@@ -1,0 +1,12 @@
+{
+    "display_name": "小剧场生成器 / Theater Generator",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Theater Generator",
+    "version": "1.5.0",
+    "homePage": "",
+    "auto_update": true
+}
