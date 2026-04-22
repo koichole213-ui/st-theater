@@ -129,6 +129,9 @@ function buildPopupHTML() {
                 <span class="theater-hint-inline">生成可交互的小剧场</span>
             </div>
             <div class="theater-btn-row">
+                <div id="theater-save-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-floppy-disk"></i><span>存为模板</span></div>
+            </div>
+            <div class="theater-btn-row">
                 <div id="theater-generate-btn" class="theater-btn primary generate"><i class="fa-solid fa-wand-magic-sparkles"></i><span>生成</span></div>
                 <div id="theater-stop-btn" class="theater-btn danger generate" style="display:none;"><i class="fa-solid fa-stop"></i><span>停止</span></div>
             </div>
@@ -183,6 +186,12 @@ function buildPopupHTML() {
                 </div>
             </div>
             <div id="theater-worldbook-list" class="theater-wb-list"></div>
+
+            <details class="theater-wb-manual-details">
+                <summary class="theater-wb-manual-summary"><i class="fa-solid fa-plus"></i> 手动添加条目</summary>
+                <textarea id="theater-wb-manual" class="theater-textarea" rows="3" placeholder="粘贴世界书内容，空行分隔多个条目…" style="margin-top:8px;"></textarea>
+                <div class="theater-btn-row"><div id="theater-wb-parse-btn" class="theater-btn"><i class="fa-solid fa-plus"></i><span>添加</span></div></div>
+            </details>
         </div>
 
         <!-- Context Range -->
@@ -197,9 +206,6 @@ function buildPopupHTML() {
         <!-- Instruction Templates -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-pen-fancy"></i> 指令模板库</label>
-            <div class="theater-btn-row" style="margin:0 0 8px;">
-                <div id="theater-save-instruction-btn" class="theater-btn"><i class="fa-solid fa-floppy-disk"></i><span>保存当前指令</span></div>
-            </div>
             <div id="theater-inst-drawer" class="theater-drawer ${inst.length ? '' : 'empty'}">
                 <div class="theater-drawer-toggle" id="theater-inst-toggle">
                     <span><i class="fa-solid fa-folder"></i> 已保存 · <span id="theater-inst-count">${inst.length}</span> 个</span>
@@ -440,6 +446,18 @@ function bindEvents() {
             $('.theater-wb-entry-toggle i').removeClass('fa-chevron-down').addClass('fa-chevron-right');
             $(this).html('<i class="fa-solid fa-chevron-down"></i> 展开');
         }
+    });
+
+    // World book - manual add
+    $d.off('click.twp').on('click.twp', '#theater-wb-parse-btn', function () {
+        const text = $('#theater-wb-manual').val().trim(); if (!text) return;
+        const parts = text.split(/\n{2,}/).filter(s => s.trim());
+        parts.forEach(p => {
+            settings.worldBookEntries.push({ name: p.substring(0, 30).replace(/\n/g, ' '), content: p.trim() });
+            settings.worldBookStates.push(true);
+        });
+        save(); refreshWBUI(); $('#theater-wb-manual').val('');
+        toastr.success(`添加了 ${parts.length} 个条目`);
     });
 
     // Context range
