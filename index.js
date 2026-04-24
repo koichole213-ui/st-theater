@@ -1,7 +1,7 @@
 // Theater Generator v1.5.0
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '1.5.5';
+const VERSION = '1.6.0';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -91,8 +91,8 @@ const defaultSettings = Object.freeze({
     renderTemplates: [],
     selectedRenderIndex: '__default__',
     systemPrompt: '',
-    presetMode: 'select', // 'select' | 'custom'
-    selectedPresetName: '',  // '' = current active preset
+    selectedPresetName: '__builtin__',  // '__builtin__' | '__follow__' | '__custom__' | saved preset name
+    savedPresets: [],  // [{ name: 'xxx', content: '...' }]
     presetEntryStates: {},  // { identifier: true/false }
     customStyleAddon: '',
     customNsfwAddon: '',
@@ -123,11 +123,16 @@ async function init() {
         settings.systemPrompt = settings.customSystemPrompt;
         delete settings.customSystemPrompt;
     }
-    // Migrate: 'current' mode → 'select' mode
-    if (settings.presetMode === 'current') {
-        settings.presetMode = 'select';
-        settings.selectedPresetName = '';
+    // Migrate: old presetMode → new selectedPresetName
+    if (settings.presetMode) {
+        if (settings.presetMode === 'custom') {
+            settings.selectedPresetName = '__custom__';
+        } else if (!settings.selectedPresetName || settings.selectedPresetName === '') {
+            settings.selectedPresetName = '__builtin__';
+        }
+        delete settings.presetMode;
     }
+    if (!settings.savedPresets) settings.savedPresets = [];
 
     const html = await renderExtensionTemplateAsync('third-party/st-theater', 'settings');
     $('#extensions_settings2').append(html);
@@ -159,8 +164,6 @@ function buildPopupHTML() {
     const render = settings.renderTemplates || [];
     const hist = settings.history || [];
     const selRender = settings.selectedRenderIndex || '__default__';
-    const sysPrompt = settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-    const presetMode = settings.presetMode || 'select';
 
     return `
 <div class="theater-popup">
@@ -214,32 +217,26 @@ function buildPopupHTML() {
         <!-- Preset -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-shield-halved"></i> 生成预设</label>
-            <select id="theater-preset-mode" class="theater-select">
-                <option value="select" ${presetMode !== 'custom' ? 'selected' : ''}>选择预设</option>
-                <option value="custom" ${presetMode === 'custom' ? 'selected' : ''}>自定义 System Prompt</option>
+            <select id="theater-preset-name-select" class="theater-select" style="margin-bottom:8px;">
             </select>
 
-            <!-- Preset selector + entries -->
-            <div id="theater-preset-current" style="${presetMode !== 'custom' ? '' : 'display:none'}; margin-top:10px;">
-                <select id="theater-preset-name-select" class="theater-select" style="margin-bottom:8px;">
-                    <option value="">-- 当前活跃预设 --</option>
-                </select>
+            <!-- Entries (for builtin / follow / saved presets) -->
+            <div id="theater-preset-current" style="margin-top:10px;">
                 <div class="theater-btn-row" style="margin:0 0 8px;">
                     <div id="theater-load-preset-btn" class="theater-btn"><i class="fa-solid fa-arrows-rotate"></i><span>刷新条目</span></div>
-                    <div id="theater-sync-preset-btn" class="theater-btn"><i class="fa-solid fa-link"></i><span>同步酒馆状态</span></div>
                     <span id="theater-preset-select-all" class="theater-wb-action-link" style="padding:8px;"><i class="fa-solid fa-check-double"></i> 全选</span>
                     <span id="theater-preset-deselect-all" class="theater-wb-action-link" style="padding:8px;"><i class="fa-regular fa-square"></i> 全不选</span>
                 </div>
                 <div id="theater-preset-entries" class="theater-wb-list"></div>
             </div>
 
-            <!-- Custom prompt -->
-            <div id="theater-preset-custom" style="${presetMode === 'custom' ? '' : 'display:none'}; margin-top:10px;">
-                <textarea id="theater-sys-prompt" class="theater-textarea" rows="8">${esc(sysPrompt)}</textarea>
-                <p class="theater-hint" style="margin-top:4px;">默认预设基于「月见轻量」 by 染染</p>
+            <!-- Custom prompt editing -->
+            <div id="theater-preset-custom" style="display:none; margin-top:10px;">
+                <textarea id="theater-sys-prompt" class="theater-textarea" rows="8"></textarea>
                 <div class="theater-btn-row">
-                    <div id="theater-save-sys-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存</span></div>
-                    <div id="theater-reset-sys-btn" class="theater-btn"><i class="fa-solid fa-rotate-left"></i><span>恢复默认</span></div>
+                    <div id="theater-save-sys-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存到当前预设</span></div>
+                    <div id="theater-save-as-preset-btn" class="theater-btn"><i class="fa-solid fa-plus"></i><span>另存为新预设</span></div>
+                    <div id="theater-delete-preset-btn" class="theater-btn danger" style="display:none;"><i class="fa-solid fa-trash"></i><span>删除预设</span></div>
                 </div>
             </div>
         </div>
@@ -459,20 +456,16 @@ async function openTheaterPopup() {
     await new Promise(r => setTimeout(r, 50));
     bindEvents();
     await loadWorldBookList();
-    await loadPresetNameList();
+    loadPresetNameList();
     // Restore selected WB
     if (settings.currentWorldBook) {
         $('#theater-wb-select').val(settings.currentWorldBook);
     }
     // Restore selected preset
-    if (settings.selectedPresetName) {
-        $('#theater-preset-name-select').val(settings.selectedPresetName);
-    }
+    $('#theater-preset-name-select').val(settings.selectedPresetName || '__builtin__');
     refreshWBUI();
-    // Auto-load preset entries when in 'select' mode
-    if (settings.presetMode !== 'custom') {
-        loadPresetEntries();
-    }
+    updatePresetUI();
+    loadPresetEntries();
     await p;
 }
 
@@ -496,21 +489,14 @@ function bindEvents() {
     $d.off('input.tii').on('input.tii', '#theater-instruction', function () { settings.lastInstruction = $(this).val(); save(); });
 
     // ---- Material: Preset ----
-    $d.off('change.tpm').on('change.tpm', '#theater-preset-mode', function () {
-        settings.presetMode = $(this).val();
-        $('#theater-preset-current').toggle(settings.presetMode === 'select');
-        $('#theater-preset-custom').toggle(settings.presetMode === 'custom');
-        if (settings.presetMode === 'select') loadPresetEntries();
-        save();
-    });
     $d.off('change.tpns').on('change.tpns', '#theater-preset-name-select', function () {
         settings.selectedPresetName = $(this).val();
         settings.presetEntryStates = {};
         save();
+        updatePresetUI();
         loadPresetEntries();
     });
     $d.off('click.tlpre').on('click.tlpre', '#theater-load-preset-btn', loadPresetEntries);
-    $d.off('click.tsync').on('click.tsync', '#theater-sync-preset-btn', syncPresetWithST);
     $d.off('change.tpec').on('change.tpec', '.theater-preset-check', function () {
         const id = $(this).data('id');
         if (!settings.presetEntryStates) settings.presetEntryStates = {};
@@ -547,13 +533,54 @@ function bindEvents() {
         $(this).find('.theater-preset-entry-toggle').trigger('click');
     });
     $d.off('click.tss').on('click.tss', '#theater-save-sys-btn', function () {
-        settings.systemPrompt = $('#theater-sys-prompt').val();
-        save(); toastr.success('预设已保存');
+        const sel = settings.selectedPresetName;
+        const content = $('#theater-sys-prompt').val();
+        if (sel === '__custom__') {
+            settings.systemPrompt = content;
+        } else {
+            // Save to a saved preset
+            const idx = settings.savedPresets.findIndex(p => p.name === sel);
+            if (idx >= 0) { settings.savedPresets[idx].content = content; }
+        }
+        settings.presetEntryStates = {};
+        save(); loadPresetEntries(); toastr.success('预设已保存');
     });
-    $d.off('click.trss').on('click.trss', '#theater-reset-sys-btn', function () {
-        settings.systemPrompt = '';
-        $('#theater-sys-prompt').val(DEFAULT_SYSTEM_PROMPT);
-        save(); toastr.success('已恢复默认');
+    $d.off('click.tsap').on('click.tsap', '#theater-save-as-preset-btn', async function () {
+        const { Popup } = SillyTavern.getContext();
+        const name = await Popup.show.input('新预设名称', '输入预设名称');
+        if (!name?.trim()) return;
+        const trimmed = name.trim();
+        if (settings.savedPresets.some(p => p.name === trimmed)) {
+            toastr.warning('已存在同名预设');
+            return;
+        }
+        const content = $('#theater-sys-prompt').val() || DEFAULT_SYSTEM_PROMPT;
+        settings.savedPresets.push({ name: trimmed, content });
+        settings.selectedPresetName = trimmed;
+        settings.presetEntryStates = {};
+        save();
+        loadPresetNameList();
+        $('#theater-preset-name-select').val(trimmed);
+        updatePresetUI();
+        loadPresetEntries();
+        toastr.success(`预设「${trimmed}」已保存`);
+    });
+    $d.off('click.tdp').on('click.tdp', '#theater-delete-preset-btn', async function () {
+        const sel = settings.selectedPresetName;
+        const idx = settings.savedPresets.findIndex(p => p.name === sel);
+        if (idx < 0) return;
+        const { Popup } = SillyTavern.getContext();
+        const ok = await Popup.show.confirm(`确定删除预设「${sel}」？`);
+        if (!ok) return;
+        settings.savedPresets.splice(idx, 1);
+        settings.selectedPresetName = '__builtin__';
+        settings.presetEntryStates = {};
+        save();
+        loadPresetNameList();
+        $('#theater-preset-name-select').val('__builtin__');
+        updatePresetUI();
+        loadPresetEntries();
+        toastr.success('已删除');
     });
 
     // ---- Material: Style & NSFW Addons ----
@@ -735,39 +762,66 @@ let cachedPresetEntries = [];
 
 async function loadPresetNameList() {
     const $select = $('#theater-preset-name-select');
-    $select.find('option:not(:first)').remove();
-    let names = [];
+    $select.empty();
+    $select.append('<option value="__builtin__">月见轻量 · 内置 (by 染染)</option>');
+    $select.append('<option value="__follow__">跟随酒馆当前预设</option>');
+    $select.append('<option value="__custom__">自定义编写</option>');
+    // User saved presets
+    (settings.savedPresets || []).forEach(p => {
+        $select.append(`<option value="${esc(p.name)}">${esc(p.name)}</option>`);
+    });
+}
 
-    try {
-        // Method 1: Read from SillyTavern DOM
-        $('#settings_preset_openai option, #settings_preset option').each(function () {
-            const text = $(this).text()?.trim();
-            const val = $(this).val()?.trim();
-            if (text && val && !text.startsWith('--') && text !== 'Default') {
-                if (!names.includes(text)) names.push(text);
-            }
+function updatePresetUI() {
+    const sel = settings.selectedPresetName || '__builtin__';
+    const isCustom = sel === '__custom__';
+    const isSaved = !['__builtin__', '__follow__', '__custom__'].includes(sel);
+    // Entries panel: show for builtin / follow / saved (entries view)
+    $('#theater-preset-current').toggle(!isCustom);
+    // Custom textarea: show for __custom__ and saved presets (for editing)
+    $('#theater-preset-custom').toggle(isCustom || isSaved);
+    // Delete button: only for user saved presets
+    $('#theater-delete-preset-btn').toggle(isSaved);
+    // Save button label
+    if (isSaved) {
+        $('#theater-save-sys-btn span').text('保存到当前预设');
+    } else {
+        $('#theater-save-sys-btn span').text('保存');
+    }
+    // Fill textarea content
+    if (isCustom) {
+        $('#theater-sys-prompt').val(settings.systemPrompt || DEFAULT_SYSTEM_PROMPT);
+    } else if (isSaved) {
+        const preset = settings.savedPresets.find(p => p.name === sel);
+        $('#theater-sys-prompt').val(preset ? preset.content : '');
+    }
+}
+
+function parsePromptToEntries(text, prefix) {
+    const entries = [];
+    const regex = /【([^】]+)】/g;
+    let match;
+    const matches = [];
+    while ((match = regex.exec(text)) !== null) {
+        matches.push({ name: match[1], start: match.index, headerEnd: match.index + match[0].length });
+    }
+    if (matches.length === 0) {
+        // No section headers, return as single entry
+        return [{ id: prefix + '_full', name: '完整内容', role: 'system', content: text.trim(), enabledInST: true }];
+    }
+    for (let i = 0; i < matches.length; i++) {
+        const contentStart = matches[i].headerEnd;
+        const contentEnd = i + 1 < matches.length ? matches[i + 1].start : text.length;
+        const content = ('【' + matches[i].name + '】\n' + text.slice(contentStart, contentEnd).trim()).trim();
+        entries.push({
+            id: prefix + '_' + matches[i].name,
+            name: matches[i].name,
+            role: 'system',
+            content,
+            enabledInST: true,
         });
-
-        // Method 2: API fallback
-        if (names.length === 0) {
-            const ctx = SillyTavern.getContext();
-            const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
-            for (const endpoint of ['/api/presets/openai', '/api/presets/search-openai']) {
-                try {
-                    const r = await fetch(endpoint, { method: 'GET', headers });
-                    if (r.ok) {
-                        const data = await r.json();
-                        const arr = Array.isArray(data) ? data : (data?.data || []);
-                        arr.forEach(n => { if (n && !names.includes(n)) names.push(n); });
-                        if (names.length) break;
-                    }
-                } catch {}
-            }
-        }
-    } catch (e) { console.error('[Theater] loadPresetNameList error:', e); }
-
-    names.forEach(n => $select.append(`<option value="${esc(n)}">${esc(n)}</option>`));
-    console.log(`[Theater] Found ${names.length} presets`);
+    }
+    return entries;
 }
 
 async function fetchPresetByName(name) {
@@ -808,31 +862,18 @@ function extractPromptsFromData(data) {
 
 async function loadPresetEntries() {
     cachedPresetEntries = [];
-    const selectedName = settings.selectedPresetName;
+    const sel = settings.selectedPresetName || '__builtin__';
 
-    if (selectedName) {
-        // Load a specific named preset via API
-        try {
-            const data = await fetchPresetByName(selectedName);
-            if (data) {
-                cachedPresetEntries = extractPromptsFromData(data);
-            }
-            if (!cachedPresetEntries.length) {
-                toastr.warning(`无法加载预设「${selectedName}」的条目，请检查预设是否存在`);
-            }
-        } catch (e) {
-            console.error('[Theater] fetchPreset error:', e);
-            toastr.error('预设加载失败: ' + e.message);
-        }
-    } else {
-        // Load from current active preset (original behavior)
+    if (sel === '__builtin__') {
+        cachedPresetEntries = parsePromptToEntries(DEFAULT_SYSTEM_PROMPT, 'builtin');
+    } else if (sel === '__follow__') {
+        // Read from current active ST preset
         try {
             const ctx = SillyTavern.getContext();
             const oai = ctx.chatCompletionSettings;
             if (oai?.prompts && Array.isArray(oai.prompts)) {
                 cachedPresetEntries = extractPromptsFromData(oai);
             }
-            // Text completion fallback
             if (!cachedPresetEntries.length && ctx.textCompletionSettings?.system_prompt) {
                 cachedPresetEntries = [{
                     id: 'tc_system',
@@ -845,9 +886,24 @@ async function loadPresetEntries() {
         } catch (e) {
             console.error('[Theater] loadPresetEntries error:', e);
         }
+        if (!cachedPresetEntries.length) {
+            toastr.warning('无法从酒馆读取预设条目');
+        }
+    } else if (sel === '__custom__') {
+        // Custom mode: single entry from textarea
+        const content = settings.systemPrompt?.trim() || DEFAULT_SYSTEM_PROMPT;
+        cachedPresetEntries = parsePromptToEntries(content, 'custom');
+    } else {
+        // User saved preset
+        const preset = settings.savedPresets.find(p => p.name === sel);
+        if (preset) {
+            cachedPresetEntries = parsePromptToEntries(preset.content, 'saved');
+        } else {
+            toastr.warning(`预设「${sel}」未找到`);
+        }
     }
 
-    // Init states: first load follows enabled state, subsequent loads keep user's choice
+    // Init states
     if (!settings.presetEntryStates) settings.presetEntryStates = {};
     cachedPresetEntries.forEach(e => {
         if (!(e.id in settings.presetEntryStates)) {
@@ -856,14 +912,7 @@ async function loadPresetEntries() {
     });
 
     $('#theater-preset-entries').html(renderPresetEntries());
-    if (cachedPresetEntries.length) toastr.info(`已读取 ${cachedPresetEntries.length} 个预设条目`);
-    else if (!selectedName) toastr.warning('未找到预设条目');
-}
-
-async function syncPresetWithST() {
-    settings.presetEntryStates = {};
-    await loadPresetEntries();
-    toastr.success('已同步预设状态');
+    if (cachedPresetEntries.length && sel !== '__custom__') toastr.info(`已读取 ${cachedPresetEntries.length} 个预设条目`);
 }
 
 function renderPresetEntries() {
@@ -1047,16 +1096,21 @@ function exportAllHistory() {
 }
 
 function downloadFile(filename, content, type) {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([content], { type }));
+    a.href = url;
     a.download = filename;
-    a.style.display = 'none';
+    a.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none;';
     document.body.appendChild(a);
-    a.click();
+    // Decouple click from caller's event chain to avoid mobile webview focus issues
     setTimeout(() => {
-        try { document.body.removeChild(a); } catch (e) {}
-        URL.revokeObjectURL(a.href);
-    }, 1000);
+        a.click();
+        setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }, 200);
+    }, 0);
 }
 
 // ============================================================
@@ -1102,14 +1156,10 @@ async function generateTheater() {
 
     const prompt = `${charInfo}${personaInfo}${wbInfo}以下是最近的剧情内容：\n${chatCtx}\n\n---\n\n${renderRules}\n\n---\n\n用户指令：${instruction}\n\n请根据以上所有信息生成小剧场，严格遵守渲染规则。`;
     let systemPrompt;
-    if (settings.presetMode === 'custom') {
-        systemPrompt = settings.systemPrompt?.trim() || DEFAULT_SYSTEM_PROMPT;
-    } else {
-        // Selected preset: use only selected entries
-        if (!cachedPresetEntries.length) await loadPresetEntries();
-        systemPrompt = getSelectedPresetPrompt();
-        if (!systemPrompt) systemPrompt = DEFAULT_SYSTEM_PROMPT;
-    }
+    // All preset modes now produce entries
+    if (!cachedPresetEntries.length) await loadPresetEntries();
+    systemPrompt = getSelectedPresetPrompt();
+    if (!systemPrompt) systemPrompt = DEFAULT_SYSTEM_PROMPT;
 
     // Append custom addons
     if (settings.customStyleAddon?.trim()) systemPrompt += '\n\n【文风补充】\n' + settings.customStyleAddon.trim();
