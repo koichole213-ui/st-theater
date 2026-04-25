@@ -1,7 +1,7 @@
 // Theater Generator v1.5.0
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '1.6.0';
+const VERSION = '1.6.1';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -456,7 +456,7 @@ async function openTheaterPopup() {
     await new Promise(r => setTimeout(r, 50));
     bindEvents();
     await loadWorldBookList();
-    loadPresetNameList();
+    await loadPresetNameList();
     // Restore selected WB
     if (settings.currentWorldBook) {
         $('#theater-wb-select').val(settings.currentWorldBook);
@@ -559,7 +559,7 @@ function bindEvents() {
         settings.selectedPresetName = trimmed;
         settings.presetEntryStates = {};
         save();
-        loadPresetNameList();
+        await loadPresetNameList();
         $('#theater-preset-name-select').val(trimmed);
         updatePresetUI();
         loadPresetEntries();
@@ -576,7 +576,7 @@ function bindEvents() {
         settings.selectedPresetName = '__builtin__';
         settings.presetEntryStates = {};
         save();
-        loadPresetNameList();
+        await loadPresetNameList();
         $('#theater-preset-name-select').val('__builtin__');
         updatePresetUI();
         loadPresetEntries();
@@ -760,23 +760,60 @@ function loadPersona() {
 // ============================================================
 let cachedPresetEntries = [];
 
+async function fetchSTPresetNameList() {
+    try {
+        const ctx = SillyTavern.getContext();
+        const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
+        // Try multiple endpoints for cross-version compatibility
+        const attempts = [
+            () => fetch('/api/presets/openai', { method: 'GET', headers }),
+            () => fetch('/api/presets', { method: 'POST', headers, body: JSON.stringify({ apiId: 'openai' }) }),
+        ];
+        for (const tryFetch of attempts) {
+            try {
+                const r = await tryFetch();
+                if (r.ok) {
+                    const data = await r.json();
+                    if (Array.isArray(data)) return data.filter(n => typeof n === 'string' && n.trim()).sort();
+                }
+            } catch {}
+        }
+    } catch (e) {
+        console.error('[Theater] fetchSTPresetNameList error:', e);
+    }
+    return [];
+}
+
 async function loadPresetNameList() {
     const $select = $('#theater-preset-name-select');
     $select.empty();
     $select.append('<option value="__builtin__">月见轻量 · 内置 (by 染染)</option>');
     $select.append('<option value="__follow__">跟随酒馆当前预设</option>');
+    // ST presets
+    const stPresets = await fetchSTPresetNameList();
+    if (stPresets.length) {
+        $select.append('<option disabled>──── 酒馆预设 ────</option>');
+        stPresets.forEach(name => {
+            $select.append(`<option value="__stpreset__:${esc(name)}">${esc(name)}</option>`);
+        });
+    }
+    $select.append('<option disabled>────────────</option>');
     $select.append('<option value="__custom__">自定义编写</option>');
     // User saved presets
-    (settings.savedPresets || []).forEach(p => {
-        $select.append(`<option value="${esc(p.name)}">${esc(p.name)}</option>`);
-    });
+    if ((settings.savedPresets || []).length) {
+        $select.append('<option disabled>──── 插件预设 ────</option>');
+        (settings.savedPresets || []).forEach(p => {
+            $select.append(`<option value="${esc(p.name)}">${esc(p.name)}</option>`);
+        });
+    }
 }
 
 function updatePresetUI() {
     const sel = settings.selectedPresetName || '__builtin__';
     const isCustom = sel === '__custom__';
-    const isSaved = !['__builtin__', '__follow__', '__custom__'].includes(sel);
-    // Entries panel: show for builtin / follow / saved (entries view)
+    const isSTPreset = sel.startsWith('__stpreset__:');
+    const isSaved = !['__builtin__', '__follow__', '__custom__'].includes(sel) && !isSTPreset;
+    // Entries panel: show for builtin / follow / stpreset / saved (entries view)
     $('#theater-preset-current').toggle(!isCustom);
     // Custom textarea: show for __custom__ and saved presets (for editing)
     $('#theater-preset-custom').toggle(isCustom || isSaved);
@@ -888,6 +925,20 @@ async function loadPresetEntries() {
         }
         if (!cachedPresetEntries.length) {
             toastr.warning('无法从酒馆读取预设条目');
+        }
+    } else if (sel.startsWith('__stpreset__:')) {
+        // Load a specific ST preset by name
+        const presetName = sel.slice('__stpreset__:'.length);
+        try {
+            const data = await fetchPresetByName(presetName);
+            if (data) {
+                cachedPresetEntries = extractPromptsFromData(data);
+            }
+        } catch (e) {
+            console.error('[Theater] load ST preset error:', e);
+        }
+        if (!cachedPresetEntries.length) {
+            toastr.warning(`无法读取酒馆预设「${presetName}」`);
         }
     } else if (sel === '__custom__') {
         // Custom mode: single entry from textarea
