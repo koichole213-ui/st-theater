@@ -713,42 +713,60 @@ async function loadPresetNameList() {
     const ctx = SillyTavern.getContext();
     const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
     let names = [];
+    let source = '';
 
-    // Try to get preset list from ST API
-    const endpoints = [
-        '/api/presets/openai',                    // GET list of openai presets
-        '/api/presets/search?api=openai',          // alternative search endpoint
-    ];
+    // Strategy 1: Read from DOM — ONLY the Chat Completion preset selector
+    // #settings_preset_openai is the exact ID for CC presets in ST
+    try {
+        const $ccSelect = $('#settings_preset_openai');
+        if ($ccSelect.length) {
+            $ccSelect.find('option').each(function () {
+                const text = $(this).text()?.trim();
+                const val = $(this).val()?.trim();
+                if (text && val && val !== 'default' && !text.startsWith('--') && !names.includes(text)) {
+                    names.push(text);
+                }
+            });
+            if (names.length) source = 'DOM #settings_preset_openai';
+        }
+    } catch (e) {
+        console.warn('[Theater] DOM read failed:', e);
+    }
 
-    for (const url of endpoints) {
+    // Strategy 2: API POST /api/presets/search
+    if (!names.length) {
         try {
-            const r = await fetch(url, { method: 'GET', headers });
+            const r = await fetch('/api/presets/search', {
+                method: 'POST', headers,
+                body: JSON.stringify({ apiId: 'openai' }),
+            });
             if (r.ok) {
                 const data = await r.json();
-                if (Array.isArray(data)) {
+                if (Array.isArray(data) && data.length) {
                     names = data.filter(n => typeof n === 'string' && n.trim());
-                    break;
+                    source = 'API /api/presets/search';
                 }
             }
         } catch {}
     }
 
-    // Fallback: read from DOM if API didn't work
+    // Strategy 3: API GET /api/presets/openai
     if (!names.length) {
         try {
-            $('select[id*="settings_preset"] option, #settings_preset option, #settings_preset_openai option').each(function () {
-                const text = $(this).text()?.trim();
-                const val = $(this).val()?.trim();
-                if (text && val && !text.startsWith('--') && text !== 'Default' && !names.includes(text)) {
-                    names.push(text);
+            const r = await fetch('/api/presets/openai', { method: 'GET', headers });
+            if (r.ok) {
+                const data = await r.json();
+                if (Array.isArray(data) && data.length) {
+                    names = data.filter(n => typeof n === 'string' && n.trim());
+                    source = 'API GET /api/presets/openai';
                 }
-            });
+            }
         } catch {}
     }
 
     names.sort((a, b) => a.localeCompare(b));
     names.forEach(n => $select.append(`<option value="${esc(n)}">${esc(n)}</option>`));
-    console.log(`[Theater] Found ${names.length} presets`);
+    console.log(`[Theater] Preset list: ${names.length} items from ${source || 'none'}`, names);
 
     if (!names.length) {
         toastr.warning('未找到 Chat Completion 预设，请确认酒馆已导入预设文件');
@@ -786,22 +804,56 @@ async function fetchPresetByName(name) {
     const ctx = SillyTavern.getContext();
     const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
 
-    // Try multiple API patterns for cross-version compatibility
-    const attempts = [
-        () => fetch('/api/presets/openai', { method: 'POST', headers, body: JSON.stringify({ name }) }),
-        () => fetch(`/api/presets/openai/${encodeURIComponent(name)}`, { method: 'GET', headers }),
-        () => fetch('/api/presets/restore', { method: 'POST', headers, body: JSON.stringify({ name, apiId: 'openai' }) }),
-    ];
+    // Strategy 1: POST /api/presets/restore (ST standard endpoint)
+    try {
+        const r = await fetch('/api/presets/restore', {
+            method: 'POST', headers,
+            body: JSON.stringify({ name, apiId: 'openai' }),
+        });
+        if (r.ok) {
+            const data = await r.json();
+            console.log('[Theater] /api/presets/restore response keys:', Object.keys(data));
+            if (data?.prompts && Array.isArray(data.prompts)) return data;
+            // Some ST versions wrap differently — check for prompt_order + prompts at top level
+            if (data?.prompt_order || data?.prompts) return data;
+        }
+    } catch (e) { console.warn('[Theater] restore failed:', e); }
 
-    for (const tryFetch of attempts) {
-        try {
-            const r = await tryFetch();
-            if (r.ok) {
-                const data = await r.json();
-                if (data?.prompts && Array.isArray(data.prompts)) return data;
-            }
-        } catch {}
-    }
+    // Strategy 2: POST /api/presets/openai with name
+    try {
+        const r = await fetch('/api/presets/openai', {
+            method: 'POST', headers,
+            body: JSON.stringify({ name }),
+        });
+        if (r.ok) {
+            const data = await r.json();
+            console.log('[Theater] POST /api/presets/openai response keys:', Object.keys(data));
+            if (data?.prompts && Array.isArray(data.prompts)) return data;
+        }
+    } catch {}
+
+    // Strategy 3: GET with name in query
+    try {
+        const r = await fetch(`/api/presets/openai?name=${encodeURIComponent(name)}`, {
+            method: 'GET', headers,
+        });
+        if (r.ok) {
+            const data = await r.json();
+            console.log('[Theater] GET /api/presets/openai?name= response keys:', Object.keys(data));
+            if (data?.prompts && Array.isArray(data.prompts)) return data;
+        }
+    } catch {}
+
+    // Strategy 4: Read from context if user's current preset matches the selected name
+    try {
+        const oai = ctx.chatCompletionSettings;
+        if (oai?.prompts && Array.isArray(oai.prompts)) {
+            console.log('[Theater] Fallback: reading from current chatCompletionSettings');
+            return oai;
+        }
+    } catch {}
+
+    console.error(`[Theater] All strategies failed for preset "${name}"`);
     return null;
 }
 
@@ -832,11 +884,15 @@ async function loadPresetEntries() {
     const data = await fetchPresetByName(sel);
     if (data) {
         cachedPresetEntries = extractPromptsFromData(data);
+        console.log(`[Theater] Extracted ${cachedPresetEntries.length} entries from preset "${sel}"`);
     }
 
     if (!cachedPresetEntries.length) {
-        toastr.warning(`预设「${sel}」未找到或无可用条目`);
-        $('#theater-preset-entries').html('<p class="theater-empty">无法读取条目</p>');
+        const hint = data
+            ? `预设「${sel}」已读取但无可用条目（可能是采样器预设而非 Prompt 预设）`
+            : `预设「${sel}」读取失败，请打开浏览器控制台查看 [Theater] 日志`;
+        toastr.warning(hint);
+        $('#theater-preset-entries').html(`<p class="theater-empty">${esc(hint)}</p>`);
         return;
     }
 
