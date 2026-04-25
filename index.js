@@ -801,59 +801,24 @@ function parsePromptToEntries(text, prefix) {
 }
 
 async function fetchPresetByName(name) {
-    const ctx = SillyTavern.getContext();
-    const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
-
-    // Strategy 1: POST /api/presets/restore (ST standard endpoint)
+    // 直接读取酒馆的预设静态文件，不走任何会影响主预设的 API
     try {
-        const r = await fetch('/api/presets/restore', {
-            method: 'POST', headers,
-            body: JSON.stringify({ name, apiId: 'openai' }),
-        });
+        const r = await fetch(`/OpenAI Settings/${encodeURIComponent(name)}.settings`);
         if (r.ok) {
             const data = await r.json();
-            console.log('[Theater] /api/presets/restore response keys:', Object.keys(data));
-            if (data?.prompts && Array.isArray(data.prompts)) return data;
-            // Some ST versions wrap differently — check for prompt_order + prompts at top level
-            if (data?.prompt_order || data?.prompts) return data;
+            if (data?.prompts && Array.isArray(data.prompts)) {
+                console.log(`[Theater] Read preset "${name}" via static file (${data.prompts.length} prompts)`);
+                return data;
+            }
+            console.warn(`[Theater] Preset file "${name}" has no valid prompts array`);
+        } else {
+            console.warn(`[Theater] Static file fetch returned ${r.status} for "${name}"`);
         }
-    } catch (e) { console.warn('[Theater] restore failed:', e); }
+    } catch (e) {
+        console.error('[Theater] Fetch preset file error:', e);
+    }
 
-    // Strategy 2: POST /api/presets/openai with name
-    try {
-        const r = await fetch('/api/presets/openai', {
-            method: 'POST', headers,
-            body: JSON.stringify({ name }),
-        });
-        if (r.ok) {
-            const data = await r.json();
-            console.log('[Theater] POST /api/presets/openai response keys:', Object.keys(data));
-            if (data?.prompts && Array.isArray(data.prompts)) return data;
-        }
-    } catch {}
-
-    // Strategy 3: GET with name in query
-    try {
-        const r = await fetch(`/api/presets/openai?name=${encodeURIComponent(name)}`, {
-            method: 'GET', headers,
-        });
-        if (r.ok) {
-            const data = await r.json();
-            console.log('[Theater] GET /api/presets/openai?name= response keys:', Object.keys(data));
-            if (data?.prompts && Array.isArray(data.prompts)) return data;
-        }
-    } catch {}
-
-    // Strategy 4: Read from context if user's current preset matches the selected name
-    try {
-        const oai = ctx.chatCompletionSettings;
-        if (oai?.prompts && Array.isArray(oai.prompts)) {
-            console.log('[Theater] Fallback: reading from current chatCompletionSettings');
-            return oai;
-        }
-    } catch {}
-
-    console.error(`[Theater] All strategies failed for preset "${name}"`);
+    console.error(`[Theater] Failed to read preset: ${name}`);
     return null;
 }
 
