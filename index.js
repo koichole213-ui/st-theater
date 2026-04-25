@@ -1378,14 +1378,28 @@ async function updateExtension() {
     const btn = $('#theater-update-btn');
     btn.addClass('disabled');
     try {
+        // TavernHelper — 封装了 git 操作，Termux 也能用
+        if (window.TavernHelper && typeof window.TavernHelper.updateExtension === 'function') {
+            toastr.info('正在更新…');
+            const res = await window.TavernHelper.updateExtension('st-theater');
+            if (res.ok) {
+                toastr.success('更新成功！正在刷新页面…');
+                setTimeout(() => window.location.reload(), 1500);
+                return;
+            }
+            toastr.warning('更新失败，请查看控制台');
+            return;
+        }
+        // Fallback: 酒馆内置 API
         const ctx = SillyTavern.getContext();
         const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
-        let resp = await fetch('/api/extensions/update', {
+        const resp = await fetch('/api/extensions/update', {
             method: 'POST', headers,
             body: JSON.stringify({ extensionName: 'st-theater' })
         }).catch(() => null);
         if (resp && resp.ok) {
-            toastr.success('更新成功，请刷新页面');
+            toastr.success('更新成功！正在刷新页面…');
+            setTimeout(() => window.location.reload(), 1500);
         } else {
             toastr.warning('更新失败，如遇 Git 冲突请删除插件文件夹后重新安装');
         }
