@@ -715,9 +715,22 @@ async function loadPresetNameList() {
     let names = [];
     let source = '';
 
+    // Strategy 0: TavernHelper API — 最可靠，名字与 getPreset() 一一对应
+    if (!names.length && window.TavernHelper && typeof window.TavernHelper.getPresetNames === 'function') {
+        try {
+            const list = window.TavernHelper.getPresetNames();
+            if (Array.isArray(list) && list.length) {
+                names = list.filter(n => typeof n === 'string' && n.trim());
+                source = 'TavernHelper.getPresetNames()';
+            }
+        } catch (e) {
+            console.warn('[Theater] TavernHelper.getPresetNames failed:', e);
+        }
+    }
+
     // Strategy 1: Read from DOM — ONLY the Chat Completion preset selector
     // #settings_preset_openai is the exact ID for CC presets in ST
-    try {
+    if (!names.length) try {
         const $ccSelect = $('#settings_preset_openai');
         if ($ccSelect.length) {
             $ccSelect.find('option').each(function () {
@@ -801,7 +814,21 @@ function parsePromptToEntries(text, prefix) {
 }
 
 async function fetchPresetByName(name) {
-    // 直接读取酒馆的预设静态文件，不走任何会影响主预设的 API
+    // Strategy 1: TavernHelper API — 酒馆原生接口，最可靠
+    if (window.TavernHelper && typeof window.TavernHelper.getPreset === 'function') {
+        try {
+            const preset = window.TavernHelper.getPreset(name);
+            if (preset?.prompts && Array.isArray(preset.prompts)) {
+                console.log(`[Theater] Read preset "${name}" via TavernHelper (${preset.prompts.length} prompts)`);
+                return preset;
+            }
+            console.warn(`[Theater] TavernHelper returned preset but no valid prompts array`);
+        } catch (e) {
+            console.warn('[Theater] TavernHelper.getPreset failed:', e);
+        }
+    }
+
+    // Strategy 2: 静态文件直读 (fallback)
     try {
         const r = await fetch(`/OpenAI Settings/${encodeURIComponent(name)}.settings`);
         if (r.ok) {
@@ -810,15 +837,12 @@ async function fetchPresetByName(name) {
                 console.log(`[Theater] Read preset "${name}" via static file (${data.prompts.length} prompts)`);
                 return data;
             }
-            console.warn(`[Theater] Preset file "${name}" has no valid prompts array`);
-        } else {
-            console.warn(`[Theater] Static file fetch returned ${r.status} for "${name}"`);
         }
     } catch (e) {
-        console.error('[Theater] Fetch preset file error:', e);
+        console.warn('[Theater] Static file read failed:', e);
     }
 
-    console.error(`[Theater] Failed to read preset: ${name}`);
+    console.error(`[Theater] Failed to read preset: ${name}. TavernHelper ${window.TavernHelper ? '已加载但未找到该预设' : '未安装'}`);
     return null;
 }
 
