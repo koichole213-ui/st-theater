@@ -1194,67 +1194,49 @@ async function generateTheater() {
 }
 
 // ============================================================
-// Main API streaming
+// Main API generation
 // ============================================================
 async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
-    // Try ST stream endpoint
-    try {
-        const result = await callSTStream(ctx, systemPrompt, prompt, onChunk);
-        if (result) return result;
-    } catch (e) {
-        console.warn('[Theater] ST stream failed:', e.message);
+    // Primary: TavernHelper.generateRaw — 稳定可靠，走酒馆原生管线
+    if (window.TavernHelper && typeof window.TavernHelper.generateRaw === 'function') {
+        try {
+            const messages = [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: prompt }
+            ];
+            const result = await window.TavernHelper.generateRaw({
+                user_input: '',
+                ordered_prompts: messages,
+                overrides: {
+                    world_info_before: '', world_info_after: '',
+                    persona_description: '', char_description: '',
+                    char_personality: '', scenario: '',
+                    dialogue_examples: '',
+                    chat_history: { prompts: [], with_depth_entries: false, author_note: '' }
+                },
+                injects: [],
+                max_chat_history: 0
+            });
+            if (result) {
+                onChunk(result);
+                return result;
+            }
+            throw new Error('TavernHelper.generateRaw returned empty');
+        } catch (e) {
+            console.warn('[Theater] TavernHelper.generateRaw failed:', e);
+            // 502/524/529 等网络错误尝试重试
+            const s = String(e?.status || e?.message || '');
+            if (/502|524|529|timeout|ECONNRESET|network/i.test(s)) {
+                onChunk('（网络错误，重试中…）');
+                return await generateWithRetry(ctx, systemPrompt, prompt, 2, onChunk);
+            }
+            throw e;
+        }
     }
 
-    // Fallback: generateRaw with retry (non-streaming)
-    onChunk('（回退到非流式模式…）');
+    // Fallback: ctx.generateRaw（TavernHelper 不可用时）
+    onChunk('（TavernHelper 不可用，使用备用模式…）');
     return await generateWithRetry(ctx, systemPrompt, prompt, 2, onChunk);
-}
-
-async function callSTStream(ctx, systemPrompt, prompt, onChunk) {
-    const headers = {};
-    if (ctx.getRequestHeaders) Object.assign(headers, ctx.getRequestHeaders());
-    headers['Content-Type'] = 'application/json';
-
-    // Include more fields that ST backend might expect
-    const body = {
-        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: prompt }],
-        stream: true,
-    };
-
-    // Add model info if available
-    const oai = ctx.chatCompletionSettings;
-    if (oai?.openai_model) body.model = oai.openai_model;
-    else if (oai?.claude_model) body.model = oai.claude_model;
-
-    const resp = await fetch('/api/backends/chat-completions/generate', {
-        method: 'POST', headers,
-        body: JSON.stringify(body),
-        signal: abortController?.signal,
-    });
-
-    if (!resp.ok) throw new Error(`ST ${resp.status}`);
-
-    const contentType = resp.headers.get('content-type') || '';
-
-    // If response is JSON (non-streaming), extract text directly
-    if (contentType.includes('application/json')) {
-        const data = await resp.json();
-        const text = data?.choices?.[0]?.message?.content
-            || data?.content?.[0]?.text
-            || (typeof data === 'string' ? data : '');
-        if (text) { onChunk(text); return text; }
-        throw new Error('JSON response but no content');
-    }
-
-    // Try SSE stream
-    try {
-        return await readSSEStream(resp, onChunk, false);
-    } catch (streamErr) {
-        // readSSEStream might fail if the response wasn't actually SSE
-        // Try reading as plain text
-        console.warn('[Theater] SSE parse failed, trying plain text:', streamErr.message);
-        throw streamErr;
-    }
 }
 
 async function generateWithRetry(ctx, systemPrompt, prompt, maxRetries, onChunk) {
