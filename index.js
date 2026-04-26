@@ -1,7 +1,7 @@
 // Theater Generator v1.6.0
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '1.6.1';
+const VERSION = '1.6.2';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
