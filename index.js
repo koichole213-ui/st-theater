@@ -1084,16 +1084,10 @@ function downloadFile(filename, content, type) {
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
-    a.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none;';
     document.body.appendChild(a);
-    // Decouple click from caller's event chain to avoid mobile webview focus issues
-    setTimeout(() => {
-        a.click();
-        setTimeout(() => {
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }, 200);
-    }, 0);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }
 
 // ============================================================
