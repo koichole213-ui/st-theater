@@ -1,7 +1,7 @@
 // Theater Generator v1.6.0
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '1.6.2';
+const VERSION = '1.7.0';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -1050,10 +1050,11 @@ async function onWorldBookSelect() {
         if (!data?.entries) { toastr.warning('世界书为空'); settings.worldBookEntries = []; settings.worldBookStates = []; save(); refreshWBUI(); return; }
 
         const entries = Object.values(data.entries)
-            .filter(e => e.content && !e.disable)
+            .filter(e => e.content)
             .map(e => ({
                 name: e.comment || (Array.isArray(e.key) ? e.key.join(', ') : String(e.key || '')) || '未命名',
                 content: e.content,
+                disabled: !!e.disable,  // 记录酒馆里的开关状态，方便参考
             }));
 
         settings.worldBookEntries = entries;
