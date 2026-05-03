@@ -140,7 +140,8 @@ async function init() {
     if (event_types?.APP_READY) eventSource.on(event_types.APP_READY, addWand);
 
     applyCustomCSS();
-    createFloatingBall();
+    // 悬浮球延迟创建，避免干扰其他插件初始化
+    setTimeout(() => { try { createFloatingBall(); } catch (e) { console.warn('[Theater] Floating ball error:', e); } }, 2000);
     console.log(`[Theater] v${VERSION} loaded`);
     console.log(`[Theater] 🐾 禾禾的小剧场，麓克永远在山脚下等你。`);
 }
@@ -151,11 +152,15 @@ function applyCustomCSS() {
 }
 
 function createFloatingBall() {
-    $('#theater-floating-ball').remove();
-    if (!settings.floatingBall) return;
-    const $ball = $(`<div id="theater-floating-ball" title="打开小剧场"><i class="fa-solid fa-masks-theater"></i></div>`);
-    $('body').append($ball);
-    $ball.on('click', openTheaterPopup);
+    try {
+        $('#theater-floating-ball').remove();
+        if (!settings.floatingBall) return;
+        const $ball = $(`<div id="theater-floating-ball" title="打开小剧场"><i class="fa-solid fa-masks-theater"></i></div>`);
+        $('body').append($ball);
+        $ball.on('click', (e) => { e.stopPropagation(); openTheaterPopup(); });
+    } catch (e) {
+        console.warn('[Theater] Floating ball error:', e);
+    }
 }
 
 // ============================================================
@@ -175,7 +180,8 @@ function buildPopupHTML() {
     </div>
     <div class="theater-tabs">
         <div class="theater-tab active" data-tab="generate">生成</div>
-        <div class="theater-tab" data-tab="material">素材</div>
+        <div class="theater-tab" data-tab="setting">设定</div>
+        <div class="theater-tab" data-tab="dialogue">对话</div>
         <div class="theater-tab" data-tab="rules">规则</div>
         <div class="theater-tab" data-tab="history">历史</div>
         <div class="theater-tab" data-tab="theme">美化</div>
@@ -215,11 +221,8 @@ function buildPopupHTML() {
         </div>
     </div>
 
-    <!-- ===== 2. 素材 ===== -->
-    <div class="theater-panel" data-panel="material">
-        <!-- ── 设定 ── -->
-        <label class="theater-group-label"><i class="fa-solid fa-globe"></i> 设定</label>
-
+    <!-- ===== 2. 设定 ===== -->
+    <div class="theater-panel" data-panel="setting">
         <!-- Preset -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-shield-halved"></i> 生成预设</label>
@@ -261,15 +264,11 @@ function buildPopupHTML() {
             <select id="theater-wb-select" class="theater-select">
                 <option value="">-- 选择世界书 --</option>
             </select>
-            <div class="theater-btn-row" style="margin-top:8px;">
-                <div id="theater-wb-import-json-btn" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入JSON</span></div>
-            </div>
             <div class="theater-wb-entries-header" id="theater-wb-header" style="display:none;">
                 <span id="theater-wb-count" class="theater-wb-entries-count"></span>
                 <div class="theater-wb-entries-actions">
                     <span id="theater-wb-select-all" class="theater-wb-action-link"><i class="fa-solid fa-check-double"></i> 全选</span>
                     <span id="theater-wb-deselect-all" class="theater-wb-action-link"><i class="fa-regular fa-square"></i> 全不选</span>
-                    <span id="theater-wb-toggle-all" class="theater-wb-action-link"><i class="fa-solid fa-chevron-down"></i> 展开</span>
                     <span id="theater-wb-collapse-btn" class="theater-wb-action-link"><i class="fa-solid fa-chevron-up"></i> 收起</span>
                 </div>
             </div>
@@ -281,10 +280,10 @@ function buildPopupHTML() {
                 <div class="theater-btn-row"><div id="theater-wb-parse-btn" class="theater-btn"><i class="fa-solid fa-plus"></i><span>添加</span></div></div>
             </details>
         </div>
+    </div>
 
-        <!-- ── 对话 ── -->
-        <label class="theater-group-label" style="margin-top:20px;"><i class="fa-solid fa-comments"></i> 对话</label>
-
+    <!-- ===== 3. 对话 ===== -->
+    <div class="theater-panel" data-panel="dialogue">
         <!-- User Persona -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-user"></i> User 人设</label>
@@ -622,19 +621,6 @@ function bindEvents() {
         if ($(e.target).is('input[type="checkbox"]') || $(e.target).closest('.theater-wb-entry-toggle').length) return;
         $(this).find('.theater-wb-entry-toggle').trigger('click');
     });
-    $d.off('click.twta').on('click.twta', '#theater-wb-toggle-all', function () {
-        const anyHidden = $('.theater-wb-entry-body:hidden').length > 0;
-        if (anyHidden) {
-            $('.theater-wb-entry-body').slideDown(150);
-            $('.theater-wb-entry-toggle i').removeClass('fa-chevron-right').addClass('fa-chevron-down');
-            $(this).html('<i class="fa-solid fa-chevron-up"></i> 收起');
-        } else {
-            $('.theater-wb-entry-body').slideUp(150);
-            $('.theater-wb-entry-toggle i').removeClass('fa-chevron-down').addClass('fa-chevron-right');
-            $(this).html('<i class="fa-solid fa-chevron-down"></i> 展开');
-        }
-    });
-
     // World book - manual add
     $d.off('click.twp').on('click.twp', '#theater-wb-parse-btn', function () {
         const text = $('#theater-wb-manual').val().trim(); if (!text) return;
@@ -755,9 +741,6 @@ function bindEvents() {
     // ---- Instruction Import/Export ----
     $d.off('click.timp').on('click.timp', '#theater-import-inst-btn', importInstructionTemplates);
     $d.off('click.texp').on('click.texp', '#theater-export-inst-btn', exportInstructionTemplates);
-
-    // ---- World Book JSON Import ----
-    $d.off('click.twbi').on('click.twbi', '#theater-wb-import-json-btn', importWorldBookJSON);
 
     // ---- Preset Collapse ----
     $d.off('click.tpcol').on('click.tpcol', '#theater-preset-collapse-btn', function () {
@@ -1160,19 +1143,36 @@ function deleteRenderTpl() {
 function importInstructionTemplates() {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.txt';
+    input.accept = '.txt,.json';
     input.onchange = async (e) => {
         const file = e.target.files[0]; if (!file) return;
         try {
             const text = await file.text();
-            const parts = text.split(/\n---\n/).map(s => s.trim()).filter(Boolean);
-            if (!parts.length) { toastr.warning('文件中没有找到指令'); return; }
-            parts.forEach(p => {
-                const firstLine = p.split('\n')[0].substring(0, 30).trim() || '导入指令';
-                settings.instructionTemplates.push({ name: firstLine, content: p });
-            });
+            let imported = [];
+
+            if (file.name.endsWith('.json')) {
+                // JSON格式：数组 [{ name, content }, ...] 或 [{ name, instruction }, ...]
+                const data = JSON.parse(text);
+                const arr = Array.isArray(data) ? data : (data.templates || data.instructions || []);
+                arr.forEach(item => {
+                    const content = item.content || item.instruction || '';
+                    if (!content.trim()) return;
+                    const name = item.name || item.title || content.split('\n')[0].substring(0, 30).trim() || '导入指令';
+                    imported.push({ name, content: content.trim() });
+                });
+            } else {
+                // TXT格式：--- 分隔
+                const parts = text.split(/\n---\n/).map(s => s.trim()).filter(Boolean);
+                parts.forEach(p => {
+                    const firstLine = p.split('\n')[0].substring(0, 30).trim() || '导入指令';
+                    imported.push({ name: firstLine, content: p });
+                });
+            }
+
+            if (!imported.length) { toastr.warning('文件中没有找到指令'); return; }
+            settings.instructionTemplates.push(...imported);
             save(); refreshInstUI();
-            toastr.success(`导入了 ${parts.length} 条指令`);
+            toastr.success(`导入了 ${imported.length} 条指令`);
         } catch (err) { toastr.error('导入失败: ' + err.message); }
     };
     input.click();
@@ -1184,50 +1184,6 @@ function exportInstructionTemplates() {
     const text = inst.map(t => t.content).join('\n---\n');
     downloadFile('theater-instructions.txt', text, 'text/plain');
     toastr.success(`导出了 ${inst.length} 条指令`);
-}
-
-// ============================================================
-// World Book JSON Import
-// ============================================================
-function importWorldBookJSON() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = async (e) => {
-        const file = e.target.files[0]; if (!file) return;
-        try {
-            const text = await file.text();
-            const data = JSON.parse(text);
-
-            let entries = [];
-            // 酒馆标准世界书格式: { entries: { ... } }
-            if (data.entries && typeof data.entries === 'object') {
-                entries = Object.values(data.entries)
-                    .filter(e => e.content)
-                    .map(e => ({
-                        name: e.comment || (Array.isArray(e.key) ? e.key.join(', ') : String(e.key || '')) || '未命名',
-                        content: e.content,
-                    }));
-            }
-            // 数组格式: [ { name, content }, ... ]
-            else if (Array.isArray(data)) {
-                entries = data.filter(e => e.content).map(e => ({
-                    name: e.name || e.comment || e.key || '未命名',
-                    content: e.content,
-                }));
-            }
-
-            if (!entries.length) { toastr.warning('JSON中没有找到有效条目'); return; }
-
-            settings.worldBookEntries = entries;
-            settings.worldBookStates = entries.map(() => true);
-            settings.currentWorldBook = '';
-            $('#theater-wb-select').val('');
-            save(); refreshWBUI();
-            toastr.success(`导入了 ${entries.length} 个世界书条目`);
-        } catch (err) { toastr.error('导入失败: ' + err.message); }
-    };
-    input.click();
 }
 
 // ============================================================
