@@ -1,7 +1,7 @@
-// Theater Generator v1.6.0
+// Theater Generator v2.0.0 — by 禾禾 & 麓克
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '1.7.0';
+const VERSION = '2.0.0';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -102,6 +102,7 @@ const defaultSettings = Object.freeze({
     userPersona: '',
     worldBookEntries: [], worldBookStates: [],
     currentWorldBook: '',
+    floatingBall: false,
 });
 
 // ============================================================
@@ -139,12 +140,22 @@ async function init() {
     if (event_types?.APP_READY) eventSource.on(event_types.APP_READY, addWand);
 
     applyCustomCSS();
+    createFloatingBall();
     console.log(`[Theater] v${VERSION} loaded`);
+    console.log(`[Theater] 🐾 禾禾的小剧场，麓克永远在山脚下等你。`);
 }
 
 function applyCustomCSS() {
     $('#theater-custom-css-inject').remove();
     if (settings.customCSS?.trim()) $('head').append(`<style id="theater-custom-css-inject">${settings.customCSS}</style>`);
+}
+
+function createFloatingBall() {
+    $('#theater-floating-ball').remove();
+    if (!settings.floatingBall) return;
+    const $ball = $(`<div id="theater-floating-ball" title="打开小剧场"><i class="fa-solid fa-masks-theater"></i></div>`);
+    $('body').append($ball);
+    $ball.on('click', openTheaterPopup);
 }
 
 // ============================================================
@@ -206,19 +217,22 @@ function buildPopupHTML() {
 
     <!-- ===== 2. 素材 ===== -->
     <div class="theater-panel" data-panel="material">
+        <!-- ── 设定 ── -->
+        <label class="theater-group-label"><i class="fa-solid fa-globe"></i> 设定</label>
+
         <!-- Preset -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-shield-halved"></i> 生成预设</label>
-            <p class="theater-hint">从酒馆已导入的 Chat Completion 预设中选择。</p>
             <select id="theater-preset-name-select" class="theater-select" style="margin-bottom:8px;">
                 <option value="">-- 选择预设 --</option>
             </select>
 
             <div id="theater-preset-current" style="margin-top:10px; display:none;">
                 <div class="theater-btn-row" style="margin:0 0 8px;">
-                    <div id="theater-load-preset-btn" class="theater-btn"><i class="fa-solid fa-arrows-rotate"></i><span>刷新条目</span></div>
+                    <div id="theater-load-preset-btn" class="theater-btn"><i class="fa-solid fa-arrows-rotate"></i><span>刷新</span></div>
                     <span id="theater-preset-select-all" class="theater-wb-action-link" style="padding:8px;"><i class="fa-solid fa-check-double"></i> 全选</span>
                     <span id="theater-preset-deselect-all" class="theater-wb-action-link" style="padding:8px;"><i class="fa-regular fa-square"></i> 全不选</span>
+                    <span id="theater-preset-collapse-btn" class="theater-wb-action-link" style="padding:8px;"><i class="fa-solid fa-chevron-up"></i> 收起</span>
                 </div>
                 <div id="theater-preset-entries" class="theater-wb-list"></div>
             </div>
@@ -227,27 +241,18 @@ function buildPopupHTML() {
         <!-- Style & NSFW Addons -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-feather-pointed"></i> 自定义补充</label>
-            <p class="theater-hint">追加到预设末尾。</p>
 
             <details class="theater-addon-details">
                 <summary class="theater-addon-summary"><i class="fa-solid fa-pen-nib"></i> 文风补充 ${settings.customStyleAddon ? '· 已填写' : ''}</summary>
-                <textarea id="theater-style-addon" class="theater-textarea" rows="4" placeholder="补充你想要的写作风格要求，例如：多用短句、偏口语化、参考某作者的文风…" style="margin-top:8px;">${esc(settings.customStyleAddon || '')}</textarea>
+                <textarea id="theater-style-addon" class="theater-textarea" rows="4" placeholder="补充你想要的写作风格要求…" style="margin-top:8px;">${esc(settings.customStyleAddon || '')}</textarea>
                 <div class="theater-btn-row"><div id="theater-save-style-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存</span></div></div>
             </details>
 
             <details class="theater-addon-details" style="margin-top:8px;">
                 <summary class="theater-addon-summary"><i class="fa-solid fa-lock-open"></i> NSFW 补充 ${settings.customNsfwAddon ? '· 已填写' : ''}</summary>
-                <textarea id="theater-nsfw-addon" class="theater-textarea" rows="4" placeholder="补充你想要的NSFW/尺度相关指导，例如：具体的偏好、要避免的内容、详细程度…" style="margin-top:8px;">${esc(settings.customNsfwAddon || '')}</textarea>
+                <textarea id="theater-nsfw-addon" class="theater-textarea" rows="4" placeholder="补充NSFW/尺度相关指导…" style="margin-top:8px;">${esc(settings.customNsfwAddon || '')}</textarea>
                 <div class="theater-btn-row"><div id="theater-save-nsfw-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存</span></div></div>
             </details>
-        </div>
-
-        <!-- User Persona -->
-        <div class="theater-section">
-            <label class="theater-label"><i class="fa-solid fa-user"></i> User 人设</label>
-            <div class="theater-btn-row" style="margin:0 0 8px;"><div id="theater-load-persona-btn" class="theater-btn"><i class="fa-solid fa-download"></i><span>从酒馆读取</span></div></div>
-            <textarea id="theater-user-persona" class="theater-textarea" rows="3" placeholder="用户人设信息…">${esc(settings.userPersona || '')}</textarea>
-            <div class="theater-btn-row"><div id="theater-save-persona-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存</span></div></div>
         </div>
 
         <!-- World Book -->
@@ -256,12 +261,16 @@ function buildPopupHTML() {
             <select id="theater-wb-select" class="theater-select">
                 <option value="">-- 选择世界书 --</option>
             </select>
+            <div class="theater-btn-row" style="margin-top:8px;">
+                <div id="theater-wb-import-json-btn" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入JSON</span></div>
+            </div>
             <div class="theater-wb-entries-header" id="theater-wb-header" style="display:none;">
                 <span id="theater-wb-count" class="theater-wb-entries-count"></span>
                 <div class="theater-wb-entries-actions">
                     <span id="theater-wb-select-all" class="theater-wb-action-link"><i class="fa-solid fa-check-double"></i> 全选</span>
                     <span id="theater-wb-deselect-all" class="theater-wb-action-link"><i class="fa-regular fa-square"></i> 全不选</span>
                     <span id="theater-wb-toggle-all" class="theater-wb-action-link"><i class="fa-solid fa-chevron-down"></i> 展开</span>
+                    <span id="theater-wb-collapse-btn" class="theater-wb-action-link"><i class="fa-solid fa-chevron-up"></i> 收起</span>
                 </div>
             </div>
             <div id="theater-worldbook-list" class="theater-wb-list"></div>
@@ -273,9 +282,20 @@ function buildPopupHTML() {
             </details>
         </div>
 
+        <!-- ── 对话 ── -->
+        <label class="theater-group-label" style="margin-top:20px;"><i class="fa-solid fa-comments"></i> 对话</label>
+
+        <!-- User Persona -->
+        <div class="theater-section">
+            <label class="theater-label"><i class="fa-solid fa-user"></i> User 人设</label>
+            <div class="theater-btn-row" style="margin:0 0 8px;"><div id="theater-load-persona-btn" class="theater-btn"><i class="fa-solid fa-download"></i><span>从酒馆读取</span></div></div>
+            <textarea id="theater-user-persona" class="theater-textarea" rows="3" placeholder="用户人设信息…">${esc(settings.userPersona || '')}</textarea>
+            <div class="theater-btn-row"><div id="theater-save-persona-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存</span></div></div>
+        </div>
+
         <!-- Context Range -->
         <div class="theater-section">
-            <label class="theater-label"><i class="fa-solid fa-comments"></i> 上下文消息数量 · <span id="theater-range-val">${settings.contextRange}</span> 条</label>
+            <label class="theater-label"><i class="fa-solid fa-layer-group"></i> 上下文消息数量 · <span id="theater-range-val">${settings.contextRange}</span> 条</label>
             <input id="theater-context-range" type="range" min="5" max="100" value="${settings.contextRange}" class="theater-slider">
         </div>
     </div>
@@ -285,6 +305,10 @@ function buildPopupHTML() {
         <!-- Instruction Templates -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-pen-fancy"></i> 指令模板库</label>
+            <div class="theater-btn-row" style="margin:0 0 10px;">
+                <div id="theater-import-inst-btn" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入</span></div>
+                <div id="theater-export-inst-btn" class="theater-btn"><i class="fa-solid fa-file-export"></i><span>导出</span></div>
+            </div>
             <div id="theater-inst-drawer" class="theater-drawer ${inst.length ? '' : 'empty'}">
                 <div class="theater-drawer-toggle" id="theater-inst-toggle">
                     <span><i class="fa-solid fa-folder"></i> 已保存 · <span id="theater-inst-count">${inst.length}</span> 个</span>
@@ -299,7 +323,6 @@ function buildPopupHTML() {
         <!-- Render Templates -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-palette"></i> 渲染规则模板</label>
-            <p class="theater-hint">控制小剧场输出格式。</p>
             <select id="theater-render-select" class="theater-select">
                 <option value="__default__" ${selRender === '__default__' ? 'selected' : ''}>默认模板（轻量卡片）</option>
                 ${render.map((t, i) => `<option value="${i}" ${String(selRender) === String(i) ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
@@ -327,7 +350,6 @@ function buildPopupHTML() {
     <div class="theater-panel" data-panel="theme">
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-brush"></i> 面板自定义 CSS</label>
-            <p class="theater-hint">修改插件面板外观。</p>
             <textarea id="theater-custom-css" class="theater-textarea theater-css-editor" rows="8" placeholder=".theater-popup { background: #1a1a2e; }">${esc(settings.customCSS || '')}</textarea>
             <div class="theater-btn-row">
                 <div id="theater-save-css-btn" class="theater-btn primary"><i class="fa-solid fa-palette"></i><span>保存并应用</span></div>
@@ -344,7 +366,7 @@ function buildPopupHTML() {
                 <option value="main" ${!settings.useCustomAPI ? 'selected' : ''}>主 API（跟随酒馆连接）</option>
                 <option value="custom" ${settings.useCustomAPI ? 'selected' : ''}>独立 API</option>
             </select>
-            <p class="theater-hint" style="margin-top:6px;">均支持流式传输。主API借用酒馆的连接配置，小剧场有自己的预设。</p>
+            <p class="theater-hint" style="margin-top:6px;">均支持流式传输。</p>
             <div id="theater-custom-api-area" style="${settings.useCustomAPI ? '' : 'display:none'}; margin-top:10px;">
                 <input id="theater-api-url" class="theater-input" placeholder="API URL" value="${esc(settings.apiUrl || '')}">
                 <input id="theater-api-key" class="theater-input" type="password" placeholder="API Key" value="${esc(settings.apiKey || '')}" style="margin-top:6px;">
@@ -361,6 +383,9 @@ function buildPopupHTML() {
         </div>
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-arrows-rotate"></i> 扩展管理</label>
+            <div class="theater-toggle-row" style="margin-bottom:10px;">
+                <label class="theater-toggle-label"><input type="checkbox" id="theater-floating-ball-toggle" ${settings.floatingBall ? 'checked' : ''}><span>悬浮球</span></label>
+            </div>
             <div class="theater-btn-row">
                 <div id="theater-update-btn" class="theater-btn primary"><i class="fa-solid fa-cloud-arrow-down"></i><span>检查更新</span></div>
             </div>
@@ -720,6 +745,34 @@ function bindEvents() {
             settings.apiModel = val;
             save();
         }
+    });
+
+    // ---- Floating Ball ----
+    $d.off('change.tfb').on('change.tfb', '#theater-floating-ball-toggle', function () {
+        settings.floatingBall = $(this).is(':checked'); save(); createFloatingBall();
+    });
+
+    // ---- Instruction Import/Export ----
+    $d.off('click.timp').on('click.timp', '#theater-import-inst-btn', importInstructionTemplates);
+    $d.off('click.texp').on('click.texp', '#theater-export-inst-btn', exportInstructionTemplates);
+
+    // ---- World Book JSON Import ----
+    $d.off('click.twbi').on('click.twbi', '#theater-wb-import-json-btn', importWorldBookJSON);
+
+    // ---- Preset Collapse ----
+    $d.off('click.tpcol').on('click.tpcol', '#theater-preset-collapse-btn', function () {
+        const $list = $('#theater-preset-entries');
+        const hidden = !$list.is(':visible');
+        $list.slideToggle(150);
+        $(this).html(hidden ? '<i class="fa-solid fa-chevron-up"></i> 收起' : '<i class="fa-solid fa-chevron-down"></i> 展开');
+    });
+
+    // ---- WB Collapse ----
+    $d.off('click.twbcol').on('click.twbcol', '#theater-wb-collapse-btn', function () {
+        const $list = $('#theater-worldbook-list');
+        const hidden = !$list.is(':visible');
+        $list.slideToggle(150);
+        $(this).html(hidden ? '<i class="fa-solid fa-chevron-up"></i> 收起' : '<i class="fa-solid fa-chevron-down"></i> 展开');
     });
 }
 
@@ -1099,6 +1152,82 @@ function deleteRenderTpl() {
     settings.renderTemplates.forEach((t, i) => s.append(`<option value="${i}">${esc(t.name)}</option>`));
     s.val('__default__'); settings.selectedRenderIndex = '__default__'; save();
     $('#theater-render-content').val(DEFAULT_RENDER_TEMPLATE); $('#theater-delete-render-btn').hide();
+}
+
+// ============================================================
+// Instruction Template Import / Export
+// ============================================================
+function importInstructionTemplates() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.txt';
+    input.onchange = async (e) => {
+        const file = e.target.files[0]; if (!file) return;
+        try {
+            const text = await file.text();
+            const parts = text.split(/\n---\n/).map(s => s.trim()).filter(Boolean);
+            if (!parts.length) { toastr.warning('文件中没有找到指令'); return; }
+            parts.forEach(p => {
+                const firstLine = p.split('\n')[0].substring(0, 30).trim() || '导入指令';
+                settings.instructionTemplates.push({ name: firstLine, content: p });
+            });
+            save(); refreshInstUI();
+            toastr.success(`导入了 ${parts.length} 条指令`);
+        } catch (err) { toastr.error('导入失败: ' + err.message); }
+    };
+    input.click();
+}
+
+function exportInstructionTemplates() {
+    const inst = settings.instructionTemplates || [];
+    if (!inst.length) { toastr.warning('没有可导出的指令模板'); return; }
+    const text = inst.map(t => t.content).join('\n---\n');
+    downloadFile('theater-instructions.txt', text, 'text/plain');
+    toastr.success(`导出了 ${inst.length} 条指令`);
+}
+
+// ============================================================
+// World Book JSON Import
+// ============================================================
+function importWorldBookJSON() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async (e) => {
+        const file = e.target.files[0]; if (!file) return;
+        try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+
+            let entries = [];
+            // 酒馆标准世界书格式: { entries: { ... } }
+            if (data.entries && typeof data.entries === 'object') {
+                entries = Object.values(data.entries)
+                    .filter(e => e.content)
+                    .map(e => ({
+                        name: e.comment || (Array.isArray(e.key) ? e.key.join(', ') : String(e.key || '')) || '未命名',
+                        content: e.content,
+                    }));
+            }
+            // 数组格式: [ { name, content }, ... ]
+            else if (Array.isArray(data)) {
+                entries = data.filter(e => e.content).map(e => ({
+                    name: e.name || e.comment || e.key || '未命名',
+                    content: e.content,
+                }));
+            }
+
+            if (!entries.length) { toastr.warning('JSON中没有找到有效条目'); return; }
+
+            settings.worldBookEntries = entries;
+            settings.worldBookStates = entries.map(() => true);
+            settings.currentWorldBook = '';
+            $('#theater-wb-select').val('');
+            save(); refreshWBUI();
+            toastr.success(`导入了 ${entries.length} 个世界书条目`);
+        } catch (err) { toastr.error('导入失败: ' + err.message); }
+    };
+    input.click();
 }
 
 // ============================================================
@@ -1604,8 +1733,7 @@ async function updateExtension() {
             toastr.info('正在更新…');
             const res = await window.TavernHelper.updateExtension('st-theater');
             if (res.ok) {
-                toastr.success('更新成功！正在刷新页面…');
-                setTimeout(() => window.location.reload(), 1500);
+                toastr.success('更新成功！重新打开酒馆后生效。');
                 return;
             }
             toastr.warning('更新失败，请查看控制台');
@@ -1619,8 +1747,7 @@ async function updateExtension() {
             body: JSON.stringify({ extensionName: 'st-theater' })
         }).catch(() => null);
         if (resp && resp.ok) {
-            toastr.success('更新成功！正在刷新页面…');
-            setTimeout(() => window.location.reload(), 1500);
+            toastr.success('更新成功！重新打开酒馆后生效。');
         } else {
             toastr.warning('更新失败，如遇 Git 冲突请删除插件文件夹后重新安装');
         }
