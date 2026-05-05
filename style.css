@@ -4,10 +4,6 @@
 .theater-popup-header .theater-title { font-size: 1.05em; font-weight: 700; margin: 0; color: var(--SmartThemeBodyColor, #333); }
 .theater-popup-header .theater-subtitle { font-size: .75em; opacity: .45; margin-top: 2px; }
 
-/* Group Label */
-.theater-group-label { display: block; font-weight: 700; font-size: .9em; margin-bottom: 10px; padding: 0 2px; color: var(--SmartThemeBodyColor, #333); opacity: .7; }
-.theater-group-label i { margin-right: 5px; opacity: .5; }
-
 /* Tabs */
 .theater-tabs { display: flex; gap: 4px; padding: 0 2px 14px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; justify-content: center; flex-wrap: wrap; }
 .theater-tabs::-webkit-scrollbar { display: none; }
@@ -125,11 +121,6 @@
 .theater-history-actions span:active { opacity: 1; }
 .theater-history-actions .theater-history-delete:hover { color: #d94848; border-color: rgba(217,72,72,.2); }
 
-/* ===== Floating Ball ===== */
-#theater-floating-ball { position: fixed; right: 20px; bottom: 80px; width: 48px; height: 48px; border-radius: 50%; background: var(--SmartThemeBodyColor, #555); color: var(--SmartThemeBgColor, #fff); display: flex; align-items: center; justify-content: center; font-size: 1.1em; cursor: pointer; box-shadow: 0 3px 12px rgba(0,0,0,.25); z-index: 9999; transition: transform .15s, opacity .15s; opacity: .85; }
-#theater-floating-ball:hover { opacity: 1; transform: scale(1.08); }
-#theater-floating-ball:active { transform: scale(.94); }
-
 /* ===== Misc ===== */
 .theater-slider { width: 100%; margin: 6px 0; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; background: var(--SmartThemeBorderColor, rgba(128,128,128,.2)); outline: none; }
 .theater-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--SmartThemeBodyColor, #666); cursor: pointer; }
@@ -142,5 +133,4 @@
     .theater-btn { padding: 7px 11px; font-size: .78em; }
     .theater-tab { padding: 5px 10px; font-size: .76em; }
     .theater-wb-entry-header, .theater-preset-entry-header { padding: 7px 8px; font-size: .8em; }
-    #theater-floating-ball { right: 14px; bottom: 70px; width: 42px; height: 42px; font-size: 1em; }
 }
