@@ -1,7 +1,7 @@
-// Theater Generator v2.0.0 — by 禾禾 & 麓克
+// Theater Generator v2.1.0 — by 禾禾 & 麓克
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -142,7 +142,7 @@ async function init() {
 
     const addWand = () => {
         if ($('#theater-wand-btn').length) return;
-        const $btn = $('<div id="theater-wand-btn" class="list-group-item flex-container flexGap5"><div class="fa-solid fa-masks-theater extensionsMenuExtensionButton"></div>小剧场</div>');
+        const $btn = $('<div id="theater-wand-btn" class="list-group-item flex-container flexGap5"><div class="fa-solid fa-paw extensionsMenuExtensionButton"></div>小剧场</div>');
         $('#extensionsMenu').append($btn);
         $btn.on('click', e => { e.stopPropagation(); $(document).trigger('click'); setTimeout(openTheaterPopup, 150); });
     };
@@ -172,7 +172,7 @@ function createFloatingBall() {
         const ball = document.createElement('div');
         ball.id = 'theater-floating-ball';
         ball.title = '打开小剧场';
-        ball.innerHTML = '<i class="fa-solid fa-masks-theater"></i>';
+        ball.innerHTML = '<i class="fa-solid fa-paw"></i>';
 
         // 全部用内联样式，避免被其他 CSS 干扰
         Object.assign(ball.style, {
@@ -776,6 +776,7 @@ function bindEvents() {
     // 取消续写
     $d.off('click.tcc').on('click.tcc', '#theater-cancel-continue', function () {
         continueContext = '';
+        accumulatedTheater = '';
         $('#theater-continue-hint').remove();
         $('#theater-instruction').attr('placeholder', '输入指令…');
         toastr.info('已取消续写');
@@ -1078,7 +1079,6 @@ async function loadPresetEntries() {
 
     $('#theater-preset-current').show();
     $('#theater-preset-entries').html(renderPresetEntries());
-    toastr.info(`已读取 ${cachedPresetEntries.length} 个预设条目`);
 }
 
 function renderPresetEntries() {
@@ -1344,6 +1344,7 @@ let isGenerating = false;      // 是否正在生成
 let bgStreamText = '';         // 后台生成时保存的流式文本
 let bgError = '';              // 后台生成时的错误信息
 let continueContext = '';      // 续写时的前情内容
+let accumulatedTheater = '';   // 累积多次续写的完整内容
 
 // 从HTML中提取纯文本（去掉标签，只留故事内容）
 function htmlToPlainText(html) {
@@ -1358,20 +1359,26 @@ function htmlToPlainText(html) {
 function startContinue(html) {
     const plainText = htmlToPlainText(html);
     if (!plainText) { toastr.warning('没有可续写的内容'); return; }
+
+    // 使用累积内容（如果有的话），否则用当前传入的内容
+    const fullText = accumulatedTheater || plainText;
+
     // 如果超过8000字，只取后半段
-    if (plainText.length > 8000) {
-        continueContext = '…（前文省略）\n\n' + plainText.slice(-8000);
+    if (fullText.length > 8000) {
+        continueContext = '…（前文省略）\n\n' + fullText.slice(-8000);
         toastr.info('前情内容较长，已自动截取后半段', '', { timeOut: 3000 });
     } else {
-        continueContext = plainText;
+        continueContext = fullText;
     }
+
+    // 如果累积内容为空，初始化它
+    if (!accumulatedTheater) accumulatedTheater = plainText;
+
     // 跳转到生成面板
     $('.theater-tab[data-tab="generate"]').click();
-    // 清空指令框并提示用户
     $('#theater-instruction').val('').attr('placeholder', '已加载前情，请输入续写指令…');
-    // 显示续写提示
     $('#theater-continue-hint').remove();
-    $('#theater-instruction').before(`<div id="theater-continue-hint" style="font-size:.78em;opacity:.6;margin-bottom:6px;padding:6px 10px;border-radius:8px;background:rgba(128,128,128,.08);"><i class="fa-solid fa-forward" style="margin-right:4px;"></i>续写模式：已加载上一幕内容（${continueContext.length}字）<span id="theater-cancel-continue" style="margin-left:8px;cursor:pointer;opacity:.5;text-decoration:underline;">取消</span></div>`);
+    $('#theater-instruction').before(`<div id="theater-continue-hint" style="font-size:.78em;opacity:.6;margin-bottom:6px;padding:6px 10px;border-radius:8px;background:rgba(128,128,128,.08);"><i class="fa-solid fa-forward" style="margin-right:4px;"></i>续写模式：已加载前情内容（${continueContext.length}字）<span id="theater-cancel-continue" style="margin-left:8px;cursor:pointer;opacity:.5;text-decoration:underline;">取消</span></div>`);
 }
 
 function stopGeneration() {
@@ -1419,9 +1426,9 @@ async function generateTheater() {
     else if (rs !== '__default__') { const t = settings.renderTemplates[parseInt(rs)]; if (t) renderRules = t.content; }
     if (settings.interactiveMode) renderRules += INTERACTIVE_ADDON;
 
-    const continueInfo = continueContext ? `以下是上一幕小剧场的内容：\n${continueContext}\n\n---\n\n` : '';
+    const continueInfo = continueContext ? `以下是已生成的小剧场内容（请在此基础上续写，不要重复已有内容，保持相同的HTML格式和风格）：\n${continueContext}\n\n---\n\n` : '';
 
-    const prompt = `${charInfo}${personaInfo}${wbInfo}以下是最近的剧情内容：\n${chatCtx}\n\n---\n\n${continueInfo}${renderRules}\n\n---\n\n用户指令：${instruction}\n\n请根据以上所有信息生成小剧场，严格遵守渲染规则。${continueContext ? '请基于上一幕的内容进行续写。' : ''}`;
+    const prompt = `${charInfo}${personaInfo}${wbInfo}以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}\n\n---\n\n${continueInfo}${renderRules}\n\n---\n\n用户指令：${instruction}\n\n请根据以上所有信息生成小剧场。${continueContext ? '严格续写上方小剧场的内容，保持相同的HTML结构、CSS样式和角色语气，不要从头开始，不要续写正文对话。' : '严格遵守渲染规则。'}`;
     let systemPrompt;
     // All preset modes now produce entries
     if (!cachedPresetEntries.length) await loadPresetEntries();
@@ -1437,6 +1444,9 @@ async function generateTheater() {
     if (roughTokens > 12000) {
         toastr.warning(`上下文约 ${Math.round(roughTokens / 1000)}k token，较长，可能导致超时。可尝试减少消息数量或关闭部分世界书条目。`, '', { timeOut: 5000 });
     }
+
+    // 非续写生成时重置累积内容
+    if (!continueContext) accumulatedTheater = '';
 
     // 标记开始生成
     isGenerating = true;
@@ -1475,6 +1485,12 @@ async function generateTheater() {
         }
         if (!result) { toastr.error('API未返回内容'); return; }
         lastGeneratedHtml = extractHtml(result);
+
+        // 更新累积内容（用于多次续写）
+        const newText = htmlToPlainText(lastGeneratedHtml);
+        if (newText) {
+            accumulatedTheater = accumulatedTheater ? (accumulatedTheater + '\n\n---\n\n' + newText) : newText;
+        }
 
         if (popupAlive()) {
             // 面板还开着：直接显示结果

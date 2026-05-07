@@ -1,4 +1,4 @@
-/* Theater Generator v2.0.0 */
+/* Theater Generator v2.1.0 */
 .theater-popup { min-height: 380px; padding: 2px 0 0; }
 .theater-popup-header { text-align: center; padding: 4px 0 14px; border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(128,128,128,.15)); margin-bottom: 14px; }
 .theater-popup-header .theater-title { font-size: 1.05em; font-weight: 700; margin: 0; color: var(--SmartThemeBodyColor, #333); }
