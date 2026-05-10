@@ -1323,7 +1323,14 @@ async function saveToHistory() {
 }
 
 function copyHtml() {
-    const html = lastGeneratedHtml || currentDisplayHtml;
+    // 优先从iframe读取当前实际显示的内容
+    let html = '';
+    try {
+        const f = document.getElementById('theater-output-frame');
+        if (f && f.srcdoc) html = f.srcdoc;
+    } catch (e) {}
+    // fallback到变量
+    if (!html) html = lastGeneratedHtml || currentDisplayHtml;
     if (!html) { toastr.warning('没有可复制的内容'); return; }
     copyToClipboard(html);
 }
