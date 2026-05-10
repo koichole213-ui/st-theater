@@ -163,39 +163,40 @@ function applyCustomCSS() {
 
 function createFloatingBall() {
     try {
-        // 清理旧实例
-        const old = document.getElementById('theater-floating-ball');
-        if (old) old.remove();
+        // 清理旧实例（在所有可能的挂载点查找）
+        document.querySelectorAll('#theater-floating-ball').forEach(el => el.remove());
         if (!settings.floatingBall) return;
 
-        // 直接用 DOM API 创建，不依赖 jQuery 模板
         const ball = document.createElement('div');
         ball.id = 'theater-floating-ball';
         ball.title = '打开小剧场';
         ball.innerHTML = '<i class="fa-solid fa-paw"></i>';
 
-        // 全部用内联样式，避免被其他 CSS 干扰
-        Object.assign(ball.style, {
-            position: 'fixed',
-            right: '20px',
-            bottom: '80px',
-            width: '46px',
-            height: '46px',
-            borderRadius: '50%',
-            background: 'var(--SmartThemeBodyColor, #555)',
-            color: 'var(--SmartThemeBgColor, #fff)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '1.1em',
-            cursor: 'pointer',
-            boxShadow: '0 3px 12px rgba(0,0,0,0.3)',
-            zIndex: '99998',
-            opacity: '0.85',
-            transition: 'transform 0.15s, opacity 0.15s',
-            userSelect: 'none',
-            WebkitUserSelect: 'none',
-        });
+        // 全部用内联样式 + !important，防止被酒馆主题或其他插件覆盖
+        ball.setAttribute('style', [
+            'position:fixed !important',
+            'right:20px !important',
+            'bottom:80px !important',
+            'width:46px !important',
+            'height:46px !important',
+            'border-radius:50% !important',
+            'background:var(--SmartThemeBodyColor, #555) !important',
+            'color:var(--SmartThemeBgColor, #fff) !important',
+            'display:flex !important',
+            'align-items:center !important',
+            'justify-content:center !important',
+            'font-size:1.1em !important',
+            'cursor:pointer !important',
+            'box-shadow:0 3px 12px rgba(0,0,0,0.3) !important',
+            'z-index:2147483647 !important',
+            'opacity:0.85',
+            'transition:transform 0.15s, opacity 0.15s',
+            '-webkit-user-select:none !important',
+            'user-select:none !important',
+            'pointer-events:auto !important',
+            'transform:none !important',
+            'contain:none !important',
+        ].join(';'));
 
         // 拖拽支持
         let isDragging = false;
@@ -219,8 +220,8 @@ function createFloatingBall() {
             const dy = e.clientY - startY;
             if (Math.abs(dx) > 5 || Math.abs(dy) > 5) isDragging = true;
             if (!isDragging) return;
-            ball.style.right = Math.max(0, startRight - dx) + 'px';
-            ball.style.bottom = Math.max(0, startBottom + dy) + 'px';
+            ball.style.setProperty('right', Math.max(0, startRight - dx) + 'px', 'important');
+            ball.style.setProperty('bottom', Math.max(0, startBottom + dy) + 'px', 'important');
         }
 
         function onTouchMove(e) {
@@ -230,8 +231,8 @@ function createFloatingBall() {
             if (Math.abs(dx) > 5 || Math.abs(dy) > 5) isDragging = true;
             if (!isDragging) return;
             e.preventDefault();
-            ball.style.right = Math.max(0, startRight - dx) + 'px';
-            ball.style.bottom = Math.max(0, startBottom + dy) + 'px';
+            ball.style.setProperty('right', Math.max(0, startRight - dx) + 'px', 'important');
+            ball.style.setProperty('bottom', Math.max(0, startBottom + dy) + 'px', 'important');
         }
 
         function onPointerUp() {
@@ -248,11 +249,11 @@ function createFloatingBall() {
         ball.addEventListener('pointerdown', onPointerDown);
         ball.addEventListener('touchstart', onPointerDown, { passive: true });
 
-        // hover 效果
         ball.addEventListener('mouseenter', () => { ball.style.opacity = '1'; ball.style.transform = 'scale(1.08)'; });
         ball.addEventListener('mouseleave', () => { ball.style.opacity = '0.85'; ball.style.transform = 'scale(1)'; });
 
-        document.body.appendChild(ball);
+        // 挂载到 html 根元素，绕过 body 内可能存在的 transform/overflow 裁剪
+        document.documentElement.appendChild(ball);
     } catch (e) {
         console.warn('[Theater] Floating ball error:', e);
     }
