@@ -592,9 +592,10 @@ async function openTheaterPopup() {
         $('#theater-stream-text').text(bgStreamText || '后台生成中…');
         $('#theater-generate-btn').hide();
         $('#theater-stop-btn').show();
-    } else if (lastGeneratedHtml) {
+    } else if (lastGeneratedHtml || currentDisplayHtml) {
         // 后台生成已完成：直接显示结果
-        showInIframe(lastGeneratedHtml);
+        const html = lastGeneratedHtml || currentDisplayHtml;
+        showInIframe(html);
         $('#theater-output-section').show();
     }
 
@@ -776,8 +777,9 @@ function bindEvents() {
     $d.off('click.tch').on('click.tch', '#theater-copy-html-btn', copyHtml);
     // 续写：从当前生成结果
     $d.off('click.tcont').on('click.tcont', '#theater-continue-btn', function () {
-        if (!lastGeneratedHtml) { toastr.warning('没有可续写的内容'); return; }
-        startContinue(lastGeneratedHtml);
+        const html = lastGeneratedHtml || currentDisplayHtml;
+        if (!html) { toastr.warning('没有可续写的内容'); return; }
+        startContinue(html);
     });
     // 取消续写
     $d.off('click.tcc').on('click.tcc', '#theater-cancel-continue', function () {
@@ -789,11 +791,13 @@ function bindEvents() {
     });
     $d.off('click.thv').on('click.thv', '.theater-history-view', function () {
         const item = settings.history[$(this).data('index')]; if (!item) return;
+        lastGeneratedHtml = item.html;
         showInIframe(item.html); $('.theater-tab[data-tab="generate"]').click(); $('#theater-output-section').show();
     });
     // 续写：从历史记录
     $d.off('click.thc').on('click.thc', '.theater-history-continue', function () {
         const item = settings.history[$(this).data('index')]; if (!item) return;
+        lastGeneratedHtml = item.html;
         startContinue(item.html);
     });
     $d.off('click.the').on('click.the', '.theater-history-export', function () {
@@ -1305,21 +1309,23 @@ function exportInstructionTemplates() {
 // History
 // ============================================================
 async function saveToHistory() {
-    if (!lastGeneratedHtml) return;
+    const html = lastGeneratedHtml || currentDisplayHtml;
+    if (!html) return;
     const count = (settings.history || []).length + 1;
     const t = await SillyTavern.getContext().Popup.show.input('保存', '标题：', `小剧场 ${count}`);
     if (!t) return;
     const now = new Date(), pad = n => String(n).padStart(2, '0');
     settings.history.push({
-        title: t, html: lastGeneratedHtml, instruction: $('#theater-instruction').val(),
+        title: t, html: html, instruction: $('#theater-instruction').val(),
         date: `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
     });
     save(); refreshHistList(); toastr.success('已保存');
 }
 
 function copyHtml() {
-    if (!lastGeneratedHtml) { toastr.warning('没有可复制的内容'); return; }
-    copyToClipboard(lastGeneratedHtml);
+    const html = lastGeneratedHtml || currentDisplayHtml;
+    if (!html) { toastr.warning('没有可复制的内容'); return; }
+    copyToClipboard(html);
 }
 
 function copyToClipboard(text) {
@@ -1726,8 +1732,11 @@ function extractHtml(t) {
     return `<!DOCTYPE html><html><head><style>body{font-family:system-ui,sans-serif;padding:20px;max-width:480px;margin:0 auto;background:transparent}.card{background:#fafafa;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.1);line-height:1.7;font-size:15px}</style></head><body><div class="card">${t}</div></body></html>`;
 }
 
+let currentDisplayHtml = '';   // 当前iframe中显示的内容
+
 function showInIframe(html) {
     const f = document.getElementById('theater-output-frame'); if (!f) return;
+    currentDisplayHtml = html;
     f.srcdoc = html;
     f.onload = () => { try { f.style.height = Math.min(Math.max((f.contentDocument || f.contentWindow.document).documentElement.scrollHeight + 20, 200), 600) + 'px'; } catch { f.style.height = '400px'; } };
 }
