@@ -1318,8 +1318,28 @@ async function saveToHistory() {
 }
 
 function copyHtml() {
-    if (!lastGeneratedHtml) return;
-    navigator.clipboard.writeText(lastGeneratedHtml).then(() => toastr.success('已复制')).catch(() => toastr.error('复制失败'));
+    if (!lastGeneratedHtml) { toastr.warning('没有可复制的内容'); return; }
+    // 优先用 clipboard API，不可用则 fallback 到 execCommand
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(lastGeneratedHtml).then(() => toastr.success('已复制')).catch(() => fallbackCopy(lastGeneratedHtml));
+    } else {
+        fallbackCopy(lastGeneratedHtml);
+    }
+}
+
+function fallbackCopy(text) {
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        toastr.success('已复制');
+    } catch (e) {
+        toastr.error('复制失败');
+    }
 }
 
 function exportAllHistory() {
