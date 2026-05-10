@@ -1319,25 +1319,53 @@ async function saveToHistory() {
 
 function copyHtml() {
     if (!lastGeneratedHtml) { toastr.warning('没有可复制的内容'); return; }
-    // 优先用 clipboard API，不可用则 fallback 到 execCommand
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(lastGeneratedHtml).then(() => toastr.success('已复制')).catch(() => fallbackCopy(lastGeneratedHtml));
-    } else {
-        fallbackCopy(lastGeneratedHtml);
+    copyToClipboard(lastGeneratedHtml);
+}
+
+function copyToClipboard(text) {
+    // 方案1：Clipboard API（需要安全上下文）
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text)
+            .then(() => toastr.success('已复制'))
+            .catch(() => fallbackCopy(text));
+        return;
     }
+    fallbackCopy(text);
 }
 
 function fallbackCopy(text) {
     try {
+        // 创建临时textarea，挂到body最外层
         const ta = document.createElement('textarea');
         ta.value = text;
-        ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;padding:0;border:none;outline:none;box-shadow:none;background:transparent;opacity:0.01;z-index:2147483647';
         document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
+
+        // iOS 需要特殊处理
+        const isIOS = navigator.userAgent.match(/ipad|iphone/i);
+        if (isIOS) {
+            const range = document.createRange();
+            range.selectNodeContents(ta);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            ta.setSelectionRange(0, text.length);
+        } else {
+            ta.focus();
+            ta.select();
+            ta.setSelectionRange(0, text.length);
+        }
+
+        const ok = document.execCommand('copy');
         document.body.removeChild(ta);
-        toastr.success('已复制');
+        if (ok) {
+            toastr.success('已复制');
+        } else {
+            toastr.error('复制失败，请手动复制');
+        }
     } catch (e) {
+        console.warn('[Theater] Copy fallback error:', e);
         toastr.error('复制失败');
     }
 }
