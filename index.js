@@ -163,7 +163,6 @@ function applyCustomCSS() {
 
 function createFloatingBall() {
     try {
-        // 清理旧实例（在所有可能的挂载点查找）
         document.querySelectorAll('#theater-floating-ball').forEach(el => el.remove());
         if (!settings.floatingBall) return;
 
@@ -172,11 +171,13 @@ function createFloatingBall() {
         ball.title = '打开小剧场';
         ball.innerHTML = '<i class="fa-solid fa-paw"></i>';
 
-        // 全部用内联样式 + !important，防止被酒馆主题或其他插件覆盖
+        const initLeft = window.innerWidth - 66;
+        const initTop = window.innerHeight - 126;
+
         ball.setAttribute('style', [
             'position:fixed !important',
-            'right:20px !important',
-            'bottom:80px !important',
+            `left:${initLeft}px`,
+            `top:${initTop}px`,
             'width:46px !important',
             'height:46px !important',
             'border-radius:50% !important',
@@ -194,21 +195,20 @@ function createFloatingBall() {
             '-webkit-user-select:none !important',
             'user-select:none !important',
             'pointer-events:auto !important',
-            'transform:none !important',
-            'contain:none !important',
         ].join(';'));
 
-        // 拖拽支持
         let isDragging = false;
-        let startX, startY, startRight, startBottom;
+        let startX, startY, startLeft, startTop;
+
+        function clamp(val, min, max) { return Math.max(min, Math.min(max, val)); }
 
         function onPointerDown(e) {
             isDragging = false;
             const touch = e.touches ? e.touches[0] : e;
             startX = touch.clientX;
             startY = touch.clientY;
-            startRight = parseInt(ball.style.right);
-            startBottom = parseInt(ball.style.bottom);
+            startLeft = parseInt(ball.style.left);
+            startTop = parseInt(ball.style.top);
             document.addEventListener('pointermove', onPointerMove, { passive: false });
             document.addEventListener('pointerup', onPointerUp);
             document.addEventListener('touchmove', onTouchMove, { passive: false });
@@ -220,8 +220,8 @@ function createFloatingBall() {
             const dy = e.clientY - startY;
             if (Math.abs(dx) > 5 || Math.abs(dy) > 5) isDragging = true;
             if (!isDragging) return;
-            ball.style.setProperty('right', Math.max(0, startRight - dx) + 'px', 'important');
-            ball.style.setProperty('bottom', Math.max(0, startBottom + dy) + 'px', 'important');
+            ball.style.left = clamp(startLeft + dx, 0, window.innerWidth - 46) + 'px';
+            ball.style.top = clamp(startTop + dy, 0, window.innerHeight - 46) + 'px';
         }
 
         function onTouchMove(e) {
@@ -231,8 +231,8 @@ function createFloatingBall() {
             if (Math.abs(dx) > 5 || Math.abs(dy) > 5) isDragging = true;
             if (!isDragging) return;
             e.preventDefault();
-            ball.style.setProperty('right', Math.max(0, startRight - dx) + 'px', 'important');
-            ball.style.setProperty('bottom', Math.max(0, startBottom + dy) + 'px', 'important');
+            ball.style.left = clamp(startLeft + dx, 0, window.innerWidth - 46) + 'px';
+            ball.style.top = clamp(startTop + dy, 0, window.innerHeight - 46) + 'px';
         }
 
         function onPointerUp() {
@@ -252,7 +252,12 @@ function createFloatingBall() {
         ball.addEventListener('mouseenter', () => { ball.style.opacity = '1'; ball.style.transform = 'scale(1.08)'; });
         ball.addEventListener('mouseleave', () => { ball.style.opacity = '0.85'; ball.style.transform = 'scale(1)'; });
 
-        // 挂载到 html 根元素，绕过 body 内可能存在的 transform/overflow 裁剪
+        window.addEventListener('resize', () => {
+            if (!document.getElementById('theater-floating-ball')) return;
+            ball.style.left = clamp(parseInt(ball.style.left), 0, window.innerWidth - 46) + 'px';
+            ball.style.top = clamp(parseInt(ball.style.top), 0, window.innerHeight - 46) + 'px';
+        });
+
         document.documentElement.appendChild(ball);
     } catch (e) {
         console.warn('[Theater] Floating ball error:', e);
