@@ -108,12 +108,15 @@ const defaultSettings = Object.freeze({
     history: [],
     interactiveMode: false,
     customCSS: '',
+    skinMode: 'default',  // 'default' (内置粉彩) | 'theater' (跟随酒馆) | 'custom' (用户CSS接管)
     useCustomAPI: false, apiUrl: '', apiKey: '', apiModel: '',
     userPersona: '',
     worldBookEntries: [], worldBookStates: [],
     currentWorldBook: '',
     floatingBall: false,
 });
+
+const SKIN_LABELS = { default: '内置默认', theater: '跟随酒馆', custom: '自定义' };
 
 // ============================================================
 // Init
@@ -273,8 +276,9 @@ function buildPopupHTML() {
     const hist = settings.history || [];
     const selRender = settings.selectedRenderIndex || '__default__';
 
+    const skin = settings.skinMode || 'default';
     return `
-<div class="theater-popup">
+<div class="theater-popup" data-skin="${skin}">
     <div class="theater-popup-header">
         <p class="theater-title">小剧场生成器</p>
         <p class="theater-subtitle">独立生成 · 不影响正文</p>
@@ -450,12 +454,40 @@ function buildPopupHTML() {
     <!-- ===== 5. 美化 ===== -->
     <div class="theater-panel" data-panel="theme">
         <div class="theater-section">
-            <label class="theater-label"><i class="fa-solid fa-brush"></i> 面板自定义 CSS</label>
-            <textarea id="theater-custom-css" class="theater-textarea theater-css-editor" rows="8" placeholder=".theater-popup { background: #1a1a2e; }">${esc(settings.customCSS || '')}</textarea>
-            <div class="theater-btn-row">
-                <div id="theater-save-css-btn" class="theater-btn primary"><i class="fa-solid fa-palette"></i><span>保存并应用</span></div>
-                <div id="theater-reset-css-btn" class="theater-btn danger"><i class="fa-solid fa-rotate-left"></i><span>重置</span></div>
+            <label class="theater-label"><i class="fa-solid fa-palette"></i> 风格</label>
+            <div class="theater-drawer">
+                <div class="theater-drawer-toggle" id="theater-skin-toggle">
+                    <span><i class="fa-solid fa-swatchbook"></i> 当前 · <span id="theater-skin-current-label">${SKIN_LABELS[skin]}</span></span>
+                    <i class="fa-solid fa-chevron-down theater-drawer-arrow"></i>
+                </div>
+                <div class="theater-drawer-body" style="display:none;">
+                    <label class="theater-skin-row${skin === 'default' ? ' active' : ''}">
+                        <input type="radio" name="theater-skin" value="default"${skin === 'default' ? ' checked' : ''}>
+                        <span class="theater-skin-row-name">内置默认</span>
+                        <span class="theater-skin-row-desc">粉彩 · 衬线 · 大圆角</span>
+                    </label>
+                    <label class="theater-skin-row${skin === 'theater' ? ' active' : ''}">
+                        <input type="radio" name="theater-skin" value="theater"${skin === 'theater' ? ' checked' : ''}>
+                        <span class="theater-skin-row-name">跟随酒馆</span>
+                        <span class="theater-skin-row-desc">用酒馆当前主题色</span>
+                    </label>
+                    <label class="theater-skin-row${skin === 'custom' ? ' active' : ''}">
+                        <input type="radio" name="theater-skin" value="custom"${skin === 'custom' ? ' checked' : ''}>
+                        <span class="theater-skin-row-name">自定义</span>
+                        <span class="theater-skin-row-desc">下方 CSS 完全接管</span>
+                    </label>
+                </div>
             </div>
+        </div>
+        <div class="theater-section">
+            <details class="theater-addon-details"${settings.customCSS || skin === 'custom' ? ' open' : ''}>
+                <summary class="theater-addon-summary"><i class="fa-solid fa-brush"></i> 自定义 CSS${settings.customCSS ? ' · 已填写' : ''}</summary>
+                <textarea id="theater-custom-css" class="theater-textarea theater-css-editor" rows="8" placeholder=".theater-popup { background: #1a1a2e; }">${esc(settings.customCSS || '')}</textarea>
+                <div class="theater-btn-row">
+                    <div id="theater-save-css-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存并应用</span></div>
+                    <div id="theater-reset-css-btn" class="theater-btn danger"><i class="fa-solid fa-rotate-left"></i><span>重置</span></div>
+                </div>
+            </details>
         </div>
     </div>
 
@@ -816,6 +848,21 @@ function bindEvents() {
     // ---- Theme ----
     $d.off('click.tcss').on('click.tcss', '#theater-save-css-btn', function () { settings.customCSS = $('#theater-custom-css').val(); save(); applyCustomCSS(); toastr.success('样式已应用'); });
     $d.off('click.trcss').on('click.trcss', '#theater-reset-css-btn', function () { settings.customCSS = ''; $('#theater-custom-css').val(''); save(); applyCustomCSS(); toastr.success('已重置'); });
+    // ---- Skin switcher ----
+    $d.off('click.tskt').on('click.tskt', '#theater-skin-toggle', function () {
+        $(this).next('.theater-drawer-body').slideToggle(150);
+        $(this).find('.theater-drawer-arrow').toggleClass('open');
+    });
+    $d.off('change.tskin').on('change.tskin', 'input[name="theater-skin"]', function () {
+        const v = $(this).val();
+        settings.skinMode = v;
+        save();
+        $('.theater-popup').attr('data-skin', v);
+        $('.theater-skin-row').removeClass('active');
+        $(this).closest('.theater-skin-row').addClass('active');
+        $('#theater-skin-current-label').text(SKIN_LABELS[v] || v);
+        toastr.success(`已切换到「${SKIN_LABELS[v] || v}」`, '', { timeOut: 2000 });
+    });
 
     // ---- Config ----
     $d.off('change.tam').on('change.tam', '#theater-api-select', function () {
