@@ -1323,15 +1323,10 @@ async function saveToHistory() {
 }
 
 function copyHtml() {
-    // 优先从iframe读取当前实际显示的内容
-    let html = '';
-    try {
-        const f = document.getElementById('theater-output-frame');
-        if (f && f.srcdoc) html = f.srcdoc;
-    } catch (e) {}
-    // fallback到变量
-    if (!html) html = lastGeneratedHtml || currentDisplayHtml;
+    // 只从已知干净的变量取 HTML，不读 iframe.srcdoc（酒馆环境里可能被改写/清空）
+    const html = lastGeneratedHtml || currentDisplayHtml;
     if (!html) { toastr.warning('没有可复制的内容'); return; }
+    console.log('[Theater] copyHtml (first 200):', html.slice(0, 200));
     copyToClipboard(html);
 }
 
@@ -1348,11 +1343,21 @@ function copyToClipboard(text) {
 
 function fallbackCopy(text) {
     try {
+        // 关键：先把当前焦点和选区清掉，避免 execCommand('copy') 复制到之前选中的输入框内容
+        // 这是 v2.1.1 修的 bug——之前 #theater-instruction 处于焦点/有选区时，临时 textarea 抢不到 selection
+        const prevActive = document.activeElement;
+        if (prevActive && typeof prevActive.blur === 'function') {
+            try { prevActive.blur(); } catch {}
+        }
+        const sel = window.getSelection();
+        if (sel) { try { sel.removeAllRanges(); } catch {} }
+
         // 创建临时textarea，挂到body最外层
         const ta = document.createElement('textarea');
         ta.value = text;
         ta.setAttribute('readonly', '');
-        ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;padding:0;border:none;outline:none;box-shadow:none;background:transparent;opacity:0.01;z-index:2147483647';
+        // 用屏幕外定位 + 完全可见尺寸，确保 select() 在所有环境下都生效
+        ta.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;padding:0;border:none;outline:none;box-shadow:none;background:transparent;z-index:2147483647';
         document.body.appendChild(ta);
 
         // iOS 需要特殊处理
@@ -1360,9 +1365,9 @@ function fallbackCopy(text) {
         if (isIOS) {
             const range = document.createRange();
             range.selectNodeContents(ta);
-            const sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
+            const s2 = window.getSelection();
+            s2.removeAllRanges();
+            s2.addRange(range);
             ta.setSelectionRange(0, text.length);
         } else {
             ta.focus();
