@@ -1,7 +1,7 @@
-// Theater Generator v2.2.3 — by 禾禾 & 麓克
+// Theater Generator v2.2.4 — by 禾禾 & 麓克
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.2.3';
+const VERSION = '2.2.4';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -1648,134 +1648,76 @@ async function generateTheater() {
 }
 
 // ============================================================
-// Main API generation
-//   1. 优先用 ctx.ChatCompletionService.processRequest（ST 官方为扩展提供的入口）
-//      - 自带流式（避免 Cloudflare 524）
-//      - 不抢主对话 generation lock（不劫持小飞机）
-//      - 自动从酒馆 secrets 拿 key、按当前 chat_completion_source 代理
-//   2. ChatCompletionService 不可用时引导用户启用插件自定义 API
+// Main API generation — 走 TavernHelper.generateRaw + should_stream
 //
-// 关键前置条件：用户必须在酒馆 API 设置里点过 [💾 Save] 把 key 存进 secrets。
-// 前端 JS 拿不到 key（ST 设计如此），所以只能让酒馆后端帮我们带 key。
+// 跟 st-persona-weaver 老师同款方案。关键点：
+//   - generateRaw 内部已经处理了 key/source/model/url，我们不用碰
+//   - overrides 全部清零 = 完全独立生成，不污染上下文
+//   - should_stream:true = 走流式管道，避免 Cloudflare 524 timeout
+//   - 不抢主对话 generation lock（generateRaw 设计如此）
+//   - 返回的是累积好的完整字符串
 // ============================================================
 async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
+    if (!window.TavernHelper || typeof window.TavernHelper.generateRaw !== 'function') {
+        const tip = '需要安装 JS-Slash-Runner / TavernHelper 扩展才能用主 API。\n\n或在插件【设置】里启用 "自定义 API" 单独配置 endpoint 和 key。';
+        onChunk(tip);
+        throw new Error('TavernHelper.generateRaw unavailable');
+    }
+
     const messages = [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt }
     ];
-    const oai = ctx?.oai_settings
-        || globalThis.oai_settings
-        || window?.SillyTavern?.getContext?.()?.oai_settings;
-    const maxTokens = oai?.openai_max_tokens ?? 4096;
 
-    // 路径 A：ChatCompletionService（ST 1.13+ 给扩展的官方入口）
-    const CCS = ctx?.ChatCompletionService
-        || window?.SillyTavern?.getContext?.()?.ChatCompletionService;
-    if (CCS && typeof CCS.processRequest === 'function') {
-        return await callViaChatCompletionService(CCS, messages, maxTokens, onChunk);
-    }
+    // 流式管道内部不暴露 chunk 回调，给个等待提示让用户知道还在跑
+    let elapsed = 0;
+    onChunk('（流式生成中…）');
+    const timer = setInterval(() => {
+        elapsed += 1;
+        onChunk(`（流式生成中… 已等待 ${elapsed}s）`);
+    }, 1000);
 
-    // 路径 B：ConnectionManagerRequestService（如果用户配了 Connection Profile）
-    const CMR = ctx?.ConnectionManagerRequestService
-        || window?.SillyTavern?.getContext?.()?.ConnectionManagerRequestService;
-    if (CMR && typeof CMR.sendRequest === 'function') {
-        return await callViaConnectionManager(CMR, messages, maxTokens, onChunk);
-    }
-
-    // 路径 C：兜底报错引导
-    const tip = '酒馆版本太旧（找不到 ChatCompletionService）。\n\n请在插件【设置】里启用 "自定义 API" 单独配置 endpoint。';
-    onChunk(tip);
-    throw new Error('ChatCompletionService unavailable');
-}
-
-// 把后端返回的流式 chunk 累加成完整文本，过程中不断 onChunk 刷新 UI
-async function consumeStreamThunk(streamThunk, onChunk) {
-    let full = '';
-    for await (const chunk of streamThunk()) {
-        let delta = '';
-        if (chunk == null) continue;
-        if (typeof chunk === 'string') delta = chunk;
-        else if (typeof chunk.text === 'string') delta = chunk.text;
-        else if (typeof chunk.content === 'string') delta = chunk.content;
-        if (delta) { full += delta; onChunk(full); }
-    }
-    if (!full) throw new Error('流式返回空');
-    return full;
-}
-
-async function callViaChatCompletionService(CCS, messages, maxTokens, onChunk) {
     let result;
     try {
-        // processRequest(custom, options, extractData)
-        //   stream:true 时返回 thunk，调用得到 async iterable
-        result = await CCS.processRequest(
-            { messages, max_tokens: maxTokens, stream: true },
-            { signal: abortController?.signal },
-            /*extractData=*/false,
-        );
+        result = await window.TavernHelper.generateRaw({
+            user_input: '',
+            ordered_prompts: messages,
+            overrides: {
+                world_info_before: '', world_info_after: '',
+                persona_description: '', char_description: '',
+                char_personality: '', scenario: '',
+                dialogue_examples: '',
+                chat_history: { prompts: [], with_depth_entries: false, author_note: '' }
+            },
+            injects: [],
+            max_chat_history: 0,
+            should_stream: true,
+        });
     } catch (e) {
-        throwFriendlyMainApi(e, onChunk);
-    }
-
-    if (typeof result === 'function') {
-        try {
-            return await consumeStreamThunk(result, onChunk);
-        } catch (e) {
-            if (e?.name === 'AbortError') throw e;
-            throwFriendlyMainApi(e, onChunk);
+        clearInterval(timer);
+        if (e?.name === 'AbortError') throw e;
+        const msg = String(e?.message || e || '');
+        if (/api[_\s]?key|401|unauthorized/i.test(msg)) {
+            const tip = 'API Key 未保存到酒馆。\n\n去酒馆 API 设置面板把 key 填进输入框后，点旁边的【💾 保存】按钮，让酒馆把它存进 secrets，再来生成。';
+            onChunk(tip);
+            throw new Error(tip);
         }
-    }
-
-    // 非流式 fallback：result 是文本或对象
-    const txt = typeof result === 'string'
-        ? result
-        : (result?.text || result?.content || result?.choices?.[0]?.message?.content || '');
-    if (!txt) throw new Error('ChatCompletionService 返回空');
-    onChunk(txt);
-    return txt;
-}
-
-async function callViaConnectionManager(CMR, messages, maxTokens, onChunk) {
-    let result;
-    try {
-        result = await CMR.sendRequest(
-            null,        // profileId: null = 使用当前
-            messages,
-            maxTokens,
-            { stream: true, signal: abortController?.signal, extractData: false, includePreset: true },
-        );
-    } catch (e) {
-        throwFriendlyMainApi(e, onChunk);
-    }
-
-    if (typeof result === 'function') {
-        try {
-            return await consumeStreamThunk(result, onChunk);
-        } catch (e) {
-            if (e?.name === 'AbortError') throw e;
-            throwFriendlyMainApi(e, onChunk);
+        if (/502|524|529|gateway|timeout|ECONNRESET|socket hang up/i.test(msg)) {
+            const tip = `主 API 网关错误：${msg.substring(0, 200)}\n\n建议在插件【设置】启用 "自定义 API" 直接配置 endpoint。`;
+            onChunk(tip);
+            throw new Error(tip);
         }
+        throw e;
+    } finally {
+        clearInterval(timer);
     }
-    const txt = typeof result === 'string' ? result : (result?.text || '');
-    if (!txt) throw new Error('ConnectionManagerRequestService 返回空');
-    onChunk(txt);
-    return txt;
-}
 
-function throwFriendlyMainApi(e, onChunk) {
-    if (e?.name === 'AbortError') throw e;
-    const msg = String(e?.message || e || '');
-    if (/api[_\s]?key[_\s]?missing|401|unauthorized/i.test(msg)) {
-        const tip = 'API Key 未保存到酒馆。\n\n请去酒馆 API 设置面板：\n① 把你的 API Key 填进输入框\n② 点输入框旁边的【💾 保存】按钮，让酒馆把 key 存进 secrets\n\n（前端 JS 出于安全无法读 key，必须让酒馆后端代为携带）\n\n或者：在插件【设置】里启用 "自定义 API" 单独配置 endpoint 和 key。';
-        onChunk(tip);
-        throw new Error(tip);
+    if (!result) {
+        onChunk('主 API 返回空内容');
+        throw new Error('main API returned empty');
     }
-    if (/502|524|529|gateway|timeout|ECONNRESET|socket hang up/i.test(msg)) {
-        const tip = `主 API 网关错误：${msg.substring(0, 200)}\n\n建议在插件【设置】启用 "自定义 API" 直接配置 endpoint。`;
-        onChunk(tip);
-        throw new Error(tip);
-    }
-    throw e;
+    onChunk(result);
+    return result;
 }
 
 // ============================================================
