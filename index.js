@@ -1,7 +1,7 @@
-// Theater Generator v2.1.0 — by 禾禾 & 麓克
+// Theater Generator v2.2.1 — by 禾禾 & 麓克
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.1.0';
+const VERSION = '2.2.1';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -177,24 +177,26 @@ function createFloatingBall() {
         const initLeft = window.innerWidth - 66;
         const initTop = window.innerHeight - 126;
 
+        // 米色猫爪 — 暖底 + 焦糖色 paw + 软阴影
         ball.setAttribute('style', [
             'position:fixed !important',
             `left:${initLeft}px`,
             `top:${initTop}px`,
-            'width:46px !important',
-            'height:46px !important',
+            'width:48px !important',
+            'height:48px !important',
             'border-radius:50% !important',
-            'background:var(--SmartThemeBodyColor, #555) !important',
-            'color:var(--SmartThemeBgColor, #fff) !important',
+            'background:linear-gradient(140deg, #FFF6E4 0%, #F5E0BC 100%) !important',
+            'color:#8C5A2F !important',
+            'border:1px solid rgba(140, 90, 47, 0.18) !important',
             'display:flex !important',
             'align-items:center !important',
             'justify-content:center !important',
-            'font-size:1.1em !important',
+            'font-size:1.2em !important',
             'cursor:pointer !important',
-            'box-shadow:0 3px 12px rgba(0,0,0,0.3) !important',
+            'box-shadow:0 6px 18px rgba(140, 90, 47, 0.22), inset 0 1px 0 rgba(255,255,255,0.6) !important',
             'z-index:2147483647 !important',
-            'opacity:0.85',
-            'transition:transform 0.15s, opacity 0.15s',
+            'opacity:0.92',
+            'transition:transform 0.18s cubic-bezier(.2,.8,.2,1), opacity 0.18s, box-shadow 0.18s',
             '-webkit-user-select:none !important',
             'user-select:none !important',
             'pointer-events:auto !important',
@@ -252,8 +254,16 @@ function createFloatingBall() {
         ball.addEventListener('pointerdown', onPointerDown);
         ball.addEventListener('touchstart', onPointerDown, { passive: true });
 
-        ball.addEventListener('mouseenter', () => { ball.style.opacity = '1'; ball.style.transform = 'scale(1.08)'; });
-        ball.addEventListener('mouseleave', () => { ball.style.opacity = '0.85'; ball.style.transform = 'scale(1)'; });
+        ball.addEventListener('mouseenter', () => {
+            ball.style.opacity = '1';
+            ball.style.transform = 'scale(1.1) rotate(-8deg)';
+            ball.style.boxShadow = '0 10px 24px rgba(140, 90, 47, 0.32), inset 0 1px 0 rgba(255,255,255,0.7)';
+        });
+        ball.addEventListener('mouseleave', () => {
+            ball.style.opacity = '0.92';
+            ball.style.transform = 'scale(1) rotate(0)';
+            ball.style.boxShadow = '0 6px 18px rgba(140, 90, 47, 0.22), inset 0 1px 0 rgba(255,255,255,0.6)';
+        });
 
         window.addEventListener('resize', () => {
             if (!document.getElementById('theater-floating-ball')) return;
@@ -1638,71 +1648,131 @@ async function generateTheater() {
 }
 
 // ============================================================
-// Main API generation
+// Main API generation — 直接走 ST 内部 Chat Completion 代理
+// 关键设计：
+//   1. 强制 stream:true，避免长生成撞 Cloudflare 524（100s）
+//   2. 绕开 TavernHelper.generateRaw / ctx.generateRaw 的 generation lock，
+//      不劫持酒馆的小飞机按钮
+//   3. 直接调 /api/backends/chat-completions/generate，由酒馆后端从 secrets
+//      取 key、按当前 chat_completion_source 代理出去
 // ============================================================
 async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
-    // Primary: TavernHelper.generateRaw — 稳定可靠，走酒馆原生管线
-    if (window.TavernHelper && typeof window.TavernHelper.generateRaw === 'function') {
-        try {
-            const messages = [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: prompt }
-            ];
-            const result = await window.TavernHelper.generateRaw({
-                user_input: '',
-                ordered_prompts: messages,
-                overrides: {
-                    world_info_before: '', world_info_after: '',
-                    persona_description: '', char_description: '',
-                    char_personality: '', scenario: '',
-                    dialogue_examples: '',
-                    chat_history: { prompts: [], with_depth_entries: false, author_note: '' }
-                },
-                injects: [],
-                max_chat_history: 0
-            });
-            if (result) {
-                onChunk(result);
-                return result;
-            }
-            throw new Error('TavernHelper.generateRaw returned empty');
-        } catch (e) {
-            console.warn('[Theater] TavernHelper.generateRaw failed:', e);
-            // 502/524/529 等网络错误尝试重试
-            const s = String(e?.status || e?.message || '');
-            if (/502|524|529|timeout|ECONNRESET|network/i.test(s)) {
-                onChunk('（网络错误，重试中…）');
-                return await generateWithRetry(ctx, systemPrompt, prompt, 2, onChunk);
-            }
-            throw e;
-        }
+    // 取 oai_settings：不同 ST 版本暴露方式不同，尽量兜底
+    const oai = ctx?.chatCompletionSettings
+        || ctx?.oai_settings
+        || globalThis.oai_settings
+        || window?.SillyTavern?.libs?.oai_settings
+        || window?.SillyTavern?.getContext?.()?.oai_settings;
+
+    // 当前主 API（取不到时默认假设是 openai）
+    const mainApi = ctx?.mainApi
+        ?? ctx?.main_api
+        ?? globalThis.main_api
+        ?? window?.main_api;
+
+    const NEED_CC_TIP = '本插件主 API 模式仅支持 Chat Completion。\n\n请二选一：\n① 在酒馆 API 设置里切到 "Chat Completion"\n② 或在插件【设置】里启用 "自定义 API" 单独配置 endpoint';
+
+    if (!oai) {
+        const tip = '读不到酒馆的 Chat Completion 配置。\n\n' + NEED_CC_TIP;
+        onChunk(tip);
+        throw new Error('oai_settings unavailable');
+    }
+    if (mainApi && mainApi !== 'openai') {
+        const tip = `当前酒馆主 API 是 "${mainApi}"，不是 Chat Completion。\n\n` + NEED_CC_TIP;
+        onChunk(tip);
+        throw new Error(`main_api is ${mainApi}, not openai`);
     }
 
-    // Fallback: ctx.generateRaw（TavernHelper 不可用时）
-    onChunk('（TavernHelper 不可用，使用备用模式…）');
-    return await generateWithRetry(ctx, systemPrompt, prompt, 2, onChunk);
-}
-
-async function generateWithRetry(ctx, systemPrompt, prompt, maxRetries, onChunk) {
-    let lastError;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-            if (attempt > 0) {
-                const wait = Math.min(2000 * Math.pow(2, attempt - 1), 10000);
-                onChunk?.(`重试中…(${attempt}/${maxRetries})`);
-                await new Promise(r => setTimeout(r, wait));
-            }
-            const result = await ctx.generateRaw({ systemPrompt, prompt });
-            if (result) onChunk?.(result);
-            return result;
-        } catch (err) {
-            lastError = err;
-            const s = String(err?.status || err?.message || '');
-            if (!/502|524|529|timeout|ECONNRESET|network/i.test(s) || attempt >= maxRetries) throw err;
-            console.warn(`[Theater] Attempt ${attempt + 1} failed (${s})`);
-        }
+    // 模型按 chat_completion_source 分发
+    const src = oai.chat_completion_source || 'openai';
+    const modelMap = {
+        openai: oai.openai_model,
+        custom: oai.custom_model,
+        openrouter: oai.openrouter_model,
+        claude: oai.claude_model,
+        scale: oai.scale_model,
+        ai21: oai.ai21_model,
+        google: oai.google_model,
+        makersuite: oai.google_model,
+        vertexai: oai.vertexai_model,
+        mistralai: oai.mistralai_model,
+        cohere: oai.cohere_model,
+        perplexity: oai.perplexity_model,
+        groq: oai.groq_model,
+        nanogpt: oai.nanogpt_model,
+        deepseek: oai.deepseek_model,
+        zerooneai: oai.zerooneai_model,
+        xai: oai.xai_model,
+        moonshot: oai.moonshot_model,
+        electronhub: oai.electronhub_model,
+        windowai: oai.windowai_model,
+    };
+    const model = modelMap[src] || oai.openai_model || oai.custom_model || '';
+    if (!model) {
+        const tip = `读不到当前模型（chat_completion_source=${src}）。\n\n` + NEED_CC_TIP;
+        onChunk(tip);
+        throw new Error('model unavailable');
     }
-    throw lastError;
+
+    const headers = ctx.getRequestHeaders
+        ? ctx.getRequestHeaders()
+        : { 'Content-Type': 'application/json' };
+
+    // 构造请求体 —— 把 oai_settings 里关键字段都带上，让后端按当前 source 走
+    const body = {
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt }
+        ],
+        model,
+        stream: true,                                          // 关键：强制流式，避免 524
+        chat_completion_source: src,
+        max_tokens: oai.openai_max_tokens ?? 4096,
+        temperature: oai.temp_openai ?? 0.9,
+        top_p: oai.top_p_openai ?? 1,
+        frequency_penalty: oai.freq_pen_openai ?? 0,
+        presence_penalty: oai.pres_pen_openai ?? 0,
+        // 自定义 endpoint 相关
+        custom_url: oai.custom_url || '',
+        custom_include_body: oai.custom_include_body || '',
+        custom_exclude_body: oai.custom_exclude_body || '',
+        custom_include_headers: oai.custom_include_headers || '',
+        custom_prompt_post_processing: oai.custom_prompt_post_processing || '',
+        // reverse proxy / api type
+        reverse_proxy: oai.reverse_proxy || '',
+        proxy_password: oai.proxy_password || '',
+        // 各家路由 / 端点 / 区域等
+        api_url_scale: oai.api_url_scale || '',
+        google_model: oai.google_model || '',
+        claude_use_sysprompt: !!oai.claude_use_sysprompt,
+        // 其它扩展可能传的字段（后端 forgiving，会忽略多余）
+        n: 1,
+    };
+
+    let r;
+    try {
+        r = await fetch('/api/backends/chat-completions/generate', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+            signal: abortController?.signal,
+        });
+    } catch (e) {
+        if (e?.name === 'AbortError') throw e;
+        throw new Error(`请求发送失败：${e?.message || e}`);
+    }
+
+    if (!r.ok) {
+        const txt = (await r.text().catch(() => '')).substring(0, 300);
+        // 524/502/529 单独提示，不再走 fallback 阻塞重试
+        if (/^(502|524|529)$/.test(String(r.status))) {
+            throw new Error(`主 API 网关超时 ${r.status}：流式连接应该不会撞这个，请检查酒馆后端代理。${txt ? ' ' + txt : ''}`);
+        }
+        throw new Error(`主 API ${r.status}: ${txt}`);
+    }
+
+    // 复用现成的 SSE 解析（OpenAI 兼容流式格式）
+    return await readSSEStream(r, onChunk, /*isAnthropic=*/false);
 }
 
 // ============================================================
@@ -1797,7 +1867,17 @@ function showInIframe(html) {
     const f = document.getElementById('theater-output-frame'); if (!f) return;
     currentDisplayHtml = html;
     f.srcdoc = html;
-    f.onload = () => { try { f.style.height = Math.min(Math.max((f.contentDocument || f.contentWindow.document).documentElement.scrollHeight + 20, 200), 600) + 'px'; } catch { f.style.height = '400px'; } };
+    f.onload = () => {
+        try {
+            const isMobile = window.innerWidth <= 768;
+            const scrollH = (f.contentDocument || f.contentWindow.document).documentElement.scrollHeight + 20;
+            const minH = isMobile ? 320 : 240;
+            const maxH = isMobile ? window.innerHeight * 0.75 : 720;
+            f.style.height = Math.min(Math.max(scrollH, minH), maxH) + 'px';
+        } catch {
+            f.style.height = window.innerWidth <= 768 ? '60vh' : '420px';
+        }
+    };
 }
 
 // ============================================================

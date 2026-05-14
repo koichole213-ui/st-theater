@@ -1,4 +1,4 @@
-/* Theater Generator v2.2.0
+/* Theater Generator v2.2.1
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -58,15 +58,16 @@
     --t-border: rgba(46, 38, 32, .10);
     --t-border-strong: rgba(46, 38, 32, .22);
 
-    --t-accent: #4F7CB8;        /* dusty blue */
-    --t-accent-deep: #2E2620;   /* near-black warm */
-    --t-on-accent: #FFFFFF;
+    --t-accent: #B07A4A;        /* warm caramel */
+    --t-accent-soft: #D9A877;   /* light caramel */
+    --t-accent-deep: #6B4423;   /* deep cocoa */
+    --t-on-accent: #FFF8EE;
     --t-danger: #C25555;
     --t-danger-soft: rgba(194, 85, 85, .12);
 
-    --t-elev-1: 0 2px 8px rgba(46, 38, 32, .05);
-    --t-elev-2: 0 8px 24px rgba(46, 38, 32, .08), 0 1px 2px rgba(46, 38, 32, .04);
-    --t-elev-3: 0 12px 40px rgba(46, 38, 32, .10);
+    --t-elev-1: 0 2px 8px rgba(107, 68, 35, .06);
+    --t-elev-2: 0 8px 24px rgba(107, 68, 35, .10), 0 1px 2px rgba(107, 68, 35, .04);
+    --t-elev-3: 0 16px 48px rgba(107, 68, 35, .14), 0 4px 12px rgba(107, 68, 35, .06);
 
     --t-font-serif: 'Playfair Display', 'Noto Serif SC', 'Source Han Serif SC', Georgia, serif;
     --t-font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
@@ -74,10 +75,14 @@
     min-height: 380px;
     padding: var(--t-space-2) 0 0;
     color: var(--t-fg);
-    background: var(--t-bg);
+    background:
+        radial-gradient(ellipse 600px 320px at top right, rgba(217, 168, 119, .18), transparent 60%),
+        radial-gradient(ellipse 480px 280px at bottom left, rgba(176, 122, 74, .12), transparent 60%),
+        var(--t-bg);
     font-family: var(--t-font-sans);
     font-size: var(--t-text-base);
     border-radius: var(--t-radius-xl);
+    box-shadow: var(--t-elev-3);
 }
 
 /* ============================================================
@@ -230,7 +235,7 @@
 .theater-tab.active {
     color: var(--t-on-accent);
     font-weight: 600;
-    background: var(--t-accent-deep);
+    background: linear-gradient(135deg, var(--t-accent) 0%, var(--t-accent-deep) 100%);
     border-color: transparent;
     box-shadow: var(--t-elev-1);
 }
@@ -418,14 +423,24 @@
 .theater-btn:active { transform: scale(.97); }
 
 .theater-btn.primary {
-    background: var(--t-accent-deep);
+    background: linear-gradient(135deg, var(--t-accent) 0%, var(--t-accent-deep) 100%);
     color: var(--t-on-accent);
     border-color: transparent;
-    box-shadow: var(--t-elev-1);
+    box-shadow: var(--t-elev-1),
+                inset 0 1px 0 rgba(255, 255, 255, .15);
+    letter-spacing: .4px;
 }
 .theater-btn.primary:hover {
-    background: color-mix(in srgb, var(--t-accent-deep) 86%, var(--t-accent));
-    box-shadow: var(--t-elev-2);
+    background: linear-gradient(135deg, var(--t-accent-soft) 0%, var(--t-accent) 100%);
+    box-shadow: var(--t-elev-2),
+                0 0 0 4px color-mix(in srgb, var(--t-accent) 18%, transparent),
+                inset 0 1px 0 rgba(255, 255, 255, .25);
+    transform: translateY(-1px);
+}
+.theater-btn.primary:active {
+    transform: translateY(0) scale(.98);
+    box-shadow: var(--t-elev-1),
+                inset 0 2px 4px rgba(107, 68, 35, .2);
 }
 .theater-btn.danger {
     color: var(--t-danger);
@@ -440,11 +455,17 @@
 .theater-btn.generate {
     flex: 1;
     justify-content: center;
-    min-height: 44px;
+    min-height: 46px;
     padding: var(--t-space-3) var(--t-space-5);
-    font-size: var(--t-text-base);
+    font-size: var(--t-text-md);
     font-weight: 600;
-    letter-spacing: .3px;
+    letter-spacing: .4px;
+}
+.theater-btn.generate i {
+    transition: transform var(--t-dur-base) var(--t-ease);
+}
+.theater-btn.generate:hover i {
+    transform: rotate(-12deg) scale(1.1);
 }
 .theater-btn:focus-visible {
     outline: none;
@@ -786,8 +807,9 @@
 }
 .theater-iframe {
     width: 100%;
-    min-height: 200px;
-    height: 400px;
+    min-height: 240px;
+    height: 420px;
+    max-height: 70vh;
     border: none;
     background: #fff;
     display: block;
@@ -932,18 +954,99 @@
 }
 
 /* ============================================================
- * Mobile
+ * Mobile / Tablet — let the popup breathe on narrow screens
  * ============================================================ */
-@media (max-width: 480px) {
-    .theater-section { padding: var(--t-space-4); }
-    .theater-btn { padding: var(--t-space-2) var(--t-space-3); }
-    .theater-tab { padding: var(--t-space-1) var(--t-space-3); font-size: var(--t-text-xs); }
-    .theater-popup-header { padding: var(--t-space-4) 0; }
+@media (max-width: 768px) {
+    .theater-popup {
+        min-height: 0;
+        border-radius: var(--t-radius-lg);
+        padding-top: var(--t-space-1);
+    }
+    .theater-popup-header {
+        padding: var(--t-space-3) var(--t-space-2) var(--t-space-3);
+        margin-bottom: var(--t-space-2);
+    }
     .theater-popup-header .theater-title { font-size: var(--t-text-lg); }
+    .theater-popup-header .theater-subtitle { font-size: 10.5px; letter-spacing: .8px; }
+    .theater-tabs {
+        padding: 0 var(--t-space-2) var(--t-space-3);
+        gap: var(--t-space-1);
+        justify-content: flex-start;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+    }
+    .theater-tab {
+        padding: var(--t-space-2) var(--t-space-3);
+        font-size: var(--t-text-xs);
+        flex-shrink: 0;
+    }
+    .theater-panels-wrapper {
+        min-height: 0;
+        padding: 0 var(--t-space-2);
+    }
+    .theater-section {
+        padding: var(--t-space-4) var(--t-space-3);
+        margin-bottom: var(--t-space-3);
+        border-radius: var(--t-radius-md);
+    }
+    .theater-textarea,
+    .theater-input,
+    .theater-select {
+        padding: var(--t-space-2) var(--t-space-3);
+        font-size: var(--t-text-base);
+    }
+    .theater-btn {
+        padding: var(--t-space-2) var(--t-space-3);
+        min-height: 38px;
+    }
+    .theater-btn.generate {
+        min-height: 44px;
+        font-size: var(--t-text-base);
+        flex: 1 1 100%;
+    }
+    .theater-btn-row { gap: var(--t-space-2); }
     .theater-wb-entry-header,
     .theater-preset-entry-header {
         padding: var(--t-space-2);
         font-size: var(--t-text-sm);
+        min-height: 36px;
     }
     .theater-skin-option { flex: 1 1 100%; }
+    .theater-iframe {
+        height: 60vh;
+        min-height: 320px;
+        max-height: 75vh;
+    }
+    .theater-stream-pre {
+        max-height: 40vh;
+        font-size: var(--t-text-xs);
+        padding: var(--t-space-3);
+    }
+}
+
+@media (max-width: 480px) {
+    .theater-popup-header { padding: var(--t-space-2) 0 var(--t-space-2); }
+    .theater-popup-header .theater-title { font-size: var(--t-text-md); }
+    .theater-popup-header .theater-subtitle { display: none; }
+    .theater-section { padding: var(--t-space-3) var(--t-space-3); }
+    .theater-tab { padding: 6px var(--t-space-2); }
+    .theater-history-actions { gap: var(--t-space-1); }
+    .theater-history-actions span {
+        font-size: 10.5px;
+        padding: 3px var(--t-space-2);
+    }
+}
+
+/* SillyTavern popup container 在窄屏给更多可用宽度 */
+@media (max-width: 768px) {
+    body .popup:has(.theater-popup),
+    body dialog.popup:has(.theater-popup) {
+        max-width: 96vw !important;
+        width: 96vw !important;
+        max-height: 92vh !important;
+    }
+    body .popup:has(.theater-popup) .popup-content,
+    body dialog.popup:has(.theater-popup) .popup-content {
+        padding: 8px !important;
+    }
 }
