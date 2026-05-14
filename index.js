@@ -1,7 +1,7 @@
-// Theater Generator v2.2.2 — by 禾禾 & 麓克
+// Theater Generator v2.2.3 — by 禾禾 & 麓克
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.2.2';
+const VERSION = '2.2.3';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -1649,189 +1649,133 @@ async function generateTheater() {
 
 // ============================================================
 // Main API generation
-//   1. 强制 stream:true，避免长生成撞 Cloudflare 524（100s）
-//   2. 不走 generateRaw，不抢酒馆 generation lock（不劫持小飞机）
-//   3. 优先：从 oai_settings 拿 custom_url + proxy_password 前端直 fetch，
-//      跟 callCustomAPIStream 同一条路径，最稳
-//   4. 兜底：调 ST 后端 /api/backends/chat-completions/generate
+//   1. 优先用 ctx.ChatCompletionService.processRequest（ST 官方为扩展提供的入口）
+//      - 自带流式（避免 Cloudflare 524）
+//      - 不抢主对话 generation lock（不劫持小飞机）
+//      - 自动从酒馆 secrets 拿 key、按当前 chat_completion_source 代理
+//   2. ChatCompletionService 不可用时引导用户启用插件自定义 API
+//
+// 关键前置条件：用户必须在酒馆 API 设置里点过 [💾 Save] 把 key 存进 secrets。
+// 前端 JS 拿不到 key（ST 设计如此），所以只能让酒馆后端帮我们带 key。
 // ============================================================
 async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
-    const oai = ctx?.chatCompletionSettings
-        || ctx?.oai_settings
+    const messages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt }
+    ];
+    const oai = ctx?.oai_settings
         || globalThis.oai_settings
-        || window?.SillyTavern?.libs?.oai_settings
         || window?.SillyTavern?.getContext?.()?.oai_settings;
+    const maxTokens = oai?.openai_max_tokens ?? 4096;
 
-    const mainApi = ctx?.mainApi
-        ?? ctx?.main_api
-        ?? globalThis.main_api
-        ?? window?.main_api;
-
-    const NEED_CC_TIP = '本插件主 API 模式仅支持 Chat Completion。\n\n请二选一：\n① 在酒馆 API 设置里切到 "Chat Completion"\n② 或在插件【设置】里启用 "自定义 API" 单独配置 endpoint';
-
-    if (!oai) {
-        const tip = '读不到酒馆的 Chat Completion 配置。\n\n' + NEED_CC_TIP;
-        onChunk(tip);
-        throw new Error('oai_settings unavailable');
-    }
-    if (mainApi && mainApi !== 'openai') {
-        const tip = `当前酒馆主 API 是 "${mainApi}"，不是 Chat Completion。\n\n` + NEED_CC_TIP;
-        onChunk(tip);
-        throw new Error(`main_api is ${mainApi}, not openai`);
+    // 路径 A：ChatCompletionService（ST 1.13+ 给扩展的官方入口）
+    const CCS = ctx?.ChatCompletionService
+        || window?.SillyTavern?.getContext?.()?.ChatCompletionService;
+    if (CCS && typeof CCS.processRequest === 'function') {
+        return await callViaChatCompletionService(CCS, messages, maxTokens, onChunk);
     }
 
-    const src = oai.chat_completion_source || 'openai';
-
-    // ====== 路径 A：source=custom + 有 custom_url → 前端直 fetch ======
-    // 这是最稳的路径，跟 callCustomAPIStream 一样的请求构造
-    if (src === 'custom' && (oai.custom_url || '').trim()) {
-        return await generateMainCustomDirect(oai, systemPrompt, prompt, onChunk);
+    // 路径 B：ConnectionManagerRequestService（如果用户配了 Connection Profile）
+    const CMR = ctx?.ConnectionManagerRequestService
+        || window?.SillyTavern?.getContext?.()?.ConnectionManagerRequestService;
+    if (CMR && typeof CMR.sendRequest === 'function') {
+        return await callViaConnectionManager(CMR, messages, maxTokens, onChunk);
     }
 
-    // ====== 路径 B：其它 source → 走 ST 后端代理 ======
-    const modelMap = {
-        openai: oai.openai_model,
-        custom: oai.custom_model,
-        openrouter: oai.openrouter_model,
-        claude: oai.claude_model,
-        scale: oai.scale_model,
-        ai21: oai.ai21_model,
-        google: oai.google_model,
-        makersuite: oai.google_model,
-        vertexai: oai.vertexai_model,
-        mistralai: oai.mistralai_model,
-        cohere: oai.cohere_model,
-        perplexity: oai.perplexity_model,
-        groq: oai.groq_model,
-        nanogpt: oai.nanogpt_model,
-        deepseek: oai.deepseek_model,
-        zerooneai: oai.zerooneai_model,
-        xai: oai.xai_model,
-        moonshot: oai.moonshot_model,
-        electronhub: oai.electronhub_model,
-        windowai: oai.windowai_model,
-    };
-    const model = modelMap[src] || oai.openai_model || oai.custom_model || '';
-    if (!model) {
-        const tip = `读不到当前模型（chat_completion_source=${src}）。\n\n` + NEED_CC_TIP;
-        onChunk(tip);
-        throw new Error('model unavailable');
-    }
-
-    const headers = ctx.getRequestHeaders
-        ? ctx.getRequestHeaders()
-        : { 'Content-Type': 'application/json' };
-
-    const body = {
-        messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: prompt }
-        ],
-        model,
-        stream: true,
-        chat_completion_source: src,
-        max_tokens: oai.openai_max_tokens ?? 4096,
-        temperature: oai.temp_openai ?? 0.9,
-        top_p: oai.top_p_openai ?? 1,
-        frequency_penalty: oai.freq_pen_openai ?? 0,
-        presence_penalty: oai.pres_pen_openai ?? 0,
-        reverse_proxy: oai.reverse_proxy || '',
-        proxy_password: oai.proxy_password || '',
-        n: 1,
-    };
-
-    let r;
-    try {
-        r = await fetch('/api/backends/chat-completions/generate', {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(body),
-            signal: abortController?.signal,
-        });
-    } catch (e) {
-        if (e?.name === 'AbortError') throw e;
-        throw new Error(`请求发送失败：${e?.message || e}`);
-    }
-
-    if (!r.ok) {
-        const txt = (await r.text().catch(() => '')).substring(0, 300);
-        const hint = `\n\n建议：在插件【设置】启用 "自定义 API" 直接配置 endpoint，更稳定。`;
-        throw new Error(`主 API ${r.status}: ${txt}${hint}`);
-    }
-
-    return await readSSEStream(r, onChunk, /*isAnthropic=*/false);
+    // 路径 C：兜底报错引导
+    const tip = '酒馆版本太旧（找不到 ChatCompletionService）。\n\n请在插件【设置】里启用 "自定义 API" 单独配置 endpoint。';
+    onChunk(tip);
+    throw new Error('ChatCompletionService unavailable');
 }
 
-// 前端直 fetch 酒馆的 custom_url，复用同一份 key（proxy_password）和 model
-async function generateMainCustomDirect(oai, systemPrompt, prompt, onChunk) {
-    const baseUrl = (oai.custom_url || '').trim().replace(/\/+$/, '');
-    const model = (oai.custom_model || '').trim();
-    const key = (oai.proxy_password || '').trim();
+// 把后端返回的流式 chunk 累加成完整文本，过程中不断 onChunk 刷新 UI
+async function consumeStreamThunk(streamThunk, onChunk) {
+    let full = '';
+    for await (const chunk of streamThunk()) {
+        let delta = '';
+        if (chunk == null) continue;
+        if (typeof chunk === 'string') delta = chunk;
+        else if (typeof chunk.text === 'string') delta = chunk.text;
+        else if (typeof chunk.content === 'string') delta = chunk.content;
+        if (delta) { full += delta; onChunk(full); }
+    }
+    if (!full) throw new Error('流式返回空');
+    return full;
+}
 
-    if (!model) {
-        onChunk('读不到 custom_model，请在酒馆 Chat Completion 设置里选好模型。');
-        throw new Error('custom_model missing');
+async function callViaChatCompletionService(CCS, messages, maxTokens, onChunk) {
+    let result;
+    try {
+        // processRequest(custom, options, extractData)
+        //   stream:true 时返回 thunk，调用得到 async iterable
+        result = await CCS.processRequest(
+            { messages, max_tokens: maxTokens, stream: true },
+            { signal: abortController?.signal },
+            /*extractData=*/false,
+        );
+    } catch (e) {
+        throwFriendlyMainApi(e, onChunk);
     }
 
-    // 拼 endpoint：如果用户已经填了带 /chat/completions 的完整 URL 就直接用
-    let endpoint;
-    if (/\/chat\/completions\/?$/.test(baseUrl)) {
-        endpoint = baseUrl;
-    } else if (/\/v\d+$/.test(baseUrl)) {
-        endpoint = baseUrl + '/chat/completions';
-    } else {
-        endpoint = baseUrl + '/v1/chat/completions';
-    }
-
-    const headers = { 'Content-Type': 'application/json' };
-    if (key) headers['Authorization'] = `Bearer ${key}`;
-
-    // 用户在酒馆里配置的 include_headers（每行一条 "Header: Value"）
-    if ((oai.custom_include_headers || '').trim()) {
-        for (const line of String(oai.custom_include_headers).split('\n')) {
-            const m = line.match(/^\s*([^:]+):\s*(.+?)\s*$/);
-            if (m) headers[m[1].trim()] = m[2].trim();
+    if (typeof result === 'function') {
+        try {
+            return await consumeStreamThunk(result, onChunk);
+        } catch (e) {
+            if (e?.name === 'AbortError') throw e;
+            throwFriendlyMainApi(e, onChunk);
         }
     }
 
-    const body = {
-        model,
-        messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: prompt }
-        ],
-        stream: true,
-        max_tokens: oai.openai_max_tokens ?? 4096,
-        temperature: oai.temp_openai ?? 0.9,
-        top_p: oai.top_p_openai ?? 1,
-    };
-    // 用户在酒馆里写的 include_body（JSON 片段，合并进 body）
-    if ((oai.custom_include_body || '').trim()) {
-        try {
-            const extra = JSON.parse(oai.custom_include_body);
-            Object.assign(body, extra);
-            body.stream = true; // 不让 include_body 覆盖掉流式
-        } catch { /* 忽略解析错误 */ }
-    }
+    // 非流式 fallback：result 是文本或对象
+    const txt = typeof result === 'string'
+        ? result
+        : (result?.text || result?.content || result?.choices?.[0]?.message?.content || '');
+    if (!txt) throw new Error('ChatCompletionService 返回空');
+    onChunk(txt);
+    return txt;
+}
 
-    let r;
+async function callViaConnectionManager(CMR, messages, maxTokens, onChunk) {
+    let result;
     try {
-        r = await fetch(endpoint, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(body),
-            signal: abortController?.signal,
-        });
+        result = await CMR.sendRequest(
+            null,        // profileId: null = 使用当前
+            messages,
+            maxTokens,
+            { stream: true, signal: abortController?.signal, extractData: false, includePreset: true },
+        );
     } catch (e) {
-        if (e?.name === 'AbortError') throw e;
-        throw new Error(`请求发送失败：${e?.message || e}`);
+        throwFriendlyMainApi(e, onChunk);
     }
 
-    if (!r.ok) {
-        const txt = (await r.text().catch(() => '')).substring(0, 300);
-        throw new Error(`主 API ${r.status}: ${txt}`);
+    if (typeof result === 'function') {
+        try {
+            return await consumeStreamThunk(result, onChunk);
+        } catch (e) {
+            if (e?.name === 'AbortError') throw e;
+            throwFriendlyMainApi(e, onChunk);
+        }
     }
-    return await readSSEStream(r, onChunk, /*isAnthropic=*/false);
+    const txt = typeof result === 'string' ? result : (result?.text || '');
+    if (!txt) throw new Error('ConnectionManagerRequestService 返回空');
+    onChunk(txt);
+    return txt;
+}
+
+function throwFriendlyMainApi(e, onChunk) {
+    if (e?.name === 'AbortError') throw e;
+    const msg = String(e?.message || e || '');
+    if (/api[_\s]?key[_\s]?missing|401|unauthorized/i.test(msg)) {
+        const tip = 'API Key 未保存到酒馆。\n\n请去酒馆 API 设置面板：\n① 把你的 API Key 填进输入框\n② 点输入框旁边的【💾 保存】按钮，让酒馆把 key 存进 secrets\n\n（前端 JS 出于安全无法读 key，必须让酒馆后端代为携带）\n\n或者：在插件【设置】里启用 "自定义 API" 单独配置 endpoint 和 key。';
+        onChunk(tip);
+        throw new Error(tip);
+    }
+    if (/502|524|529|gateway|timeout|ECONNRESET|socket hang up/i.test(msg)) {
+        const tip = `主 API 网关错误：${msg.substring(0, 200)}\n\n建议在插件【设置】启用 "自定义 API" 直接配置 endpoint。`;
+        onChunk(tip);
+        throw new Error(tip);
+    }
+    throw e;
 }
 
 // ============================================================
