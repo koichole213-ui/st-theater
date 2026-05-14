@@ -1,4 +1,4 @@
-/* Theater Generator v2.2.1
+/* Theater Generator v2.2.2
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -413,7 +413,7 @@
                 box-shadow var(--t-dur-fast) var(--t-ease),
                 color var(--t-dur-fast) var(--t-ease);
 }
-.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-btn {
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-btn:not(.primary) {
     background: #FFFFFF;
 }
 .theater-btn:hover {
@@ -492,6 +492,75 @@
     color: var(--t-fg);
 }
 .theater-toggle-label input[type="checkbox"] { accent-color: var(--t-accent); }
+
+/* 默认皮肤：自绘暖色复选框，覆盖浏览器原生灰色 */
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-toggle-label input[type="checkbox"],
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-wb-entry-header input[type="checkbox"],
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-preset-entry-header input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border: 1.5px solid color-mix(in srgb, var(--t-accent) 50%, var(--t-border-strong));
+    border-radius: 5px;
+    background: #FFFFFF;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+    transition: border-color var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease),
+                box-shadow var(--t-dur-fast) var(--t-ease);
+    margin: 0;
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-toggle-label input[type="checkbox"]:hover,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-wb-entry-header input[type="checkbox"]:hover,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-preset-entry-header input[type="checkbox"]:hover {
+    border-color: var(--t-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 18%, transparent);
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-toggle-label input[type="checkbox"]:checked,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-wb-entry-header input[type="checkbox"]:checked,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-preset-entry-header input[type="checkbox"]:checked {
+    background: linear-gradient(135deg, var(--t-accent) 0%, var(--t-accent-deep) 100%);
+    border-color: var(--t-accent-deep);
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-toggle-label input[type="checkbox"]:checked::after,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-wb-entry-header input[type="checkbox"]:checked::after,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-preset-entry-header input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    left: 5px;
+    top: 1px;
+    width: 4px;
+    height: 9px;
+    border: solid var(--t-on-accent);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+/* 默认皮肤：单选钮也同色 */
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-skin-row input[type="radio"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid color-mix(in srgb, var(--t-accent) 50%, var(--t-border-strong));
+    border-radius: 50%;
+    background: #FFFFFF;
+    cursor: pointer;
+    position: relative;
+    transition: border-color var(--t-dur-fast) var(--t-ease);
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-skin-row input[type="radio"]:checked {
+    border-color: var(--t-accent-deep);
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-skin-row input[type="radio"]:checked::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    background: linear-gradient(135deg, var(--t-accent) 0%, var(--t-accent-deep) 100%);
+    border-radius: 50%;
+}
 .theater-hint-inline {
     font-size: var(--t-text-xs);
     color: var(--t-fg-mute);
@@ -1049,4 +1118,66 @@
     body dialog.popup:has(.theater-popup) .popup-content {
         padding: 8px !important;
     }
+}
+
+/* ============================================================
+ * 默认皮肤：把 SillyTavern 外层 popup 容器也染成米色
+ *   仅当 .theater-popup 没切到 theater/custom 皮肤时生效
+ * ============================================================ */
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])),
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) {
+    background: #FFFDF7 !important;
+    color: #2E2620 !important;
+    border: 1px solid rgba(176, 122, 74, .14) !important;
+    border-radius: 24px !important;
+    box-shadow: 0 16px 48px rgba(107, 68, 35, .14),
+                0 4px 12px rgba(107, 68, 35, .06) !important;
+    overflow: hidden;
+}
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-body,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-body {
+    background: transparent !important;
+}
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-controls,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-controls,
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-buttons,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-buttons {
+    background: transparent !important;
+    border-top: 1px solid rgba(176, 122, 74, .12) !important;
+    padding-top: 14px !important;
+    padding-bottom: 14px !important;
+    margin-top: 8px !important;
+}
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-close,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-close,
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-ok,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-ok,
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-cancel,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-cancel {
+    background: linear-gradient(135deg, #B07A4A 0%, #6B4423 100%) !important;
+    color: #FFF8EE !important;
+    border: none !important;
+    border-radius: 999px !important;
+    padding: 8px 28px !important;
+    font-weight: 600 !important;
+    letter-spacing: .4px !important;
+    box-shadow: 0 2px 8px rgba(107, 68, 35, .18),
+                inset 0 1px 0 rgba(255, 255, 255, .15) !important;
+    transition: transform 120ms cubic-bezier(.2, .8, .2, 1),
+                box-shadow 120ms cubic-bezier(.2, .8, .2, 1),
+                background 120ms cubic-bezier(.2, .8, .2, 1) !important;
+}
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-close:hover,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-close:hover,
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-ok:hover,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-ok:hover {
+    background: linear-gradient(135deg, #D9A877 0%, #B07A4A 100%) !important;
+    box-shadow: 0 6px 18px rgba(107, 68, 35, .25),
+                inset 0 1px 0 rgba(255, 255, 255, .25) !important;
+    transform: translateY(-1px);
+}
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]))::backdrop,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]))::backdrop {
+    background: rgba(46, 38, 32, .42) !important;
+    backdrop-filter: blur(2px);
 }

@@ -1,7 +1,7 @@
-// Theater Generator v2.2.1 — by 禾禾 & 麓克
+// Theater Generator v2.2.2 — by 禾禾 & 麓克
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.2.1';
+const VERSION = '2.2.2';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -1648,23 +1648,20 @@ async function generateTheater() {
 }
 
 // ============================================================
-// Main API generation — 直接走 ST 内部 Chat Completion 代理
-// 关键设计：
+// Main API generation
 //   1. 强制 stream:true，避免长生成撞 Cloudflare 524（100s）
-//   2. 绕开 TavernHelper.generateRaw / ctx.generateRaw 的 generation lock，
-//      不劫持酒馆的小飞机按钮
-//   3. 直接调 /api/backends/chat-completions/generate，由酒馆后端从 secrets
-//      取 key、按当前 chat_completion_source 代理出去
+//   2. 不走 generateRaw，不抢酒馆 generation lock（不劫持小飞机）
+//   3. 优先：从 oai_settings 拿 custom_url + proxy_password 前端直 fetch，
+//      跟 callCustomAPIStream 同一条路径，最稳
+//   4. 兜底：调 ST 后端 /api/backends/chat-completions/generate
 // ============================================================
 async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
-    // 取 oai_settings：不同 ST 版本暴露方式不同，尽量兜底
     const oai = ctx?.chatCompletionSettings
         || ctx?.oai_settings
         || globalThis.oai_settings
         || window?.SillyTavern?.libs?.oai_settings
         || window?.SillyTavern?.getContext?.()?.oai_settings;
 
-    // 当前主 API（取不到时默认假设是 openai）
     const mainApi = ctx?.mainApi
         ?? ctx?.main_api
         ?? globalThis.main_api
@@ -1683,8 +1680,15 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
         throw new Error(`main_api is ${mainApi}, not openai`);
     }
 
-    // 模型按 chat_completion_source 分发
     const src = oai.chat_completion_source || 'openai';
+
+    // ====== 路径 A：source=custom + 有 custom_url → 前端直 fetch ======
+    // 这是最稳的路径，跟 callCustomAPIStream 一样的请求构造
+    if (src === 'custom' && (oai.custom_url || '').trim()) {
+        return await generateMainCustomDirect(oai, systemPrompt, prompt, onChunk);
+    }
+
+    // ====== 路径 B：其它 source → 走 ST 后端代理 ======
     const modelMap = {
         openai: oai.openai_model,
         custom: oai.custom_model,
@@ -1718,34 +1722,21 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
         ? ctx.getRequestHeaders()
         : { 'Content-Type': 'application/json' };
 
-    // 构造请求体 —— 把 oai_settings 里关键字段都带上，让后端按当前 source 走
     const body = {
         messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt }
         ],
         model,
-        stream: true,                                          // 关键：强制流式，避免 524
+        stream: true,
         chat_completion_source: src,
         max_tokens: oai.openai_max_tokens ?? 4096,
         temperature: oai.temp_openai ?? 0.9,
         top_p: oai.top_p_openai ?? 1,
         frequency_penalty: oai.freq_pen_openai ?? 0,
         presence_penalty: oai.pres_pen_openai ?? 0,
-        // 自定义 endpoint 相关
-        custom_url: oai.custom_url || '',
-        custom_include_body: oai.custom_include_body || '',
-        custom_exclude_body: oai.custom_exclude_body || '',
-        custom_include_headers: oai.custom_include_headers || '',
-        custom_prompt_post_processing: oai.custom_prompt_post_processing || '',
-        // reverse proxy / api type
         reverse_proxy: oai.reverse_proxy || '',
         proxy_password: oai.proxy_password || '',
-        // 各家路由 / 端点 / 区域等
-        api_url_scale: oai.api_url_scale || '',
-        google_model: oai.google_model || '',
-        claude_use_sysprompt: !!oai.claude_use_sysprompt,
-        // 其它扩展可能传的字段（后端 forgiving，会忽略多余）
         n: 1,
     };
 
@@ -1764,14 +1755,82 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
 
     if (!r.ok) {
         const txt = (await r.text().catch(() => '')).substring(0, 300);
-        // 524/502/529 单独提示，不再走 fallback 阻塞重试
-        if (/^(502|524|529)$/.test(String(r.status))) {
-            throw new Error(`主 API 网关超时 ${r.status}：流式连接应该不会撞这个，请检查酒馆后端代理。${txt ? ' ' + txt : ''}`);
-        }
-        throw new Error(`主 API ${r.status}: ${txt}`);
+        const hint = `\n\n建议：在插件【设置】启用 "自定义 API" 直接配置 endpoint，更稳定。`;
+        throw new Error(`主 API ${r.status}: ${txt}${hint}`);
     }
 
-    // 复用现成的 SSE 解析（OpenAI 兼容流式格式）
+    return await readSSEStream(r, onChunk, /*isAnthropic=*/false);
+}
+
+// 前端直 fetch 酒馆的 custom_url，复用同一份 key（proxy_password）和 model
+async function generateMainCustomDirect(oai, systemPrompt, prompt, onChunk) {
+    const baseUrl = (oai.custom_url || '').trim().replace(/\/+$/, '');
+    const model = (oai.custom_model || '').trim();
+    const key = (oai.proxy_password || '').trim();
+
+    if (!model) {
+        onChunk('读不到 custom_model，请在酒馆 Chat Completion 设置里选好模型。');
+        throw new Error('custom_model missing');
+    }
+
+    // 拼 endpoint：如果用户已经填了带 /chat/completions 的完整 URL 就直接用
+    let endpoint;
+    if (/\/chat\/completions\/?$/.test(baseUrl)) {
+        endpoint = baseUrl;
+    } else if (/\/v\d+$/.test(baseUrl)) {
+        endpoint = baseUrl + '/chat/completions';
+    } else {
+        endpoint = baseUrl + '/v1/chat/completions';
+    }
+
+    const headers = { 'Content-Type': 'application/json' };
+    if (key) headers['Authorization'] = `Bearer ${key}`;
+
+    // 用户在酒馆里配置的 include_headers（每行一条 "Header: Value"）
+    if ((oai.custom_include_headers || '').trim()) {
+        for (const line of String(oai.custom_include_headers).split('\n')) {
+            const m = line.match(/^\s*([^:]+):\s*(.+?)\s*$/);
+            if (m) headers[m[1].trim()] = m[2].trim();
+        }
+    }
+
+    const body = {
+        model,
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt }
+        ],
+        stream: true,
+        max_tokens: oai.openai_max_tokens ?? 4096,
+        temperature: oai.temp_openai ?? 0.9,
+        top_p: oai.top_p_openai ?? 1,
+    };
+    // 用户在酒馆里写的 include_body（JSON 片段，合并进 body）
+    if ((oai.custom_include_body || '').trim()) {
+        try {
+            const extra = JSON.parse(oai.custom_include_body);
+            Object.assign(body, extra);
+            body.stream = true; // 不让 include_body 覆盖掉流式
+        } catch { /* 忽略解析错误 */ }
+    }
+
+    let r;
+    try {
+        r = await fetch(endpoint, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+            signal: abortController?.signal,
+        });
+    } catch (e) {
+        if (e?.name === 'AbortError') throw e;
+        throw new Error(`请求发送失败：${e?.message || e}`);
+    }
+
+    if (!r.ok) {
+        const txt = (await r.text().catch(() => '')).substring(0, 300);
+        throw new Error(`主 API ${r.status}: ${txt}`);
+    }
     return await readSSEStream(r, onChunk, /*isAnthropic=*/false);
 }
 
