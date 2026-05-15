@@ -1,4 +1,4 @@
-/* Theater Generator v2.2.4
+/* Theater Generator v2.2.5
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -493,24 +493,37 @@
 }
 .theater-toggle-label input[type="checkbox"] { accent-color: var(--t-accent); }
 
-/* 默认皮肤：自绘暖色复选框，覆盖浏览器原生灰色 */
+/* 默认皮肤：自绘暖色复选框，覆盖浏览器原生灰色
+   ST 主题（如 SmartTheme）会给 input[type=checkbox] 加 ::before 伪元素画勾
+   和强制 width/height，必须用 !important 才能压住 */
 .theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-toggle-label input[type="checkbox"],
 .theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-wb-entry-header input[type="checkbox"],
 .theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-preset-entry-header input[type="checkbox"] {
     appearance: none;
     -webkit-appearance: none;
-    width: 18px;
-    height: 18px;
+    width: 18px !important;
+    height: 18px !important;
     border: 1.5px solid color-mix(in srgb, var(--t-accent) 50%, var(--t-border-strong));
     border-radius: 5px;
     background: #FFFFFF;
+    background-image: none;
     cursor: pointer;
     position: relative;
     flex-shrink: 0;
+    box-sizing: border-box;
     transition: border-color var(--t-dur-fast) var(--t-ease),
                 background var(--t-dur-fast) var(--t-ease),
                 box-shadow var(--t-dur-fast) var(--t-ease);
     margin: 0;
+    padding: 0;
+}
+/* 关键：清掉 ST 主题给 checkbox 加的 ::before 伪元素勾，
+   它跟自绘的 ::after 重叠就是禾禾看到的"两个图标挤一起" */
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-toggle-label input[type="checkbox"]::before,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-wb-entry-header input[type="checkbox"]::before,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-preset-entry-header input[type="checkbox"]::before {
+    content: none !important;
+    display: none !important;
 }
 .theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-toggle-label input[type="checkbox"]:hover,
 .theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-wb-entry-header input[type="checkbox"]:hover,
@@ -1180,4 +1193,47 @@ body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom
 body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]))::backdrop {
     background: rgba(46, 38, 32, .42) !important;
     backdrop-filter: blur(2px);
+}
+
+/* ============================================================
+ * 默认皮肤：暖色滚动条
+ *   外层 ST popup-body 和内层所有滚动区域都同步成米色＋焦糖
+ * ============================================================ */
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])),
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])),
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) *,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) *,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]),
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) * {
+    scrollbar-width: thin;
+    scrollbar-color: #B07A4A rgba(176, 122, 74, .08);
+}
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) ::-webkit-scrollbar,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) ::-webkit-scrollbar,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) ::-webkit-scrollbar-track,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) ::-webkit-scrollbar-track,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) ::-webkit-scrollbar-track {
+    background: rgba(176, 122, 74, .08) !important;
+    border-radius: 4px;
+}
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) ::-webkit-scrollbar-thumb,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) ::-webkit-scrollbar-thumb,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #D9A877 0%, #B07A4A 100%) !important;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 253, 247, .4);
+}
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) ::-webkit-scrollbar-thumb:hover,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) ::-webkit-scrollbar-thumb:hover,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) ::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #B07A4A 0%, #6B4423 100%) !important;
+}
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) ::-webkit-scrollbar-corner,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) ::-webkit-scrollbar-corner,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) ::-webkit-scrollbar-corner {
+    background: transparent !important;
 }

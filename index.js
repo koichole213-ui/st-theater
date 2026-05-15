@@ -1,7 +1,7 @@
-// Theater Generator v2.2.4 — by 禾禾 & 麓克
+// Theater Generator v2.2.5 — by 禾禾 & 麓克
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.2.4';
+const VERSION = '2.2.5';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -317,7 +317,7 @@ function buildPopupHTML() {
                 <div id="theater-save-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-floppy-disk"></i><span>存为模板</span></div>
             </div>
             <div class="theater-btn-row">
-                <div id="theater-generate-btn" class="theater-btn primary generate"><i class="fa-solid fa-wand-magic-sparkles"></i><span>生成</span></div>
+                <div id="theater-generate-btn" class="theater-btn primary generate"><i class="fa-solid fa-paw"></i><span>生成</span></div>
                 <div id="theater-stop-btn" class="theater-btn danger generate" style="display:none;"><i class="fa-solid fa-stop"></i><span>停止</span></div>
             </div>
         </div>
