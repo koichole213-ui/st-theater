@@ -1,7 +1,7 @@
-// Theater Generator v2.2.6 — by 禾禾 & 麓克
+// Theater Generator v2.2.7 — by 禾禾 & 麓克
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.2.6';
+const VERSION = '2.2.7';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -438,6 +438,18 @@ function buildPopupHTML() {
                         <div id="theater-inst-new-group-btn" class="theater-btn theater-inst-tool-btn" title="新建分组"><i class="fa-solid fa-folder-plus"></i></div>
                         <div id="theater-inst-manage-group-btn" class="theater-btn theater-inst-tool-btn" title="管理分组"><i class="fa-solid fa-gear"></i></div>
                     </div>
+                    <div class="theater-inst-search-row">
+                        <input type="text" id="theater-inst-search" class="theater-input theater-inst-search-input" placeholder="搜索模板名…" value="${esc(instSearch || '')}">
+                        <div id="theater-inst-select-all-btn" class="theater-btn theater-inst-select-all-btn" title="全选当前可见"><i class="fa-solid fa-list-check"></i><span>全选</span></div>
+                    </div>
+                    <div id="theater-inst-bulk-bar" class="theater-inst-bulk-bar" style="display:none;">
+                        <span class="theater-inst-bulk-label">已选 <b id="theater-inst-bulk-count">0</b> 个</span>
+                        <div class="theater-inst-bulk-actions">
+                            <div id="theater-inst-bulk-move-btn" class="theater-btn primary"><i class="fa-solid fa-folder-tree"></i><span>移到…</span></div>
+                            <div id="theater-inst-bulk-delete-btn" class="theater-btn danger"><i class="fa-solid fa-trash"></i><span>删除</span></div>
+                            <div id="theater-inst-bulk-clear-btn" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>取消</span></div>
+                        </div>
+                    </div>
                     <div id="theater-instruction-list">${renderInstList(inst)}</div>
                 </div>
             </div>
@@ -604,24 +616,41 @@ function renderGroupFilterOptions() {
     return opts.join('');
 }
 
-function filterInstByGroup(arr) {
+// 临时状态：当前选中索引 + 搜索关键词，仅本次会话有效
+let instSelected = new Set();
+let instSearch = '';
+
+function filterInstAll(arr) {
     const filter = settings.instructionGroupFilter || '__all__';
-    if (filter === '__all__') return arr.map((t, i) => ({ t, i }));
-    if (filter === '__none__') return arr.map((t, i) => ({ t, i })).filter(x => !templateGroup(x.t));
-    return arr.map((t, i) => ({ t, i })).filter(x => templateGroup(x.t) === filter);
+    const q = (instSearch || '').toLowerCase().trim();
+    return arr.map((t, i) => ({ t, i })).filter(x => {
+        if (filter === '__none__') {
+            if (templateGroup(x.t)) return false;
+        } else if (filter !== '__all__') {
+            if (templateGroup(x.t) !== filter) return false;
+        }
+        if (q && !(x.t.name || '').toLowerCase().includes(q)) return false;
+        return true;
+    });
 }
 
 function renderInstList(arr) {
     if (!arr || !arr.length) return '<p class="theater-empty">暂无</p>';
-    const filtered = filterInstByGroup(arr);
-    if (!filtered.length) return '<p class="theater-empty">这个分组里还没有模板</p>';
+    const filtered = filterInstAll(arr);
+    if (!filtered.length) {
+        const q = (instSearch || '').trim();
+        return `<p class="theater-empty">${q ? `没找到包含「${esc(q)}」的模板` : '这个分组里还没有模板'}</p>`;
+    }
     return filtered.map(({ t: item, i }) => {
         const g = templateGroup(item);
         const groupBadge = g
             ? `<span class="theater-inst-group-badge"><i class="fa-solid fa-folder"></i> ${esc(g)}</span>`
             : '';
+        const checked = instSelected.has(i) ? 'checked' : '';
+        const selClass = instSelected.has(i) ? ' theater-inst-item-selected' : '';
         return `
-        <div class="theater-inst-item" data-index="${i}">
+        <div class="theater-inst-item${selClass}" data-index="${i}">
+            <input type="checkbox" class="theater-inst-checkbox" data-index="${i}" ${checked}>
             <span class="theater-inst-name" data-index="${i}"><i class="fa-solid fa-file-lines"></i> ${esc(item.name)}</span>
             ${groupBadge}
             <span class="theater-inst-move" data-index="${i}" title="改分组"><i class="fa-solid fa-folder-tree"></i></span>
@@ -629,6 +658,16 @@ function renderInstList(arr) {
         </div>
     `;
     }).join('');
+}
+
+function updateBulkBar() {
+    const n = instSelected.size;
+    if (n === 0) {
+        $('#theater-inst-bulk-bar').hide();
+    } else {
+        $('#theater-inst-bulk-bar').show();
+        $('#theater-inst-bulk-count').text(n);
+    }
 }
 
 function renderWBEntries() {
@@ -862,7 +901,9 @@ function bindEvents() {
         const { Popup, POPUP_TYPE } = SillyTavern.getContext();
         const ok = await Popup.show.confirm(`确定删除「${name}」？`, '删除后无法恢复');
         if (!ok) return;
-        settings.instructionTemplates.splice(idx, 1); save();
+        settings.instructionTemplates.splice(idx, 1);
+        instSelected.clear();  // 单删后索引会移位，清掉多选避免误操作
+        save();
         refreshInstUI();
     });
     // ---- Groups ----
@@ -876,6 +917,23 @@ function bindEvents() {
     $d.off('click.tim').on('click.tim', '.theater-inst-move', function () {
         moveInstructionTemplate($(this).data('index'));
     });
+    // ---- Search & Bulk ----
+    $d.off('input.tis').on('input.tis', '#theater-inst-search', function () {
+        instSearch = $(this).val() || '';
+        $('#theater-instruction-list').html(renderInstList(settings.instructionTemplates || []));
+    });
+    $d.off('change.ticb').on('change.ticb', '.theater-inst-checkbox', function (e) {
+        e.stopPropagation();
+        const i = parseInt($(this).data('index'));
+        if ($(this).is(':checked')) instSelected.add(i);
+        else instSelected.delete(i);
+        $(this).closest('.theater-inst-item').toggleClass('theater-inst-item-selected', $(this).is(':checked'));
+        updateBulkBar();
+    });
+    $d.off('click.tisa').on('click.tisa', '#theater-inst-select-all-btn', selectAllVisible);
+    $d.off('click.tibm').on('click.tibm', '#theater-inst-bulk-move-btn', bulkMoveSelected);
+    $d.off('click.tibd').on('click.tibd', '#theater-inst-bulk-delete-btn', bulkDeleteSelected);
+    $d.off('click.tibc').on('click.tibc', '#theater-inst-bulk-clear-btn', clearInstSelection);
 
     // ---- Rules: Render templates ----
     $d.off('change.tr').on('change.tr', '#theater-render-select', function () {
@@ -1004,6 +1062,7 @@ function refreshInstUI() {
     $('#theater-instruction-list').html(renderInstList(inst));
     $('#theater-inst-count').text(inst.length);
     $('#theater-inst-drawer').toggleClass('empty', !inst.length);
+    updateBulkBar();
 }
 
 function refreshHistList() {
@@ -1492,6 +1551,90 @@ async function moveInstructionTemplate(idx) {
         toastr.success(target ? `已移到「${target}」` : '已移到未分组');
     });
     popup.show();
+}
+
+// 把当前 instSelected 里所有模板批量移到指定组
+async function bulkMoveSelected() {
+    const { Popup, POPUP_TYPE } = SillyTavern.getContext();
+    if (instSelected.size === 0) return;
+    const groups = settings.instructionGroups || [];
+    const rows = [];
+    rows.push(`<div class="theater-group-pick-row" data-target=""><i class="fa-solid fa-folder-open"></i> 未分组</div>`);
+    groups.forEach(name => {
+        rows.push(`<div class="theater-group-pick-row" data-target="${esc(name)}"><i class="fa-solid fa-folder"></i> ${esc(name)}</div>`);
+    });
+    rows.push(`<div class="theater-group-pick-row theater-group-pick-new" data-target="__new__"><i class="fa-solid fa-folder-plus"></i> 新建分组…</div>`);
+    const html = `
+    <div class="theater-popup" data-skin="${settings.skinMode || 'default'}">
+        <div class="theater-popup-header"><p class="theater-title">批量移动</p><p class="theater-subtitle">${instSelected.size} 个模板</p></div>
+        <div class="theater-section">${rows.join('')}</div>
+    </div>`;
+    const popup = new Popup(html, POPUP_TYPE.TEXT, '', { wide: false, okButton: '关闭', allowVerticalScrolling: true });
+    const $body = $(popup.dlg);
+    $body.on('click', '.theater-group-pick-row', async function (e) {
+        e.preventDefault();
+        let target = $(this).data('target');
+        if (target === '__new__') {
+            const name = await Popup.show.input('新建分组并移入', '分组名称：', '');
+            if (!name) return;
+            target = name.trim();
+            if (!target) return;
+            if (!Array.isArray(settings.instructionGroups)) settings.instructionGroups = [];
+            if (!settings.instructionGroups.includes(target)) settings.instructionGroups.push(target);
+        }
+        const arr = settings.instructionTemplates || [];
+        let moved = 0;
+        instSelected.forEach(i => {
+            const tpl = arr[i];
+            if (!tpl) return;
+            if (target === '') delete tpl.group;
+            else tpl.group = target;
+            moved++;
+        });
+        instSelected.clear();
+        save();
+        if (typeof popup.completeAffirmative === 'function') popup.completeAffirmative();
+        else popup.dlg?.close?.();
+        refreshInstUI();
+        toastr.success(target ? `${moved} 个模板已移到「${target}」` : `${moved} 个模板已移到未分组`);
+    });
+    popup.show();
+}
+
+async function bulkDeleteSelected() {
+    if (instSelected.size === 0) return;
+    const { Popup } = SillyTavern.getContext();
+    const n = instSelected.size;
+    const ok = await Popup.show.confirm(`确定删除选中的 ${n} 个模板？`, '删除后无法恢复');
+    if (!ok) return;
+    // 从大到小删，避免索引变化
+    const sorted = [...instSelected].sort((a, b) => b - a);
+    const arr = settings.instructionTemplates || [];
+    sorted.forEach(i => arr.splice(i, 1));
+    instSelected.clear();
+    save();
+    refreshInstUI();
+    toastr.success(`已删除 ${n} 个模板`);
+}
+
+function selectAllVisible() {
+    const arr = settings.instructionTemplates || [];
+    const visible = filterInstAll(arr);
+    if (!visible.length) {
+        toastr.info('当前没有可选的模板');
+        return;
+    }
+    visible.forEach(({ i }) => instSelected.add(i));
+    // 只重画 list 的勾选状态，不重建 toolbar/搜索框
+    $('#theater-instruction-list').html(renderInstList(arr));
+    updateBulkBar();
+}
+
+function clearInstSelection() {
+    instSelected.clear();
+    $('.theater-inst-checkbox').prop('checked', false);
+    $('.theater-inst-item').removeClass('theater-inst-item-selected');
+    updateBulkBar();
 }
 
 async function saveRenderTpl() {

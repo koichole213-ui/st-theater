@@ -1,4 +1,4 @@
-/* Theater Generator v2.2.6
+/* Theater Generator v2.2.7
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -724,6 +724,109 @@
     justify-content: center;
 }
 .theater-inst-tool-btn span { display: none; }
+
+/* 搜索行：搜索框 + 全选按钮 */
+.theater-inst-search-row {
+    display: flex;
+    gap: var(--t-space-2);
+    margin-bottom: var(--t-space-2);
+    align-items: center;
+}
+.theater-inst-search-input {
+    flex: 1;
+    min-width: 0;
+}
+.theater-inst-select-all-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+/* 批量操作浮条 */
+.theater-inst-bulk-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--t-space-2);
+    padding: 8px 12px;
+    margin-bottom: var(--t-space-2);
+    background: color-mix(in srgb, var(--t-accent) 8%, var(--t-surface-2));
+    border: 1px solid color-mix(in srgb, var(--t-accent) 25%, var(--t-border));
+    border-radius: var(--t-radius-sm);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, .4) inset,
+                0 2px 8px color-mix(in srgb, var(--t-accent) 12%, transparent);
+    flex-wrap: wrap;
+}
+.theater-inst-bulk-label {
+    font-size: var(--t-text-sm);
+    color: var(--t-accent-deep, var(--t-accent));
+    flex-shrink: 0;
+}
+.theater-inst-bulk-label b {
+    color: var(--t-accent);
+    font-weight: 600;
+    padding: 0 2px;
+}
+.theater-inst-bulk-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.theater-inst-bulk-actions .theater-btn {
+    padding: 5px 10px;
+    font-size: 12.5px;
+}
+
+/* 列表里的复选框 */
+.theater-inst-checkbox {
+    flex-shrink: 0;
+    margin: 0 4px 0 0;
+    cursor: pointer;
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-inst-checkbox {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px !important;
+    height: 16px !important;
+    border: 1.5px solid color-mix(in srgb, var(--t-accent) 45%, var(--t-border-strong));
+    border-radius: 4px;
+    background: #FFFFFF;
+    background-image: none;
+    position: relative;
+    box-sizing: border-box;
+    transition: border-color var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease);
+    padding: 0;
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-inst-checkbox::before {
+    content: none !important;
+    display: none !important;
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-inst-checkbox:hover {
+    border-color: var(--t-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--t-accent) 15%, transparent);
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-inst-checkbox:checked {
+    background: linear-gradient(135deg, var(--t-accent) 0%, var(--t-accent-deep) 100%);
+    border-color: var(--t-accent-deep);
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-inst-checkbox:checked::after {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 5px;
+    height: 9px;
+    border: solid #FFF8EE;
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+}
+
+/* 选中态：项目高亮 */
+.theater-inst-item-selected {
+    background: color-mix(in srgb, var(--t-accent) 10%, var(--t-surface-2)) !important;
+    border-color: color-mix(in srgb, var(--t-accent) 35%, var(--t-border)) !important;
+}
 
 /* 模板项里的分组小标签 */
 .theater-inst-group-badge {
