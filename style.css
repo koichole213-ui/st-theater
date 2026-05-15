@@ -1,4 +1,4 @@
-/* Theater Generator v2.2.5
+/* Theater Generator v2.2.6
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -691,6 +691,106 @@
 .theater-inst-delete:hover {
     color: var(--t-danger);
     background: var(--t-danger-soft);
+}
+.theater-inst-move {
+    cursor: pointer;
+    color: var(--t-fg-faint);
+    padding: var(--t-space-1) var(--t-space-2);
+    border-radius: var(--t-radius-sm);
+    flex-shrink: 0;
+    transition: color var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease);
+}
+.theater-inst-move:hover {
+    color: var(--t-accent);
+    background: color-mix(in srgb, var(--t-accent) 12%, transparent);
+}
+
+/* 分组工具栏 */
+.theater-inst-toolbar {
+    display: flex;
+    gap: var(--t-space-2);
+    margin-bottom: var(--t-space-2);
+    align-items: center;
+}
+.theater-inst-group-select {
+    flex: 1;
+    min-width: 0;
+}
+.theater-inst-tool-btn {
+    flex: 0 0 auto;
+    width: 36px;
+    padding: 7px 0 !important;
+    justify-content: center;
+}
+.theater-inst-tool-btn span { display: none; }
+
+/* 模板项里的分组小标签 */
+.theater-inst-group-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    background: color-mix(in srgb, var(--t-accent) 18%, transparent);
+    color: var(--t-accent-deep, var(--t-accent));
+    flex-shrink: 0;
+    margin-right: var(--t-space-2);
+}
+.theater-inst-group-badge i {
+    font-size: 10px;
+    opacity: .8;
+}
+
+/* 管理分组弹窗每一行 */
+.theater-group-mgmt-row {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    padding: var(--t-space-2) var(--t-space-3);
+    border-radius: var(--t-radius-sm);
+    margin-bottom: var(--t-space-1);
+    background: var(--t-surface-2);
+    border: 1px solid var(--t-border);
+}
+.theater-group-mgmt-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--t-fg);
+    font-size: var(--t-text-sm);
+}
+.theater-group-mgmt-name i {
+    margin-right: 6px;
+    color: var(--t-accent);
+}
+
+/* 选分组弹窗里的可点击行 */
+.theater-group-pick-row {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    padding: var(--t-space-2) var(--t-space-3);
+    border-radius: var(--t-radius-sm);
+    margin-bottom: var(--t-space-1);
+    background: var(--t-surface-2);
+    border: 1px solid var(--t-border);
+    cursor: pointer;
+    color: var(--t-fg);
+    font-size: var(--t-text-sm);
+    transition: border-color var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease);
+}
+.theater-group-pick-row i { color: var(--t-accent); flex-shrink: 0; }
+.theater-group-pick-row:hover {
+    border-color: var(--t-accent);
+    background: color-mix(in srgb, var(--t-accent) 8%, var(--t-surface-2));
+}
+.theater-group-pick-row.theater-group-pick-new {
+    border-style: dashed;
+    color: var(--t-fg-soft);
 }
 
 /* ============================================================

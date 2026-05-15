@@ -1,7 +1,7 @@
-// Theater Generator v2.2.5 — by 禾禾 & 麓克
+// Theater Generator v2.2.6 — by 禾禾 & 麓克
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.2.5';
+const VERSION = '2.2.6';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -98,6 +98,8 @@ let settings = {};
 const defaultSettings = Object.freeze({
     contextRange: 10,
     instructionTemplates: [],
+    instructionGroups: [],            // 用户创建的分组名列表
+    instructionGroupFilter: '__all__', // 当前筛选：'__all__' | '__none__'(未分组) | 组名
     renderTemplates: [],
     selectedRenderIndex: '__default__',
     selectedPresetName: '',  // name of selected ST preset (empty = none)
@@ -429,6 +431,13 @@ function buildPopupHTML() {
                     <i class="fa-solid fa-chevron-down theater-drawer-arrow"></i>
                 </div>
                 <div class="theater-drawer-body" style="display:none;">
+                    <div class="theater-inst-toolbar">
+                        <select id="theater-inst-group-filter" class="theater-select theater-inst-group-select">
+                            ${renderGroupFilterOptions()}
+                        </select>
+                        <div id="theater-inst-new-group-btn" class="theater-btn theater-inst-tool-btn" title="新建分组"><i class="fa-solid fa-folder-plus"></i></div>
+                        <div id="theater-inst-manage-group-btn" class="theater-btn theater-inst-tool-btn" title="管理分组"><i class="fa-solid fa-gear"></i></div>
+                    </div>
                     <div id="theater-instruction-list">${renderInstList(inst)}</div>
                 </div>
             </div>
@@ -558,14 +567,68 @@ function historyItemHTML(h, i) {
     </div>`;
 }
 
+// 把没有 group 字段或 group 在已删除组里的模板视为「未分组」
+function templateGroup(t) {
+    const g = t && t.group;
+    if (!g) return '';
+    const groups = settings.instructionGroups || [];
+    return groups.includes(g) ? g : '';
+}
+
+// 返回 { '': N未分组, '组名1': N1, ... } 仅包含有内容的键
+function groupCountsMap() {
+    const arr = settings.instructionTemplates || [];
+    const m = Object.create(null);
+    arr.forEach(t => {
+        const g = templateGroup(t);
+        m[g] = (m[g] || 0) + 1;
+    });
+    return m;
+}
+
+function renderGroupFilterOptions() {
+    const filter = settings.instructionGroupFilter || '__all__';
+    const groups = settings.instructionGroups || [];
+    const counts = groupCountsMap();
+    const total = (settings.instructionTemplates || []).length;
+    const ungrouped = counts[''] || 0;
+    const opts = [];
+    opts.push(`<option value="__all__" ${filter === '__all__' ? 'selected' : ''}>📁 全部（${total}）</option>`);
+    groups.forEach(name => {
+        const c = counts[name] || 0;
+        opts.push(`<option value="${esc(name)}" ${filter === name ? 'selected' : ''}>📁 ${esc(name)}（${c}）</option>`);
+    });
+    if (ungrouped > 0 || groups.length === 0) {
+        opts.push(`<option value="__none__" ${filter === '__none__' ? 'selected' : ''}>📂 未分组（${ungrouped}）</option>`);
+    }
+    return opts.join('');
+}
+
+function filterInstByGroup(arr) {
+    const filter = settings.instructionGroupFilter || '__all__';
+    if (filter === '__all__') return arr.map((t, i) => ({ t, i }));
+    if (filter === '__none__') return arr.map((t, i) => ({ t, i })).filter(x => !templateGroup(x.t));
+    return arr.map((t, i) => ({ t, i })).filter(x => templateGroup(x.t) === filter);
+}
+
 function renderInstList(arr) {
     if (!arr || !arr.length) return '<p class="theater-empty">暂无</p>';
-    return arr.map((item, i) => `
+    const filtered = filterInstByGroup(arr);
+    if (!filtered.length) return '<p class="theater-empty">这个分组里还没有模板</p>';
+    return filtered.map(({ t: item, i }) => {
+        const g = templateGroup(item);
+        const groupBadge = g
+            ? `<span class="theater-inst-group-badge"><i class="fa-solid fa-folder"></i> ${esc(g)}</span>`
+            : '';
+        return `
         <div class="theater-inst-item" data-index="${i}">
             <span class="theater-inst-name" data-index="${i}"><i class="fa-solid fa-file-lines"></i> ${esc(item.name)}</span>
-            <span class="theater-inst-delete" data-index="${i}"><i class="fa-solid fa-xmark"></i></span>
+            ${groupBadge}
+            <span class="theater-inst-move" data-index="${i}" title="改分组"><i class="fa-solid fa-folder-tree"></i></span>
+            <span class="theater-inst-delete" data-index="${i}" title="删除"><i class="fa-solid fa-xmark"></i></span>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 function renderWBEntries() {
@@ -802,6 +865,17 @@ function bindEvents() {
         settings.instructionTemplates.splice(idx, 1); save();
         refreshInstUI();
     });
+    // ---- Groups ----
+    $d.off('change.tigf').on('change.tigf', '#theater-inst-group-filter', function () {
+        settings.instructionGroupFilter = $(this).val();
+        save();
+        $('#theater-instruction-list').html(renderInstList(settings.instructionTemplates || []));
+    });
+    $d.off('click.tigew').on('click.tigew', '#theater-inst-new-group-btn', newInstructionGroup);
+    $d.off('click.tigmg').on('click.tigmg', '#theater-inst-manage-group-btn', manageInstructionGroups);
+    $d.off('click.tim').on('click.tim', '.theater-inst-move', function () {
+        moveInstructionTemplate($(this).data('index'));
+    });
 
     // ---- Rules: Render templates ----
     $d.off('change.tr').on('change.tr', '#theater-render-select', function () {
@@ -926,6 +1000,7 @@ function bindEvents() {
 
 function refreshInstUI() {
     const inst = settings.instructionTemplates || [];
+    $('#theater-inst-group-filter').html(renderGroupFilterOptions());
     $('#theater-instruction-list').html(renderInstList(inst));
     $('#theater-inst-count').text(inst.length);
     $('#theater-inst-drawer').toggleClass('empty', !inst.length);
@@ -1278,8 +1353,145 @@ async function saveInstructionTpl() {
     const defaultName = `小剧场模板 ${count}`;
     const n = await SillyTavern.getContext().Popup.show.input('保存指令模板', '模板名称：', defaultName);
     if (!n) return;
-    settings.instructionTemplates.push({ name: n, content: c });
-    save(); refreshInstUI(); toastr.success('已保存');
+    // 自动归到「当前筛选的组」：__all__/__none__ 都视为未分组
+    const filter = settings.instructionGroupFilter || '__all__';
+    const groups = settings.instructionGroups || [];
+    const targetGroup = (filter !== '__all__' && filter !== '__none__' && groups.includes(filter)) ? filter : '';
+    const tpl = { name: n, content: c };
+    if (targetGroup) tpl.group = targetGroup;
+    settings.instructionTemplates.push(tpl);
+    save(); refreshInstUI();
+    toastr.success(targetGroup ? `已保存到「${targetGroup}」` : '已保存');
+}
+
+async function newInstructionGroup() {
+    const name = await SillyTavern.getContext().Popup.show.input('新建分组', '分组名称：', '');
+    if (!name) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (!Array.isArray(settings.instructionGroups)) settings.instructionGroups = [];
+    if (settings.instructionGroups.includes(trimmed)) {
+        toastr.warning(`分组「${trimmed}」已存在`);
+        return;
+    }
+    settings.instructionGroups.push(trimmed);
+    settings.instructionGroupFilter = trimmed;
+    save(); refreshInstUI();
+    toastr.success(`已新建「${trimmed}」`);
+}
+
+async function manageInstructionGroups() {
+    const { Popup, POPUP_TYPE } = SillyTavern.getContext();
+    const groups = settings.instructionGroups || [];
+    const counts = groupCountsMap();
+    if (!groups.length) {
+        toastr.info('还没有分组，点旁边的 ➕ 新建一个');
+        return;
+    }
+    const rows = groups.map(name => {
+        const c = counts[name] || 0;
+        return `
+        <div class="theater-group-mgmt-row" data-group="${esc(name)}">
+            <span class="theater-group-mgmt-name"><i class="fa-solid fa-folder"></i> ${esc(name)} <small style="opacity:.6;">（${c}）</small></span>
+            <button class="theater-group-mgmt-rename theater-btn" data-group="${esc(name)}"><i class="fa-solid fa-pen"></i><span>改名</span></button>
+            <button class="theater-group-mgmt-delete theater-btn danger" data-group="${esc(name)}"><i class="fa-solid fa-trash"></i><span>删除</span></button>
+        </div>`;
+    }).join('');
+    const html = `
+    <div class="theater-popup" data-skin="${settings.skinMode || 'default'}">
+        <div class="theater-popup-header"><p class="theater-title">管理分组</p><p class="theater-subtitle">改名 / 删除（删除后该组模板回到未分组）</p></div>
+        <div class="theater-section">${rows}</div>
+    </div>`;
+    const popup = new Popup(html, POPUP_TYPE.TEXT, '', { wide: false, okButton: '关闭', allowVerticalScrolling: true });
+    const $body = $(popup.dlg);
+
+    $body.on('click', '.theater-group-mgmt-rename', async function (e) {
+        e.preventDefault();
+        const oldName = $(this).data('group');
+        const newName = await Popup.show.input('改名分组', `把「${oldName}」改成：`, oldName);
+        if (!newName) return;
+        const trimmed = newName.trim();
+        if (!trimmed || trimmed === oldName) return;
+        const list = settings.instructionGroups || [];
+        if (list.includes(trimmed)) { toastr.warning(`「${trimmed}」已存在`); return; }
+        const idx = list.indexOf(oldName);
+        if (idx !== -1) list[idx] = trimmed;
+        (settings.instructionTemplates || []).forEach(t => {
+            if (t.group === oldName) t.group = trimmed;
+        });
+        if (settings.instructionGroupFilter === oldName) settings.instructionGroupFilter = trimmed;
+        save();
+        if (typeof popup.completeAffirmative === 'function') popup.completeAffirmative();
+        else popup.dlg?.close?.();
+        refreshInstUI();
+        toastr.success(`已改名为「${trimmed}」`);
+    });
+
+    $body.on('click', '.theater-group-mgmt-delete', async function (e) {
+        e.preventDefault();
+        const name = $(this).data('group');
+        const c = groupCountsMap()[name] || 0;
+        const msg = c > 0
+            ? `删除「${name}」？里面 ${c} 个模板会回到「未分组」`
+            : `删除空分组「${name}」？`;
+        const ok = await Popup.show.confirm(msg, '');
+        if (!ok) return;
+        settings.instructionGroups = (settings.instructionGroups || []).filter(g => g !== name);
+        (settings.instructionTemplates || []).forEach(t => {
+            if (t.group === name) delete t.group;
+        });
+        if (settings.instructionGroupFilter === name) settings.instructionGroupFilter = '__all__';
+        save();
+        if (typeof popup.completeAffirmative === 'function') popup.completeAffirmative();
+        else popup.dlg?.close?.();
+        refreshInstUI();
+        toastr.success(`已删除「${name}」`);
+    });
+
+    popup.show();
+}
+
+async function moveInstructionTemplate(idx) {
+    const { Popup, POPUP_TYPE } = SillyTavern.getContext();
+    const t = (settings.instructionTemplates || [])[idx];
+    if (!t) return;
+    const groups = settings.instructionGroups || [];
+    const currentGroup = templateGroup(t);
+    const rows = [];
+    rows.push(`<div class="theater-group-pick-row" data-target=""><i class="fa-solid fa-folder-open"></i> 未分组 ${currentGroup === '' ? '<small>· 当前</small>' : ''}</div>`);
+    groups.forEach(name => {
+        rows.push(`<div class="theater-group-pick-row" data-target="${esc(name)}"><i class="fa-solid fa-folder"></i> ${esc(name)} ${currentGroup === name ? '<small>· 当前</small>' : ''}</div>`);
+    });
+    rows.push(`<div class="theater-group-pick-row theater-group-pick-new" data-target="__new__"><i class="fa-solid fa-folder-plus"></i> 新建分组…</div>`);
+    const html = `
+    <div class="theater-popup" data-skin="${settings.skinMode || 'default'}">
+        <div class="theater-popup-header"><p class="theater-title">移动到分组</p><p class="theater-subtitle">${esc(t.name)}</p></div>
+        <div class="theater-section">${rows.join('')}</div>
+    </div>`;
+    const popup = new Popup(html, POPUP_TYPE.TEXT, '', { wide: false, okButton: '关闭', allowVerticalScrolling: true });
+    const $body = $(popup.dlg);
+    $body.on('click', '.theater-group-pick-row', async function (e) {
+        e.preventDefault();
+        let target = $(this).data('target');
+        if (target === '__new__') {
+            const name = await Popup.show.input('新建分组并移入', '分组名称：', '');
+            if (!name) return;
+            target = name.trim();
+            if (!target) return;
+            if (!Array.isArray(settings.instructionGroups)) settings.instructionGroups = [];
+            if (!settings.instructionGroups.includes(target)) settings.instructionGroups.push(target);
+        }
+        const tpl = (settings.instructionTemplates || [])[idx];
+        if (!tpl) return;
+        if (target === '') delete tpl.group;
+        else tpl.group = target;
+        save();
+        if (typeof popup.completeAffirmative === 'function') popup.completeAffirmative();
+        else popup.dlg?.close?.();
+        refreshInstUI();
+        toastr.success(target ? `已移到「${target}」` : '已移到未分组');
+    });
+    popup.show();
 }
 
 async function saveRenderTpl() {
