@@ -1,7 +1,7 @@
-// 千夜浮梦 · 小剧场生成器 v2.2.8 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.2.9 — by 禾禾 & 麓克
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.2.8';
+const VERSION = '2.2.9';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -293,6 +293,7 @@ function buildPopupHTML() {
 <div class="theater-popup" data-skin="${skin}">
     <div class="theater-popup-header">
         <p class="theater-title">千夜浮梦</p>
+        <p class="theater-function">小剧场生成插件</p>
         <p class="theater-subtitle">独立生成 · 不影响正文</p>
     </div>
     <div class="theater-tabs">
@@ -2024,13 +2025,8 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
         { role: 'user', content: prompt }
     ];
 
-    // 流式管道内部不暴露 chunk 回调，给个等待提示让用户知道还在跑
-    let elapsed = 0;
-    onChunk('（流式生成中…）');
-    const timer = setInterval(() => {
-        elapsed += 1;
-        onChunk(`（流式生成中… 已等待 ${elapsed}s）`);
-    }, 1000);
+    // generateRaw 内部流式但不暴露 chunk，给个静态提示就好
+    onChunk('（生成中…主 API 流式管道不暴露逐字 chunk，请稍候）');
 
     let result;
     try {
@@ -2049,7 +2045,6 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
             should_stream: true,
         });
     } catch (e) {
-        clearInterval(timer);
         if (e?.name === 'AbortError') throw e;
         const msg = String(e?.message || e || '');
         if (/api[_\s]?key|401|unauthorized/i.test(msg)) {
@@ -2063,8 +2058,6 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
             throw new Error(tip);
         }
         throw e;
-    } finally {
-        clearInterval(timer);
     }
 
     if (!result) {
