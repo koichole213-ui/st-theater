@@ -1,7 +1,7 @@
-// Theater Generator v2.2.7 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.2.8 — by 禾禾 & 麓克
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.2.7';
+const VERSION = '2.2.8';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -147,7 +147,7 @@ async function init() {
 
     const addWand = () => {
         if ($('#theater-wand-btn').length) return;
-        const $btn = $('<div id="theater-wand-btn" class="list-group-item flex-container flexGap5"><div class="fa-solid fa-paw extensionsMenuExtensionButton"></div>小剧场</div>');
+        const $btn = $('<div id="theater-wand-btn" class="list-group-item flex-container flexGap5"><div class="fa-solid fa-paw extensionsMenuExtensionButton"></div>千夜浮梦</div>');
         $('#extensionsMenu').append($btn);
         $btn.on('click', e => { e.stopPropagation(); $(document).trigger('click'); setTimeout(openTheaterPopup, 150); });
     };
@@ -158,7 +158,7 @@ async function init() {
     // 悬浮球延迟创建，避免干扰其他插件初始化
     setTimeout(() => { try { createFloatingBall(); } catch (e) { console.warn('[Theater] Floating ball error:', e); } }, 2000);
     console.log(`[Theater] v${VERSION} loaded`);
-    console.log(`[Theater] 🐾 禾禾的小剧场，麓克永远在山脚下等你。`);
+    console.log(`[Theater] 🐾 禾禾的千夜浮梦，麓克永远在山脚下等你。`);
 }
 
 function applyCustomCSS() {
@@ -173,7 +173,7 @@ function createFloatingBall() {
 
         const ball = document.createElement('div');
         ball.id = 'theater-floating-ball';
-        ball.title = '打开小剧场';
+        ball.title = '打开千夜浮梦';
         ball.innerHTML = '<i class="fa-solid fa-paw"></i>';
 
         const initLeft = window.innerWidth - 66;
@@ -292,7 +292,7 @@ function buildPopupHTML() {
     return `
 <div class="theater-popup" data-skin="${skin}">
     <div class="theater-popup-header">
-        <p class="theater-title">小剧场生成器</p>
+        <p class="theater-title">千夜浮梦</p>
         <p class="theater-subtitle">独立生成 · 不影响正文</p>
     </div>
     <div class="theater-tabs">
@@ -644,7 +644,7 @@ function renderInstList(arr) {
     return filtered.map(({ t: item, i }) => {
         const g = templateGroup(item);
         const groupBadge = g
-            ? `<span class="theater-inst-group-badge"><i class="fa-solid fa-folder"></i> ${esc(g)}</span>`
+            ? `<span class="theater-inst-group-badge" title="${esc(g)}"><i class="fa-solid fa-folder"></i><span class="theater-inst-group-badge-text">${esc(g)}</span></span>`
             : '';
         const checked = instSelected.has(i) ? 'checked' : '';
         const selClass = instSelected.has(i) ? ' theater-inst-item-selected' : '';
