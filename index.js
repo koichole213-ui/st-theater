@@ -1,7 +1,10 @@
-// 千夜浮梦 · 小剧场生成器 v2.2.9 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.2.10 — by 禾禾 & 麓克
+// Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.2.9';
+const VERSION = '2.2.10';
+
+const LAMP_SVG_HTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="1em" height="1em" fill="currentColor" aria-hidden="true" style="vertical-align:-0.125em"><path d="M203.72 87.938c-2.082.017-4.18.31-6.282.874-13.45 3.608-21.412 17.53-17.782 31.094 1.384 5.172 4.235 9.52 8 12.75-31.85 15.446-53.498 45.172-59.28 78.72l-22.532 7.593c-11.235-2.877-21.416-4.2-30.53-4.095-14.696.167-26.65 4.02-35.908 10.97-18.518 13.896-23.316 38.02-19.53 60.655 3.784 22.636 15.81 45.127 34.343 59.344 18.532 14.216 44.715 18.96 71.03 4.875 4.43-2.373 8.776-4.81 12.813-6.97 2.993 10.772 14.018 17.16 24.75 14.28 10.253-2.75 16.547-12.963 14.656-23.31 16.984 10.05 34.495 15.674 52.186 17.405-14.094 20.893-32.316 39.57-53.97 54.78 27.754 27.726 224.764-24.853 229.626-61.592-26.89-2.484-52.525-9.935-75.562-21.563 67.995-43.983 128.655-133.27 160.656-234.563l-42.47 14.344c-44.11 67.313-122.214 103.81-167.155 28a107.922 107.922 0 0 0-53-9.593c1.656-4.69 1.95-9.913.564-15.093-3.063-11.443-13.392-18.998-24.625-18.906zM76.062 233.53c5.11-.027 10.865.51 17.312 1.75 18.656 36.728 39.31 63.938 61.188 82.845-.767.113-1.546.263-2.313.47-.146.038-.293.08-.438.124-2.846.324-5.588 1.044-8.218 1.936-9.64 3.27-18.73 9.084-27.156 13.594-20.655 11.056-36.95 7.41-50.844-3.25-13.895-10.66-24.256-29.5-27.28-47.594-3.027-18.094.948-34.097 12.31-42.625 5.683-4.263 13.943-7.186 25.438-7.25z"/></svg>';
 
 // ============================================================
 // Default system prompt — 月见轻量 by 染染, adapted for theater
@@ -147,7 +150,7 @@ async function init() {
 
     const addWand = () => {
         if ($('#theater-wand-btn').length) return;
-        const $btn = $('<div id="theater-wand-btn" class="list-group-item flex-container flexGap5"><div class="fa-solid fa-paw extensionsMenuExtensionButton"></div>千夜浮梦</div>');
+        const $btn = $(`<div id="theater-wand-btn" class="list-group-item flex-container flexGap5"><div class="extensionsMenuExtensionButton">${LAMP_SVG_HTML}</div>千夜浮梦</div>`);
         $('#extensionsMenu').append($btn);
         $btn.on('click', e => { e.stopPropagation(); $(document).trigger('click'); setTimeout(openTheaterPopup, 150); });
     };
@@ -174,12 +177,12 @@ function createFloatingBall() {
         const ball = document.createElement('div');
         ball.id = 'theater-floating-ball';
         ball.title = '打开千夜浮梦';
-        ball.innerHTML = '<i class="fa-solid fa-paw"></i>';
+        ball.innerHTML = LAMP_SVG_HTML;
 
         const initLeft = window.innerWidth - 66;
         const initTop = window.innerHeight - 126;
 
-        // 米色猫爪 — 暖底 + 焦糖色 paw + 软阴影
+        // 暖底 + 焦糖色油灯 + 软阴影
         ball.setAttribute('style', [
             'position:fixed !important',
             `left:${initLeft}px`,
@@ -320,7 +323,7 @@ function buildPopupHTML() {
                 <div id="theater-save-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-floppy-disk"></i><span>存为模板</span></div>
             </div>
             <div class="theater-btn-row">
-                <div id="theater-generate-btn" class="theater-btn primary generate"><i class="fa-solid fa-paw"></i><span>生成</span></div>
+                <div id="theater-generate-btn" class="theater-btn primary generate">${LAMP_SVG_HTML}<span>生成</span></div>
                 <div id="theater-stop-btn" class="theater-btn danger generate" style="display:none;"><i class="fa-solid fa-stop"></i><span>停止</span></div>
             </div>
         </div>
