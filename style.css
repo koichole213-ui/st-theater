@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v2.2.9
+/* 千夜浮梦 · 小剧场生成器 v2.2.11
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -1250,6 +1250,21 @@
     letter-spacing: .5px;
 }
 .theater-launch-area { padding: var(--t-space-1) 0; }
+
+/* Magic-lamp icon (game-icons.net path leaves padding around the shape — bump size to match neighbor FA icons; +8deg rotation levels the artist's up-right tilt) */
+.theater-lamp-icon {
+    width: 1.5em;
+    height: 1.5em;
+    fill: currentColor;
+    vertical-align: -0.3em;
+    transform: rotate(8deg);
+    flex-shrink: 0;
+}
+#theater-floating-ball .theater-lamp-icon {
+    width: 1.8em;
+    height: 1.8em;
+    vertical-align: 0;
+}
 
 /* ============================================================
  * Reduced motion
