@@ -1269,7 +1269,9 @@
     transform: rotate(8deg) translateY(0.15em);
 }
 #theater-wand-btn .theater-lamp-icon {
-    transform: rotate(8deg) translateY(0.25em);
+    width: 1em;
+    height: 1em;
+    transform: scale(1.5) rotate(8deg) translateY(0.15em);
 }
 
 /* ============================================================
