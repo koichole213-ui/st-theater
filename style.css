@@ -1268,6 +1268,9 @@
 #theater-open-btn .theater-lamp-icon {
     transform: rotate(8deg) translateY(0.15em);
 }
+#theater-wand-btn .theater-lamp-icon {
+    transform: rotate(8deg) translateY(0.25em);
+}
 
 /* ============================================================
  * Reduced motion
