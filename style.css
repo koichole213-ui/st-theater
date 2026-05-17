@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v2.2.11
+/* 千夜浮梦 · 小剧场生成器 v2.3.0
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -1261,9 +1261,12 @@
     flex-shrink: 0;
 }
 #theater-floating-ball .theater-lamp-icon {
-    width: 1.8em;
-    height: 1.8em;
+    width: 1.4em;
+    height: 1.4em;
     vertical-align: 0;
+}
+#theater-open-btn .theater-lamp-icon {
+    transform: rotate(8deg) translateY(0.15em);
 }
 
 /* ============================================================
@@ -1482,3 +1485,7 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) ::-webkit-scrollbar-corner {
     background: transparent !important;
 }
+
+/* Tabs row must NEVER show a scrollbar — touch swipe still works. Overrides the global default-skin scrollbar styling above. */
+.theater-popup .theater-tabs { scrollbar-width: none !important; }
+.theater-popup .theater-tabs::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
