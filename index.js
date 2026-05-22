@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.3.0 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.3.1 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.3.0';
+const VERSION = '2.3.1';
 
 const LAMP_SVG_HTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" class="theater-lamp-icon" aria-hidden="true"><path d="M203.72 87.938c-2.082.017-4.18.31-6.282.874-13.45 3.608-21.412 17.53-17.782 31.094 1.384 5.172 4.235 9.52 8 12.75-31.85 15.446-53.498 45.172-59.28 78.72l-22.532 7.593c-11.235-2.877-21.416-4.2-30.53-4.095-14.696.167-26.65 4.02-35.908 10.97-18.518 13.896-23.316 38.02-19.53 60.655 3.784 22.636 15.81 45.127 34.343 59.344 18.532 14.216 44.715 18.96 71.03 4.875 4.43-2.373 8.776-4.81 12.813-6.97 2.993 10.772 14.018 17.16 24.75 14.28 10.253-2.75 16.547-12.963 14.656-23.31 16.984 10.05 34.495 15.674 52.186 17.405-14.094 20.893-32.316 39.57-53.97 54.78 27.754 27.726 224.764-24.853 229.626-61.592-26.89-2.484-52.525-9.935-75.562-21.563 67.995-43.983 128.655-133.27 160.656-234.563l-42.47 14.344c-44.11 67.313-122.214 103.81-167.155 28a107.922 107.922 0 0 0-53-9.593c1.656-4.69 1.95-9.913.564-15.093-3.063-11.443-13.392-18.998-24.625-18.906zM76.062 233.53c5.11-.027 10.865.51 17.312 1.75 18.656 36.728 39.31 63.938 61.188 82.845-.767.113-1.546.263-2.313.47-.146.038-.293.08-.438.124-2.846.324-5.588 1.044-8.218 1.936-9.64 3.27-18.73 9.084-27.156 13.594-20.655 11.056-36.95 7.41-50.844-3.25-13.895-10.66-24.256-29.5-27.28-47.594-3.027-18.094.948-34.097 12.31-42.625 5.683-4.263 13.943-7.186 25.438-7.25z"/></svg>';
 
@@ -164,9 +164,72 @@ async function init() {
     console.log(`[Theater] 🐾 禾禾的千夜浮梦，麓克永远在山脚下等你。`);
 }
 
+// 把用户 CSS 限定在 .theater-popup 容器内，避免污染酒馆主界面。
+// 用浏览器原生 CSSOM 解析，遍历每条规则改写选择器；解析失败则不注入。
+const THEATER_SCOPE = '.theater-popup';
+
+function scopeSelector(selectorText, scope) {
+    return selectorText.split(',').map(raw => {
+        const sel = raw.trim();
+        if (!sel) return '';
+        // body / html / :root 这种代表整个文档的选择器，等价于 scope 本身
+        if (/^(body|html|:root)$/i.test(sel)) return scope;
+        // 形如 "body.foo" / "html[data-x]" —— 把开头的 body/html 摘掉，剩下的限定到 scope 上
+        const stripDocRoot = sel.replace(/^(?:body|html|:root)(?=[.\[#:])/i, '');
+        if (stripDocRoot !== sel) return `${scope}${stripDocRoot}`;
+        // 已经以 scope 开头（含 .theater-popup-* BEM 命名），不重复加
+        if (sel === scope || sel.startsWith(scope)) return sel;
+        return `${scope} ${sel}`;
+    }).filter(Boolean).join(', ');
+}
+
+function scopeRules(rules, scope) {
+    const out = [];
+    for (const rule of rules) {
+        // CSSRule.STYLE_RULE = 1
+        if (rule.type === 1) {
+            const sel = scopeSelector(rule.selectorText, scope);
+            if (sel) out.push(`${sel} { ${rule.style.cssText} }`);
+        // MEDIA_RULE = 4
+        } else if (rule.type === 4) {
+            out.push(`@media ${rule.conditionText || rule.media.mediaText} {\n${scopeRules(rule.cssRules, scope)}\n}`);
+        // SUPPORTS_RULE = 12
+        } else if (rule.type === 12) {
+            out.push(`@supports ${rule.conditionText} {\n${scopeRules(rule.cssRules, scope)}\n}`);
+        // KEYFRAMES_RULE = 7 / FONT_FACE_RULE = 5 / IMPORT_RULE = 3 等都不需要 scope
+        } else {
+            out.push(rule.cssText || '');
+        }
+    }
+    return out.join('\n');
+}
+
+function scopeCSS(cssText, scope) {
+    if (!cssText?.trim()) return '';
+    const probe = document.createElement('style');
+    probe.media = 'not all'; // 解析但不让它生效
+    probe.textContent = cssText;
+    document.head.appendChild(probe);
+    try {
+        const rules = probe.sheet?.cssRules;
+        if (!rules) return '';
+        return scopeRules(rules, scope);
+    } finally {
+        probe.remove();
+    }
+}
+
 function applyCustomCSS() {
     $('#theater-custom-css-inject').remove();
-    if (settings.customCSS?.trim()) $('head').append(`<style id="theater-custom-css-inject">${settings.customCSS}</style>`);
+    const raw = settings.customCSS;
+    if (!raw?.trim()) return;
+    try {
+        const scoped = scopeCSS(raw, THEATER_SCOPE);
+        if (scoped) $('head').append(`<style id="theater-custom-css-inject">${scoped}</style>`);
+    } catch (e) {
+        console.warn('[Theater] custom CSS scope failed:', e);
+        toastr?.warning('自定义 CSS 解析失败，已跳过应用。请检查语法。');
+    }
 }
 
 function createFloatingBall() {
@@ -518,6 +581,7 @@ function buildPopupHTML() {
             <details class="theater-addon-details"${settings.customCSS || skin === 'custom' ? ' open' : ''}>
                 <summary class="theater-addon-summary"><i class="fa-solid fa-brush"></i> 自定义 CSS${settings.customCSS ? ' · 已填写' : ''}</summary>
                 <textarea id="theater-custom-css" class="theater-textarea theater-css-editor" rows="8" placeholder=".theater-popup { background: #1a1a2e; }">${esc(settings.customCSS || '')}</textarea>
+                <p class="theater-hint" style="margin:4px 0 8px;">所有规则会自动限定在小剧场弹窗内，不会污染酒馆界面。写 <code>body</code> 等同写 <code>.theater-popup</code>。</p>
                 <div class="theater-btn-row">
                     <div id="theater-save-css-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存并应用</span></div>
                     <div id="theater-reset-css-btn" class="theater-btn danger"><i class="fa-solid fa-rotate-left"></i><span>重置</span></div>
@@ -2307,31 +2371,44 @@ async function testAPIConnection() {
 async function updateExtension() {
     const btn = $('#theater-update-btn');
     btn.addClass('disabled');
+    toastr.info('正在更新…');
     try {
-        // TavernHelper — 封装了 git 操作，Termux 也能用
-        if (window.TavernHelper && typeof window.TavernHelper.updateExtension === 'function') {
-            toastr.info('正在更新…');
-            const res = await window.TavernHelper.updateExtension('st-theater');
-            if (res.ok) {
-                toastr.success('更新成功！重新打开酒馆后生效。');
-                return;
-            }
-            toastr.warning('更新失败，请查看控制台');
+        // 直接走 ST 原生 git pull endpoint（不走 TavernHelper：它的实现可能是先卸载再重装，
+        // 卸载失败时会撞 install 的"Directory already exists"409 → 用户卡死。）
+        const ctx = SillyTavern.getContext();
+        const headers = ctx.getRequestHeaders
+            ? ctx.getRequestHeaders()
+            : { 'Content-Type': 'application/json' };
+        // 先试 user 范围（默认），失败再试 global —— 用户可能装在 system-wide
+        const tryUpdate = async (global) => fetch('/api/extensions/update', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ extensionName: 'st-theater', global }),
+        }).catch(err => ({ ok: false, status: 0, _err: err }));
+
+        let resp = await tryUpdate(false);
+        if (!resp.ok && (resp.status === 404 || resp.status === 400)) {
+            resp = await tryUpdate(true);
+        }
+
+        if (resp.ok) {
+            toastr.success('更新成功！重新打开酒馆后生效。');
             return;
         }
-        // Fallback: 酒馆内置 API
-        const ctx = SillyTavern.getContext();
-        const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
-        const resp = await fetch('/api/extensions/update', {
-            method: 'POST', headers,
-            body: JSON.stringify({ extensionName: 'st-theater' })
-        }).catch(() => null);
-        if (resp && resp.ok) {
-            toastr.success('更新成功！重新打开酒馆后生效。');
-        } else {
-            toastr.warning('更新失败，如遇 Git 冲突请删除插件文件夹后重新安装');
-        }
-    } catch (e) { toastr.error('更新失败: ' + e.message); } finally { btn.removeClass('disabled'); }
+
+        // 失败：把后端真实错误显示出来
+        let detail = '';
+        try { detail = await resp.text?.() || ''; } catch (_) {}
+        detail = (detail || resp._err?.message || '').slice(0, 220);
+        const tip = (resp.status === 409 || /already exists/i.test(detail))
+            ? '插件目录被旧版残留卡住了。请在【扩展管理】卸载本插件，再用 Install from URL 输入 https://github.com/koichole213-ui/st-theater 重新安装（设置不会丢）。'
+            : '如遇 Git 冲突或网络问题，可在【扩展管理】卸载后重新安装。';
+        toastr.error(`更新失败 (HTTP ${resp.status || 0})\n${detail}\n\n${tip}`, '更新失败', { timeOut: 12000, extendedTimeOut: 6000 });
+    } catch (e) {
+        toastr.error('更新失败: ' + e.message);
+    } finally {
+        btn.removeClass('disabled');
+    }
 }
 
 // ============================================================
