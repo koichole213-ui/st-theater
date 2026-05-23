@@ -1,8 +1,17 @@
-// 千夜浮梦 · 小剧场生成器 v2.3.1 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.4.0 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.3.1';
+const VERSION = '2.4.0';
+const SOUNDS_BASE_URL = '/scripts/extensions/third-party/st-theater/sounds/';
+const SOUND_PRESETS = [
+    { id: 'chime',  label: '铃·清脆', file: 'freesound_community-chime-sound-7143.mp3' },
+    { id: 'ping',   label: '铃·温和', file: 'dragon-studio-notification-ping-372479.mp3' },
+    { id: 'notify', label: '通知·柔', file: 'dragon-studio-new-notification-3-398649.mp3' },
+    { id: 'soft',   label: '通知·暖', file: 'universfield-new-notification-017-352293.mp3' },
+    { id: 'beep',   label: '电子·哔', file: 'freesound_community-beep-6-96243.mp3' },
+    { id: 'pop',    label: '萌·啵',   file: 'universfield-bubble-pop-06-351337.mp3' },
+];
 
 const LAMP_SVG_HTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" class="theater-lamp-icon" aria-hidden="true"><path d="M203.72 87.938c-2.082.017-4.18.31-6.282.874-13.45 3.608-21.412 17.53-17.782 31.094 1.384 5.172 4.235 9.52 8 12.75-31.85 15.446-53.498 45.172-59.28 78.72l-22.532 7.593c-11.235-2.877-21.416-4.2-30.53-4.095-14.696.167-26.65 4.02-35.908 10.97-18.518 13.896-23.316 38.02-19.53 60.655 3.784 22.636 15.81 45.127 34.343 59.344 18.532 14.216 44.715 18.96 71.03 4.875 4.43-2.373 8.776-4.81 12.813-6.97 2.993 10.772 14.018 17.16 24.75 14.28 10.253-2.75 16.547-12.963 14.656-23.31 16.984 10.05 34.495 15.674 52.186 17.405-14.094 20.893-32.316 39.57-53.97 54.78 27.754 27.726 224.764-24.853 229.626-61.592-26.89-2.484-52.525-9.935-75.562-21.563 67.995-43.983 128.655-133.27 160.656-234.563l-42.47 14.344c-44.11 67.313-122.214 103.81-167.155 28a107.922 107.922 0 0 0-53-9.593c1.656-4.69 1.95-9.913.564-15.093-3.063-11.443-13.392-18.998-24.625-18.906zM76.062 233.53c5.11-.027 10.865.51 17.312 1.75 18.656 36.728 39.31 63.938 61.188 82.845-.767.113-1.546.263-2.313.47-.146.038-.293.08-.438.124-2.846.324-5.588 1.044-8.218 1.936-9.64 3.27-18.73 9.084-27.156 13.594-20.655 11.056-36.95 7.41-50.844-3.25-13.895-10.66-24.256-29.5-27.28-47.594-3.027-18.094.948-34.097 12.31-42.625 5.683-4.263 13.943-7.186 25.438-7.25z"/></svg>';
 
@@ -117,8 +126,12 @@ const defaultSettings = Object.freeze({
     useCustomAPI: false, apiUrl: '', apiKey: '', apiModel: '',
     userPersona: '',
     worldBookEntries: [], worldBookStates: [],
+    worldBookStatesByBook: {},  // { [bookName]: { [entryKey]: false } }，缺省 true
     currentWorldBook: '',
     floatingBall: false,
+    soundEnabled: true,
+    soundPreset: 'chime',
+    soundVolume: 70,
 });
 
 const SKIN_LABELS = { default: '内置默认', theater: '跟随酒馆', custom: '自定义' };
@@ -229,6 +242,27 @@ function applyCustomCSS() {
     } catch (e) {
         console.warn('[Theater] custom CSS scope failed:', e);
         toastr?.warning('自定义 CSS 解析失败，已跳过应用。请检查语法。');
+    }
+}
+
+function getSoundPreset(id) {
+    return SOUND_PRESETS.find(p => p.id === id) || SOUND_PRESETS[0];
+}
+
+let _notifyAudio = null;
+function playNotificationSound({ force = false } = {}) {
+    if (!force && !settings.soundEnabled) return;
+    const preset = getSoundPreset(settings.soundPreset);
+    if (!preset) return;
+    try {
+        if (_notifyAudio) { try { _notifyAudio.pause(); } catch (_) {} }
+        const audio = new Audio(SOUNDS_BASE_URL + preset.file);
+        const vol = Math.max(0, Math.min(100, Number(settings.soundVolume) || 0));
+        audio.volume = vol / 100;
+        _notifyAudio = audio;
+        audio.play().catch(err => console.warn('[Theater] sound play blocked:', err?.message || err));
+    } catch (e) {
+        console.warn('[Theater] sound play failed:', e);
     }
 }
 
@@ -614,6 +648,23 @@ function buildPopupHTML() {
             </div>
         </div>
         <div class="theater-section">
+            <label class="theater-label"><i class="fa-solid fa-bell"></i> 生成完毕提示音</label>
+            <div class="theater-toggle-row" style="margin-bottom:10px;">
+                <label class="theater-toggle-label"><input type="checkbox" id="theater-sound-enabled" ${settings.soundEnabled ? 'checked' : ''}><span>开启提示音</span></label>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+                <select id="theater-sound-preset" class="theater-select" style="flex:1;min-width:140px;">
+                    ${SOUND_PRESETS.map(p => `<option value="${esc(p.id)}" ${settings.soundPreset === p.id ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}
+                </select>
+                <div id="theater-sound-preview-btn" class="theater-btn"><i class="fa-solid fa-play"></i><span>试听</span></div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <span class="theater-hint" style="min-width:48px;">音量</span>
+                <input id="theater-sound-volume" type="range" min="0" max="100" step="5" value="${Number(settings.soundVolume) || 0}" style="flex:1;">
+                <span id="theater-sound-volume-num" class="theater-hint" style="min-width:36px;text-align:right;">${Number(settings.soundVolume) || 0}</span>
+            </div>
+        </div>
+        <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-arrows-rotate"></i> 扩展管理</label>
             <div class="theater-toggle-row" style="margin-bottom:10px;">
                 <label class="theater-toggle-label"><input type="checkbox" id="theater-floating-ball-toggle" ${settings.floatingBall ? 'checked' : ''}><span>悬浮球</span></label>
@@ -910,20 +961,41 @@ function bindEvents() {
         e.stopPropagation();
         const idx = parseInt($(this).data('index'));
         while (settings.worldBookStates.length <= idx) settings.worldBookStates.push(true);
-        settings.worldBookStates[idx] = $(this).is(':checked');
-        $(this).closest('.theater-wb-entry').toggleClass('theater-wb-entry-off', !settings.worldBookStates[idx]);
+        const checked = $(this).is(':checked');
+        settings.worldBookStates[idx] = checked;
+        $(this).closest('.theater-wb-entry').toggleClass('theater-wb-entry-off', !checked);
+        const book = settings.currentWorldBook;
+        if (book) {
+            if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
+            if (!settings.worldBookStatesByBook[book]) settings.worldBookStatesByBook[book] = {};
+            const key = entryKey(settings.worldBookEntries[idx]);
+            if (checked) delete settings.worldBookStatesByBook[book][key];
+            else settings.worldBookStatesByBook[book][key] = false;
+        }
         save(); updateWBCount();
     });
     $d.off('click.twsa').on('click.twsa', '#theater-wb-select-all', () => {
         settings.worldBookStates = (settings.worldBookEntries || []).map(() => true);
         $('.theater-wb-check').prop('checked', true);
         $('.theater-wb-entry').removeClass('theater-wb-entry-off');
+        const book = settings.currentWorldBook;
+        if (book) {
+            if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
+            settings.worldBookStatesByBook[book] = {};
+        }
         save(); updateWBCount();
     });
     $d.off('click.twda').on('click.twda', '#theater-wb-deselect-all', () => {
         settings.worldBookStates = (settings.worldBookEntries || []).map(() => false);
         $('.theater-wb-check').prop('checked', false);
         $('.theater-wb-entry').addClass('theater-wb-entry-off');
+        const book = settings.currentWorldBook;
+        if (book) {
+            if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
+            const map = {};
+            (settings.worldBookEntries || []).forEach(e => { map[entryKey(e)] = false; });
+            settings.worldBookStatesByBook[book] = map;
+        }
         save(); updateWBCount();
     });
     $d.off('click.twet').on('click.twet', '.theater-wb-entry-toggle', function (e) {
@@ -1101,6 +1173,24 @@ function bindEvents() {
     // ---- Floating Ball ----
     $d.off('change.tfb').on('change.tfb', '#theater-floating-ball-toggle', function () {
         settings.floatingBall = $(this).is(':checked'); save(); createFloatingBall();
+    });
+
+    // ---- Sound ----
+    $d.off('change.tse').on('change.tse', '#theater-sound-enabled', function () {
+        settings.soundEnabled = $(this).is(':checked'); save();
+    });
+    $d.off('change.tsp').on('change.tsp', '#theater-sound-preset', function () {
+        settings.soundPreset = $(this).val(); save();
+        playNotificationSound({ force: true });
+    });
+    $d.off('input.tsv').on('input.tsv', '#theater-sound-volume', function () {
+        const v = Math.max(0, Math.min(100, parseInt($(this).val()) || 0));
+        settings.soundVolume = v;
+        $('#theater-sound-volume-num').text(v);
+        save();
+    });
+    $d.off('click.tspv').on('click.tspv', '#theater-sound-preview-btn', function () {
+        playNotificationSound({ force: true });
     });
 
     // ---- Instruction Import/Export ----
@@ -1428,6 +1518,11 @@ async function loadWorldBookList() {
     console.log(`[Theater] Found ${names.length} world books`);
 }
 
+function entryKey(e) {
+    if (e?.uid !== undefined && e?.uid !== null) return String(e.uid);
+    return 'm:' + (e?.name || '') + ':' + (e?.content || '').slice(0, 30);
+}
+
 async function onWorldBookSelect() {
     const name = $('#theater-wb-select').val();
     settings.currentWorldBook = name;
@@ -1454,13 +1549,16 @@ async function onWorldBookSelect() {
         const entries = Object.values(data.entries)
             .filter(e => e.content)
             .map(e => ({
+                uid: e.uid,
                 name: e.comment || (Array.isArray(e.key) ? e.key.join(', ') : String(e.key || '')) || '未命名',
                 content: e.content,
                 disabled: !!e.disable,  // 记录酒馆里的开关状态，方便参考
             }));
 
+        if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
+        const savedStates = settings.worldBookStatesByBook[name] || {};
         settings.worldBookEntries = entries;
-        settings.worldBookStates = entries.map(() => true);
+        settings.worldBookStates = entries.map(e => savedStates[entryKey(e)] !== false);
         save();
         refreshWBUI();
         toastr.success(`已加载 ${entries.length} 个条目`);
@@ -2050,8 +2148,9 @@ async function generateTheater() {
             $('#theater-stream-section').hide();
             $('#theater-output-section').show();
         }
-        // 不管面板在不在，都弹通知
+        // 不管面板在不在，都弹通知 + 播放提示音
         toastr.success('小剧场生成完成！点击打开面板查看', '', { timeOut: 6000 });
+        playNotificationSound();
     } catch (err) {
         if (err.name === 'AbortError') { toastr.info('已停止'); return; }
         console.error('[Theater]', err);
