@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.4.2 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.4.3 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.4.2';
+const VERSION = '2.4.3';
 const SOUNDS_BASE_URL = '/scripts/extensions/third-party/st-theater/sounds/';
 const SOUND_PRESETS = [
     { id: 'chime',  label: '铃·清脆', file: 'freesound_community-chime-sound-7143.mp3' },
@@ -485,7 +485,6 @@ function buildPopupHTML() {
             <select id="theater-wb-select" class="theater-select">
                 <option value="">-- 选择世界书 --</option>
             </select>
-            <p class="theater-hint" style="margin:6px 0 0;font-size:0.85em;opacity:0.7;">勾选状态没保留？多端使用酒馆时，换端前先刷新另一端页面。</p>
             <div class="theater-wb-entries-header" id="theater-wb-header" style="display:none;">
                 <span id="theater-wb-count" class="theater-wb-entries-count"></span>
                 <div class="theater-wb-entries-actions">
