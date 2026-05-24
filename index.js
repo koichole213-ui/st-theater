@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.4.0 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.4.1 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.4.0';
+const VERSION = '2.4.1';
 const SOUNDS_BASE_URL = '/scripts/extensions/third-party/st-theater/sounds/';
 const SOUND_PRESETS = [
     { id: 'chime',  label: '铃·清脆', file: 'freesound_community-chime-sound-7143.mp3' },
@@ -132,6 +132,8 @@ const defaultSettings = Object.freeze({
     soundEnabled: true,
     soundPreset: 'chime',
     soundVolume: 70,
+    randomEnabled: false,
+    randomScope: '__current__',  // '__current__' | '__all__' | '__none__' | 分组名
 });
 
 const SKIN_LABELS = { default: '内置默认', theater: '跟随酒馆', custom: '自定义' };
@@ -418,6 +420,7 @@ function buildPopupHTML() {
             </div>
             <div class="theater-btn-row">
                 <div id="theater-save-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-floppy-disk"></i><span>存为模板</span></div>
+                <div id="theater-random-btn" class="theater-btn generate" style="${settings.randomEnabled ? '' : 'display:none;'}"><i class="fa-solid fa-dice"></i><span>抽一个</span></div>
             </div>
             <div class="theater-btn-row">
                 <div id="theater-generate-btn" class="theater-btn primary generate">${LAMP_SVG_HTML}<span>生成</span></div>
@@ -665,6 +668,30 @@ function buildPopupHTML() {
             </div>
         </div>
         <div class="theater-section">
+            <label class="theater-label"><i class="fa-solid fa-dice"></i> 随机抽取指令</label>
+            <div class="theater-toggle-row" style="margin-bottom:10px;">
+                <label class="theater-toggle-label"><input type="checkbox" id="theater-random-enabled" ${settings.randomEnabled ? 'checked' : ''}><span>开启「抽一个」按钮</span></label>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <span class="theater-hint" style="min-width:48px;">抽取范围</span>
+                <select id="theater-random-scope" class="theater-select" style="flex:1;min-width:140px;">
+                    ${(() => {
+                        const cur = settings.randomScope || '__current__';
+                        const opts = [
+                            `<option value="__current__" ${cur === '__current__' ? 'selected' : ''}>跟随当前筛选</option>`,
+                            `<option value="__all__" ${cur === '__all__' ? 'selected' : ''}>全部模板</option>`,
+                            `<option value="__none__" ${cur === '__none__' ? 'selected' : ''}>仅未分组</option>`,
+                        ];
+                        (settings.instructionGroups || []).forEach(g => {
+                            opts.push(`<option value="${esc(g)}" ${cur === g ? 'selected' : ''}>分组：${esc(g)}</option>`);
+                        });
+                        return opts.join('');
+                    })()}
+                </select>
+            </div>
+            <p class="theater-hint" style="margin-top:6px;">开启后会在「生成」页加一个🎲按钮，点一下从所选范围里随机填一个指令到输入框。</p>
+        </div>
+        <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-arrows-rotate"></i> 扩展管理</label>
             <div class="theater-toggle-row" style="margin-bottom:10px;">
                 <label class="theater-toggle-label"><input type="checkbox" id="theater-floating-ball-toggle" ${settings.floatingBall ? 'checked' : ''}><span>悬浮球</span></label>
@@ -715,6 +742,33 @@ function groupCountsMap() {
         m[g] = (m[g] || 0) + 1;
     });
     return m;
+}
+
+function rollRandomInstruction() {
+    const templates = settings.instructionTemplates || [];
+    if (!templates.length) { toastr.warning('模板库是空的'); return; }
+
+    const scope = settings.randomScope || '__current__';
+    let pool;
+    if (scope === '__current__') {
+        const filter = settings.instructionGroupFilter || '__all__';
+        if (filter === '__all__') pool = templates;
+        else if (filter === '__none__') pool = templates.filter(t => !templateGroup(t));
+        else pool = templates.filter(t => templateGroup(t) === filter);
+    } else if (scope === '__all__') {
+        pool = templates;
+    } else if (scope === '__none__') {
+        pool = templates.filter(t => !templateGroup(t));
+    } else {
+        pool = templates.filter(t => templateGroup(t) === scope);
+    }
+
+    if (!pool.length) { toastr.warning('当前抽取范围内没有模板'); return; }
+    const t = pool[Math.floor(Math.random() * pool.length)];
+    $('#theater-instruction').val(t.content);
+    settings.lastInstruction = t.content;
+    save();
+    toastr.info(`已填入：${t.name || '未命名'}`, '', { timeOut: 3000 });
 }
 
 function renderGroupFilterOptions() {
@@ -1192,6 +1246,18 @@ function bindEvents() {
     $d.off('click.tspv').on('click.tspv', '#theater-sound-preview-btn', function () {
         playNotificationSound({ force: true });
     });
+
+    // ---- Random pick ----
+    $d.off('change.tre').on('change.tre', '#theater-random-enabled', function () {
+        settings.randomEnabled = $(this).is(':checked');
+        $('#theater-random-btn').toggle(settings.randomEnabled);
+        save();
+    });
+    $d.off('change.trs').on('change.trs', '#theater-random-scope', function () {
+        settings.randomScope = $(this).val();
+        save();
+    });
+    $d.off('click.trb').on('click.trb', '#theater-random-btn', rollRandomInstruction);
 
     // ---- Instruction Import/Export ----
     $d.off('click.timp').on('click.timp', '#theater-import-inst-btn', importInstructionTemplates);
