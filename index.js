@@ -1,8 +1,10 @@
-// 千夜浮梦 · 小剧场生成器 v2.4.3 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.4.4 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.4.3';
+const VERSION = '2.4.4';
+const REMOTE_MANIFEST_URL = 'https://raw.githubusercontent.com/koichole213-ui/st-theater/main/manifest.json';
+let latestRemoteVersion = null;
 const SOUNDS_BASE_URL = '/scripts/extensions/third-party/st-theater/sounds/';
 const SOUND_PRESETS = [
     { id: 'chime',  label: '铃·清脆', file: 'freesound_community-chime-sound-7143.mp3' },
@@ -127,6 +129,7 @@ const defaultSettings = Object.freeze({
     userPersona: '',
     worldBookEntries: [], worldBookStates: [],
     worldBookStatesByBook: {},  // { [bookName]: { [entryKey]: false } }，缺省 true
+    worldBookKnownEntriesByBook: {},  // { [bookName]: [entryKey, ...] }，记录"曾见过"的 key，用来识别新条目
     currentWorldBook: '',
     floatingBall: false,
     soundEnabled: true,
@@ -175,8 +178,43 @@ async function init() {
     applyCustomCSS();
     // 悬浮球延迟创建，避免干扰其他插件初始化
     setTimeout(() => { try { createFloatingBall(); } catch (e) { console.warn('[Theater] Floating ball error:', e); } }, 2000);
+    // 后台检查 github 上的最新版本，仅用于在「设置」tab 旁挂 new 标记
+    setTimeout(() => { checkRemoteVersion(); }, 3000);
     console.log(`[Theater] v${VERSION} loaded`);
     console.log(`[Theater] 🐾 禾禾的千夜浮梦，麓克永远在山脚下等你。`);
+}
+
+function compareVersion(a, b) {
+    const pa = String(a).split('.').map(n => parseInt(n) || 0);
+    const pb = String(b).split('.').map(n => parseInt(n) || 0);
+    const len = Math.max(pa.length, pb.length);
+    for (let i = 0; i < len; i++) {
+        const x = pa[i] || 0, y = pb[i] || 0;
+        if (x > y) return 1;
+        if (x < y) return -1;
+    }
+    return 0;
+}
+
+async function checkRemoteVersion() {
+    try {
+        const resp = await fetch(`${REMOTE_MANIFEST_URL}?_=${Date.now()}`, { cache: 'no-store' });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data?.version) {
+            latestRemoteVersion = String(data.version);
+            console.log(`[Theater] remote v${latestRemoteVersion}, local v${VERSION}`);
+            // 如果 popup 已打开，给「设置」tab 实时挂个 dot
+            if (compareVersion(latestRemoteVersion, VERSION) > 0) {
+                const $tab = $('.theater-tab[data-tab="config"]');
+                if ($tab.length && !$tab.find('.theater-tab-new-badge').length) {
+                    $tab.append(`<span class="theater-tab-new-badge" title="发现新版本 v${latestRemoteVersion}"></span>`);
+                }
+            }
+        }
+    } catch (e) {
+        // 静默失败：GFW / 网络抖动 / github 抽风都不打扰用户
+    }
 }
 
 // 把用户 CSS 限定在 .theater-popup 容器内，避免污染酒馆主界面。
@@ -405,7 +443,11 @@ function buildPopupHTML() {
         <div class="theater-tab" data-tab="rules">规则</div>
         <div class="theater-tab" data-tab="history">历史</div>
         <div class="theater-tab" data-tab="theme">美化</div>
-        <div class="theater-tab" data-tab="config">设置</div>
+        <div class="theater-tab" data-tab="config">设置${
+            latestRemoteVersion && compareVersion(latestRemoteVersion, VERSION) > 0
+                ? `<span class="theater-tab-new-badge" title="发现新版本 v${esc(latestRemoteVersion)}"></span>`
+                : ''
+        }</div>
     </div>
     <div class="theater-panels-wrapper">
 
@@ -1622,9 +1664,22 @@ async function onWorldBookSelect() {
             }));
 
         if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
+        if (!settings.worldBookKnownEntriesByBook) settings.worldBookKnownEntriesByBook = {};
         const savedStates = settings.worldBookStatesByBook[name] || {};
+        const knownKeys = settings.worldBookKnownEntriesByBook[name];
+        const hasMemory = Array.isArray(knownKeys);
+        const knownSet = hasMemory ? new Set(knownKeys) : null;
+
         settings.worldBookEntries = entries;
-        settings.worldBookStates = entries.map(e => savedStates[entryKey(e)] !== false);
+        settings.worldBookStates = entries.map(e => {
+            const k = entryKey(e);
+            // 已经记录过本书的 key 列表，且当前 key 没出现过 → 新条目，默认不勾选
+            if (hasMemory && !knownSet.has(k)) return false;
+            // 已知条目（或从未记录过的旧版本场景）→ 按保存来，缺省勾选
+            return savedStates[k] !== false;
+        });
+        // 把当前所有 key 写回 known 列表，新条目下次就不再被当成"新"
+        settings.worldBookKnownEntriesByBook[name] = entries.map(e => entryKey(e));
         save();
         refreshWBUI();
         toastr.success(`已加载 ${entries.length} 个条目`);

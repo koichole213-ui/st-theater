@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v2.4.3
+/* 千夜浮梦 · 小剧场生成器 v2.4.4
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -265,6 +265,30 @@
     color: var(--t-fg);
     border-color: var(--t-border);
     box-shadow: none;
+}
+
+/* tab 上的 "new" 小红点：仅在远端版本更新时挂出来 */
+.theater-tab-new-badge {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--t-accent);
+    margin-left: 5px;
+    margin-top: 3px;
+    vertical-align: top;
+    box-shadow: 0 0 0 0 var(--t-accent);
+    animation: theater-new-pulse 2.2s ease-out infinite;
+    pointer-events: auto;
+}
+.theater-tab.active .theater-tab-new-badge {
+    background: var(--t-on-accent);
+    box-shadow: 0 0 0 0 var(--t-on-accent);
+}
+@keyframes theater-new-pulse {
+    0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--t-accent) 55%, transparent); opacity: 1; }
+    70%  { box-shadow: 0 0 0 5px transparent; opacity: 0.7; }
+    100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
 }
 
 /* ============================================================
