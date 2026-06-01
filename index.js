@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.4.7 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.5.0 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.4.7';
+const VERSION = '2.5.0';
 const REMOTE_MANIFEST_URL = 'https://raw.githubusercontent.com/koichole213-ui/st-theater/main/manifest.json';
 let latestRemoteVersion = null;
 const SOUNDS_BASE_URL = '/scripts/extensions/third-party/st-theater/sounds/';
@@ -2432,7 +2432,7 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
     const startedAt = Date.now();
     const signal = abortController?.signal;
 
-    onChunk('（已开始生成，请稍候…长 context + Claude 慢吐 token 可能要几分钟。点"停止"可随时中断；超过 5 分钟会自动放弃。）');
+    onChunk('已开始生成，可能要几分钟。点「停止」可随时中断，超过 5 分钟会自动放弃。');
 
     // 心跳：每 5 秒刷新已等时长，让用户看到时间在走，避免误以为卡死
     const heartbeat = setInterval(() => {
@@ -2440,7 +2440,7 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
         const mins = Math.floor(elapsed / 60);
         const secs = elapsed % 60;
         const timeStr = mins ? `${mins} 分 ${secs} 秒` : `${elapsed} 秒`;
-        onChunk(`（已等待 ${timeStr}…主 API 流式管道不暴露逐字 chunk。Claude 处理长 prompt + 公益站排队都会拖慢，再等等。超过 5 分钟会自动放弃。）`);
+        onChunk(`已等待 ${timeStr}…`);
     }, 5000);
 
     // 用户按"停止"时，让 race 立刻退出（generateRaw 即便后台还在跑，前端也立刻解锁）
