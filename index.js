@@ -1,9 +1,16 @@
-// 千夜浮梦 · 小剧场生成器 v2.5.1 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.5.2 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.5.1';
-const REMOTE_MANIFEST_URL = 'https://raw.githubusercontent.com/koichole213-ui/st-theater/main/manifest.json';
+const VERSION = '2.5.2';
+const REMOTE_MANIFEST_URLS = [
+    // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
+    'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
+    // ghproxy 镜像：国内备胎
+    'https://ghproxy.net/https://raw.githubusercontent.com/koichole213-ui/st-theater/main/manifest.json',
+    // 原 raw：有梯子时能用，海外用户主路
+    'https://raw.githubusercontent.com/koichole213-ui/st-theater/main/manifest.json',
+];
 let latestRemoteVersion = null;
 const SOUNDS_BASE_URL = '/scripts/extensions/third-party/st-theater/sounds/';
 const SOUND_PRESETS = [
@@ -197,23 +204,29 @@ function compareVersion(a, b) {
 }
 
 async function checkRemoteVersion() {
+    // 三个镜像并行 race——谁先返回有效 manifest 就用谁
     try {
-        const resp = await fetch(`${REMOTE_MANIFEST_URL}?_=${Date.now()}`, { cache: 'no-store' });
-        if (!resp.ok) return;
-        const data = await resp.json();
-        if (data?.version) {
-            latestRemoteVersion = String(data.version);
-            console.log(`[Theater] remote v${latestRemoteVersion}, local v${VERSION}`);
-            // 如果 popup 已打开，给「设置」tab 实时挂个 dot
-            if (compareVersion(latestRemoteVersion, VERSION) > 0) {
-                const $tab = $('.theater-tab[data-tab="config"]');
-                if ($tab.length && !$tab.find('.theater-tab-new-badge').length) {
-                    $tab.append(`<span class="theater-tab-new-badge" title="发现新版本 v${latestRemoteVersion}"></span>`);
-                }
+        const probes = REMOTE_MANIFEST_URLS.map(async url => {
+            const resp = await fetch(`${url}?_=${Date.now()}`, { cache: 'no-store' });
+            if (!resp.ok) throw new Error(`${url}: ${resp.status}`);
+            const data = await resp.json();
+            if (!data?.version) throw new Error(`${url}: no version field`);
+            return { url, data };
+        });
+        const { url, data } = await Promise.any(probes);
+        latestRemoteVersion = String(data.version);
+        const host = (() => { try { return new URL(url).host; } catch { return url; } })();
+        console.log(`[Theater] remote v${latestRemoteVersion}, local v${VERSION} (via ${host})`);
+        // popup 已经打开过的话给「设置」tab 实时挂个 dot；没打开过的话 buildPopupHTML 下次会读 latestRemoteVersion 渲染
+        if (compareVersion(latestRemoteVersion, VERSION) > 0) {
+            const $tab = $('.theater-tab[data-tab="config"]');
+            if ($tab.length && !$tab.find('.theater-tab-new-badge').length) {
+                $tab.append(`<span class="theater-tab-new-badge" title="发现新版本 v${latestRemoteVersion}"></span>`);
             }
         }
     } catch (e) {
-        // 静默失败：GFW / 网络抖动 / github 抽风都不打扰用户
+        // 全部 mirror 都挂了——网络抽风或者全被墙
+        console.log('[Theater] update check failed: all mirrors unreachable');
     }
 }
 
