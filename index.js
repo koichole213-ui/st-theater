@@ -689,7 +689,6 @@ function buildPopupHTML() {
     <div class="theater-panel" data-panel="config">
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-plug"></i> API 配置</label>
-            <p class="theater-hint" style="margin-bottom:10px;">填一个 OpenAI 兼容的 endpoint（公益站 / OpenRouter / Anthropic / 自部署都行）。走逐字流式输出，不会跟酒馆主对话抢生成。</p>
             <div id="theater-custom-api-area" style="margin-top:10px;">
                 <input id="theater-api-url" class="theater-input" placeholder="API URL" value="${esc(settings.apiUrl || '')}">
                 <input id="theater-api-key" class="theater-input" type="password" placeholder="API Key" value="${esc(settings.apiKey || '')}" style="margin-top:6px;">
