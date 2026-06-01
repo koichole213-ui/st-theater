@@ -1036,6 +1036,25 @@
 }
 .theater-wb-entry-toggle:hover,
 .theater-preset-entry-toggle:hover { color: var(--t-fg); }
+.theater-wb-entry-delete {
+    flex-shrink: 0;
+    color: var(--t-fg-faint);
+    padding: 2px var(--t-space-1);
+    cursor: pointer;
+    opacity: 0.5;
+    transition: color var(--t-dur-fast) var(--t-ease), opacity var(--t-dur-fast) var(--t-ease);
+}
+.theater-wb-entry-delete:hover {
+    color: #c0635a;
+    opacity: 1;
+}
+.theater-wb-clear-manual {
+    color: var(--t-fg-faint);
+    font-size: var(--t-text-xs);
+}
+.theater-wb-clear-manual:hover {
+    color: #c0635a;
+}
 .theater-wb-entry-body,
 .theater-preset-entry-body { border-top: 1px solid var(--t-border); }
 .theater-wb-entry-content {

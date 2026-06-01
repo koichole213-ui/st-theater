@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.4.6 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.4.7 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.4.6';
+const VERSION = '2.4.7';
 const REMOTE_MANIFEST_URL = 'https://raw.githubusercontent.com/koichole213-ui/st-theater/main/manifest.json';
 let latestRemoteVersion = null;
 const SOUNDS_BASE_URL = '/scripts/extensions/third-party/st-theater/sounds/';
@@ -540,7 +540,10 @@ function buildPopupHTML() {
             <details class="theater-wb-manual-details">
                 <summary class="theater-wb-manual-summary"><i class="fa-solid fa-plus"></i> 手动添加条目</summary>
                 <textarea id="theater-wb-manual" class="theater-textarea" rows="3" placeholder="粘贴世界书内容，空行分隔多个条目…" style="margin-top:8px;"></textarea>
-                <div class="theater-btn-row"><div id="theater-wb-parse-btn" class="theater-btn"><i class="fa-solid fa-plus"></i><span>添加</span></div></div>
+                <div class="theater-btn-row" style="align-items:center; gap:var(--t-space-3);">
+                    <div id="theater-wb-parse-btn" class="theater-btn"><i class="fa-solid fa-plus"></i><span>添加</span></div>
+                    <span id="theater-wb-clear-manual" class="theater-wb-action-link theater-wb-clear-manual" style="display:none;"><i class="fa-solid fa-trash-can"></i> 清空已添加的手动条目</span>
+                </div>
             </details>
         </div>
     </div>
@@ -891,11 +894,16 @@ function renderWBEntries() {
     if (!entries.length) return '<p class="theater-empty">暂无条目</p>';
     return entries.map((entry, i) => {
         const checked = (i < states.length) ? (states[i] !== false) : true;
+        const isManual = entry.uid === undefined || entry.uid === null;
+        const deleteBtn = isManual
+            ? `<span class="theater-wb-entry-delete" data-index="${i}" title="删除此手动添加的条目"><i class="fa-solid fa-trash-can"></i></span>`
+            : '';
         return `
 <div class="theater-wb-entry ${checked ? '' : 'theater-wb-entry-off'}">
     <div class="theater-wb-entry-header" data-index="${i}">
         <input type="checkbox" class="theater-wb-check" data-index="${i}" ${checked ? 'checked' : ''}>
         <span class="theater-wb-entry-name">${esc(entry.name || '#' + (i + 1))}</span>
+        ${deleteBtn}
         <span class="theater-wb-entry-toggle" data-index="${i}"><i class="fa-solid fa-chevron-right"></i></span>
     </div>
     <div class="theater-wb-entry-body" data-index="${i}" style="display:none;">
@@ -903,6 +911,10 @@ function renderWBEntries() {
     </div>
 </div>`;
     }).join('');
+}
+
+function hasManualEntries() {
+    return (settings.worldBookEntries || []).some(e => e.uid === undefined || e.uid === null);
 }
 
 function updateWBCount() {
@@ -920,6 +932,7 @@ function updateWBCount() {
 function refreshWBUI() {
     $('#theater-worldbook-list').html(renderWBEntries());
     updateWBCount();
+    $('#theater-wb-clear-manual').toggle(hasManualEntries());
 }
 
 // ============================================================
@@ -1101,8 +1114,44 @@ function bindEvents() {
         $(this).find('i').toggleClass('fa-chevron-right fa-chevron-down');
     });
     $d.off('click.tweh').on('click.tweh', '.theater-wb-entry-header', function (e) {
-        if ($(e.target).is('input[type="checkbox"]') || $(e.target).closest('.theater-wb-entry-toggle').length) return;
+        if ($(e.target).is('input[type="checkbox"]') ||
+            $(e.target).closest('.theater-wb-entry-toggle').length ||
+            $(e.target).closest('.theater-wb-entry-delete').length) return;
         $(this).find('.theater-wb-entry-toggle').trigger('click');
+    });
+    // World book - delete a single manually-added entry
+    $d.off('click.twed').on('click.twed', '.theater-wb-entry-delete', async function (e) {
+        e.stopPropagation();
+        const idx = parseInt($(this).data('index'));
+        const entry = (settings.worldBookEntries || [])[idx];
+        if (!entry) return;
+        const { Popup } = SillyTavern.getContext();
+        const ok = await Popup.show.confirm(`删除「${entry.name || '#' + (idx + 1)}」？`, '此条目是手动添加的，删除后不可恢复。');
+        if (!ok) return;
+        settings.worldBookEntries.splice(idx, 1);
+        if (Array.isArray(settings.worldBookStates)) settings.worldBookStates.splice(idx, 1);
+        save();
+        refreshWBUI();
+    });
+    // World book - clear ALL manually-added entries (世界书来的不动)
+    $d.off('click.twcm').on('click.twcm', '#theater-wb-clear-manual', async function () {
+        const manualCount = (settings.worldBookEntries || []).filter(e => e.uid === undefined || e.uid === null).length;
+        if (!manualCount) return;
+        const { Popup } = SillyTavern.getContext();
+        const ok = await Popup.show.confirm(`清空 ${manualCount} 条手动添加的条目？`, '世界书来的条目不受影响。');
+        if (!ok) return;
+        const newEntries = [];
+        const newStates = [];
+        (settings.worldBookEntries || []).forEach((e, i) => {
+            if (e.uid !== undefined && e.uid !== null) {
+                newEntries.push(e);
+                newStates.push((settings.worldBookStates || [])[i] !== false);
+            }
+        });
+        settings.worldBookEntries = newEntries;
+        settings.worldBookStates = newStates;
+        save();
+        refreshWBUI();
     });
     // World book - manual add
     $d.off('click.twp').on('click.twp', '#theater-wb-parse-btn', function () {
@@ -2378,25 +2427,55 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
         { role: 'user', content: prompt }
     ];
 
-    // generateRaw 内部流式但不暴露 chunk，给个静态提示就好
-    onChunk('（生成中…主 API 流式管道不暴露逐字 chunk，请稍候）');
+    // 5 分钟兜底超时——长 context + 公益站排队真有可能跑很久，但超过 5 分钟基本就是卡了
+    const TIMEOUT_MS = 5 * 60 * 1000;
+    const startedAt = Date.now();
+    const signal = abortController?.signal;
+
+    onChunk('（已开始生成，请稍候…长 context + Claude 慢吐 token 可能要几分钟。点"停止"可随时中断；超过 5 分钟会自动放弃。）');
+
+    // 心跳：每 5 秒刷新已等时长，让用户看到时间在走，避免误以为卡死
+    const heartbeat = setInterval(() => {
+        const elapsed = Math.round((Date.now() - startedAt) / 1000);
+        const mins = Math.floor(elapsed / 60);
+        const secs = elapsed % 60;
+        const timeStr = mins ? `${mins} 分 ${secs} 秒` : `${elapsed} 秒`;
+        onChunk(`（已等待 ${timeStr}…主 API 流式管道不暴露逐字 chunk。Claude 处理长 prompt + 公益站排队都会拖慢，再等等。超过 5 分钟会自动放弃。）`);
+    }, 5000);
+
+    // 用户按"停止"时，让 race 立刻退出（generateRaw 即便后台还在跑，前端也立刻解锁）
+    const abortPromise = signal
+        ? new Promise((_, reject) => {
+            if (signal.aborted) reject(new DOMException('Aborted', 'AbortError'));
+            else signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        })
+        : new Promise(() => {});
+
+    const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`主 API ${Math.round(TIMEOUT_MS / 60000)} 分钟未返回，已放弃等待。建议在【设置】启用"自定义 API"直接配置 endpoint，能拿到真正的逐字流式输出。`)), TIMEOUT_MS)
+    );
 
     let result;
     try {
-        result = await window.TavernHelper.generateRaw({
-            user_input: '',
-            ordered_prompts: messages,
-            overrides: {
-                world_info_before: '', world_info_after: '',
-                persona_description: '', char_description: '',
-                char_personality: '', scenario: '',
-                dialogue_examples: '',
-                chat_history: { prompts: [], with_depth_entries: false, author_note: '' }
-            },
-            injects: [],
-            max_chat_history: 0,
-            should_stream: true,
-        });
+        result = await Promise.race([
+            window.TavernHelper.generateRaw({
+                user_input: '',
+                ordered_prompts: messages,
+                overrides: {
+                    world_info_before: '', world_info_after: '',
+                    persona_description: '', char_description: '',
+                    char_personality: '', scenario: '',
+                    dialogue_examples: '',
+                    chat_history: { prompts: [], with_depth_entries: false, author_note: '' }
+                },
+                injects: [],
+                max_chat_history: 0,
+                should_stream: true,
+                signal,  // 新版 TavernHelper 支持，旧版会忽略此字段
+            }),
+            abortPromise,
+            timeoutPromise,
+        ]);
     } catch (e) {
         if (e?.name === 'AbortError') throw e;
         const msg = String(e?.message || e || '');
@@ -2411,6 +2490,8 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
             throw new Error(tip);
         }
         throw e;
+    } finally {
+        clearInterval(heartbeat);
     }
 
     if (!result) {
