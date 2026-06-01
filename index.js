@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.5.0 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.5.1 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.5.0';
+const VERSION = '2.5.1';
 const REMOTE_MANIFEST_URL = 'https://raw.githubusercontent.com/koichole213-ui/st-theater/main/manifest.json';
 let latestRemoteVersion = null;
 const SOUNDS_BASE_URL = '/scripts/extensions/third-party/st-theater/sounds/';
@@ -2406,35 +2406,117 @@ async function generateTheater() {
 }
 
 // ============================================================
-// Main API generation — 走 TavernHelper.generateRaw + should_stream
+// Main API generation
 //
-// 跟 st-persona-weaver 老师同款方案。关键点：
-//   - generateRaw 内部已经处理了 key/source/model/url，我们不用碰
-//   - overrides 全部清零 = 完全独立生成，不污染上下文
-//   - should_stream:true = 走流式管道，避免 Cloudflare 524 timeout
-//   - 不抢主对话 generation lock（generateRaw 设计如此）
-//   - 返回的是累积好的完整字符串
+// 路由：
+//   A. ChatCompletionService.processRequest（ST 1.13+ 官方扩展入口）
+//      → 走 quiet 模式 = 不劫持小飞机
+//      → 自带真流式 = 用户能看到逐字生成，无需假心跳
+//   B. TavernHelper.generateRaw（兜底）
+//      → 会劫持小飞机（generateRaw 内部走主 generate）
+//      → 不暴露 chunk，所以加心跳让用户看到时间在走
+//      → 5 分钟超时 + abort race 兜底
 // ============================================================
 async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
-    if (!window.TavernHelper || typeof window.TavernHelper.generateRaw !== 'function') {
-        const tip = '需要安装 JS-Slash-Runner / TavernHelper 扩展才能用主 API。\n\n或在插件【设置】里启用 "自定义 API" 单独配置 endpoint 和 key。';
-        onChunk(tip);
-        throw new Error('TavernHelper.generateRaw unavailable');
-    }
-
     const messages = [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt }
     ];
+    const signal = abortController?.signal;
+    const oai = ctx?.oai_settings || globalThis.oai_settings;
+    const maxTokens = oai?.openai_max_tokens ?? 4096;
 
-    // 5 分钟兜底超时——长 context + 公益站排队真有可能跑很久，但超过 5 分钟基本就是卡了
+    // 路径 A：ChatCompletionService（不劫持小飞机 + 真流式，首选）
+    const CCS = ctx?.ChatCompletionService
+        || window?.SillyTavern?.getContext?.()?.ChatCompletionService;
+    if (CCS && typeof CCS.processRequest === 'function') {
+        return await callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk);
+    }
+
+    // 路径 B：TavernHelper.generateRaw（兜底，会劫持小飞机但功能可用）
+    if (!window.TavernHelper || typeof window.TavernHelper.generateRaw !== 'function') {
+        const tip = '酒馆既不支持 ChatCompletionService（版本太旧）也没装 TavernHelper。\n\n请在插件【设置】里启用 "自定义 API" 单独配置 endpoint 和 key。';
+        onChunk(tip);
+        throw new Error('No main API path available');
+    }
+    return await callViaGenerateRaw(messages, signal, onChunk);
+}
+
+// 通过 ChatCompletionService 走 quiet 生成——不劫持小飞机，自带真流式
+async function callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk) {
+    onChunk('已开始生成…');
+    let result;
+    try {
+        // 两种签名兼容：
+        //   ST 1.13~1.17: processRequest(data, {signal}, extractData) — signal 藏在 options
+        //   ST 1.18+:     processRequest(data, options, extractData, signal) — signal 独立参数
+        // 同时传，新老 ST 各取所需，互不干扰
+        result = await CCS.processRequest(
+            { messages, max_tokens: maxTokens, stream: true },
+            { signal },
+            /*extractData=*/false,
+            signal,
+        );
+    } catch (e) {
+        throwFriendlyMainApi(e, onChunk);
+    }
+
+    // stream:true 时 result 是个 thunk，调用得到 async iterable
+    if (typeof result === 'function') {
+        try {
+            return await consumeStreamThunk(result, onChunk);
+        } catch (e) {
+            if (e?.name === 'AbortError') throw e;
+            throwFriendlyMainApi(e, onChunk);
+        }
+    }
+
+    // 非流式 fallback
+    const txt = typeof result === 'string'
+        ? result
+        : (result?.text || result?.content || result?.choices?.[0]?.message?.content || '');
+    if (!txt) throw new Error('ChatCompletionService 返回空');
+    onChunk(txt);
+    return txt;
+}
+
+async function consumeStreamThunk(streamThunk, onChunk) {
+    let full = '';
+    for await (const chunk of streamThunk()) {
+        let delta = '';
+        if (chunk == null) continue;
+        if (typeof chunk === 'string') delta = chunk;
+        else if (typeof chunk.text === 'string') delta = chunk.text;
+        else if (typeof chunk.content === 'string') delta = chunk.content;
+        if (delta) { full += delta; onChunk(full); }
+    }
+    if (!full) throw new Error('流式返回空');
+    return full;
+}
+
+function throwFriendlyMainApi(e, onChunk) {
+    if (e?.name === 'AbortError') throw e;
+    const msg = String(e?.message || e || '');
+    if (/api[_\s]?key[_\s]?missing|401|unauthorized/i.test(msg)) {
+        const tip = 'API Key 未保存到酒馆。\n\n去酒馆 API 设置面板把 key 填进输入框后，点旁边的【💾 保存】按钮，让酒馆把它存进 secrets，再来生成。';
+        onChunk(tip);
+        throw new Error(tip);
+    }
+    if (/502|524|529|gateway|timeout|ECONNRESET|socket hang up/i.test(msg)) {
+        const tip = `主 API 网关错误：${msg.substring(0, 200)}\n\n建议在插件【设置】启用 "自定义 API" 直接配置 endpoint。`;
+        onChunk(tip);
+        throw new Error(tip);
+    }
+    throw e;
+}
+
+// 通过 TavernHelper.generateRaw 生成——会劫持小飞机，所以加心跳/超时/abort race 兜底
+async function callViaGenerateRaw(messages, signal, onChunk) {
     const TIMEOUT_MS = 5 * 60 * 1000;
     const startedAt = Date.now();
-    const signal = abortController?.signal;
 
     onChunk('已开始生成，可能要几分钟。点「停止」可随时中断，超过 5 分钟会自动放弃。');
 
-    // 心跳：每 5 秒刷新已等时长，让用户看到时间在走，避免误以为卡死
     const heartbeat = setInterval(() => {
         const elapsed = Math.round((Date.now() - startedAt) / 1000);
         const mins = Math.floor(elapsed / 60);
@@ -2443,7 +2525,6 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
         onChunk(`已等待 ${timeStr}…`);
     }, 5000);
 
-    // 用户按"停止"时，让 race 立刻退出（generateRaw 即便后台还在跑，前端也立刻解锁）
     const abortPromise = signal
         ? new Promise((_, reject) => {
             if (signal.aborted) reject(new DOMException('Aborted', 'AbortError'));
@@ -2452,7 +2533,7 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
         : new Promise(() => {});
 
     const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`主 API ${Math.round(TIMEOUT_MS / 60000)} 分钟未返回，已放弃等待。建议在【设置】启用"自定义 API"直接配置 endpoint，能拿到真正的逐字流式输出。`)), TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`主 API ${Math.round(TIMEOUT_MS / 60000)} 分钟未返回，已放弃等待。建议在【设置】启用"自定义 API"直接配置 endpoint。`)), TIMEOUT_MS)
     );
 
     let result;
@@ -2471,25 +2552,14 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
                 injects: [],
                 max_chat_history: 0,
                 should_stream: true,
-                signal,  // 新版 TavernHelper 支持，旧版会忽略此字段
+                signal,
             }),
             abortPromise,
             timeoutPromise,
         ]);
     } catch (e) {
         if (e?.name === 'AbortError') throw e;
-        const msg = String(e?.message || e || '');
-        if (/api[_\s]?key|401|unauthorized/i.test(msg)) {
-            const tip = 'API Key 未保存到酒馆。\n\n去酒馆 API 设置面板把 key 填进输入框后，点旁边的【💾 保存】按钮，让酒馆把它存进 secrets，再来生成。';
-            onChunk(tip);
-            throw new Error(tip);
-        }
-        if (/502|524|529|gateway|timeout|ECONNRESET|socket hang up/i.test(msg)) {
-            const tip = `主 API 网关错误：${msg.substring(0, 200)}\n\n建议在插件【设置】启用 "自定义 API" 直接配置 endpoint。`;
-            onChunk(tip);
-            throw new Error(tip);
-        }
-        throw e;
+        throwFriendlyMainApi(e, onChunk);
     } finally {
         clearInterval(heartbeat);
     }
