@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.5.3 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.6.0 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.5.3';
+const VERSION = '2.6.0';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -132,7 +132,7 @@ const defaultSettings = Object.freeze({
     interactiveMode: false,
     customCSS: '',
     skinMode: 'default',  // 'default' (内置粉彩) | 'theater' (跟随酒馆) | 'custom' (用户CSS接管)
-    useCustomAPI: false, apiUrl: '', apiKey: '', apiModel: '',
+    apiUrl: '', apiKey: '', apiModel: '',
     userPersona: '',
     worldBookEntries: [], worldBookStates: [],
     worldBookStatesByBook: {},  // { [bookName]: { [entryKey]: false } }，缺省 true
@@ -688,13 +688,9 @@ function buildPopupHTML() {
     <!-- ===== 6. 设置 ===== -->
     <div class="theater-panel" data-panel="config">
         <div class="theater-section">
-            <label class="theater-label"><i class="fa-solid fa-plug"></i> API 来源</label>
-            <select id="theater-api-select" class="theater-select">
-                <option value="main" ${!settings.useCustomAPI ? 'selected' : ''}>主 API（跟随酒馆连接）</option>
-                <option value="custom" ${settings.useCustomAPI ? 'selected' : ''}>独立 API</option>
-            </select>
-            <p class="theater-hint" style="margin-top:6px;">均支持流式传输。</p>
-            <div id="theater-custom-api-area" style="${settings.useCustomAPI ? '' : 'display:none'}; margin-top:10px;">
+            <label class="theater-label"><i class="fa-solid fa-plug"></i> API 配置</label>
+            <p class="theater-hint" style="margin-bottom:10px;">填一个 OpenAI 兼容的 endpoint（公益站 / OpenRouter / Anthropic / 自部署都行）。走逐字流式输出，不会跟酒馆主对话抢生成。</p>
+            <div id="theater-custom-api-area" style="margin-top:10px;">
                 <input id="theater-api-url" class="theater-input" placeholder="API URL" value="${esc(settings.apiUrl || '')}">
                 <input id="theater-api-key" class="theater-input" type="password" placeholder="API Key" value="${esc(settings.apiKey || '')}" style="margin-top:6px;">
                 <div style="margin-top:6px;">
@@ -1305,11 +1301,6 @@ function bindEvents() {
     });
 
     // ---- Config ----
-    $d.off('change.tam').on('change.tam', '#theater-api-select', function () {
-        settings.useCustomAPI = $(this).val() === 'custom';
-        $('#theater-custom-api-area').toggle(settings.useCustomAPI);
-        save();
-    });
     $d.off('click.tsa').on('click.tsa', '#theater-save-api-btn', function () {
         settings.apiUrl = $('#theater-api-url').val().trim().replace(/\/+$/, '');
         settings.apiKey = $('#theater-api-key').val().trim();
@@ -2376,12 +2367,11 @@ async function generateTheater() {
     };
 
     try {
-        let result;
-        if (settings.useCustomAPI && settings.apiUrl && settings.apiKey && settings.apiModel) {
-            result = await callCustomAPIStream(systemPrompt, prompt, onChunk);
-        } else {
-            result = await generateWithMainAPI(ctx, systemPrompt, prompt, onChunk);
+        if (!settings.apiUrl || !settings.apiKey || !settings.apiModel) {
+            toastr.warning('请先在【设置】里填好 API URL、Key、模型再生成', '', { timeOut: 5000 });
+            return;
         }
+        const result = await callCustomAPIStream(systemPrompt, prompt, onChunk);
         if (!result) { toastr.error('API未返回内容'); return; }
         lastGeneratedHtml = extractHtml(result);
 
@@ -2416,191 +2406,6 @@ async function generateTheater() {
         }
         abortController = null;
     }
-}
-
-// ============================================================
-// Main API generation
-//
-// 路由：
-//   A. ChatCompletionService.processRequest（ST 1.13+ 官方扩展入口）
-//      → 走 quiet 模式 = 不劫持小飞机
-//      → 自带真流式 = 用户能看到逐字生成，无需假心跳
-//   B. TavernHelper.generateRaw（兜底）
-//      → 会劫持小飞机（generateRaw 内部走主 generate）
-//      → 不暴露 chunk，所以加心跳让用户看到时间在走
-//      → 5 分钟超时 + abort race 兜底
-// ============================================================
-async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
-    const messages = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: prompt }
-    ];
-    const signal = abortController?.signal;
-    const oai = ctx?.oai_settings || globalThis.oai_settings;
-    const maxTokens = oai?.openai_max_tokens ?? 4096;
-
-    // 路径 A：ChatCompletionService（不劫持小飞机 + 真流式，首选）
-    const CCS = ctx?.ChatCompletionService
-        || window?.SillyTavern?.getContext?.()?.ChatCompletionService;
-    if (CCS && typeof CCS.processRequest === 'function') {
-        return await callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk);
-    }
-
-    // 路径 B：TavernHelper.generateRaw（兜底，会劫持小飞机但功能可用）
-    if (!window.TavernHelper || typeof window.TavernHelper.generateRaw !== 'function') {
-        const tip = '酒馆既不支持 ChatCompletionService（版本太旧）也没装 TavernHelper。\n\n请在插件【设置】里启用 "自定义 API" 单独配置 endpoint 和 key。';
-        onChunk(tip);
-        throw new Error('No main API path available');
-    }
-    return await callViaGenerateRaw(messages, signal, onChunk);
-}
-
-// 通过 ChatCompletionService 走 quiet 生成——不劫持小飞机，自带真流式
-async function callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk) {
-    // ST 1.18 后端校验 chat_completion_source + model 必填，没有就 400。
-    // 从酒馆当前配置自动取。
-    const ctx = SillyTavern.getContext();
-    const oai = ctx?.oai_settings || globalThis.oai_settings;
-    const source = oai?.chat_completion_source;
-    const model = ctx?.getChatCompletionModel ? ctx.getChatCompletionModel() : null;
-    if (!source || !model) {
-        const tip = '酒馆 Chat Completion 还没选好 API source 或模型。\n\n去酒馆 API 设置面板把 source（如 Claude / OpenAI / Custom）和 model 都选好，再回来生成。';
-        onChunk(tip);
-        throw new Error(tip);
-    }
-
-    onChunk('已开始生成…');
-    let result;
-    try {
-        // 两种签名兼容：
-        //   ST 1.13~1.17: processRequest(data, {signal}, extractData) — signal 藏在 options
-        //   ST 1.18+:     processRequest(data, options, extractData, signal) — signal 独立参数
-        // 同时传，新老 ST 各取所需，互不干扰
-        result = await CCS.processRequest(
-            {
-                messages,
-                model,
-                chat_completion_source: source,
-                max_tokens: maxTokens,
-                stream: true,
-            },
-            { signal },
-            /*extractData=*/false,
-            signal,
-        );
-    } catch (e) {
-        throwFriendlyMainApi(e, onChunk);
-    }
-
-    // stream:true 时 result 是个 thunk，调用得到 async iterable
-    if (typeof result === 'function') {
-        try {
-            return await consumeStreamThunk(result, onChunk);
-        } catch (e) {
-            if (e?.name === 'AbortError') throw e;
-            throwFriendlyMainApi(e, onChunk);
-        }
-    }
-
-    // 非流式 fallback
-    const txt = typeof result === 'string'
-        ? result
-        : (result?.text || result?.content || result?.choices?.[0]?.message?.content || '');
-    if (!txt) throw new Error('ChatCompletionService 返回空');
-    onChunk(txt);
-    return txt;
-}
-
-async function consumeStreamThunk(streamThunk, onChunk) {
-    let full = '';
-    for await (const chunk of streamThunk()) {
-        let delta = '';
-        if (chunk == null) continue;
-        if (typeof chunk === 'string') delta = chunk;
-        else if (typeof chunk.text === 'string') delta = chunk.text;
-        else if (typeof chunk.content === 'string') delta = chunk.content;
-        if (delta) { full += delta; onChunk(full); }
-    }
-    if (!full) throw new Error('流式返回空');
-    return full;
-}
-
-function throwFriendlyMainApi(e, onChunk) {
-    if (e?.name === 'AbortError') throw e;
-    const msg = String(e?.message || e || '');
-    if (/api[_\s]?key[_\s]?missing|401|unauthorized/i.test(msg)) {
-        const tip = 'API Key 未保存到酒馆。\n\n去酒馆 API 设置面板把 key 填进输入框后，点旁边的【💾 保存】按钮，让酒馆把它存进 secrets，再来生成。';
-        onChunk(tip);
-        throw new Error(tip);
-    }
-    if (/502|524|529|gateway|timeout|ECONNRESET|socket hang up/i.test(msg)) {
-        const tip = `主 API 网关错误：${msg.substring(0, 200)}\n\n建议在插件【设置】启用 "自定义 API" 直接配置 endpoint。`;
-        onChunk(tip);
-        throw new Error(tip);
-    }
-    throw e;
-}
-
-// 通过 TavernHelper.generateRaw 生成——会劫持小飞机，所以加心跳/超时/abort race 兜底
-async function callViaGenerateRaw(messages, signal, onChunk) {
-    const TIMEOUT_MS = 5 * 60 * 1000;
-    const startedAt = Date.now();
-
-    onChunk('已开始生成，可能要几分钟。点「停止」可随时中断，超过 5 分钟会自动放弃。');
-
-    const heartbeat = setInterval(() => {
-        const elapsed = Math.round((Date.now() - startedAt) / 1000);
-        const mins = Math.floor(elapsed / 60);
-        const secs = elapsed % 60;
-        const timeStr = mins ? `${mins} 分 ${secs} 秒` : `${elapsed} 秒`;
-        onChunk(`已等待 ${timeStr}…`);
-    }, 5000);
-
-    const abortPromise = signal
-        ? new Promise((_, reject) => {
-            if (signal.aborted) reject(new DOMException('Aborted', 'AbortError'));
-            else signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
-        })
-        : new Promise(() => {});
-
-    const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`主 API ${Math.round(TIMEOUT_MS / 60000)} 分钟未返回，已放弃等待。建议在【设置】启用"自定义 API"直接配置 endpoint。`)), TIMEOUT_MS)
-    );
-
-    let result;
-    try {
-        result = await Promise.race([
-            window.TavernHelper.generateRaw({
-                user_input: '',
-                ordered_prompts: messages,
-                overrides: {
-                    world_info_before: '', world_info_after: '',
-                    persona_description: '', char_description: '',
-                    char_personality: '', scenario: '',
-                    dialogue_examples: '',
-                    chat_history: { prompts: [], with_depth_entries: false, author_note: '' }
-                },
-                injects: [],
-                max_chat_history: 0,
-                should_stream: true,
-                signal,
-            }),
-            abortPromise,
-            timeoutPromise,
-        ]);
-    } catch (e) {
-        if (e?.name === 'AbortError') throw e;
-        throwFriendlyMainApi(e, onChunk);
-    } finally {
-        clearInterval(heartbeat);
-    }
-
-    if (!result) {
-        onChunk('主 API 返回空内容');
-        throw new Error('main API returned empty');
-    }
-    onChunk(result);
-    return result;
 }
 
 // ============================================================
