@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.5.2 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.5.3 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.5.2';
+const VERSION = '2.5.3';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -2457,6 +2457,18 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
 
 // 通过 ChatCompletionService 走 quiet 生成——不劫持小飞机，自带真流式
 async function callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk) {
+    // ST 1.18 后端校验 chat_completion_source + model 必填，没有就 400。
+    // 从酒馆当前配置自动取。
+    const ctx = SillyTavern.getContext();
+    const oai = ctx?.oai_settings || globalThis.oai_settings;
+    const source = oai?.chat_completion_source;
+    const model = ctx?.getChatCompletionModel ? ctx.getChatCompletionModel() : null;
+    if (!source || !model) {
+        const tip = '酒馆 Chat Completion 还没选好 API source 或模型。\n\n去酒馆 API 设置面板把 source（如 Claude / OpenAI / Custom）和 model 都选好，再回来生成。';
+        onChunk(tip);
+        throw new Error(tip);
+    }
+
     onChunk('已开始生成…');
     let result;
     try {
@@ -2465,7 +2477,13 @@ async function callViaChatCompletionService(CCS, messages, maxTokens, signal, on
         //   ST 1.18+:     processRequest(data, options, extractData, signal) — signal 独立参数
         // 同时传，新老 ST 各取所需，互不干扰
         result = await CCS.processRequest(
-            { messages, max_tokens: maxTokens, stream: true },
+            {
+                messages,
+                model,
+                chat_completion_source: source,
+                max_tokens: maxTokens,
+                stream: true,
+            },
             { signal },
             /*extractData=*/false,
             signal,
