@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.4.5 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.4.6 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.4.5';
+const VERSION = '2.4.6';
 const REMOTE_MANIFEST_URL = 'https://raw.githubusercontent.com/koichole213-ui/st-theater/main/manifest.json';
 let latestRemoteVersion = null;
 const SOUNDS_BASE_URL = '/scripts/extensions/third-party/st-theater/sounds/';
@@ -1366,7 +1366,23 @@ async function loadPresetNameList() {
     let names = [];
     let source = '';
 
-    // Strategy 0: TavernHelper API — 最可靠，名字与 getPreset() 一一对应
+    // Strategy 0a: SillyTavern 官方 preset manager — ST 1.13+ 推荐 API
+    if (!names.length) try {
+        if (ctx?.getPresetManager) {
+            const mgr = ctx.getPresetManager('openai');
+            if (mgr && typeof mgr.getAllPresets === 'function') {
+                const list = mgr.getAllPresets();
+                if (Array.isArray(list) && list.length) {
+                    names = list.filter(n => typeof n === 'string' && n.trim() && !n.startsWith('--'));
+                    source = 'getPresetManager.getAllPresets()';
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('[Theater] getPresetManager.getAllPresets failed:', e);
+    }
+
+    // Strategy 0b: TavernHelper API — 第三方扩展，存在时优先
     if (!names.length && window.TavernHelper && typeof window.TavernHelper.getPresetNames === 'function') {
         try {
             const list = window.TavernHelper.getPresetNames();
@@ -1465,6 +1481,23 @@ function parsePromptToEntries(text, prefix) {
 }
 
 async function fetchPresetByName(name) {
+    // Strategy 0: SillyTavern 官方 preset manager — ST 1.13+ 推荐 API
+    try {
+        const ctx = SillyTavern.getContext();
+        if (ctx?.getPresetManager) {
+            const mgr = ctx.getPresetManager('openai');
+            if (mgr && typeof mgr.getCompletionPresetByName === 'function') {
+                const preset = mgr.getCompletionPresetByName(name);
+                if (preset?.prompts && Array.isArray(preset.prompts)) {
+                    console.log(`[Theater] Read preset "${name}" via getPresetManager (${preset.prompts.length} prompts)`);
+                    return preset;
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('[Theater] getPresetManager.getCompletionPresetByName failed:', e);
+    }
+
     // Strategy 1: TavernHelper API — 酒馆原生接口，最可靠
     if (window.TavernHelper && typeof window.TavernHelper.getPreset === 'function') {
         try {
@@ -1479,7 +1512,7 @@ async function fetchPresetByName(name) {
         }
     }
 
-    // Strategy 2: 静态文件直读 (fallback)
+    // Strategy 2: 静态文件直读 (fallback for older ST)
     try {
         const r = await fetch(`/OpenAI Settings/${encodeURIComponent(name)}.settings`);
         if (r.ok) {
@@ -1493,7 +1526,7 @@ async function fetchPresetByName(name) {
         console.warn('[Theater] Static file read failed:', e);
     }
 
-    console.error(`[Theater] Failed to read preset: ${name}. TavernHelper ${window.TavernHelper ? '已加载但未找到该预设' : '未安装'}`);
+    console.error(`[Theater] Failed to read preset: ${name}`);
     return null;
 }
 
