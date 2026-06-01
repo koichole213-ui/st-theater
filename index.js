@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.4.4 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.4.5 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.4.4';
+const VERSION = '2.4.5';
 const REMOTE_MANIFEST_URL = 'https://raw.githubusercontent.com/koichole213-ui/st-theater/main/manifest.json';
 let latestRemoteVersion = null;
 const SOUNDS_BASE_URL = '/scripts/extensions/third-party/st-theater/sounds/';
@@ -1499,15 +1499,48 @@ async function fetchPresetByName(name) {
 
 function extractPromptsFromData(data) {
     if (!data?.prompts || !Array.isArray(data.prompts)) return [];
-    return data.prompts
+
+    // SillyTavern 把"哪些 prompt 启用、按什么顺序"放在 prompt_order 里，
+    // prompts 池里的 enabled 字段不可靠（很多预设默认 false 或缺失）。
+    // 优先用 prompt_order；找不到再回退到 prompt.enabled。
+    let orderEnabled = null;  // Map<identifier, boolean>
+    let orderIndex = null;    // Map<identifier, number>
+    if (Array.isArray(data.prompt_order) && data.prompt_order.length) {
+        const orderEntry =
+            data.prompt_order.find(o => o.character_id === 100001) ||
+            data.prompt_order.find(o => o.character_id === 100000) ||
+            data.prompt_order[0];
+        if (orderEntry?.order && Array.isArray(orderEntry.order)) {
+            orderEnabled = new Map(orderEntry.order.map(o => [o.identifier, o.enabled !== false]));
+            orderIndex   = new Map(orderEntry.order.map((o, i) => [o.identifier, i]));
+            const onCount  = orderEntry.order.filter(o => o.enabled !== false).length;
+            const offCount = orderEntry.order.length - onCount;
+            console.log(`[Theater] prompt_order found: ${onCount} enabled / ${offCount} disabled`);
+        }
+    } else {
+        console.log('[Theater] prompt_order missing, falling back to prompts[].enabled');
+    }
+
+    const entries = data.prompts
         .filter(p => p.content && !p.forbid)
-        .map((p, i) => ({
-            id: p.identifier || `prompt_${i}`,
-            name: p.name || p.identifier || `条目 ${i + 1}`,
-            role: p.role || 'system',
-            content: p.content,
-            enabledInST: p.enabled !== false,
-        }));
+        .map((p, i) => {
+            const id = p.identifier || `prompt_${i}`;
+            const enabledInST = orderEnabled
+                ? (orderEnabled.has(id) ? orderEnabled.get(id) : false)  // prompt_order 缺该项视为禁用（与 ST 行为一致）
+                : (p.enabled !== false);
+            return {
+                id,
+                name: p.name || p.identifier || `条目 ${i + 1}`,
+                role: p.role || 'system',
+                content: p.content,
+                enabledInST,
+                _orderIdx: orderIndex?.has(id) ? orderIndex.get(id) : 10000 + i,
+            };
+        });
+
+    entries.sort((a, b) => a._orderIdx - b._orderIdx);
+    entries.forEach(e => delete e._orderIdx);
+    return entries;
 }
 
 async function loadPresetEntries() {
