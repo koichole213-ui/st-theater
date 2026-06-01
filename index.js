@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.6.0 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.6.1 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.6.0';
+const VERSION = '2.6.1';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -204,15 +204,27 @@ function compareVersion(a, b) {
 }
 
 async function checkRemoteVersion() {
-    // 三个镜像并行 race——谁先返回有效 manifest 就用谁
-    try {
-        const probes = REMOTE_MANIFEST_URLS.map(async url => {
-            const resp = await fetch(`${url}?_=${Date.now()}`, { cache: 'no-store' });
-            if (!resp.ok) throw new Error(`${url}: ${resp.status}`);
+    // 三个镜像并行 race——谁先返回有效 manifest 就用谁。
+    // 每路 5 秒超时，避免某一路 hang 着把 Promise.any 整个拖死。
+    const fetchManifest = async (url) => {
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), 5000);
+        try {
+            const resp = await fetch(`${url}?_=${Date.now()}`, { cache: 'no-store', signal: ctrl.signal });
+            if (!resp.ok) throw new Error(`${new URL(url).host}: status ${resp.status}`);
             const data = await resp.json();
-            if (!data?.version) throw new Error(`${url}: no version field`);
+            if (!data?.version) throw new Error(`${new URL(url).host}: no version field`);
             return { url, data };
-        });
+        } catch (e) {
+            if (e?.name === 'AbortError') throw new Error(`${new URL(url).host}: timeout 5s`);
+            throw e;
+        } finally {
+            clearTimeout(to);
+        }
+    };
+
+    try {
+        const probes = REMOTE_MANIFEST_URLS.map(fetchManifest);
         const { url, data } = await Promise.any(probes);
         latestRemoteVersion = String(data.version);
         const host = (() => { try { return new URL(url).host; } catch { return url; } })();
@@ -225,8 +237,11 @@ async function checkRemoteVersion() {
             }
         }
     } catch (e) {
-        // 全部 mirror 都挂了——网络抽风或者全被墙
-        console.log('[Theater] update check failed: all mirrors unreachable');
+        // Promise.any 在全部 reject 时抛 AggregateError，把每一路具体原因都打出来
+        const reasons = Array.isArray(e?.errors)
+            ? e.errors.map(er => er?.message || String(er)).join(' | ')
+            : (e?.message || String(e));
+        console.log('[Theater] update check failed:', reasons);
     }
 }
 
