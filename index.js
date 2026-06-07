@@ -1256,9 +1256,11 @@ function bindEvents() {
             <textarea id="theater-edit-tpl-content" class="text_pole" rows="6" style="width:100%;resize:vertical;">${esc(tpl.content)}</textarea>
         </div>`;
         const popup = new Popup(html, POPUP_TYPE.CONFIRM, '', { okButton: '保存', cancelButton: '取消', wide: true });
+        const showPromise = popup.show();
+        // show() 之后元素才在 DOM 中，先拿引用
         const nameEl = document.getElementById('theater-edit-tpl-name');
         const contentEl = document.getElementById('theater-edit-tpl-content');
-        const result = await popup.show();
+        const result = await showPromise;
         if (!result) return;
         const newName = nameEl?.value?.trim() || '';
         const newContent = contentEl?.value?.trim() || '';
