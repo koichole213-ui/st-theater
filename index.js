@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.6.1 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.7.0 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.6.1';
+const VERSION = '2.7.0';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -144,6 +144,8 @@ const defaultSettings = Object.freeze({
     soundVolume: 70,
     randomEnabled: false,
     randomScope: '__current__',  // '__current__' | '__all__' | '__none__' | 分组名
+    recentGenerations: [],  // 最近 3 条自动保留的生成结果 [{ html, time, instruction }]
+    recentIndex: 0,         // 当前查看的 recentGenerations 索引
 });
 
 const SKIN_LABELS = { default: '内置默认', theater: '跟随酒馆', custom: '自定义' };
@@ -490,6 +492,7 @@ function buildPopupHTML() {
             </div>
             <div class="theater-btn-row">
                 <div id="theater-save-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-floppy-disk"></i><span>存为模板</span></div>
+                <div id="theater-clear-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-eraser"></i><span>清空</span></div>
                 <div id="theater-random-btn" class="theater-btn generate" style="${settings.randomEnabled ? '' : 'display:none;'}"><i class="fa-solid fa-dice"></i><span>抽一个</span></div>
             </div>
             <div class="theater-btn-row">
@@ -502,12 +505,19 @@ function buildPopupHTML() {
             <pre id="theater-stream-text" class="theater-stream-pre"></pre>
         </div>
         <div class="theater-section" id="theater-output-section" style="display:none;">
+            <div class="theater-recent-nav" id="theater-recent-nav" style="display:none;">
+                <span id="theater-recent-prev" class="theater-recent-arrow" title="上一条"><i class="fa-solid fa-chevron-left"></i></span>
+                <span id="theater-recent-indicator"></span>
+                <span id="theater-recent-next" class="theater-recent-arrow" title="下一条"><i class="fa-solid fa-chevron-right"></i></span>
+            </div>
             <label class="theater-label">生成结果</label>
             <div id="theater-output-container"><iframe id="theater-output-frame" sandbox="allow-scripts allow-same-origin" class="theater-iframe"></iframe></div>
             <div class="theater-btn-row">
                 <div id="theater-save-history-btn" class="theater-btn"><i class="fa-solid fa-bookmark"></i><span>保存</span></div>
                 <div id="theater-copy-html-btn" class="theater-btn"><i class="fa-solid fa-copy"></i><span>复制HTML</span></div>
                 <div id="theater-continue-btn" class="theater-btn"><i class="fa-solid fa-forward"></i><span>续写</span></div>
+                <div id="theater-edit-result-btn" class="theater-btn"><i class="fa-solid fa-pen-to-square"></i><span>编辑文字</span></div>
+                <div id="theater-save-edit-btn" class="theater-btn primary" style="display:none;"><i class="fa-solid fa-check"></i><span>完成编辑</span></div>
             </div>
         </div>
     </div>
@@ -894,6 +904,7 @@ function renderInstList(arr) {
             <input type="checkbox" class="theater-inst-checkbox" data-index="${i}" ${checked}>
             <span class="theater-inst-name" data-index="${i}"><i class="fa-solid fa-file-lines"></i> ${esc(item.name)}</span>
             ${groupBadge}
+            <span class="theater-inst-edit" data-index="${i}" title="编辑"><i class="fa-solid fa-pen"></i></span>
             <span class="theater-inst-move" data-index="${i}" title="改分组"><i class="fa-solid fa-folder-tree"></i></span>
             <span class="theater-inst-delete" data-index="${i}" title="删除"><i class="fa-solid fa-xmark"></i></span>
         </div>
@@ -988,10 +999,20 @@ async function openTheaterPopup() {
         $('#theater-generate-btn').hide();
         $('#theater-stop-btn').show();
     } else if (lastGeneratedHtml || currentDisplayHtml) {
-        // 后台生成已完成：直接显示结果
         const html = lastGeneratedHtml || currentDisplayHtml;
         showInIframe(html);
         $('#theater-output-section').show();
+        updateRecentNav();
+    } else if ((settings.recentGenerations || []).length) {
+        // 没有当前生成但有最近记录，恢复最近一条
+        const idx = settings.recentIndex || 0;
+        const item = settings.recentGenerations[idx];
+        if (item) {
+            lastGeneratedHtml = item.html;
+            showInIframe(item.html);
+            $('#theater-output-section').show();
+            updateRecentNav();
+        }
     }
 
     await p;
@@ -1195,6 +1216,15 @@ function bindEvents() {
 
     // ---- Rules: Instruction templates ----
     $d.off('click.tsi').on('click.tsi', '#theater-save-instruction-btn', saveInstructionTpl);
+    $d.off('click.tci').on('click.tci', '#theater-clear-instruction-btn', async function () {
+        if (!$('#theater-instruction').val().trim()) return;
+        const { Popup } = SillyTavern.getContext();
+        const ok = await Popup.show.confirm('确定清空指令输入框？');
+        if (!ok) return;
+        $('#theater-instruction').val('');
+        settings.lastInstruction = '';
+        save();
+    });
     $d.off('click.titog').on('click.titog', '#theater-inst-toggle', function () {
         $(this).next('.theater-drawer-body').slideToggle(150);
         $(this).find('.theater-drawer-arrow').toggleClass('open');
@@ -1202,6 +1232,29 @@ function bindEvents() {
     $d.off('click.tin').on('click.tin', '.theater-inst-name', function () {
         const t = settings.instructionTemplates[$(this).data('index')];
         if (t) { $('#theater-instruction').val(t.content); $('.theater-tab[data-tab="generate"]').click(); toastr.info('已加载指令'); }
+    });
+    $d.off('click.tie').on('click.tie', '.theater-inst-edit', async function () {
+        const idx = $(this).data('index');
+        const tpl = settings.instructionTemplates[idx];
+        if (!tpl) return;
+        const { Popup, POPUP_TYPE } = SillyTavern.getContext();
+        const html = `<div style="display:flex;flex-direction:column;gap:10px;">
+            <label style="font-weight:600;">模板名称</label>
+            <input id="theater-edit-tpl-name" class="text_pole" value="${esc(tpl.name)}" style="width:100%;">
+            <label style="font-weight:600;">指令内容</label>
+            <textarea id="theater-edit-tpl-content" class="text_pole" rows="6" style="width:100%;resize:vertical;">${esc(tpl.content)}</textarea>
+        </div>`;
+        const popup = new Popup(html, POPUP_TYPE.CONFIRM, '', { okButton: '保存', cancelButton: '取消', wide: true });
+        const result = await popup.show();
+        if (result !== POPUP_TYPE.CONFIRM) return;
+        const newName = $('#theater-edit-tpl-name').val().trim();
+        const newContent = $('#theater-edit-tpl-content').val().trim();
+        if (!newName || !newContent) { toastr.warning('名称和内容不能为空'); return; }
+        tpl.name = newName;
+        tpl.content = newContent;
+        save();
+        refreshInstUI();
+        toastr.success('已更新');
     });
     $d.off('click.tid').on('click.tid', '.theater-inst-delete', async function () {
         const idx = $(this).data('index');
@@ -1257,6 +1310,67 @@ function bindEvents() {
     // ---- History ----
     $d.off('click.tsh').on('click.tsh', '#theater-save-history-btn', saveToHistory);
     $d.off('click.tch').on('click.tch', '#theater-copy-html-btn', copyHtml);
+    // ---- Recent generations nav ----
+    $d.off('click.trp').on('click.trp', '#theater-recent-prev', function () {
+        const recent = settings.recentGenerations || [];
+        if ((settings.recentIndex || 0) <= 0) return;
+        settings.recentIndex--;
+        save();
+        showInIframe(recent[settings.recentIndex].html);
+        lastGeneratedHtml = recent[settings.recentIndex].html;
+        updateRecentNav();
+    });
+    $d.off('click.trn').on('click.trn', '#theater-recent-next', function () {
+        const recent = settings.recentGenerations || [];
+        if ((settings.recentIndex || 0) >= recent.length - 1) return;
+        settings.recentIndex++;
+        save();
+        showInIframe(recent[settings.recentIndex].html);
+        lastGeneratedHtml = recent[settings.recentIndex].html;
+        updateRecentNav();
+    });
+    // ---- Edit result text ----
+    $d.off('click.ter').on('click.ter', '#theater-edit-result-btn', function () {
+        const f = document.getElementById('theater-output-frame');
+        if (!f) return;
+        try {
+            const doc = f.contentDocument || f.contentWindow.document;
+            doc.querySelectorAll('p, span, h1, h2, h3, h4, h5, h6, li, td, th, div, blockquote').forEach(el => {
+                if (!el.querySelector('p, span, h1, h2, h3, h4, h5, h6, li, td, th, div, blockquote')) {
+                    el.setAttribute('contenteditable', 'true');
+                    el.style.outline = '1px dashed rgba(128,128,128,.3)';
+                    el.style.outlineOffset = '2px';
+                    el.style.cursor = 'text';
+                }
+            });
+            $('#theater-edit-result-btn').hide();
+            $('#theater-save-edit-btn').show();
+            toastr.info('点击小剧场里的文字即可编辑，改完点「完成编辑」');
+        } catch { toastr.error('无法进入编辑模式'); }
+    });
+    $d.off('click.tse').on('click.tse', '#theater-save-edit-btn', function () {
+        const f = document.getElementById('theater-output-frame');
+        if (!f) return;
+        try {
+            const doc = f.contentDocument || f.contentWindow.document;
+            doc.querySelectorAll('[contenteditable]').forEach(el => {
+                el.removeAttribute('contenteditable');
+                el.style.outline = '';
+                el.style.outlineOffset = '';
+                el.style.cursor = '';
+            });
+            const newHtml = '<!DOCTYPE html>' + doc.documentElement.outerHTML;
+            lastGeneratedHtml = newHtml;
+            currentDisplayHtml = newHtml;
+            // 同步更新 recentGenerations
+            const recent = settings.recentGenerations || [];
+            const idx = settings.recentIndex || 0;
+            if (recent[idx]) { recent[idx].html = newHtml; save(); }
+            $('#theater-save-edit-btn').hide();
+            $('#theater-edit-result-btn').show();
+            toastr.success('编辑已保存');
+        } catch { toastr.error('保存失败'); }
+    });
     // 续写：从当前生成结果
     $d.off('click.tcont').on('click.tcont', '#theater-continue-btn', function () {
         const html = lastGeneratedHtml || currentDisplayHtml;
@@ -1769,9 +1883,11 @@ async function onWorldBookSelect() {
     settings.currentWorldBook = name;
 
     if (!name) {
-        // Clear
-        settings.worldBookEntries = [];
-        settings.worldBookStates = [];
+        // Clear world book entries but keep manual ones
+        const manualEntries = (settings.worldBookEntries || []).filter((e, i) => (e.uid === undefined || e.uid === null));
+        const manualStates = (settings.worldBookEntries || []).map((e, i) => ({ manual: e.uid === undefined || e.uid === null, state: (settings.worldBookStates || [])[i] !== false })).filter(x => x.manual).map(x => x.state);
+        settings.worldBookEntries = manualEntries;
+        settings.worldBookStates = manualStates;
         save(); refreshWBUI();
         return;
     }
@@ -1803,14 +1919,20 @@ async function onWorldBookSelect() {
         const hasMemory = Array.isArray(knownKeys);
         const knownSet = hasMemory ? new Set(knownKeys) : null;
 
-        settings.worldBookEntries = entries;
-        settings.worldBookStates = entries.map(e => {
+        // 保留已有的手动条目
+        const oldManual = (settings.worldBookEntries || []).filter(e => e.uid === undefined || e.uid === null);
+        const oldManualStates = (settings.worldBookEntries || []).reduce((acc, e, i) => {
+            if (e.uid === undefined || e.uid === null) acc.push((settings.worldBookStates || [])[i] !== false);
+            return acc;
+        }, []);
+
+        const wbStates = entries.map(e => {
             const k = entryKey(e);
-            // 已经记录过本书的 key 列表，且当前 key 没出现过 → 新条目，默认不勾选
             if (hasMemory && !knownSet.has(k)) return false;
-            // 已知条目（或从未记录过的旧版本场景）→ 按保存来，缺省勾选
             return savedStates[k] !== false;
         });
+        settings.worldBookEntries = [...entries, ...oldManual];
+        settings.worldBookStates = [...wbStates, ...oldManualStates];
         // 把当前所有 key 写回 known 列表，新条目下次就不再被当成"新"
         settings.worldBookKnownEntriesByBook[name] = entries.map(e => entryKey(e));
         save();
@@ -2220,11 +2342,33 @@ function fallbackCopy(text) {
     }
 }
 
-function exportAllHistory() {
+async function exportAllHistory() {
     const hist = settings.history || [];
     if (!hist.length) return;
-    const data = hist.map(h => ({ title: h.title, date: h.date, instruction: h.instruction, html: h.html }));
-    downloadFile(`theater-history-${Date.now()}.json`, JSON.stringify(data, null, 2), 'application/json');
+    try {
+        if (!window.JSZip) await import('/lib/jszip.min.js');
+        const zip = new JSZip();
+        hist.forEach((h, i) => {
+            const safeTitle = (h.title || `小剧场${i + 1}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 50);
+            const dateStr = (h.date || '').replace(/[\\/:*?"<>|]/g, '-').slice(0, 10);
+            const filename = `${dateStr ? dateStr + '_' : ''}${safeTitle}.html`;
+            zip.file(filename, h.html || '');
+        });
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `theater-history-${Date.now()}.zip`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toastr.success(`已导出 ${hist.length} 个小剧场`);
+    } catch (e) {
+        console.error('[Theater] Export zip error:', e);
+        // JSZip 不可用时回退为 JSON
+        const data = hist.map(h => ({ title: h.title, date: h.date, instruction: h.instruction, html: h.html }));
+        downloadFile(`theater-history-${Date.now()}.json`, JSON.stringify(data, null, 2), 'application/json');
+        toastr.info('压缩包生成失败，已导出为 JSON 文件');
+    }
 }
 
 function downloadFile(filename, content, type) {
@@ -2253,10 +2397,18 @@ let accumulatedTheater = '';   // 累积多次续写的完整内容
 // 从HTML中提取纯文本（去掉标签，只留故事内容）
 function htmlToPlainText(html) {
     const div = document.createElement('div');
-    div.innerHTML = html;
-    // 移除 script 和 style 标签
-    div.querySelectorAll('script, style').forEach(el => el.remove());
-    return (div.textContent || div.innerText || '').trim();
+    // 先用正则预清理完整 HTML 文档结构，避免某些浏览器 innerHTML 解析不彻底
+    let cleaned = html
+        .replace(/<!(DOCTYPE|doctype)[^>]*>/gi, '')
+        .replace(/<\/?(html|head|body|meta|link)[^>]*>/gi, '');
+    div.innerHTML = cleaned;
+    div.querySelectorAll('script, style, svg, noscript').forEach(el => el.remove());
+    let text = (div.textContent || div.innerText || '').trim();
+    // 兜底：如果还残留 HTML 标签，用正则剥掉
+    if (/<[a-z][\s\S]*>/i.test(text)) {
+        text = text.replace(/<[^>]+>/g, '').trim();
+    }
+    return text;
 }
 
 // 设置续写上下文并跳转到生成面板
@@ -2330,7 +2482,7 @@ async function generateTheater() {
     else if (rs !== '__default__') { const t = settings.renderTemplates[parseInt(rs)]; if (t) renderRules = t.content; }
     if (settings.interactiveMode) renderRules += INTERACTIVE_ADDON;
 
-    const continueInfo = continueContext ? `以下是已生成的小剧场内容（请在此基础上续写，不要重复已有内容，保持相同的HTML格式和风格）：\n${continueContext}\n\n---\n\n` : '';
+    const continueInfo = continueContext ? `以下是已生成的小剧场的故事内容纯文本（请在此基础上续写故事，不要重复已有内容，保持相同的角色语气和叙事风格，但用全新的HTML结构输出）：\n${continueContext}\n\n---\n\n` : '';
 
     const prompt = `${charInfo}${personaInfo}${wbInfo}以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}\n\n---\n\n${continueInfo}${renderRules}\n\n---\n\n用户指令：${instruction}\n\n请根据以上所有信息生成小剧场。${continueContext ? '严格续写上方小剧场的内容，保持相同的HTML结构、CSS样式和角色语气，不要从头开始，不要续写正文对话。' : '严格遵守渲染规则。'}`;
     let systemPrompt;
@@ -2368,15 +2520,19 @@ async function generateTheater() {
     $('#theater-stop-btn').show();
     abortController = new AbortController();
 
-    const onChunk = (text) => {
-        // 不管面板在不在，都把文本存到后台变量里
-        bgStreamText = text;
-        // 如果面板还开着，同步更新界面
+    let chunkThrottle = null;
+    const flushStream = () => {
         const $el = $('#theater-stream-text');
         if ($el.length) {
-            $el.text(text);
+            $el.text(bgStreamText);
             const el = $el[0];
             if (el) el.scrollTop = el.scrollHeight;
+        }
+    };
+    const onChunk = (text) => {
+        bgStreamText = text;
+        if (!chunkThrottle) {
+            chunkThrottle = setTimeout(() => { chunkThrottle = null; flushStream(); }, 100);
         }
     };
 
@@ -2395,13 +2551,25 @@ async function generateTheater() {
             accumulatedTheater = accumulatedTheater ? (accumulatedTheater + '\n\n---\n\n' + newText) : newText;
         }
 
+        // 自动保留到最近生成（最多 3 条）
+        if (lastGeneratedHtml) {
+            if (!settings.recentGenerations) settings.recentGenerations = [];
+            settings.recentGenerations.unshift({
+                html: lastGeneratedHtml,
+                time: new Date().toLocaleString('zh-CN', { hour12: false }),
+                instruction: instruction || '',
+            });
+            if (settings.recentGenerations.length > 3) settings.recentGenerations.length = 3;
+            settings.recentIndex = 0;
+            save();
+        }
+
         if (popupAlive()) {
-            // 面板还开着：直接显示结果
             showInIframe(lastGeneratedHtml);
             $('#theater-stream-section').hide();
             $('#theater-output-section').show();
+            updateRecentNav();
         }
-        // 不管面板在不在，都弹通知 + 播放提示音
         toastr.success('小剧场生成完成！点击打开面板查看', '', { timeOut: 6000 });
         playNotificationSound();
     } catch (err) {
@@ -2412,6 +2580,8 @@ async function generateTheater() {
     } finally {
         isGenerating = false;
         continueContext = '';
+        if (chunkThrottle) { clearTimeout(chunkThrottle); chunkThrottle = null; }
+        flushStream();
         $('#theater-continue-hint').remove();
         $('#theater-instruction').attr('placeholder', '输入指令…');
         if (popupAlive()) {
@@ -2499,13 +2669,23 @@ async function readSSEStream(response, onChunk, isAnthropic) {
 // HTML extraction & iframe
 // ============================================================
 function extractHtml(t) {
+    if (!t || !t.trim()) return '';
     let m;
+    // 代码块里的 HTML
     if ((m = t.match(/```(?:html)?\s*\n?([\s\S]*?)```/))) return m[1].trim();
+    // 完整 HTML 文档
     if ((m = t.match(/(<!DOCTYPE[\s\S]*?<\/html>)/i))) return m[1].trim();
     if ((m = t.match(/(<html[\s\S]*?<\/html>)/i))) return m[1].trim();
+    // 不完整的 HTML 文档（有开头没结尾，被截断的情况）
+    if ((m = t.match(/(<!DOCTYPE[\s\S]*)/i)) && m[1].includes('<body')) return m[1].trim() + '</body></html>';
+    if ((m = t.match(/(<html[\s\S]*)/i)) && m[1].includes('<body')) return m[1].trim() + '</body></html>';
+    // snow 标签
     if ((m = t.match(/<snow>([\s\S]*?)<\/snow>/i))) { const inner = m[1].match(/```(?:html)?\s*\n?([\s\S]*?)```/); return inner ? inner[1].trim() : m[1].trim(); }
-    if (t.includes('<div') || t.includes('<style')) return t.trim();
-    return `<!DOCTYPE html><html><head><style>body{font-family:system-ui,sans-serif;padding:20px;max-width:480px;margin:0 auto;background:transparent}.card{background:#fafafa;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.1);line-height:1.7;font-size:15px}</style></head><body><div class="card">${t}</div></body></html>`;
+    // 包含 HTML 标签的片段
+    if (t.includes('<div') || t.includes('<style') || t.includes('<p') || t.includes('<span')) return t.trim();
+    // 纯文字兜底
+    const fallback = `<!DOCTYPE html><html><head><style>body{font-family:system-ui,sans-serif;padding:20px;max-width:480px;margin:0 auto;background:transparent}.card{background:#fafafa;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.1);line-height:1.7;font-size:15px}</style></head><body><div class="card">${t}</div></body></html>`;
+    return fallback;
 }
 
 let currentDisplayHtml = '';   // 当前iframe中显示的内容
@@ -2525,6 +2705,19 @@ function showInIframe(html) {
             f.style.height = window.innerWidth <= 768 ? '60vh' : '420px';
         }
     };
+}
+
+function updateRecentNav() {
+    const recent = settings.recentGenerations || [];
+    const $nav = $('#theater-recent-nav');
+    if (recent.length <= 1) { $nav.hide(); return; }
+    $nav.show();
+    const idx = settings.recentIndex || 0;
+    const item = recent[idx];
+    const timeStr = item?.time || '';
+    $('#theater-recent-indicator').text(`${idx + 1} / ${recent.length}${timeStr ? '  ·  ' + timeStr : ''}`);
+    $('#theater-recent-prev').toggleClass('disabled', idx <= 0);
+    $('#theater-recent-next').toggleClass('disabled', idx >= recent.length - 1);
 }
 
 // ============================================================

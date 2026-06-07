@@ -731,6 +731,19 @@
     color: var(--t-danger);
     background: var(--t-danger-soft);
 }
+.theater-inst-edit {
+    cursor: pointer;
+    color: var(--t-fg-faint);
+    padding: var(--t-space-1) var(--t-space-2);
+    border-radius: var(--t-radius-sm);
+    flex-shrink: 0;
+    transition: color var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease);
+}
+.theater-inst-edit:hover {
+    color: var(--t-accent);
+    background: color-mix(in srgb, var(--t-accent) 12%, transparent);
+}
 .theater-inst-move {
     cursor: pointer;
     color: var(--t-fg-faint);
@@ -1166,6 +1179,31 @@
     border: none;
     background: #fff;
     display: block;
+}
+.theater-recent-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--t-space-3);
+    padding: var(--t-space-2) 0;
+    font-size: var(--t-text-sm);
+    color: var(--t-fg-mute);
+}
+.theater-recent-arrow {
+    cursor: pointer;
+    padding: var(--t-space-1) var(--t-space-2);
+    border-radius: var(--t-radius-sm);
+    transition: color var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease);
+}
+.theater-recent-arrow:hover:not(.disabled) {
+    color: var(--t-accent);
+    background: color-mix(in srgb, var(--t-accent) 12%, transparent);
+}
+.theater-recent-arrow.disabled {
+    opacity: .3;
+    cursor: default;
+    pointer-events: none;
 }
 
 /* ============================================================
