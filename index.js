@@ -664,6 +664,7 @@ function buildPopupHTML() {
             <div class="theater-history-top-bar">
                 <label class="theater-label" style="margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> 保存的小剧场</label>
                 <div id="theater-export-all-history" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-download"></i><span>批量导出</span></div>
+                <div id="theater-clear-all-history" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-trash-can"></i><span>批量删除</span></div>
             </div>
             <div id="theater-history-list">${hist.length === 0 ? '<p class="theater-empty">暂无</p>' : hist.map((h, i) => historyItemHTML(h, i)).join('')}</div>
         </div>
@@ -1237,21 +1238,14 @@ function bindEvents() {
         const idx = $(this).data('index');
         const tpl = settings.instructionTemplates[idx];
         if (!tpl) return;
-        const { Popup, POPUP_TYPE } = SillyTavern.getContext();
-        const html = `<div style="display:flex;flex-direction:column;gap:10px;">
-            <label style="font-weight:600;">模板名称</label>
-            <input id="theater-edit-tpl-name" class="text_pole" value="${esc(tpl.name)}" style="width:100%;">
-            <label style="font-weight:600;">指令内容</label>
-            <textarea id="theater-edit-tpl-content" class="text_pole" rows="6" style="width:100%;resize:vertical;">${esc(tpl.content)}</textarea>
-        </div>`;
-        const popup = new Popup(html, POPUP_TYPE.CONFIRM, '', { okButton: '保存', cancelButton: '取消', wide: true });
-        const result = await popup.show();
-        if (result !== POPUP_TYPE.CONFIRM) return;
-        const newName = $('#theater-edit-tpl-name').val().trim();
-        const newContent = $('#theater-edit-tpl-content').val().trim();
-        if (!newName || !newContent) { toastr.warning('名称和内容不能为空'); return; }
-        tpl.name = newName;
-        tpl.content = newContent;
+        const { Popup } = SillyTavern.getContext();
+        // 分两步：先改名字，再改内容
+        const newName = await Popup.show.input('编辑模板名称', '名称：', tpl.name);
+        if (newName === null || newName === undefined || !String(newName).trim()) return;
+        const newContent = await Popup.show.input('编辑模板内容', '内容：', tpl.content);
+        if (newContent === null || newContent === undefined || !String(newContent).trim()) return;
+        tpl.name = String(newName).trim();
+        tpl.content = String(newContent).trim();
         save();
         refreshInstUI();
         toastr.success('已更新');
@@ -1408,6 +1402,17 @@ function bindEvents() {
         settings.history.splice(idx, 1); save(); refreshHistList();
     });
     $d.off('click.teah').on('click.teah', '#theater-export-all-history', exportAllHistory);
+    $d.off('click.tcah').on('click.tcah', '#theater-clear-all-history', async function () {
+        const count = (settings.history || []).length;
+        if (!count) return;
+        const { Popup } = SillyTavern.getContext();
+        const ok = await Popup.show.confirm(`确定删除全部 ${count} 条历史记录？`, '删除后无法恢复');
+        if (!ok) return;
+        settings.history = [];
+        save();
+        refreshHistList();
+        toastr.success('已清空全部历史');
+    });
 
     // ---- Theme ----
     $d.off('click.tcss').on('click.tcss', '#theater-save-css-btn', function () { settings.customCSS = $('#theater-custom-css').val(); save(); applyCustomCSS(); toastr.success('样式已应用'); });
@@ -1516,6 +1521,7 @@ function refreshHistList() {
     const h = settings.history || [];
     $('#theater-history-list').html(h.length === 0 ? '<p class="theater-empty">暂无</p>' : h.map((item, i) => historyItemHTML(item, i)).join(''));
     $('#theater-export-all-history').toggle(h.length > 0);
+    $('#theater-clear-all-history').toggle(h.length > 0);
 }
 
 // ============================================================
