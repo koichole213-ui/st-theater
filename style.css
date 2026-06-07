@@ -1233,11 +1233,19 @@
     transform: translateY(-1px);
     box-shadow: var(--t-elev-1);
 }
+.theater-history-item-selected {
+    border-color: var(--t-accent);
+    background: color-mix(in srgb, var(--t-accent) 6%, var(--t-surface-1));
+}
+.theater-hist-checkbox {
+    margin-right: var(--t-space-2);
+    flex-shrink: 0;
+}
 .theater-history-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
     margin-bottom: var(--t-space-3);
+    gap: var(--t-space-2);
 }
 .theater-history-title {
     font-weight: 600;

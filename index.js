@@ -664,7 +664,8 @@ function buildPopupHTML() {
             <div class="theater-history-top-bar">
                 <label class="theater-label" style="margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> 保存的小剧场</label>
                 <div id="theater-export-all-history" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-download"></i><span>批量导出</span></div>
-                <div id="theater-clear-all-history" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-trash-can"></i><span>批量删除</span></div>
+                <div id="theater-hist-select-all" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-check-double"></i><span>全选</span></div>
+                <div id="theater-hist-delete-selected" class="theater-btn" style="display:none;"><i class="fa-solid fa-trash-can"></i><span>删除选中 (<span id="theater-hist-sel-count">0</span>)</span></div>
             </div>
             <div id="theater-history-list">${hist.length === 0 ? '<p class="theater-empty">暂无</p>' : hist.map((h, i) => historyItemHTML(h, i)).join('')}</div>
         </div>
@@ -790,8 +791,11 @@ function buildPopupHTML() {
 // Rendering helpers
 // ============================================================
 function historyItemHTML(h, i) {
-    return `<div class="theater-history-item" data-index="${i}">
+    const checked = histSelected.has(i) ? 'checked' : '';
+    const selClass = histSelected.has(i) ? ' theater-history-item-selected' : '';
+    return `<div class="theater-history-item${selClass}" data-index="${i}">
         <div class="theater-history-header">
+            <input type="checkbox" class="theater-hist-checkbox" data-index="${i}" ${checked}>
             <span class="theater-history-title">${esc(h.title || '小剧场 #' + (i + 1))}</span>
             <span class="theater-history-date">${h.date || ''}</span>
         </div>
@@ -870,6 +874,7 @@ function renderGroupFilterOptions() {
 
 // 临时状态：当前选中索引 + 搜索关键词，仅本次会话有效
 let instSelected = new Set();
+let histSelected = new Set();
 let instSearch = '';
 
 function filterInstAll(arr) {
@@ -1238,14 +1243,23 @@ function bindEvents() {
         const idx = $(this).data('index');
         const tpl = settings.instructionTemplates[idx];
         if (!tpl) return;
-        const { Popup } = SillyTavern.getContext();
-        // 分两步：先改名字，再改内容
-        const newName = await Popup.show.input('编辑模板名称', '名称：', tpl.name);
-        if (newName === null || newName === undefined || !String(newName).trim()) return;
-        const newContent = await Popup.show.input('编辑模板内容', '内容：', tpl.content);
-        if (newContent === null || newContent === undefined || !String(newContent).trim()) return;
-        tpl.name = String(newName).trim();
-        tpl.content = String(newContent).trim();
+        const { Popup, POPUP_TYPE } = SillyTavern.getContext();
+        const html = `<div style="display:flex;flex-direction:column;gap:10px;">
+            <label style="font-weight:600;">模板名称</label>
+            <input id="theater-edit-tpl-name" class="text_pole" value="${esc(tpl.name)}" style="width:100%;">
+            <label style="font-weight:600;">指令内容</label>
+            <textarea id="theater-edit-tpl-content" class="text_pole" rows="6" style="width:100%;resize:vertical;">${esc(tpl.content)}</textarea>
+        </div>`;
+        const popup = new Popup(html, POPUP_TYPE.CONFIRM, '', { okButton: '保存', cancelButton: '取消', wide: true });
+        const nameEl = document.getElementById('theater-edit-tpl-name');
+        const contentEl = document.getElementById('theater-edit-tpl-content');
+        const result = await popup.show();
+        if (!result) return;
+        const newName = nameEl?.value?.trim() || '';
+        const newContent = contentEl?.value?.trim() || '';
+        if (!newName || !newContent) { toastr.warning('名称和内容不能为空'); return; }
+        tpl.name = newName;
+        tpl.content = newContent;
         save();
         refreshInstUI();
         toastr.success('已更新');
@@ -1402,16 +1416,36 @@ function bindEvents() {
         settings.history.splice(idx, 1); save(); refreshHistList();
     });
     $d.off('click.teah').on('click.teah', '#theater-export-all-history', exportAllHistory);
-    $d.off('click.tcah').on('click.tcah', '#theater-clear-all-history', async function () {
-        const count = (settings.history || []).length;
-        if (!count) return;
+    $d.off('change.thcb').on('change.thcb', '.theater-hist-checkbox', function () {
+        const idx = parseInt($(this).data('index'));
+        if ($(this).is(':checked')) histSelected.add(idx);
+        else histSelected.delete(idx);
+        $(this).closest('.theater-history-item').toggleClass('theater-history-item-selected', $(this).is(':checked'));
+        updateHistBulkBar();
+    });
+    $d.off('click.thsa').on('click.thsa', '#theater-hist-select-all', function () {
+        const h = settings.history || [];
+        if (histSelected.size === h.length) {
+            histSelected.clear();
+        } else {
+            h.forEach((_, i) => histSelected.add(i));
+        }
+        refreshHistList();
+        updateHistBulkBar();
+    });
+    $d.off('click.thds').on('click.thds', '#theater-hist-delete-selected', async function () {
+        const n = histSelected.size;
+        if (!n) return;
         const { Popup } = SillyTavern.getContext();
-        const ok = await Popup.show.confirm(`确定删除全部 ${count} 条历史记录？`, '删除后无法恢复');
+        const ok = await Popup.show.confirm(`确定删除选中的 ${n} 条历史记录？`, '删除后无法恢复');
         if (!ok) return;
-        settings.history = [];
+        const sorted = [...histSelected].sort((a, b) => b - a);
+        sorted.forEach(i => settings.history.splice(i, 1));
+        histSelected.clear();
         save();
         refreshHistList();
-        toastr.success('已清空全部历史');
+        updateHistBulkBar();
+        toastr.success(`已删除 ${n} 条`);
     });
 
     // ---- Theme ----
@@ -1521,7 +1555,14 @@ function refreshHistList() {
     const h = settings.history || [];
     $('#theater-history-list').html(h.length === 0 ? '<p class="theater-empty">暂无</p>' : h.map((item, i) => historyItemHTML(item, i)).join(''));
     $('#theater-export-all-history').toggle(h.length > 0);
-    $('#theater-clear-all-history').toggle(h.length > 0);
+    $('#theater-hist-select-all').toggle(h.length > 0);
+    updateHistBulkBar();
+}
+
+function updateHistBulkBar() {
+    const n = histSelected.size;
+    $('#theater-hist-delete-selected').toggle(n > 0);
+    $('#theater-hist-sel-count').text(n);
 }
 
 // ============================================================
