@@ -664,8 +664,12 @@ function buildPopupHTML() {
             <div class="theater-history-top-bar">
                 <label class="theater-label" style="margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> 保存的小剧场</label>
                 <div id="theater-export-all-history" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-download"></i><span>批量导出</span></div>
-                <div id="theater-hist-select-all" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-check-double"></i><span>全选</span></div>
-                <div id="theater-hist-delete-selected" class="theater-btn" style="display:none;"><i class="fa-solid fa-trash-can"></i><span>删除选中 (<span id="theater-hist-sel-count">0</span>)</span></div>
+                <div id="theater-hist-batch-enter" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-trash-can"></i><span>批量删除</span></div>
+                <div id="theater-hist-batch-bar" style="display:none;">
+                    <div id="theater-hist-select-all" class="theater-btn"><i class="fa-solid fa-check-double"></i><span>全选</span></div>
+                    <div id="theater-hist-delete-selected" class="theater-btn danger"><i class="fa-solid fa-trash-can"></i><span>删除选中 (<span id="theater-hist-sel-count">0</span>)</span></div>
+                    <div id="theater-hist-batch-cancel" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>取消</span></div>
+                </div>
             </div>
             <div id="theater-history-list">${hist.length === 0 ? '<p class="theater-empty">暂无</p>' : hist.map((h, i) => historyItemHTML(h, i)).join('')}</div>
         </div>
@@ -795,7 +799,7 @@ function historyItemHTML(h, i) {
     const selClass = histSelected.has(i) ? ' theater-history-item-selected' : '';
     return `<div class="theater-history-item${selClass}" data-index="${i}">
         <div class="theater-history-header">
-            <input type="checkbox" class="theater-hist-checkbox" data-index="${i}" ${checked}>
+            <input type="checkbox" class="theater-hist-checkbox" data-index="${i}" ${checked} style="display:none;">
             <span class="theater-history-title">${esc(h.title || '小剧场 #' + (i + 1))}</span>
             <span class="theater-history-date">${h.date || ''}</span>
         </div>
@@ -875,6 +879,7 @@ function renderGroupFilterOptions() {
 // 临时状态：当前选中索引 + 搜索关键词，仅本次会话有效
 let instSelected = new Set();
 let histSelected = new Set();
+let histBatchMode = false;
 let instSearch = '';
 
 function filterInstAll(arr) {
@@ -1416,6 +1421,16 @@ function bindEvents() {
         settings.history.splice(idx, 1); save(); refreshHistList();
     });
     $d.off('click.teah').on('click.teah', '#theater-export-all-history', exportAllHistory);
+    $d.off('click.thbe').on('click.thbe', '#theater-hist-batch-enter', function () {
+        histBatchMode = true;
+        histSelected.clear();
+        enterHistBatchMode();
+    });
+    $d.off('click.thbc').on('click.thbc', '#theater-hist-batch-cancel', function () {
+        histBatchMode = false;
+        histSelected.clear();
+        exitHistBatchMode();
+    });
     $d.off('change.thcb').on('change.thcb', '.theater-hist-checkbox', function () {
         const idx = parseInt($(this).data('index'));
         if ($(this).is(':checked')) histSelected.add(idx);
@@ -1427,11 +1442,13 @@ function bindEvents() {
         const h = settings.history || [];
         if (histSelected.size === h.length) {
             histSelected.clear();
+            $(this).find('span').text('全选');
         } else {
             h.forEach((_, i) => histSelected.add(i));
+            $(this).find('span').text('取消全选');
         }
         refreshHistList();
-        updateHistBulkBar();
+        if (histBatchMode) enterHistBatchMode();
     });
     $d.off('click.thds').on('click.thds', '#theater-hist-delete-selected', async function () {
         const n = histSelected.size;
@@ -1442,9 +1459,10 @@ function bindEvents() {
         const sorted = [...histSelected].sort((a, b) => b - a);
         sorted.forEach(i => settings.history.splice(i, 1));
         histSelected.clear();
+        histBatchMode = false;
         save();
         refreshHistList();
-        updateHistBulkBar();
+        exitHistBatchMode();
         toastr.success(`已删除 ${n} 条`);
     });
 
@@ -1563,6 +1581,26 @@ function updateHistBulkBar() {
     const n = histSelected.size;
     $('#theater-hist-delete-selected').toggle(n > 0);
     $('#theater-hist-sel-count').text(n);
+}
+
+function enterHistBatchMode() {
+    $('#theater-hist-batch-enter').hide();
+    $('#theater-export-all-history').hide();
+    $('#theater-hist-batch-bar').show();
+    $('.theater-hist-checkbox').show();
+    $('.theater-history-actions').hide();
+    updateHistBulkBar();
+}
+
+function exitHistBatchMode() {
+    $('#theater-hist-batch-bar').hide();
+    $('.theater-hist-checkbox').hide().prop('checked', false);
+    $('.theater-history-item').removeClass('theater-history-item-selected');
+    const h = settings.history || [];
+    $('#theater-hist-batch-enter').toggle(h.length > 0);
+    $('#theater-export-all-history').toggle(h.length > 0);
+    $('.theater-history-actions').show();
+    updateHistBulkBar();
 }
 
 // ============================================================
