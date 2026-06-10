@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.7.1 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.8.0 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.7.1';
+const VERSION = '2.8.0';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -134,10 +134,13 @@ const defaultSettings = Object.freeze({
     skinMode: 'default',  // 'default' (内置粉彩) | 'theater' (跟随酒馆) | 'custom' (用户CSS接管)
     apiUrl: '', apiKey: '', apiModel: '',
     userPersona: '',
-    worldBookEntries: [], worldBookStates: [],
+    worldBookEntries: [], worldBookStates: [],  // 旧版字段，v2.8.0 起仅用于迁移
     worldBookStatesByBook: {},  // { [bookName]: { [entryKey]: false } }，缺省 true
     worldBookKnownEntriesByBook: {},  // { [bookName]: [entryKey, ...] }，记录"曾见过"的 key，用来识别新条目
-    currentWorldBook: '',
+    currentWorldBook: '',       // 旧版字段，v2.8.0 起仅用于迁移
+    selectedWorldBooks: [],     // 勾选的世界书名列表（v2.8.0 起支持多本）
+    manualWBEntries: [],        // 手动添加的条目 [{ name, content, on }]
+    followCharCard: false,      // 切角色时自动选中角色卡绑定的世界书
     floatingBall: false,
     soundEnabled: true,
     soundPreset: 'chime',
@@ -307,6 +310,24 @@ async function init() {
     delete settings.savedPresets;
     delete settings.systemPrompt;
 
+    // v2.8.0 迁移：单选世界书 → 多选；手动条目从混合数组里拆出来；
+    // 世界书条目内容不再持久化（弹窗打开时现从酒馆读），settings 跟着瘦身
+    if (!Array.isArray(settings.selectedWorldBooks)) settings.selectedWorldBooks = [];
+    if (!Array.isArray(settings.manualWBEntries)) settings.manualWBEntries = [];
+    if (settings.currentWorldBook) {
+        if (!settings.selectedWorldBooks.includes(settings.currentWorldBook)) settings.selectedWorldBooks.push(settings.currentWorldBook);
+        settings.currentWorldBook = '';
+    }
+    if (Array.isArray(settings.worldBookEntries) && settings.worldBookEntries.length) {
+        settings.worldBookEntries.forEach((e, i) => {
+            if (e.uid === undefined || e.uid === null) {
+                settings.manualWBEntries.push({ name: e.name, content: e.content, on: (settings.worldBookStates || [])[i] !== false });
+            }
+        });
+        settings.worldBookEntries = [];
+        settings.worldBookStates = [];
+    }
+
     await storageInit();
 
     const html = await renderExtensionTemplateAsync('third-party/st-theater', 'settings');
@@ -321,6 +342,14 @@ async function init() {
     };
     addWand();
     if (event_types?.APP_READY) eventSource.on(event_types.APP_READY, addWand);
+
+    // 跟随角色卡：切聊天/角色时自动换成这张卡绑定的世界书
+    if (event_types?.CHAT_CHANGED) {
+        eventSource.on(event_types.CHAT_CHANGED, async () => {
+            if (!settings.followCharCard) return;
+            try { await applyCharBoundBooks(); } catch (e) { console.warn('[Theater] 跟随角色卡失败:', e); }
+        });
+    }
 
     applyCustomCSS();
     // 悬浮球延迟创建，避免干扰其他插件初始化
@@ -665,6 +694,7 @@ function buildPopupHTML() {
         <!-- Preset -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-shield-halved"></i> 生成预设</label>
+            <input id="theater-preset-search" class="theater-input" placeholder="搜索预设…" style="margin-bottom:6px;">
             <select id="theater-preset-name-select" class="theater-select" style="margin-bottom:8px;">
                 <option value="">-- 选择预设 --</option>
             </select>
@@ -699,10 +729,13 @@ function buildPopupHTML() {
 
         <!-- World Book -->
         <div class="theater-section">
-            <label class="theater-label"><i class="fa-solid fa-book-atlas"></i> 世界书</label>
-            <select id="theater-wb-select" class="theater-select">
-                <option value="">-- 选择世界书 --</option>
-            </select>
+            <label class="theater-label"><i class="fa-solid fa-book-atlas"></i> 世界书 <span class="theater-hint-inline">可多选</span></label>
+            <div class="theater-toggle-row" style="margin-bottom:8px;">
+                <label class="theater-toggle-label"><input type="checkbox" id="theater-wb-follow" ${settings.followCharCard ? 'checked' : ''}><span>跟随角色卡</span></label>
+                <span class="theater-hint-inline">切角色时自动选中卡绑定的世界书</span>
+            </div>
+            <input id="theater-wb-search" class="theater-input" placeholder="搜索世界书…" style="margin-bottom:6px;">
+            <div id="theater-wb-books" class="theater-wb-list"></div>
             <div class="theater-wb-entries-header" id="theater-wb-header" style="display:none;">
                 <span id="theater-wb-count" class="theater-wb-entries-count"></span>
                 <div class="theater-wb-entries-actions">
@@ -1071,17 +1104,44 @@ function updateBulkBar() {
     }
 }
 
+// ---- World Book 运行时状态 ----
+// 条目内容不再持久化到 settings（避免撑大 settings.json），弹窗打开时现从酒馆读。
+// 持久化的只有：选了哪些书（selectedWorldBooks）、每本书条目的开关（worldBookStatesByBook）、手动条目（manualWBEntries）。
+let wbEntries = [];    // [{ book, uid, name, content } | { manual: true, mIdx, name, content }]
+let wbStates = [];     // 与 wbEntries 平行的开关数组
+let wbBookNames = [];  // 可选世界书名列表
+let wbSearch = '';
+
+function renderWBBookList() {
+    if (!wbBookNames.length) return '<p class="theater-empty">没找到世界书</p>';
+    const q = (wbSearch || '').toLowerCase().trim();
+    const sel = settings.selectedWorldBooks || [];
+    const names = wbBookNames.filter(n => !q || n.toLowerCase().includes(q));
+    if (!names.length) return `<p class="theater-empty">没找到包含「${esc(q)}」的世界书</p>`;
+    return names.map(n => `
+<label class="theater-wb-book-row${sel.includes(n) ? ' active' : ''}">
+    <input type="checkbox" class="theater-wb-book-check" data-name="${esc(n)}" ${sel.includes(n) ? 'checked' : ''}>
+    <span class="theater-wb-book-name">${esc(n)}</span>
+</label>`).join('');
+}
+
 function renderWBEntries() {
-    const entries = settings.worldBookEntries || [];
-    const states = settings.worldBookStates || [];
-    if (!entries.length) return '<p class="theater-empty">暂无条目</p>';
-    return entries.map((entry, i) => {
-        const checked = (i < states.length) ? (states[i] !== false) : true;
-        const isManual = entry.uid === undefined || entry.uid === null;
+    if (!wbEntries.length) return '<p class="theater-empty">暂无条目</p>';
+    const groupCount = new Set(wbEntries.map(e => e.manual ? '__manual__' : e.book)).size;
+    let lastGroup = null;
+    return wbEntries.map((entry, i) => {
+        const checked = wbStates[i] !== false;
+        const isManual = !!entry.manual;
+        const group = isManual ? '手动添加' : (entry.book || '');
+        let divider = '';
+        if (groupCount > 1 && group !== lastGroup) {
+            lastGroup = group;
+            divider = `<div class="theater-wb-book-divider"><i class="fa-solid ${isManual ? 'fa-pen' : 'fa-book'}"></i> ${esc(group)}</div>`;
+        }
         const deleteBtn = isManual
             ? `<span class="theater-wb-entry-delete" data-index="${i}" title="删除此手动添加的条目"><i class="fa-solid fa-trash-can"></i></span>`
             : '';
-        return `
+        return `${divider}
 <div class="theater-wb-entry ${checked ? '' : 'theater-wb-entry-off'}">
     <div class="theater-wb-entry-header" data-index="${i}">
         <input type="checkbox" class="theater-wb-check" data-index="${i}" ${checked ? 'checked' : ''}>
@@ -1097,18 +1157,19 @@ function renderWBEntries() {
 }
 
 function hasManualEntries() {
-    return (settings.worldBookEntries || []).some(e => e.uid === undefined || e.uid === null);
+    return (settings.manualWBEntries || []).length > 0;
 }
 
 function updateWBCount() {
-    const entries = settings.worldBookEntries || [];
-    const states = settings.worldBookStates || [];
-    const total = entries.length;
-    let active = 0;
+    const total = wbEntries.length;
+    let active = 0, chars = 0;
     for (let i = 0; i < total; i++) {
-        if (i >= states.length || states[i] !== false) active++;
+        if (wbStates[i] !== false) { active++; chars += (wbEntries[i].content || '').length; }
     }
-    $('#theater-wb-count').text(`${active}/${total} 个条目已启用`);
+    const roughTokens = Math.ceil(chars / 1.5);
+    const tokenStr = roughTokens >= 1000 ? `${(roughTokens / 1000).toFixed(1)}k` : String(roughTokens);
+    const warn = roughTokens > 20000;
+    $('#theater-wb-count').html(`${active}/${total} 个条目已启用 · 约 ${tokenStr} token${warn ? ' <span class="theater-wb-count-warn">⚠ 偏多</span>' : ''}`);
     $('#theater-wb-header').toggle(total > 0);
 }
 
@@ -1116,6 +1177,36 @@ function refreshWBUI() {
     $('#theater-worldbook-list').html(renderWBEntries());
     updateWBCount();
     $('#theater-wb-clear-manual').toggle(hasManualEntries());
+}
+
+// 把 settings.manualWBEntries 重新同步到 wbEntries 尾部
+function syncManualIntoWB() {
+    const keep = [], keepStates = [];
+    wbEntries.forEach((e, i) => { if (!e.manual) { keep.push(e); keepStates.push(wbStates[i]); } });
+    (settings.manualWBEntries || []).forEach((m, j) => {
+        keep.push({ manual: true, mIdx: j, name: m.name, content: m.content });
+        keepStates.push(m.on !== false);
+    });
+    wbEntries = keep;
+    wbStates = keepStates;
+}
+
+function setAllWBStates(on) {
+    wbStates = wbEntries.map(() => on);
+    if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
+    wbEntries.forEach(e => {
+        if (e.manual) {
+            const m = (settings.manualWBEntries || [])[e.mIdx];
+            if (m) m.on = on;
+        } else if (e.book) {
+            if (!settings.worldBookStatesByBook[e.book]) settings.worldBookStatesByBook[e.book] = {};
+            if (on) delete settings.worldBookStatesByBook[e.book][entryKey(e)];
+            else settings.worldBookStatesByBook[e.book][entryKey(e)] = false;
+        }
+    });
+    $('#theater-worldbook-list .theater-wb-check').prop('checked', on);
+    $('#theater-worldbook-list .theater-wb-entry').toggleClass('theater-wb-entry-off', !on);
+    save(); updateWBCount();
 }
 
 // ============================================================
@@ -1126,19 +1217,20 @@ async function openTheaterPopup() {
     const popup = new Popup(buildPopupHTML(), POPUP_TYPE.TEXT, '', { wide: true, okButton: 'Close', allowVerticalScrolling: true });
     const p = popup.show();
     await new Promise(r => setTimeout(r, 50));
+    // 搜索框是重建的空框，过滤词也要跟着清，不然看起来"列表少了一截"
+    wbSearch = '';
+    presetSearch = '';
     bindEvents();
     await loadWorldBookList();
     await loadPresetNameList();
-    // Restore selected WB
-    if (settings.currentWorldBook) {
-        $('#theater-wb-select').val(settings.currentWorldBook);
-    }
+    // 世界书：跟随角色卡的话先按当前卡选书，然后把选中的书的条目现读进来
+    if (settings.followCharCard) await applyCharBoundBooks();
+    else await reloadWorldBooks({ silent: true });
     // Restore selected preset
     if (settings.selectedPresetName) {
         $('#theater-preset-name-select').val(settings.selectedPresetName);
+        loadPresetEntries();
     }
-    refreshWBUI();
-    if (settings.selectedPresetName) loadPresetEntries();
 
     // === 恢复后台生成状态 ===
     if (isGenerating) {
@@ -1187,6 +1279,10 @@ function bindEvents() {
     $d.off('input.tii').on('input.tii', '#theater-instruction', function () { settings.lastInstruction = $(this).val(); save(); });
 
     // ---- Material: Preset ----
+    $d.off('input.tpsq').on('input.tpsq', '#theater-preset-search', function () {
+        presetSearch = $(this).val() || '';
+        renderPresetOptions();
+    });
     $d.off('change.tpns').on('change.tpns', '#theater-preset-name-select', function () {
         settings.selectedPresetName = $(this).val();
         settings.presetEntryStates = {};
@@ -1258,48 +1354,48 @@ function bindEvents() {
     });
 
     // ---- Material: World Book ----
-    $d.off('change.twbs').on('change.twbs', '#theater-wb-select', onWorldBookSelect);
+    $d.off('change.twbk').on('change.twbk', '.theater-wb-book-check', async function () {
+        const name = String($(this).data('name'));
+        if (!Array.isArray(settings.selectedWorldBooks)) settings.selectedWorldBooks = [];
+        const sel = settings.selectedWorldBooks;
+        if ($(this).is(':checked')) { if (!sel.includes(name)) sel.push(name); }
+        else { const i = sel.indexOf(name); if (i !== -1) sel.splice(i, 1); }
+        $(this).closest('.theater-wb-book-row').toggleClass('active', $(this).is(':checked'));
+        save();
+        await reloadWorldBooks();
+    });
+    $d.off('input.twbq').on('input.twbq', '#theater-wb-search', function () {
+        wbSearch = $(this).val() || '';
+        $('#theater-wb-books').html(renderWBBookList());
+    });
+    $d.off('change.twbf').on('change.twbf', '#theater-wb-follow', async function () {
+        settings.followCharCard = $(this).is(':checked');
+        save();
+        if (settings.followCharCard) await applyCharBoundBooks({ announce: true });
+    });
     $d.off('change.twb').on('change.twb', '.theater-wb-check', function (e) {
         e.stopPropagation();
         const idx = parseInt($(this).data('index'));
-        while (settings.worldBookStates.length <= idx) settings.worldBookStates.push(true);
+        const entry = wbEntries[idx];
+        if (!entry) return;
         const checked = $(this).is(':checked');
-        settings.worldBookStates[idx] = checked;
+        while (wbStates.length <= idx) wbStates.push(true);
+        wbStates[idx] = checked;
         $(this).closest('.theater-wb-entry').toggleClass('theater-wb-entry-off', !checked);
-        const book = settings.currentWorldBook;
-        if (book) {
+        if (entry.manual) {
+            const m = (settings.manualWBEntries || [])[entry.mIdx];
+            if (m) m.on = checked;
+        } else if (entry.book) {
             if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
-            if (!settings.worldBookStatesByBook[book]) settings.worldBookStatesByBook[book] = {};
-            const key = entryKey(settings.worldBookEntries[idx]);
-            if (checked) delete settings.worldBookStatesByBook[book][key];
-            else settings.worldBookStatesByBook[book][key] = false;
+            if (!settings.worldBookStatesByBook[entry.book]) settings.worldBookStatesByBook[entry.book] = {};
+            const key = entryKey(entry);
+            if (checked) delete settings.worldBookStatesByBook[entry.book][key];
+            else settings.worldBookStatesByBook[entry.book][key] = false;
         }
         save(); updateWBCount();
     });
-    $d.off('click.twsa').on('click.twsa', '#theater-wb-select-all', () => {
-        settings.worldBookStates = (settings.worldBookEntries || []).map(() => true);
-        $('.theater-wb-check').prop('checked', true);
-        $('.theater-wb-entry').removeClass('theater-wb-entry-off');
-        const book = settings.currentWorldBook;
-        if (book) {
-            if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
-            settings.worldBookStatesByBook[book] = {};
-        }
-        save(); updateWBCount();
-    });
-    $d.off('click.twda').on('click.twda', '#theater-wb-deselect-all', () => {
-        settings.worldBookStates = (settings.worldBookEntries || []).map(() => false);
-        $('.theater-wb-check').prop('checked', false);
-        $('.theater-wb-entry').addClass('theater-wb-entry-off');
-        const book = settings.currentWorldBook;
-        if (book) {
-            if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
-            const map = {};
-            (settings.worldBookEntries || []).forEach(e => { map[entryKey(e)] = false; });
-            settings.worldBookStatesByBook[book] = map;
-        }
-        save(); updateWBCount();
-    });
+    $d.off('click.twsa').on('click.twsa', '#theater-wb-select-all', () => setAllWBStates(true));
+    $d.off('click.twda').on('click.twda', '#theater-wb-deselect-all', () => setAllWBStates(false));
     $d.off('click.twet').on('click.twet', '.theater-wb-entry-toggle', function (e) {
         e.stopPropagation();
         const idx = $(this).data('index');
@@ -1316,45 +1412,40 @@ function bindEvents() {
     $d.off('click.twed').on('click.twed', '.theater-wb-entry-delete', async function (e) {
         e.stopPropagation();
         const idx = parseInt($(this).data('index'));
-        const entry = (settings.worldBookEntries || [])[idx];
-        if (!entry) return;
+        const entry = wbEntries[idx];
+        if (!entry?.manual) return;
         const { Popup } = SillyTavern.getContext();
         const ok = await Popup.show.confirm(`删除「${entry.name || '#' + (idx + 1)}」？`, '此条目是手动添加的，删除后不可恢复。');
         if (!ok) return;
-        settings.worldBookEntries.splice(idx, 1);
-        if (Array.isArray(settings.worldBookStates)) settings.worldBookStates.splice(idx, 1);
+        (settings.manualWBEntries || []).splice(entry.mIdx, 1);
         save();
+        syncManualIntoWB();
         refreshWBUI();
     });
     // World book - clear ALL manually-added entries (世界书来的不动)
     $d.off('click.twcm').on('click.twcm', '#theater-wb-clear-manual', async function () {
-        const manualCount = (settings.worldBookEntries || []).filter(e => e.uid === undefined || e.uid === null).length;
+        const manualCount = (settings.manualWBEntries || []).length;
         if (!manualCount) return;
         const { Popup } = SillyTavern.getContext();
         const ok = await Popup.show.confirm(`清空 ${manualCount} 条手动添加的条目？`, '世界书来的条目不受影响。');
         if (!ok) return;
-        const newEntries = [];
-        const newStates = [];
-        (settings.worldBookEntries || []).forEach((e, i) => {
-            if (e.uid !== undefined && e.uid !== null) {
-                newEntries.push(e);
-                newStates.push((settings.worldBookStates || [])[i] !== false);
-            }
-        });
-        settings.worldBookEntries = newEntries;
-        settings.worldBookStates = newStates;
+        settings.manualWBEntries = [];
         save();
+        syncManualIntoWB();
         refreshWBUI();
     });
     // World book - manual add
     $d.off('click.twp').on('click.twp', '#theater-wb-parse-btn', function () {
         const text = $('#theater-wb-manual').val().trim(); if (!text) return;
         const parts = text.split(/\n{2,}/).filter(s => s.trim());
+        if (!Array.isArray(settings.manualWBEntries)) settings.manualWBEntries = [];
         parts.forEach(p => {
-            settings.worldBookEntries.push({ name: p.substring(0, 30).replace(/\n/g, ' '), content: p.trim() });
-            settings.worldBookStates.push(true);
+            settings.manualWBEntries.push({ name: p.substring(0, 30).replace(/\n/g, ' '), content: p.trim(), on: true });
         });
-        save(); refreshWBUI(); $('#theater-wb-manual').val('');
+        save();
+        syncManualIntoWB();
+        refreshWBUI();
+        $('#theater-wb-manual').val('');
         toastr.success(`添加了 ${parts.length} 个条目`);
     });
 
@@ -1752,12 +1843,20 @@ function loadPersona() {
 // Preset Entries
 // ============================================================
 let cachedPresetEntries = [];
+let presetNamesCache = [];
+let presetSearch = '';
+
+function renderPresetOptions() {
+    const $select = $('#theater-preset-name-select');
+    if (!$select.length) return;
+    const q = (presetSearch || '').toLowerCase().trim();
+    const names = presetNamesCache.filter(n => !q || n.toLowerCase().includes(q));
+    $select.empty().append('<option value="">-- 选择预设 --</option>');
+    names.forEach(n => $select.append(`<option value="${esc(n)}">${esc(n)}</option>`));
+    if (settings.selectedPresetName && names.includes(settings.selectedPresetName)) $select.val(settings.selectedPresetName);
+}
 
 async function loadPresetNameList() {
-    const $select = $('#theater-preset-name-select');
-    $select.empty();
-    $select.append('<option value="">-- 选择预设 --</option>');
-
     const ctx = SillyTavern.getContext();
     const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
     let names = [];
@@ -1842,7 +1941,8 @@ async function loadPresetNameList() {
     }
 
     names.sort((a, b) => a.localeCompare(b));
-    names.forEach(n => $select.append(`<option value="${esc(n)}">${esc(n)}</option>`));
+    presetNamesCache = names;
+    renderPresetOptions();
     console.log(`[Theater] Preset list: ${names.length} items from ${source || 'none'}`, names);
 
     if (!names.length) {
@@ -2045,8 +2145,6 @@ function getSelectedPresetPrompt() {
 // World Book
 // ============================================================
 async function loadWorldBookList() {
-    const $select = $('#theater-wb-select');
-    $select.find('option:not(:first)').remove();
     let names = [];
 
     try {
@@ -2085,7 +2183,10 @@ async function loadWorldBookList() {
         }
     } catch (e) { console.error('[Theater] WB list error:', e); }
 
-    names.forEach(n => $select.append(`<option value="${esc(n)}">${esc(n)}</option>`));
+    // 已选中但没被发现的书也要进列表，不然没法取消勾选
+    (settings.selectedWorldBooks || []).forEach(b => { if (b && !names.includes(b)) names.push(b); });
+    wbBookNames = names;
+    $('#theater-wb-books').html(renderWBBookList());
     console.log(`[Theater] Found ${names.length} world books`);
 }
 
@@ -2094,69 +2195,96 @@ function entryKey(e) {
     return 'm:' + (e?.name || '') + ':' + (e?.content || '').slice(0, 30);
 }
 
-async function onWorldBookSelect() {
-    const name = $('#theater-wb-select').val();
-    settings.currentWorldBook = name;
+// 重新加载所有勾选的世界书条目（多本合并，手动条目排最后）
+async function reloadWorldBooks({ silent = false } = {}) {
+    const books = settings.selectedWorldBooks || [];
+    const all = [], allStates = [];
+    if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
+    if (!settings.worldBookKnownEntriesByBook) settings.worldBookKnownEntriesByBook = {};
+    let loadedBooks = 0;
 
-    if (!name) {
-        // Clear world book entries but keep manual ones
-        const manualEntries = (settings.worldBookEntries || []).filter((e, i) => (e.uid === undefined || e.uid === null));
-        const manualStates = (settings.worldBookEntries || []).map((e, i) => ({ manual: e.uid === undefined || e.uid === null, state: (settings.worldBookStates || [])[i] !== false })).filter(x => x.manual).map(x => x.state);
-        settings.worldBookEntries = manualEntries;
-        settings.worldBookStates = manualStates;
-        save(); refreshWBUI();
-        return;
-    }
-
-    // Replace all entries with this book's entries
     try {
         const ctx = SillyTavern.getContext();
         const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
-        const resp = await fetch('/api/worldinfo/get', { method: 'POST', headers, body: JSON.stringify({ name }) });
+        for (const name of books) {
+            try {
+                const resp = await fetch('/api/worldinfo/get', { method: 'POST', headers, body: JSON.stringify({ name }) });
+                if (!resp.ok) { if (!silent) toastr.warning(`世界书「${name}」读取失败 (${resp.status})`); continue; }
+                const data = await resp.json();
+                if (!data?.entries) { loadedBooks++; continue; }
 
-        if (!resp.ok) { toastr.warning(`读取失败 (${resp.status})`); return; }
-        const data = await resp.json();
+                const entries = Object.values(data.entries)
+                    .filter(e => e.content)
+                    .map(e => ({
+                        book: name,
+                        uid: e.uid,
+                        name: e.comment || (Array.isArray(e.key) ? e.key.join(', ') : String(e.key || '')) || '未命名',
+                        content: e.content,
+                        disabled: !!e.disable,  // 记录酒馆里的开关状态，方便参考
+                    }));
 
-        if (!data?.entries) { toastr.warning('世界书为空'); settings.worldBookEntries = []; settings.worldBookStates = []; save(); refreshWBUI(); return; }
+                const savedStates = settings.worldBookStatesByBook[name] || {};
+                const knownKeys = settings.worldBookKnownEntriesByBook[name];
+                const hasMemory = Array.isArray(knownKeys);
+                const knownSet = hasMemory ? new Set(knownKeys) : null;
 
-        const entries = Object.values(data.entries)
-            .filter(e => e.content)
-            .map(e => ({
-                uid: e.uid,
-                name: e.comment || (Array.isArray(e.key) ? e.key.join(', ') : String(e.key || '')) || '未命名',
-                content: e.content,
-                disabled: !!e.disable,  // 记录酒馆里的开关状态，方便参考
-            }));
+                entries.forEach(e => {
+                    const k = entryKey(e);
+                    // 没见过的新条目默认不勾选，避免悄悄混进 prompt
+                    allStates.push(hasMemory && !knownSet.has(k) ? false : savedStates[k] !== false);
+                    all.push(e);
+                });
+                // 把当前所有 key 写回 known 列表，新条目下次就不再被当成"新"
+                settings.worldBookKnownEntriesByBook[name] = entries.map(e => entryKey(e));
+                loadedBooks++;
+            } catch (e) {
+                console.error('[Theater] WB load error:', name, e);
+                if (!silent) toastr.error(`世界书「${name}」读取失败: ` + e.message);
+            }
+        }
+    } catch (e) { console.error('[Theater] WB reload error:', e); }
 
-        if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
-        if (!settings.worldBookKnownEntriesByBook) settings.worldBookKnownEntriesByBook = {};
-        const savedStates = settings.worldBookStatesByBook[name] || {};
-        const knownKeys = settings.worldBookKnownEntriesByBook[name];
-        const hasMemory = Array.isArray(knownKeys);
-        const knownSet = hasMemory ? new Set(knownKeys) : null;
+    wbEntries = all;
+    wbStates = allStates;
+    syncManualIntoWB();
+    save();
+    refreshWBUI();
+    if (!silent && books.length) toastr.success(`已加载 ${loadedBooks} 本世界书 · ${all.length} 个条目`);
+}
 
-        // 保留已有的手动条目
-        const oldManual = (settings.worldBookEntries || []).filter(e => e.uid === undefined || e.uid === null);
-        const oldManualStates = (settings.worldBookEntries || []).reduce((acc, e, i) => {
-            if (e.uid === undefined || e.uid === null) acc.push((settings.worldBookStates || [])[i] !== false);
-            return acc;
-        }, []);
+// ---- 跟随角色卡 ----
+function getCharBoundBooks() {
+    const books = [];
+    try {
+        const ctx = SillyTavern.getContext();
+        const c = (ctx.characterId !== undefined && ctx.characterId !== null) ? ctx.characters?.[ctx.characterId] : null;
+        const primary = c?.data?.extensions?.world;
+        if (primary) books.push(primary);
+        // 附加世界书（charLore）：不同 ST 版本暴露位置不一样，能拿到就用
+        const avatar = c?.avatar;
+        const charLore = ctx.worldInfoSettings?.charLore || window.world_info?.charLore;
+        if (avatar && Array.isArray(charLore)) {
+            const fileName = String(avatar).replace(/\.[^.]+$/, '');
+            const found = charLore.find(e => e?.name === fileName);
+            (found?.extraBooks || []).forEach(b => { if (b && !books.includes(b)) books.push(b); });
+        }
+        // 聊天绑定的世界书也算
+        const chatBook = ctx.chatMetadata?.world_info;
+        if (typeof chatBook === 'string' && chatBook && !books.includes(chatBook)) books.push(chatBook);
+    } catch (e) { console.warn('[Theater] 读取角色绑定世界书失败:', e); }
+    return books;
+}
 
-        const wbStates = entries.map(e => {
-            const k = entryKey(e);
-            if (hasMemory && !knownSet.has(k)) return false;
-            return savedStates[k] !== false;
-        });
-        settings.worldBookEntries = [...entries, ...oldManual];
-        settings.worldBookStates = [...wbStates, ...oldManualStates];
-        // 把当前所有 key 写回 known 列表，新条目下次就不再被当成"新"
-        settings.worldBookKnownEntriesByBook[name] = entries.map(e => entryKey(e));
-        save();
-        refreshWBUI();
-        toastr.success(`已加载 ${entries.length} 个条目`);
-    } catch (e) {
-        console.error('[Theater] WB load error:', e);
-        toastr.error('读取失败: ' + e.message);
+// 把选中列表换成当前角色卡绑定的书；弹窗开着就顺手刷新 UI
+async function applyCharBoundBooks({ announce = false } = {}) {
+    const books = getCharBoundBooks();
+    settings.selectedWorldBooks = books;
+    save();
+    if (announce) toastr.info(books.length ? `已选中角色卡绑定的 ${books.length} 本世界书` : '这张卡没有绑定世界书');
+    if ($('#theater-wb-books').length) {
+        books.forEach(b => { if (!wbBookNames.includes(b)) wbBookNames.push(b); });
+        $('#theater-wb-books').html(renderWBBookList());
+        await reloadWorldBooks({ silent: true });
     }
 }
 
@@ -2689,7 +2817,7 @@ async function generateTheater() {
 
     const personaInfo = settings.userPersona?.trim() ? `User人设：\n${settings.userPersona}\n\n` : '';
 
-    const wbParts = (settings.worldBookEntries || []).filter((_e, i) => (settings.worldBookStates || [])[i] !== false).map(e => e.content);
+    const wbParts = wbEntries.filter((_e, i) => wbStates[i] !== false).map(e => e.content);
     const wbInfo = wbParts.length ? `世界书设定：\n${wbParts.join('\n\n')}\n\n` : '';
 
     let renderRules = DEFAULT_RENDER_TEMPLATE;

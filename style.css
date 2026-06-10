@@ -1590,3 +1590,49 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 /* Tabs row must NEVER show a scrollbar — touch swipe still works. Overrides the global default-skin scrollbar styling above. */
 .theater-popup .theater-tabs { scrollbar-width: none !important; }
 .theater-popup .theater-tabs::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+
+/* ============================================================
+   v2.8.0 世界书多选 + 搜索
+   ============================================================ */
+#theater-wb-books {
+    max-height: 190px;
+    overflow-y: auto;
+    margin-bottom: var(--t-space-2);
+}
+.theater-wb-book-row {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    padding: 7px 10px;
+    border-radius: var(--t-radius-sm);
+    cursor: pointer;
+    transition: background var(--t-dur-fast) var(--t-ease);
+}
+.theater-wb-book-row:hover {
+    background: var(--t-surface-2);
+}
+.theater-wb-book-row.active {
+    background: var(--t-surface-2);
+}
+.theater-wb-book-row .theater-wb-book-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.theater-wb-book-divider {
+    font-size: var(--t-text-xs);
+    font-weight: 600;
+    color: var(--t-fg-mute);
+    margin: var(--t-space-2) 0 var(--t-space-1);
+    padding-left: 2px;
+    letter-spacing: .04em;
+}
+.theater-wb-book-divider i {
+    margin-right: 4px;
+    opacity: .7;
+}
+.theater-wb-count-warn {
+    color: var(--t-danger);
+    font-weight: 600;
+}
