@@ -1668,3 +1668,31 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-wb-group-body {
     padding-left: 2px;
 }
+
+/* v2.8.2 世界书树形列表：勾选框选书，点行展开条目 */
+#theater-wb-books {
+    max-height: 48vh;
+}
+.theater-wb-book-node {
+    margin-bottom: 2px;
+}
+.theater-wb-book-node .theater-wb-group-body {
+    margin: 2px 0 6px 10px;
+    padding-left: 8px;
+    border-left: 2px solid var(--t-border);
+}
+.theater-wb-body-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    margin: 4px 0 6px;
+}
+.theater-wb-body-toolbar .theater-wb-entry-filter {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+}
+.theater-wb-body-toolbar .theater-wb-action-link {
+    white-space: nowrap;
+    padding: 6px 4px;
+}

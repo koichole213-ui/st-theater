@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.8.1 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.8.2 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.8.1';
+const VERSION = '2.8.2';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -735,16 +735,14 @@ function buildPopupHTML() {
                 <span class="theater-hint-inline">切角色时自动选中卡绑定的世界书</span>
             </div>
             <input id="theater-wb-search" class="theater-input" placeholder="搜索世界书…" style="margin-bottom:6px;">
-            <div id="theater-wb-books" class="theater-wb-list"></div>
             <div class="theater-wb-entries-header" id="theater-wb-header" style="display:none;">
                 <span id="theater-wb-count" class="theater-wb-entries-count"></span>
                 <div class="theater-wb-entries-actions">
                     <span id="theater-wb-select-all" class="theater-wb-action-link"><i class="fa-solid fa-check-double"></i> 全选</span>
                     <span id="theater-wb-deselect-all" class="theater-wb-action-link"><i class="fa-regular fa-square"></i> 全不选</span>
-                    <span id="theater-wb-collapse-btn" class="theater-wb-action-link"><i class="fa-solid fa-chevron-down"></i> 展开</span>
                 </div>
             </div>
-            <div id="theater-worldbook-list" class="theater-wb-list" style="display:none;"></div>
+            <div id="theater-wb-books" class="theater-wb-list"></div>
 
             <details class="theater-wb-manual-details">
                 <summary class="theater-wb-manual-summary"><i class="fa-solid fa-plus"></i> 手动添加条目</summary>
@@ -1112,21 +1110,8 @@ let wbStates = [];     // 与 wbEntries 平行的开关数组
 let wbBookNames = [];  // 可选世界书名列表
 let wbSearch = '';
 
-function renderWBBookList() {
-    if (!wbBookNames.length) return '<p class="theater-empty">没找到世界书</p>';
-    const q = (wbSearch || '').toLowerCase().trim();
-    const sel = settings.selectedWorldBooks || [];
-    const names = wbBookNames.filter(n => !q || n.toLowerCase().includes(q));
-    if (!names.length) return `<p class="theater-empty">没找到包含「${esc(q)}」的世界书</p>`;
-    return names.map(n => `
-<label class="theater-wb-book-row${sel.includes(n) ? ' active' : ''}">
-    <input type="checkbox" class="theater-wb-book-check" data-name="${esc(n)}" ${sel.includes(n) ? 'checked' : ''}>
-    <span class="theater-wb-book-name">${esc(n)}</span>
-</label>`).join('');
-}
-
-// 每本书一个可折叠分组；默认收起，免得第二本书被第一本的长列表压在底下
-let wbGroupCollapsed = {};  // { 组名: false 表示展开 }，缺省收起
+// 每本书一个节点：勾选框选书，点行展开条目，条目直接挂在书底下（树形）
+let wbGroupCollapsed = {};  // { 书名或 __manual__: false 表示展开 }，缺省收起
 
 function wbEntryHTML(entry, i) {
     const checked = wbStates[i] !== false;
@@ -1147,40 +1132,70 @@ function wbEntryHTML(entry, i) {
 </div>`;
 }
 
-function renderWBEntries() {
-    if (!wbEntries.length) return '<p class="theater-empty">暂无条目</p>';
-    // 按出现顺序分组（同一本书的条目是连续的，手动条目在最后）
-    const groups = [];
-    wbEntries.forEach((entry, i) => {
-        const label = entry.manual ? '手动添加' : (entry.book || '');
-        let g = groups[groups.length - 1];
-        if (!g || g.label !== label) { g = { label, manual: !!entry.manual, items: [] }; groups.push(g); }
-        g.items.push(i);
-    });
-    // 只有一组时不显示分组头，跟旧版一样平铺
-    if (groups.length === 1) return groups[0].items.map(i => wbEntryHTML(wbEntries[i], i)).join('');
-    return groups.map(g => {
-        const total = g.items.length;
-        const active = g.items.filter(i => wbStates[i] !== false).length;
-        const collapsed = wbGroupCollapsed[g.label] !== false;
+function wbBookBodyHTML(idxs) {
+    const toolbar = `
+<div class="theater-wb-body-toolbar">
+    <input class="theater-input theater-wb-entry-filter" placeholder="筛选条目…">
+    <span class="theater-wb-action-link theater-wb-book-all"><i class="fa-solid fa-check-double"></i> 全选</span>
+    <span class="theater-wb-action-link theater-wb-book-none"><i class="fa-regular fa-square"></i> 全不选</span>
+</div>`;
+    const list = idxs.length ? idxs.map(i => wbEntryHTML(wbEntries[i], i)).join('') : '<p class="theater-empty">没有可用条目</p>';
+    return toolbar + list;
+}
+
+function renderWBTree() {
+    const q = (wbSearch || '').toLowerCase().trim();
+    const sel = settings.selectedWorldBooks || [];
+    const names = wbBookNames.filter(n => !q || n.toLowerCase().includes(q));
+    const manualCount = (settings.manualWBEntries || []).length;
+    if (!wbBookNames.length && !manualCount) return '<p class="theater-empty">没找到世界书</p>';
+
+    const nodes = names.map(name => {
+        const selected = sel.includes(name);
+        const idxs = [];
+        if (selected) wbEntries.forEach((e, i) => { if (!e.manual && e.book === name) idxs.push(i); });
+        const active = idxs.filter(i => wbStates[i] !== false).length;
+        const collapsed = wbGroupCollapsed[name] !== false;
         return `
-<div class="theater-wb-book-group">
-    <div class="theater-wb-book-divider theater-wb-group-toggle" data-group="${esc(g.label)}">
-        <i class="fa-solid ${g.manual ? 'fa-pen' : 'fa-book'}"></i>
-        <span class="theater-wb-group-name">${esc(g.label)}</span>
-        <span class="theater-wb-group-count">${active}/${total}</span>
+<div class="theater-wb-book-node" data-key="${esc(name)}">
+    <div class="theater-wb-book-row${selected ? ' active' : ''}">
+        <input type="checkbox" class="theater-wb-book-check" data-name="${esc(name)}" ${selected ? 'checked' : ''}>
+        <span class="theater-wb-book-name">${esc(name)}</span>
+        ${selected ? `<span class="theater-wb-group-count">${active}/${idxs.length}</span><i class="fa-solid fa-chevron-${collapsed ? 'right' : 'down'} theater-wb-group-arrow"></i>` : ''}
+    </div>
+    ${selected ? `<div class="theater-wb-group-body" style="${collapsed ? 'display:none;' : ''}">${wbBookBodyHTML(idxs)}</div>` : ''}
+</div>`;
+    });
+
+    // 手动条目作为最后一个固定节点
+    if (manualCount) {
+        const idxs = [];
+        wbEntries.forEach((e, i) => { if (e.manual) idxs.push(i); });
+        const active = idxs.filter(i => wbStates[i] !== false).length;
+        const collapsed = wbGroupCollapsed['__manual__'] !== false;
+        nodes.push(`
+<div class="theater-wb-book-node" data-key="__manual__">
+    <div class="theater-wb-book-row active">
+        <i class="fa-solid fa-pen" style="opacity:.6;"></i>
+        <span class="theater-wb-book-name">手动添加</span>
+        <span class="theater-wb-group-count">${active}/${idxs.length}</span>
         <i class="fa-solid fa-chevron-${collapsed ? 'right' : 'down'} theater-wb-group-arrow"></i>
     </div>
-    <div class="theater-wb-group-body" style="${collapsed ? 'display:none;' : ''}">${g.items.map(i => wbEntryHTML(wbEntries[i], i)).join('')}</div>
-</div>`;
-    }).join('');
+    <div class="theater-wb-group-body" style="${collapsed ? 'display:none;' : ''}">${wbBookBodyHTML(idxs)}</div>
+</div>`);
+    }
+
+    if (!nodes.length) return `<p class="theater-empty">没找到包含「${esc(q)}」的世界书</p>`;
+    return nodes.join('');
 }
 
 function updateWBGroupCounts() {
-    $('#theater-worldbook-list .theater-wb-book-group').each(function () {
+    $('#theater-wb-books .theater-wb-book-node').each(function () {
+        const $count = $(this).find('.theater-wb-group-count');
+        if (!$count.length) return;
         const idxs = $(this).find('.theater-wb-check').map(function () { return parseInt($(this).data('index')); }).get();
         const active = idxs.filter(i => wbStates[i] !== false).length;
-        $(this).find('.theater-wb-group-count').text(`${active}/${idxs.length}`);
+        $count.text(`${active}/${idxs.length}`);
     });
 }
 
@@ -1203,9 +1218,27 @@ function updateWBCount() {
 }
 
 function refreshWBUI() {
-    $('#theater-worldbook-list').html(renderWBEntries());
+    $('#theater-wb-books').html(renderWBTree());
     updateWBCount();
     $('#theater-wb-clear-manual').toggle(hasManualEntries());
+}
+
+// 改某个条目的开关，并把状态写回对应的持久化位置
+function setWBStateByIndex(idx, on) {
+    const entry = wbEntries[idx];
+    if (!entry) return;
+    while (wbStates.length <= idx) wbStates.push(true);
+    wbStates[idx] = on;
+    if (entry.manual) {
+        const m = (settings.manualWBEntries || [])[entry.mIdx];
+        if (m) m.on = on;
+    } else if (entry.book) {
+        if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
+        if (!settings.worldBookStatesByBook[entry.book]) settings.worldBookStatesByBook[entry.book] = {};
+        const key = entryKey(entry);
+        if (on) delete settings.worldBookStatesByBook[entry.book][key];
+        else settings.worldBookStatesByBook[entry.book][key] = false;
+    }
 }
 
 // 把 settings.manualWBEntries 重新同步到 wbEntries 尾部
@@ -1221,20 +1254,9 @@ function syncManualIntoWB() {
 }
 
 function setAllWBStates(on) {
-    wbStates = wbEntries.map(() => on);
-    if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
-    wbEntries.forEach(e => {
-        if (e.manual) {
-            const m = (settings.manualWBEntries || [])[e.mIdx];
-            if (m) m.on = on;
-        } else if (e.book) {
-            if (!settings.worldBookStatesByBook[e.book]) settings.worldBookStatesByBook[e.book] = {};
-            if (on) delete settings.worldBookStatesByBook[e.book][entryKey(e)];
-            else settings.worldBookStatesByBook[e.book][entryKey(e)] = false;
-        }
-    });
-    $('#theater-worldbook-list .theater-wb-check').prop('checked', on);
-    $('#theater-worldbook-list .theater-wb-entry').toggleClass('theater-wb-entry-off', !on);
+    wbEntries.forEach((_e, i) => setWBStateByIndex(i, on));
+    $('#theater-wb-books .theater-wb-check').prop('checked', on);
+    $('#theater-wb-books .theater-wb-entry').toggleClass('theater-wb-entry-off', !on);
     save(); updateWBCount();
 }
 
@@ -1400,44 +1422,59 @@ function bindEvents() {
     });
     $d.off('input.twbq').on('input.twbq', '#theater-wb-search', function () {
         wbSearch = $(this).val() || '';
-        $('#theater-wb-books').html(renderWBBookList());
+        $('#theater-wb-books').html(renderWBTree());
     });
     $d.off('change.twbf').on('change.twbf', '#theater-wb-follow', async function () {
         settings.followCharCard = $(this).is(':checked');
         save();
         if (settings.followCharCard) await applyCharBoundBooks({ announce: true });
     });
+    // 点书那一行：没勾的书 = 勾上（自动展开），勾了的书 = 展开/收起条目
+    $d.off('click.twbr').on('click.twbr', '.theater-wb-book-row', function (e) {
+        if ($(e.target).is('input')) return;
+        const $node = $(this).closest('.theater-wb-book-node');
+        const key = String($node.attr('data-key'));
+        const isManual = key === '__manual__';
+        const selected = isManual || (settings.selectedWorldBooks || []).includes(key);
+        if (!selected) {
+            $(this).find('.theater-wb-book-check').prop('checked', true).trigger('change');
+            return;
+        }
+        const collapsed = wbGroupCollapsed[key] !== false;
+        wbGroupCollapsed[key] = collapsed ? false : true;
+        $node.find('.theater-wb-group-body').slideToggle(150);
+        $(this).find('.theater-wb-group-arrow').toggleClass('fa-chevron-right fa-chevron-down');
+    });
     $d.off('change.twb').on('change.twb', '.theater-wb-check', function (e) {
         e.stopPropagation();
         const idx = parseInt($(this).data('index'));
-        const entry = wbEntries[idx];
-        if (!entry) return;
         const checked = $(this).is(':checked');
-        while (wbStates.length <= idx) wbStates.push(true);
-        wbStates[idx] = checked;
+        setWBStateByIndex(idx, checked);
         $(this).closest('.theater-wb-entry').toggleClass('theater-wb-entry-off', !checked);
-        if (entry.manual) {
-            const m = (settings.manualWBEntries || [])[entry.mIdx];
-            if (m) m.on = checked;
-        } else if (entry.book) {
-            if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
-            if (!settings.worldBookStatesByBook[entry.book]) settings.worldBookStatesByBook[entry.book] = {};
-            const key = entryKey(entry);
-            if (checked) delete settings.worldBookStatesByBook[entry.book][key];
-            else settings.worldBookStatesByBook[entry.book][key] = false;
-        }
         save(); updateWBCount();
     });
     $d.off('click.twsa').on('click.twsa', '#theater-wb-select-all', () => setAllWBStates(true));
     $d.off('click.twda').on('click.twda', '#theater-wb-deselect-all', () => setAllWBStates(false));
-    // 按书折叠/展开
-    $d.off('click.twgt').on('click.twgt', '.theater-wb-group-toggle', function () {
-        const g = String($(this).data('group'));
-        const collapsed = wbGroupCollapsed[g] !== false;
-        wbGroupCollapsed[g] = collapsed ? false : true;
-        $(this).closest('.theater-wb-book-group').find('.theater-wb-group-body').slideToggle(150);
-        $(this).find('.theater-wb-group-arrow').toggleClass('fa-chevron-right fa-chevron-down');
+    // 书内条目筛选（大书救星）
+    $d.off('input.twef').on('input.twef', '.theater-wb-entry-filter', function () {
+        const q = ($(this).val() || '').toLowerCase().trim();
+        $(this).closest('.theater-wb-group-body').find('.theater-wb-entry').each(function () {
+            const name = $(this).find('.theater-wb-entry-name').text().toLowerCase();
+            $(this).toggle(!q || name.includes(q));
+        });
     });
+    // 书内全选/全不选（只作用于当前筛选可见的条目）
+    const setBookEntries = ($el, on) => {
+        $el.closest('.theater-wb-group-body').find('.theater-wb-entry:visible').each(function () {
+            const $check = $(this).find('.theater-wb-check');
+            setWBStateByIndex(parseInt($check.data('index')), on);
+            $check.prop('checked', on);
+            $(this).toggleClass('theater-wb-entry-off', !on);
+        });
+        save(); updateWBCount();
+    };
+    $d.off('click.twba').on('click.twba', '.theater-wb-book-all', function () { setBookEntries($(this), true); });
+    $d.off('click.twbn').on('click.twbn', '.theater-wb-book-none', function () { setBookEntries($(this), false); });
     $d.off('click.twet').on('click.twet', '.theater-wb-entry-toggle', function (e) {
         e.stopPropagation();
         const idx = $(this).data('index');
@@ -1810,14 +1847,6 @@ function bindEvents() {
     // ---- Preset Collapse ----
     $d.off('click.tpcol').on('click.tpcol', '#theater-preset-collapse-btn', function () {
         const $list = $('#theater-preset-entries');
-        const hidden = !$list.is(':visible');
-        $list.slideToggle(150);
-        $(this).html(hidden ? '<i class="fa-solid fa-chevron-up"></i> 收起' : '<i class="fa-solid fa-chevron-down"></i> 展开');
-    });
-
-    // ---- WB Collapse ----
-    $d.off('click.twbcol').on('click.twbcol', '#theater-wb-collapse-btn', function () {
-        const $list = $('#theater-worldbook-list');
         const hidden = !$list.is(':visible');
         $list.slideToggle(150);
         $(this).html(hidden ? '<i class="fa-solid fa-chevron-up"></i> 收起' : '<i class="fa-solid fa-chevron-down"></i> 展开');
@@ -2228,7 +2257,7 @@ async function loadWorldBookList() {
     // 已选中但没被发现的书也要进列表，不然没法取消勾选
     (settings.selectedWorldBooks || []).forEach(b => { if (b && !names.includes(b)) names.push(b); });
     wbBookNames = names;
-    $('#theater-wb-books').html(renderWBBookList());
+    $('#theater-wb-books').html(renderWBTree());
     console.log(`[Theater] Found ${names.length} world books`);
 }
 
@@ -2325,7 +2354,7 @@ async function applyCharBoundBooks({ announce = false } = {}) {
     if (announce) toastr.info(books.length ? `已选中角色卡绑定的 ${books.length} 本世界书` : '这张卡没有绑定世界书');
     if ($('#theater-wb-books').length) {
         books.forEach(b => { if (!wbBookNames.includes(b)) wbBookNames.push(b); });
-        $('#theater-wb-books').html(renderWBBookList());
+        $('#theater-wb-books').html(renderWBTree());
         await reloadWorldBooks({ silent: true });
     }
 }
