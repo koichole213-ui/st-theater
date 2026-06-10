@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.9.0 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v3.0.0 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.9.0';
+const VERSION = '3.0.0';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
