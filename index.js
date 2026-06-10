@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.8.2 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.8.3 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.8.2';
+const VERSION = '2.8.3';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -2222,8 +2222,9 @@ async function loadWorldBookList() {
         const ctx = SillyTavern.getContext();
         const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
 
-        // DOM
-        $('#world_info_select option, #world_editor_select option, select[id*="world_info"] option').each(function () {
+        // DOM —— 只认这两个真正装着世界书名的下拉框。
+        // 之前用 select[id*="world_info"] 通配，把排序方式下拉框（均匀排序/优先级/词符…）的选项也当成了书名
+        $('#world_info_select option, #world_editor_select option').each(function () {
             const text = $(this).text()?.trim();
             if (text && text !== 'None' && text !== '--- None ---' && !text.startsWith('--')) {
                 if (!names.includes(text)) names.push(text);
