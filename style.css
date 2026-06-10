@@ -1636,3 +1636,35 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     color: var(--t-danger);
     font-weight: 600;
 }
+
+/* v2.8.1 世界书按书折叠 */
+.theater-wb-group-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    padding: 7px 8px;
+    border-radius: var(--t-radius-sm);
+    -webkit-user-select: none;
+    user-select: none;
+}
+.theater-wb-group-toggle:hover {
+    background: var(--t-surface-2);
+}
+.theater-wb-group-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.theater-wb-group-count {
+    opacity: .6;
+    font-weight: 500;
+}
+.theater-wb-group-arrow {
+    opacity: .55;
+    font-size: .85em;
+}
+.theater-wb-group-body {
+    padding-left: 2px;
+}

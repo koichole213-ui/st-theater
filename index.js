@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.8.0 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.8.1 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.8.0';
+const VERSION = '2.8.1';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -1125,23 +1125,15 @@ function renderWBBookList() {
 </label>`).join('');
 }
 
-function renderWBEntries() {
-    if (!wbEntries.length) return '<p class="theater-empty">暂无条目</p>';
-    const groupCount = new Set(wbEntries.map(e => e.manual ? '__manual__' : e.book)).size;
-    let lastGroup = null;
-    return wbEntries.map((entry, i) => {
-        const checked = wbStates[i] !== false;
-        const isManual = !!entry.manual;
-        const group = isManual ? '手动添加' : (entry.book || '');
-        let divider = '';
-        if (groupCount > 1 && group !== lastGroup) {
-            lastGroup = group;
-            divider = `<div class="theater-wb-book-divider"><i class="fa-solid ${isManual ? 'fa-pen' : 'fa-book'}"></i> ${esc(group)}</div>`;
-        }
-        const deleteBtn = isManual
-            ? `<span class="theater-wb-entry-delete" data-index="${i}" title="删除此手动添加的条目"><i class="fa-solid fa-trash-can"></i></span>`
-            : '';
-        return `${divider}
+// 每本书一个可折叠分组；默认收起，免得第二本书被第一本的长列表压在底下
+let wbGroupCollapsed = {};  // { 组名: false 表示展开 }，缺省收起
+
+function wbEntryHTML(entry, i) {
+    const checked = wbStates[i] !== false;
+    const deleteBtn = entry.manual
+        ? `<span class="theater-wb-entry-delete" data-index="${i}" title="删除此手动添加的条目"><i class="fa-solid fa-trash-can"></i></span>`
+        : '';
+    return `
 <div class="theater-wb-entry ${checked ? '' : 'theater-wb-entry-off'}">
     <div class="theater-wb-entry-header" data-index="${i}">
         <input type="checkbox" class="theater-wb-check" data-index="${i}" ${checked ? 'checked' : ''}>
@@ -1153,7 +1145,43 @@ function renderWBEntries() {
         <div class="theater-wb-entry-content">${esc(entry.content || '')}</div>
     </div>
 </div>`;
+}
+
+function renderWBEntries() {
+    if (!wbEntries.length) return '<p class="theater-empty">暂无条目</p>';
+    // 按出现顺序分组（同一本书的条目是连续的，手动条目在最后）
+    const groups = [];
+    wbEntries.forEach((entry, i) => {
+        const label = entry.manual ? '手动添加' : (entry.book || '');
+        let g = groups[groups.length - 1];
+        if (!g || g.label !== label) { g = { label, manual: !!entry.manual, items: [] }; groups.push(g); }
+        g.items.push(i);
+    });
+    // 只有一组时不显示分组头，跟旧版一样平铺
+    if (groups.length === 1) return groups[0].items.map(i => wbEntryHTML(wbEntries[i], i)).join('');
+    return groups.map(g => {
+        const total = g.items.length;
+        const active = g.items.filter(i => wbStates[i] !== false).length;
+        const collapsed = wbGroupCollapsed[g.label] !== false;
+        return `
+<div class="theater-wb-book-group">
+    <div class="theater-wb-book-divider theater-wb-group-toggle" data-group="${esc(g.label)}">
+        <i class="fa-solid ${g.manual ? 'fa-pen' : 'fa-book'}"></i>
+        <span class="theater-wb-group-name">${esc(g.label)}</span>
+        <span class="theater-wb-group-count">${active}/${total}</span>
+        <i class="fa-solid fa-chevron-${collapsed ? 'right' : 'down'} theater-wb-group-arrow"></i>
+    </div>
+    <div class="theater-wb-group-body" style="${collapsed ? 'display:none;' : ''}">${g.items.map(i => wbEntryHTML(wbEntries[i], i)).join('')}</div>
+</div>`;
     }).join('');
+}
+
+function updateWBGroupCounts() {
+    $('#theater-worldbook-list .theater-wb-book-group').each(function () {
+        const idxs = $(this).find('.theater-wb-check').map(function () { return parseInt($(this).data('index')); }).get();
+        const active = idxs.filter(i => wbStates[i] !== false).length;
+        $(this).find('.theater-wb-group-count').text(`${active}/${idxs.length}`);
+    });
 }
 
 function hasManualEntries() {
@@ -1171,6 +1199,7 @@ function updateWBCount() {
     const warn = roughTokens > 20000;
     $('#theater-wb-count').html(`${active}/${total} 个条目已启用 · 约 ${tokenStr} token${warn ? ' <span class="theater-wb-count-warn">⚠ 偏多</span>' : ''}`);
     $('#theater-wb-header').toggle(total > 0);
+    updateWBGroupCounts();
 }
 
 function refreshWBUI() {
@@ -1358,8 +1387,13 @@ function bindEvents() {
         const name = String($(this).data('name'));
         if (!Array.isArray(settings.selectedWorldBooks)) settings.selectedWorldBooks = [];
         const sel = settings.selectedWorldBooks;
-        if ($(this).is(':checked')) { if (!sel.includes(name)) sel.push(name); }
-        else { const i = sel.indexOf(name); if (i !== -1) sel.splice(i, 1); }
+        if ($(this).is(':checked')) {
+            if (!sel.includes(name)) sel.push(name);
+            wbGroupCollapsed[name] = false;  // 刚勾的书自动展开，方便马上调条目
+        } else {
+            const i = sel.indexOf(name);
+            if (i !== -1) sel.splice(i, 1);
+        }
         $(this).closest('.theater-wb-book-row').toggleClass('active', $(this).is(':checked'));
         save();
         await reloadWorldBooks();
@@ -1396,6 +1430,14 @@ function bindEvents() {
     });
     $d.off('click.twsa').on('click.twsa', '#theater-wb-select-all', () => setAllWBStates(true));
     $d.off('click.twda').on('click.twda', '#theater-wb-deselect-all', () => setAllWBStates(false));
+    // 按书折叠/展开
+    $d.off('click.twgt').on('click.twgt', '.theater-wb-group-toggle', function () {
+        const g = String($(this).data('group'));
+        const collapsed = wbGroupCollapsed[g] !== false;
+        wbGroupCollapsed[g] = collapsed ? false : true;
+        $(this).closest('.theater-wb-book-group').find('.theater-wb-group-body').slideToggle(150);
+        $(this).find('.theater-wb-group-arrow').toggleClass('fa-chevron-right fa-chevron-down');
+    });
     $d.off('click.twet').on('click.twet', '.theater-wb-entry-toggle', function (e) {
         e.stopPropagation();
         const idx = $(this).data('index');
