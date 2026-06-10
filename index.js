@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.8.3 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.9.0 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.8.3';
+const VERSION = '2.9.0';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -147,6 +147,10 @@ const defaultSettings = Object.freeze({
     soundVolume: 70,
     randomEnabled: false,
     randomScope: '__current__',  // '__current__' | '__all__' | '__none__' | 分组名
+    autoMode: false,             // 自动生成开关
+    autoInterval: 10,            // 每攒够 N 层 AI 楼自动生成一次
+    autoSource: '__last__',      // '__last__' | '__all__' | '__none__' | 分组名
+    autoAnchors: {},             // { [chatId]: 上次触发时的 AI 楼数 }
     recentGenerations: [],  // 最近 3 条自动保留的生成结果 [{ html, time, instruction }]
     recentIndex: 0,         // 当前查看的 recentGenerations 索引
 });
@@ -348,6 +352,13 @@ async function init() {
         eventSource.on(event_types.CHAT_CHANGED, async () => {
             if (!settings.followCharCard) return;
             try { await applyCharBoundBooks(); } catch (e) { console.warn('[Theater] 跟随角色卡失败:', e); }
+        });
+    }
+
+    // 自动模式：AI 每回完一条就看看攒没攒够
+    if (event_types?.MESSAGE_RECEIVED) {
+        eventSource.on(event_types.MESSAGE_RECEIVED, () => {
+            autoTick().catch(e => console.warn('[Theater] auto tick error:', e));
         });
     }
 
@@ -945,6 +956,35 @@ function buildPopupHTML() {
             <p class="theater-hint" style="margin-top:6px;">开启后会在「生成」页加一个🎲按钮，点一下从所选范围里随机填一个指令到输入框。</p>
         </div>
         <div class="theater-section">
+            <label class="theater-label"><i class="fa-solid fa-wand-magic-sparkles"></i> 自动生成</label>
+            <div class="theater-toggle-row" style="margin-bottom:10px;">
+                <label class="theater-toggle-label"><input type="checkbox" id="theater-auto-enabled" ${settings.autoMode ? 'checked' : ''}><span>开启自动模式</span></label>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+                <span class="theater-hint" style="min-width:48px;">间隔</span>
+                <input id="theater-auto-interval" type="range" min="3" max="50" value="${Math.max(3, Math.min(50, Number(settings.autoInterval) || 10))}" class="theater-slider" style="flex:1;">
+                <span class="theater-hint" style="white-space:nowrap;">每 <b id="theater-auto-interval-num">${Math.max(3, Math.min(50, Number(settings.autoInterval) || 10))}</b> 层 AI 楼</span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <span class="theater-hint" style="min-width:48px;">指令来源</span>
+                <select id="theater-auto-source" class="theater-select" style="flex:1;min-width:140px;">
+                    ${(() => {
+                        const cur = settings.autoSource || '__last__';
+                        const opts = [
+                            `<option value="__last__" ${cur === '__last__' ? 'selected' : ''}>上次使用的指令</option>`,
+                            `<option value="__all__" ${cur === '__all__' ? 'selected' : ''}>随机 · 全部模板</option>`,
+                            `<option value="__none__" ${cur === '__none__' ? 'selected' : ''}>随机 · 仅未分组</option>`,
+                        ];
+                        (settings.instructionGroups || []).forEach(g => {
+                            opts.push(`<option value="${esc(g)}" ${cur === g ? 'selected' : ''}>随机 · 分组：${esc(g)}</option>`);
+                        });
+                        return opts.join('');
+                    })()}
+                </select>
+            </div>
+            <p class="theater-hint" style="margin-top:6px;">攒够设定层数的 AI 回复后，静默在后台生成一次小剧场，完成后响提示音。每个聊天单独计数；删楼、重roll不会算错。</p>
+        </div>
+        <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-arrows-rotate"></i> 扩展管理</label>
             <div class="theater-toggle-row" style="margin-bottom:10px;">
                 <label class="theater-toggle-label"><input type="checkbox" id="theater-floating-ball-toggle" ${settings.floatingBall ? 'checked' : ''}><span>悬浮球</span></label>
@@ -1268,6 +1308,7 @@ async function openTheaterPopup() {
     const popup = new Popup(buildPopupHTML(), POPUP_TYPE.TEXT, '', { wide: true, okButton: 'Close', allowVerticalScrolling: true });
     const p = popup.show();
     await new Promise(r => setTimeout(r, 50));
+    setBallDot(false);  // 看过了，红点熄灭
     // 搜索框是重建的空框，过滤词也要跟着清，不然看起来"列表少了一截"
     wbSearch = '';
     presetSearch = '';
@@ -1839,6 +1880,23 @@ function bindEvents() {
         save();
     });
     $d.off('click.trb').on('click.trb', '#theater-random-btn', rollRandomInstruction);
+
+    // ---- Auto mode ----
+    $d.off('change.tae').on('change.tae', '#theater-auto-enabled', function () {
+        settings.autoMode = $(this).is(':checked');
+        save();
+        if (settings.autoMode) toastr.info(`自动模式已开启：每攒 ${settings.autoInterval || 10} 层 AI 楼生成一次`, '', { timeOut: 4000 });
+    });
+    $d.off('input.tai').on('input.tai', '#theater-auto-interval', function () {
+        const v = Math.max(3, Math.min(50, parseInt($(this).val()) || 10));
+        settings.autoInterval = v;
+        $('#theater-auto-interval-num').text(v);
+        save();
+    });
+    $d.off('change.tas').on('change.tas', '#theater-auto-source', function () {
+        settings.autoSource = $(this).val();
+        save();
+    });
 
     // ---- Instruction Import/Export ----
     $d.off('click.timp').on('click.timp', '#theater-import-inst-btn', importInstructionTemplates);
@@ -2869,10 +2927,16 @@ async function generateTheater() {
     if (isGenerating) { toastr.warning('正在生成中，请等待完成或点击停止'); return; }
     const instruction = $('#theater-instruction').val().trim();
     if (!instruction) { toastr.warning('请输入指令'); return; }
+    await runGeneration(instruction, false);
+}
+
+// 生成核心。isAuto = 自动模式触发（弹窗可能根本没开，所有 UI 操作都已有 popupAlive 保护）
+async function runGeneration(instruction, isAuto) {
+    if (isGenerating) return;
 
     const ctx = SillyTavern.getContext();
     const { chat, characters, characterId, name1, name2 } = ctx;
-    if (!chat?.length) { toastr.warning('无聊天记录'); return; }
+    if (!chat?.length) { if (!isAuto) toastr.warning('无聊天记录'); return; }
 
     const chatCtx = chat.slice(-(settings.contextRange || 10)).map(m =>
         `${m.is_user ? (name1 || 'User') : (m.name || name2 || 'Char')}: ${extractMesContent(m.mes)}`
@@ -2898,9 +2962,10 @@ async function generateTheater() {
     else if (rs !== '__default__') { const t = settings.renderTemplates[parseInt(rs)]; if (t) renderRules = t.content; }
     if (settings.interactiveMode) renderRules += INTERACTIVE_ADDON;
 
-    const continueInfo = continueContext ? `以下是已生成的小剧场的故事内容纯文本（请在此基础上续写故事，不要重复已有内容，保持相同的角色语气和叙事风格，但用全新的HTML结构输出）：\n${continueContext}\n\n---\n\n` : '';
+    const contCtx = isAuto ? '' : continueContext;  // 自动生成永远是全新的，不掺手动的续写上下文
+    const continueInfo = contCtx ? `以下是已生成的小剧场的故事内容纯文本（请在此基础上续写故事，不要重复已有内容，保持相同的角色语气和叙事风格，但用全新的HTML结构输出）：\n${contCtx}\n\n---\n\n` : '';
 
-    const prompt = `${charInfo}${personaInfo}${wbInfo}以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}\n\n---\n\n${continueInfo}${renderRules}\n\n---\n\n用户指令：${instruction}\n\n请根据以上所有信息生成小剧场。${continueContext ? '严格续写上方小剧场的内容，保持相同的HTML结构、CSS样式和角色语气，不要从头开始，不要续写正文对话。' : '严格遵守渲染规则。'}`;
+    const prompt = `${charInfo}${personaInfo}${wbInfo}以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}\n\n---\n\n${continueInfo}${renderRules}\n\n---\n\n用户指令：${instruction}\n\n请根据以上所有信息生成小剧场。${contCtx ? '严格续写上方小剧场的内容，保持相同的HTML结构、CSS样式和角色语气，不要从头开始，不要续写正文对话。' : '严格遵守渲染规则。'}`;
     let systemPrompt;
     // All preset modes now produce entries
     if (!cachedPresetEntries.length) await loadPresetEntries();
@@ -2918,7 +2983,7 @@ async function generateTheater() {
     }
 
     // 非续写生成时重置累积内容
-    if (!continueContext) accumulatedTheater = '';
+    if (!contCtx) accumulatedTheater = '';
 
     // 标记开始生成
     isGenerating = true;
@@ -2985,8 +3050,9 @@ async function generateTheater() {
             $('#theater-output-section').show();
             updateRecentNav();
         }
-        toastr.success('小剧场生成完成！点击打开面板查看', '', { timeOut: 6000 });
+        toastr.success(isAuto ? '自动小剧场生成完成！打开面板查看' : '小剧场生成完成！点击打开面板查看', '', { timeOut: 6000 });
         playNotificationSound();
+        if (isAuto) setBallDot(true);
     } catch (err) {
         if (err.name === 'AbortError') { toastr.info('已停止'); return; }
         console.error('[Theater]', err);
@@ -2994,17 +3060,91 @@ async function generateTheater() {
         toastr.error('生成失败: ' + bgError);
     } finally {
         isGenerating = false;
-        continueContext = '';
         if (chunkThrottle) { clearTimeout(chunkThrottle); chunkThrottle = null; }
         flushStream();
-        $('#theater-continue-hint').remove();
-        $('#theater-instruction').attr('placeholder', '输入指令…');
+        if (!isAuto) {
+            continueContext = '';
+            $('#theater-continue-hint').remove();
+            $('#theater-instruction').attr('placeholder', '输入指令…');
+        }
         if (popupAlive()) {
             $('#theater-generate-btn').show();
             $('#theater-stop-btn').hide();
         }
         abortController = null;
     }
+}
+
+// ============================================================
+// Auto mode
+// ============================================================
+function pickAutoInstruction() {
+    const src = settings.autoSource || '__last__';
+    if (src === '__last__') return (settings.lastInstruction || '').trim();
+    const templates = settings.instructionTemplates || [];
+    let pool;
+    if (src === '__all__') pool = templates;
+    else if (src === '__none__') pool = templates.filter(t => !templateGroup(t));
+    else pool = templates.filter(t => templateGroup(t) === src);
+    if (!pool.length) return '';
+    return (pool[Math.floor(Math.random() * pool.length)].content || '').trim();
+}
+
+// 计数逻辑：只看"当前 AI 楼数"和锚点的差值，不数事件。
+// 删楼把楼数删到锚点以下时，锚点自动下移到当前楼数——
+// 既不会"永远凑不够"，也不会"一删楼就连环触发"。swipe 不加楼数，天然不计。
+async function autoTick() {
+    if (!settings.autoMode || isGenerating) return;
+    const ctx = SillyTavern.getContext();
+    const chatId = String(ctx.chatId ?? '');
+    if (!chatId || chatId === 'undefined' || chatId === 'null') return;
+    const floors = (ctx.chat || []).filter(m => !m.is_user && !m.is_system).length;
+
+    if (!settings.autoAnchors || typeof settings.autoAnchors !== 'object') settings.autoAnchors = {};
+    if (Object.keys(settings.autoAnchors).length > 200) settings.autoAnchors = {};
+
+    const prev = settings.autoAnchors[chatId];
+    if (prev === undefined) {
+        // 第一次见这个聊天：先立锚，从现在开始数
+        settings.autoAnchors[chatId] = floors;
+        save();
+        return;
+    }
+    let anchor = prev;
+    if (anchor > floors) {
+        anchor = floors;
+        settings.autoAnchors[chatId] = floors;
+        save();
+    }
+    if (floors - anchor < Math.max(1, Number(settings.autoInterval) || 10)) return;
+
+    const instruction = pickAutoInstruction();
+    if (!instruction) {
+        console.warn('[Theater] 自动模式：指令来源是空的，跳过本次');
+        return;
+    }
+    settings.autoAnchors[chatId] = floors;
+    save();
+    console.log(`[Theater] 自动生成触发：${chatId} @ ${floors} 层 AI 楼`);
+
+    // 弹窗从没打开过的话世界书条目还没加载，先静默读一遍
+    if (!wbEntries.length && (settings.selectedWorldBooks || []).length) {
+        try { await reloadWorldBooks({ silent: true }); } catch { }
+    }
+    await runGeneration(instruction, true);
+}
+
+// 悬浮球小红点：自动生成完成后亮起，打开面板就熄灭
+function setBallDot(on) {
+    const ball = document.getElementById('theater-floating-ball');
+    if (!ball) return;
+    let dot = ball.querySelector('.theater-ball-dot');
+    if (on && !dot) {
+        dot = document.createElement('span');
+        dot.className = 'theater-ball-dot';
+        ball.appendChild(dot);
+    }
+    if (!on && dot) dot.remove();
 }
 
 // ============================================================

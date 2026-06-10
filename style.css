@@ -1696,3 +1696,16 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     white-space: nowrap;
     padding: 6px 4px;
 }
+
+/* v2.9.0 自动模式：悬浮球小红点 */
+#theater-floating-ball .theater-ball-dot {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: #C25555;
+    box-shadow: 0 0 0 2px rgba(255, 246, 228, .95);
+    pointer-events: none;
+}
