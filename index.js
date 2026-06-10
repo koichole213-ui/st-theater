@@ -527,6 +527,35 @@ function createFloatingBall() {
         const initLeft = window.innerWidth - 66;
         const initTop = window.innerHeight - 126;
 
+        // 贴边收纳：拖完吸附到最近的左/右边，闲置一会儿缩进边里半个身子
+        const BASE_TRANSITION = 'transform 0.18s cubic-bezier(.2,.8,.2,1), opacity 0.18s, box-shadow 0.18s';
+        const SNAP_TRANSITION = 'left 0.22s cubic-bezier(.2,.8,.2,1), ' + BASE_TRANSITION;
+        const TUCK_DELAY = 2500;
+        let tuckTimer = null;
+
+        function cancelTuck() { if (tuckTimer) { clearTimeout(tuckTimer); tuckTimer = null; } }
+        function untuck() {
+            ball.style.transform = 'scale(1) rotate(0)';
+            ball.style.opacity = '0.92';
+        }
+        function scheduleTuck() {
+            cancelTuck();
+            tuckTimer = setTimeout(() => {
+                const side = ball.dataset.side || 'right';
+                ball.style.transform = side === 'left' ? 'translateX(-58%)' : 'translateX(58%)';
+                ball.style.opacity = '0.45';
+            }, TUCK_DELAY);
+        }
+        function snapToEdge() {
+            const w = window.innerWidth;
+            const cur = parseInt(ball.style.left) || 0;
+            const onLeft = cur + 24 < w / 2;
+            ball.dataset.side = onLeft ? 'left' : 'right';
+            ball.style.transition = SNAP_TRANSITION;
+            ball.style.left = (onLeft ? 6 : w - 54) + 'px';
+            scheduleTuck();
+        }
+
         // 暖底 + 焦糖色油灯 + 软阴影
         ball.setAttribute('style', [
             'position:fixed !important',
@@ -558,6 +587,9 @@ function createFloatingBall() {
         function clamp(val, min, max) { return Math.max(min, Math.min(max, val)); }
 
         function onPointerDown(e) {
+            cancelTuck();
+            untuck();
+            ball.style.transition = BASE_TRANSITION;  // 拖动时 left 不能带动画，不然会"飘"
             isDragging = false;
             const touch = e.touches ? e.touches[0] : e;
             startX = touch.clientX;
@@ -599,12 +631,14 @@ function createFloatingBall() {
                 try { openTheaterPopup(); } catch (err) { console.warn('[Theater] Popup error:', err); }
             }
             isDragging = false;
+            snapToEdge();
         }
 
         ball.addEventListener('pointerdown', onPointerDown);
         ball.addEventListener('touchstart', onPointerDown, { passive: true });
 
         ball.addEventListener('mouseenter', () => {
+            cancelTuck();
             ball.style.opacity = '1';
             ball.style.transform = 'scale(1.1) rotate(-8deg)';
             ball.style.boxShadow = '0 10px 24px rgba(140, 90, 47, 0.32), inset 0 1px 0 rgba(255,255,255,0.7)';
@@ -613,15 +647,17 @@ function createFloatingBall() {
             ball.style.opacity = '0.92';
             ball.style.transform = 'scale(1) rotate(0)';
             ball.style.boxShadow = '0 6px 18px rgba(140, 90, 47, 0.22), inset 0 1px 0 rgba(255,255,255,0.6)';
+            scheduleTuck();
         });
 
         window.addEventListener('resize', () => {
             if (!document.getElementById('theater-floating-ball')) return;
-            ball.style.left = clamp(parseInt(ball.style.left), 0, window.innerWidth - 46) + 'px';
             ball.style.top = clamp(parseInt(ball.style.top), 0, window.innerHeight - 46) + 'px';
+            snapToEdge();  // 横向跟着窗口重新贴边
         });
 
         document.documentElement.appendChild(ball);
+        snapToEdge();
     } catch (e) {
         console.warn('[Theater] Floating ball error:', e);
     }
