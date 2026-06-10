@@ -1,8 +1,8 @@
-// 千夜浮梦 · 小剧场生成器 v2.7.0 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 v2.7.1 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '2.7.0';
+const VERSION = '2.7.1';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -151,6 +151,142 @@ const defaultSettings = Object.freeze({
 const SKIN_LABELS = { default: '内置默认', theater: '跟随酒馆', custom: '自定义' };
 
 // ============================================================
+// 本地仓库（IndexedDB）
+// settings.json 是整体重写式保存，把大量 HTML 存进去会让保存请求越来越大，
+// 大到失败时整晚的改动都写不进盘（删掉的回来、新存的消失）。
+// 所以历史和最近生成从 v2.7.1 起放进 IndexedDB，按条独立读写。
+// ============================================================
+let idb = null;            // 打不开时为 null，回退到 settings 存储
+let historyCache = [];     // [{ id, title, html, instruction, date }]
+let recentCache = [];      // 最近 3 条生成 [{ html, time, instruction }]
+let recentIndex = 0;       // 当前查看的最近生成索引（仅内存）
+
+function idbReq(req) {
+    return new Promise((resolve, reject) => {
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error || new Error('IndexedDB error'));
+    });
+}
+
+async function storageInit() {
+    try {
+        idb = await new Promise((resolve, reject) => {
+            const req = indexedDB.open('st-theater', 1);
+            req.onupgradeneeded = () => {
+                const db = req.result;
+                if (!db.objectStoreNames.contains('history')) db.createObjectStore('history', { keyPath: 'id', autoIncrement: true });
+                if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error || new Error('open failed'));
+        });
+    } catch (e) {
+        console.warn('[Theater] IndexedDB 不可用，回退到 settings 存储:', e);
+        idb = null;
+    }
+
+    if (!idb) {
+        // 回退模式：直接引用 settings 里的数组，行为和旧版一致
+        if (!Array.isArray(settings.history)) settings.history = [];
+        if (!Array.isArray(settings.recentGenerations)) settings.recentGenerations = [];
+        settings.history.forEach((h, i) => { if (h.id === undefined || h.id === null) h.id = i + 1; });
+        historyCache = settings.history;
+        recentCache = settings.recentGenerations;
+        return;
+    }
+
+    // 迁移：把还留在 settings 里的旧数据搬进 IndexedDB（搬成功才清空 settings）
+    try {
+        if (Array.isArray(settings.history) && settings.history.length) {
+            const n = settings.history.length;
+            for (const h of settings.history) {
+                await idbReq(idb.transaction('history', 'readwrite').objectStore('history')
+                    .add({ title: h.title, html: h.html, instruction: h.instruction, date: h.date }));
+            }
+            settings.history = [];
+            save();
+            console.log(`[Theater] ${n} 条历史已迁移到 IndexedDB`);
+        }
+        if (Array.isArray(settings.recentGenerations) && settings.recentGenerations.length) {
+            await idbReq(idb.transaction('kv', 'readwrite').objectStore('kv').put(settings.recentGenerations.slice(0, 3), 'recent'));
+            settings.recentGenerations = [];
+            save();
+        }
+    } catch (e) {
+        console.error('[Theater] 存档迁移失败:', e);
+        toastr.error('小剧场存档迁移失败，旧数据保留在原位：' + (e?.message || e));
+    }
+
+    try {
+        historyCache = (await idbReq(idb.transaction('history').objectStore('history').getAll())) || [];
+        recentCache = (await idbReq(idb.transaction('kv').objectStore('kv').get('recent'))) || [];
+    } catch (e) {
+        console.error('[Theater] 读取本地仓库失败:', e);
+        historyCache = [];
+        recentCache = [];
+        toastr.error('读取小剧场存档失败：' + (e?.message || e));
+    }
+}
+
+async function histAdd(item) {
+    if (!idb) {
+        item.id = historyCache.reduce((m, h) => Math.max(m, Number(h.id) || 0), 0) + 1;
+        historyCache.push(item);
+        save();
+        return true;
+    }
+    try {
+        item.id = await idbReq(idb.transaction('history', 'readwrite').objectStore('history').add(item));
+        historyCache.push(item);
+        return true;
+    } catch (e) {
+        console.error('[Theater] 保存历史失败:', e);
+        toastr.error('保存失败（本地数据库写入出错）：' + (e?.message || e));
+        return false;
+    }
+}
+
+async function histDelete(ids) {
+    const removeFromCache = () => {
+        for (const id of ids) {
+            const i = historyCache.findIndex(h => h.id === id);
+            if (i !== -1) historyCache.splice(i, 1);
+        }
+    };
+    if (!idb) {
+        removeFromCache();
+        save();
+        return true;
+    }
+    try {
+        const tx = idb.transaction('history', 'readwrite');
+        const store = tx.objectStore('history');
+        for (const id of ids) store.delete(id);
+        await new Promise((resolve, reject) => {
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error || new Error('aborted'));
+        });
+        removeFromCache();
+        return true;
+    } catch (e) {
+        console.error('[Theater] 删除历史失败:', e);
+        toastr.error('删除失败（本地数据库出错）：' + (e?.message || e));
+        return false;
+    }
+}
+
+async function recentPersist() {
+    if (!idb) { save(); return; }
+    try {
+        await idbReq(idb.transaction('kv', 'readwrite').objectStore('kv').put(recentCache.slice(0, 3), 'recent'));
+    } catch (e) {
+        console.error('[Theater] 保存最近生成失败:', e);
+        toastr.error('保存最近生成失败：' + (e?.message || e));
+    }
+}
+
+// ============================================================
 // Init
 // ============================================================
 async function init() {
@@ -170,6 +306,8 @@ async function init() {
     delete settings.presetMode;
     delete settings.savedPresets;
     delete settings.systemPrompt;
+
+    await storageInit();
 
     const html = await renderExtensionTemplateAsync('third-party/st-theater', 'settings');
     $('#extensions_settings2').append(html);
@@ -455,7 +593,7 @@ function createFloatingBall() {
 function buildPopupHTML() {
     const inst = settings.instructionTemplates || [];
     const render = settings.renderTemplates || [];
-    const hist = settings.history || [];
+    const hist = historyCache;
     const selRender = settings.selectedRenderIndex || '__default__';
 
     const skin = settings.skinMode || 'default';
@@ -671,7 +809,7 @@ function buildPopupHTML() {
                     <div id="theater-hist-batch-cancel" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>取消</span></div>
                 </div>
             </div>
-            <div id="theater-history-list">${hist.length === 0 ? '<p class="theater-empty">暂无</p>' : hist.map((h, i) => historyItemHTML(h, i)).join('')}</div>
+            <div id="theater-history-list">${hist.length === 0 ? '<p class="theater-empty">暂无</p>' : hist.map(h => historyItemHTML(h)).join('')}</div>
         </div>
     </div>
 
@@ -794,20 +932,20 @@ function buildPopupHTML() {
 // ============================================================
 // Rendering helpers
 // ============================================================
-function historyItemHTML(h, i) {
-    const checked = histSelected.has(i) ? 'checked' : '';
-    const selClass = histSelected.has(i) ? ' theater-history-item-selected' : '';
-    return `<div class="theater-history-item${selClass}" data-index="${i}">
+function historyItemHTML(h) {
+    const checked = histSelected.has(h.id) ? 'checked' : '';
+    const selClass = histSelected.has(h.id) ? ' theater-history-item-selected' : '';
+    return `<div class="theater-history-item${selClass}" data-id="${h.id}">
         <div class="theater-history-header">
-            <input type="checkbox" class="theater-hist-checkbox" data-index="${i}" ${checked} style="display:none;">
-            <span class="theater-history-title">${esc(h.title || '小剧场 #' + (i + 1))}</span>
+            <input type="checkbox" class="theater-hist-checkbox" data-id="${h.id}" ${checked} style="display:none;">
+            <span class="theater-history-title">${esc(h.title || '未命名小剧场')}</span>
             <span class="theater-history-date">${h.date || ''}</span>
         </div>
         <div class="theater-history-actions">
-            <span class="theater-history-view" data-index="${i}"><i class="fa-solid fa-eye"></i> 查看</span>
-            <span class="theater-history-continue" data-index="${i}"><i class="fa-solid fa-forward"></i> 续写</span>
-            <span class="theater-history-export" data-index="${i}"><i class="fa-solid fa-download"></i> 导出</span>
-            <span class="theater-history-delete" data-index="${i}"><i class="fa-solid fa-trash"></i> 删除</span>
+            <span class="theater-history-view" data-id="${h.id}"><i class="fa-solid fa-eye"></i> 查看</span>
+            <span class="theater-history-continue" data-id="${h.id}"><i class="fa-solid fa-forward"></i> 续写</span>
+            <span class="theater-history-export" data-id="${h.id}"><i class="fa-solid fa-download"></i> 导出</span>
+            <span class="theater-history-delete" data-id="${h.id}"><i class="fa-solid fa-trash"></i> 删除</span>
         </div>
     </div>`;
 }
@@ -1014,10 +1152,10 @@ async function openTheaterPopup() {
         showInIframe(html);
         $('#theater-output-section').show();
         updateRecentNav();
-    } else if ((settings.recentGenerations || []).length) {
+    } else if (recentCache.length) {
         // 没有当前生成但有最近记录，恢复最近一条
-        const idx = settings.recentIndex || 0;
-        const item = settings.recentGenerations[idx];
+        recentIndex = Math.min(recentIndex, recentCache.length - 1);
+        const item = recentCache[recentIndex];
         if (item) {
             lastGeneratedHtml = item.html;
             showInIframe(item.html);
@@ -1327,21 +1465,17 @@ function bindEvents() {
     $d.off('click.tch').on('click.tch', '#theater-copy-html-btn', copyHtml);
     // ---- Recent generations nav ----
     $d.off('click.trp').on('click.trp', '#theater-recent-prev', function () {
-        const recent = settings.recentGenerations || [];
-        if ((settings.recentIndex || 0) <= 0) return;
-        settings.recentIndex--;
-        save();
-        showInIframe(recent[settings.recentIndex].html);
-        lastGeneratedHtml = recent[settings.recentIndex].html;
+        if (recentIndex <= 0) return;
+        recentIndex--;
+        showInIframe(recentCache[recentIndex].html);
+        lastGeneratedHtml = recentCache[recentIndex].html;
         updateRecentNav();
     });
     $d.off('click.trn').on('click.trn', '#theater-recent-next', function () {
-        const recent = settings.recentGenerations || [];
-        if ((settings.recentIndex || 0) >= recent.length - 1) return;
-        settings.recentIndex++;
-        save();
-        showInIframe(recent[settings.recentIndex].html);
-        lastGeneratedHtml = recent[settings.recentIndex].html;
+        if (recentIndex >= recentCache.length - 1) return;
+        recentIndex++;
+        showInIframe(recentCache[recentIndex].html);
+        lastGeneratedHtml = recentCache[recentIndex].html;
         updateRecentNav();
     });
     // ---- Edit result text ----
@@ -1378,9 +1512,7 @@ function bindEvents() {
             lastGeneratedHtml = newHtml;
             currentDisplayHtml = newHtml;
             // 同步更新 recentGenerations
-            const recent = settings.recentGenerations || [];
-            const idx = settings.recentIndex || 0;
-            if (recent[idx]) { recent[idx].html = newHtml; save(); }
+            if (recentCache[recentIndex]) { recentCache[recentIndex].html = newHtml; recentPersist(); }
             $('#theater-save-edit-btn').hide();
             $('#theater-edit-result-btn').show();
             toastr.success('编辑已保存');
@@ -1401,26 +1533,26 @@ function bindEvents() {
         toastr.info('已取消续写');
     });
     $d.off('click.thv').on('click.thv', '.theater-history-view', function () {
-        const item = settings.history[$(this).data('index')]; if (!item) return;
+        const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
         lastGeneratedHtml = item.html;
         showInIframe(item.html); $('.theater-tab[data-tab="generate"]').click(); $('#theater-output-section').show();
     });
     // 续写：从历史记录
     $d.off('click.thc').on('click.thc', '.theater-history-continue', function () {
-        const item = settings.history[$(this).data('index')]; if (!item) return;
+        const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
         lastGeneratedHtml = item.html;
         startContinue(item.html);
     });
     $d.off('click.the').on('click.the', '.theater-history-export', function () {
-        const item = settings.history[$(this).data('index')]; if (!item) return;
+        const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
         downloadFile(`${item.title || 'theater'}.html`, item.html, 'text/html');
     });
     $d.off('click.thd').on('click.thd', '.theater-history-delete', async function () {
-        const idx = $(this).data('index');
+        const id = $(this).data('id');
         const { Popup } = SillyTavern.getContext();
         const ok = await Popup.show.confirm('确定删除这条历史？');
         if (!ok) return;
-        settings.history.splice(idx, 1); save(); refreshHistList();
+        if (await histDelete([id])) refreshHistList();
     });
     $d.off('click.teah').on('click.teah', '#theater-export-all-history', exportAllHistory);
     $d.off('click.thbe').on('click.thbe', '#theater-hist-batch-enter', function () {
@@ -1434,19 +1566,18 @@ function bindEvents() {
         exitHistBatchMode();
     });
     $d.off('change.thcb').on('change.thcb', '.theater-hist-checkbox', function () {
-        const idx = parseInt($(this).data('index'));
-        if ($(this).is(':checked')) histSelected.add(idx);
-        else histSelected.delete(idx);
+        const id = $(this).data('id');
+        if ($(this).is(':checked')) histSelected.add(id);
+        else histSelected.delete(id);
         $(this).closest('.theater-history-item').toggleClass('theater-history-item-selected', $(this).is(':checked'));
         updateHistBulkBar();
     });
     $d.off('click.thsa').on('click.thsa', '#theater-hist-select-all', function () {
-        const h = settings.history || [];
-        if (histSelected.size === h.length) {
+        if (histSelected.size === historyCache.length) {
             histSelected.clear();
             $(this).find('span').text('全选');
         } else {
-            h.forEach((_, i) => histSelected.add(i));
+            historyCache.forEach(h => histSelected.add(h.id));
             $(this).find('span').text('取消全选');
         }
         refreshHistList();
@@ -1458,11 +1589,9 @@ function bindEvents() {
         const { Popup } = SillyTavern.getContext();
         const ok = await Popup.show.confirm(`确定删除选中的 ${n} 条历史记录？`, '删除后无法恢复');
         if (!ok) return;
-        const sorted = [...histSelected].sort((a, b) => b - a);
-        sorted.forEach(i => settings.history.splice(i, 1));
+        if (!(await histDelete([...histSelected]))) return;
         histSelected.clear();
         histBatchMode = false;
-        save();
         refreshHistList();
         exitHistBatchMode();
         toastr.success(`已删除 ${n} 条`);
@@ -1572,8 +1701,8 @@ function refreshInstUI() {
 }
 
 function refreshHistList() {
-    const h = settings.history || [];
-    $('#theater-history-list').html(h.length === 0 ? '<p class="theater-empty">暂无</p>' : h.map((item, i) => historyItemHTML(item, i)).join(''));
+    const h = historyCache;
+    $('#theater-history-list').html(h.length === 0 ? '<p class="theater-empty">暂无</p>' : h.map(item => historyItemHTML(item)).join(''));
     $('#theater-export-all-history').toggle(h.length > 0);
     $('#theater-hist-select-all').toggle(h.length > 0);
     updateHistBulkBar();
@@ -1598,7 +1727,7 @@ function exitHistBatchMode() {
     $('#theater-hist-batch-bar').hide();
     $('.theater-hist-checkbox').hide().prop('checked', false);
     $('.theater-history-item').removeClass('theater-history-item-selected');
-    const h = settings.history || [];
+    const h = historyCache;
     $('#theater-hist-batch-enter').toggle(h.length > 0);
     $('#theater-export-all-history').toggle(h.length > 0);
     $('.theater-history-actions').show();
@@ -2352,15 +2481,15 @@ function exportInstructionTemplates() {
 async function saveToHistory() {
     const html = lastGeneratedHtml || currentDisplayHtml;
     if (!html) return;
-    const count = (settings.history || []).length + 1;
+    const count = historyCache.length + 1;
     const t = await SillyTavern.getContext().Popup.show.input('保存', '标题：', `小剧场 ${count}`);
     if (!t) return;
     const now = new Date(), pad = n => String(n).padStart(2, '0');
-    settings.history.push({
+    const item = {
         title: t, html: html, instruction: $('#theater-instruction').val(),
         date: `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
-    });
-    save(); refreshHistList(); toastr.success('已保存');
+    };
+    if (await histAdd(item)) { refreshHistList(); toastr.success('已保存'); }
 }
 
 function copyHtml() {
@@ -2430,7 +2559,7 @@ function fallbackCopy(text) {
 }
 
 async function exportAllHistory() {
-    const hist = settings.history || [];
+    const hist = historyCache;
     if (!hist.length) return;
     try {
         if (!window.JSZip) await import('/lib/jszip.min.js');
@@ -2640,15 +2769,14 @@ async function generateTheater() {
 
         // 自动保留到最近生成（最多 3 条）
         if (lastGeneratedHtml) {
-            if (!settings.recentGenerations) settings.recentGenerations = [];
-            settings.recentGenerations.unshift({
+            recentCache.unshift({
                 html: lastGeneratedHtml,
                 time: new Date().toLocaleString('zh-CN', { hour12: false }),
                 instruction: instruction || '',
             });
-            if (settings.recentGenerations.length > 3) settings.recentGenerations.length = 3;
-            settings.recentIndex = 0;
-            save();
+            if (recentCache.length > 3) recentCache.length = 3;
+            recentIndex = 0;
+            recentPersist();
         }
 
         if (popupAlive()) {
@@ -2795,16 +2923,14 @@ function showInIframe(html) {
 }
 
 function updateRecentNav() {
-    const recent = settings.recentGenerations || [];
     const $nav = $('#theater-recent-nav');
-    if (recent.length <= 1) { $nav.hide(); return; }
+    if (recentCache.length <= 1) { $nav.hide(); return; }
     $nav.show();
-    const idx = settings.recentIndex || 0;
-    const item = recent[idx];
+    const item = recentCache[recentIndex];
     const timeStr = item?.time || '';
-    $('#theater-recent-indicator').text(`${idx + 1} / ${recent.length}${timeStr ? '  ·  ' + timeStr : ''}`);
-    $('#theater-recent-prev').toggleClass('disabled', idx <= 0);
-    $('#theater-recent-next').toggleClass('disabled', idx >= recent.length - 1);
+    $('#theater-recent-indicator').text(`${recentIndex + 1} / ${recentCache.length}${timeStr ? '  ·  ' + timeStr : ''}`);
+    $('#theater-recent-prev').toggleClass('disabled', recentIndex <= 0);
+    $('#theater-recent-next').toggleClass('disabled', recentIndex >= recentCache.length - 1);
 }
 
 // ============================================================
