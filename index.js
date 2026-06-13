@@ -2,7 +2,7 @@
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.0.0';
+const VERSION = '3.0.1';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -2028,10 +2028,73 @@ function exitHistBatchMode() {
 // ============================================================
 function readCurrentUserPersona() {
     const ctx = SillyTavern.getContext();
-    let persona = '';
-    if (ctx.name1) persona = `[用户名: ${ctx.name1}]\n`;
-    if (ctx.powerUserSettings?.persona_description) persona += ctx.powerUserSettings.persona_description;
-    return persona.trim();
+    const prefix = ctx.name1 ? `[用户名: ${ctx.name1}]\n` : '';
+
+    const fromDom = (() => {
+        const selectors = [
+            '#persona_description',
+            '#personaDescription',
+            '#user_persona',
+            '#user-persona',
+            'textarea[name="persona_description"]',
+            'textarea[id*="persona"]',
+            'textarea[id*="Persona"]',
+            '[id*="persona"] textarea',
+            '[id*="Persona"] textarea',
+        ];
+        for (const sel of selectors) {
+            const el = [...document.querySelectorAll(sel)]
+                .find(node => !node.closest('.theater-popup') && !node.disabled && node.offsetParent !== null);
+            const val = el ? (el.value || el.textContent || '').trim() : '';
+            if (val) return val;
+        }
+        return '';
+    })();
+    if (fromDom) return (prefix + fromDom).trim();
+
+    const selectedPersonaSelects = [...document.querySelectorAll('#persona_select, #user_avatar_select, select')]
+        .filter(el => !el.closest('.theater-popup') && /persona|avatar/i.test(el.id || el.name || '') && el.offsetParent !== null);
+
+    const selectedKeys = [
+        ctx.user_avatar,
+        ctx.userAvatar,
+        window.user_avatar,
+        window.power_user?.user_avatar,
+        $('#user_avatar_block img').attr('src')?.split('/').pop(),
+        ...selectedPersonaSelects.map(el => el.value),
+        ...selectedPersonaSelects.map(el => el.selectedOptions?.[0]?.textContent),
+        ctx.name1,
+    ].filter(Boolean).map(v => String(v).trim());
+
+    const stores = [
+        window.power_user?.persona_descriptions,
+        window.power_user?.personas,
+        ctx.powerUserSettings?.persona_descriptions,
+        ctx.powerUserSettings?.personas,
+    ].filter(Boolean);
+
+    for (const store of stores) {
+        if (Array.isArray(store)) {
+            for (const item of store) {
+                const keys = [item?.avatar, item?.name, item?.key, item?.id, item?.filename].filter(Boolean).map(v => String(v).trim());
+                if (keys.some(k => selectedKeys.includes(k))) {
+                    const desc = item.description || item.persona_description || item.content || item.value || '';
+                    if (String(desc).trim()) return (prefix + String(desc).trim()).trim();
+                }
+            }
+        } else if (typeof store === 'object') {
+            for (const key of selectedKeys) {
+                const direct = store[key] ?? store[key.replace(/^.*[\\/]/, '')];
+                const desc = typeof direct === 'string'
+                    ? direct
+                    : (direct?.description || direct?.persona_description || direct?.content || direct?.value || '');
+                if (String(desc).trim()) return (prefix + String(desc).trim()).trim();
+            }
+        }
+    }
+
+    const cached = window.power_user?.persona_description || ctx.powerUserSettings?.persona_description || '';
+    return (prefix + String(cached || '').trim()).trim();
 }
 
 function loadPersona({ silent = false } = {}) {
