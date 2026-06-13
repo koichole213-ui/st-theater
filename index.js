@@ -5,7 +5,7 @@ import { power_user } from '../../../power-user.js';
 import { user_avatar } from '../../../personas.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.0.2';
+const VERSION = '3.0.3';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -364,8 +364,15 @@ async function init() {
         if (!settings.followUserPersona) return;
         try { loadPersona({ silent: true }); } catch (e) { console.warn('[Theater] 跟随 User 人设失败:', e); }
     };
-    if (event_types?.PERSONA_CHANGED) eventSource.on(event_types.PERSONA_CHANGED, refreshFollowedPersona);
-    if (event_types?.PERSONA_UPDATED) eventSource.on(event_types.PERSONA_UPDATED, refreshFollowedPersona);
+    const scheduleFollowedPersonaRefresh = () => {
+        if (!settings.followUserPersona) return;
+        [0, 120, 500].forEach(ms => setTimeout(refreshFollowedPersona, ms));
+    };
+    if (event_types?.PERSONA_CHANGED) eventSource.on(event_types.PERSONA_CHANGED, scheduleFollowedPersonaRefresh);
+    if (event_types?.PERSONA_UPDATED) eventSource.on(event_types.PERSONA_UPDATED, scheduleFollowedPersonaRefresh);
+    $(document).on('click.theaterPersonaFollow change.theaterPersonaFollow input.theaterPersonaFollow',
+        '#user_avatar_block .avatar-container, #persona_description, #persona-management-dropdown, #persona_sort_order',
+        scheduleFollowedPersonaRefresh);
 
     // 自动模式：AI 每回完一条就看看攒没攒够
     if (event_types?.MESSAGE_RECEIVED) {
@@ -2041,6 +2048,10 @@ function readCurrentUserPersona() {
     const prefix = ctx.name1 ? `[用户名: ${ctx.name1}]\n` : '';
     const currentAvatar = user_avatar || ctx.user_avatar || ctx.userAvatar || window.user_avatar || '';
 
+    const descriptor = currentAvatar ? power_user?.persona_descriptions?.[currentAvatar] : null;
+    const currentDescription = descriptor ? (descriptor.description || '') : (power_user?.persona_description || '');
+    if (String(currentDescription).trim()) return (prefix + String(currentDescription).trim()).trim();
+
     const fromDom = (() => {
         const selectors = [
             '#persona_description',
@@ -2062,10 +2073,6 @@ function readCurrentUserPersona() {
         return '';
     })();
     if (fromDom) return (prefix + fromDom).trim();
-
-    const descriptor = currentAvatar ? power_user?.persona_descriptions?.[currentAvatar] : null;
-    const currentDescription = descriptor?.description || '';
-    if (String(currentDescription).trim()) return (prefix + String(currentDescription).trim()).trim();
 
     const selectedPersonaSelects = [...document.querySelectorAll('#persona_select, #user_avatar_select, select')]
         .filter(el => !el.closest('.theater-popup') && /persona|avatar/i.test(el.id || el.name || '') && el.offsetParent !== null);
