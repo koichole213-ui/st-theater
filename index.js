@@ -1,8 +1,11 @@
 // 千夜浮梦 · 小剧场生成器 v3.0.0 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
+import { power_user } from '../../../power-user.js';
+import { user_avatar } from '../../../personas.js';
+
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.0.1';
+const VERSION = '3.0.2';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -356,6 +359,13 @@ async function init() {
             try { await applyCharBoundBooks(); } catch (e) { console.warn('[Theater] 跟随角色卡失败:', e); }
         });
     }
+
+    const refreshFollowedPersona = () => {
+        if (!settings.followUserPersona) return;
+        try { loadPersona({ silent: true }); } catch (e) { console.warn('[Theater] 跟随 User 人设失败:', e); }
+    };
+    if (event_types?.PERSONA_CHANGED) eventSource.on(event_types.PERSONA_CHANGED, refreshFollowedPersona);
+    if (event_types?.PERSONA_UPDATED) eventSource.on(event_types.PERSONA_UPDATED, refreshFollowedPersona);
 
     // 自动模式：AI 每回完一条就看看攒没攒够
     if (event_types?.MESSAGE_RECEIVED) {
@@ -2029,6 +2039,7 @@ function exitHistBatchMode() {
 function readCurrentUserPersona() {
     const ctx = SillyTavern.getContext();
     const prefix = ctx.name1 ? `[用户名: ${ctx.name1}]\n` : '';
+    const currentAvatar = user_avatar || ctx.user_avatar || ctx.userAvatar || window.user_avatar || '';
 
     const fromDom = (() => {
         const selectors = [
@@ -2052,13 +2063,19 @@ function readCurrentUserPersona() {
     })();
     if (fromDom) return (prefix + fromDom).trim();
 
+    const descriptor = currentAvatar ? power_user?.persona_descriptions?.[currentAvatar] : null;
+    const currentDescription = descriptor?.description || '';
+    if (String(currentDescription).trim()) return (prefix + String(currentDescription).trim()).trim();
+
     const selectedPersonaSelects = [...document.querySelectorAll('#persona_select, #user_avatar_select, select')]
         .filter(el => !el.closest('.theater-popup') && /persona|avatar/i.test(el.id || el.name || '') && el.offsetParent !== null);
 
     const selectedKeys = [
+        currentAvatar,
         ctx.user_avatar,
         ctx.userAvatar,
         window.user_avatar,
+        power_user?.user_avatar,
         window.power_user?.user_avatar,
         $('#user_avatar_block img').attr('src')?.split('/').pop(),
         ...selectedPersonaSelects.map(el => el.value),
@@ -2067,10 +2084,9 @@ function readCurrentUserPersona() {
     ].filter(Boolean).map(v => String(v).trim());
 
     const stores = [
+        power_user?.persona_descriptions,
         window.power_user?.persona_descriptions,
-        window.power_user?.personas,
         ctx.powerUserSettings?.persona_descriptions,
-        ctx.powerUserSettings?.personas,
     ].filter(Boolean);
 
     for (const store of stores) {
