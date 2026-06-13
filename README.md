@@ -44,4 +44,4 @@ Extensions → Install Extension → 粘贴仓库地址
 
 ## 开源协议
 
-CC BY-NC-SA 4.0，仅限私人使用，禁止商用。
+MIT License。详见 [LICENSE.txt](LICENSE.txt)。
