@@ -5,7 +5,7 @@ import { power_user } from '../../../power-user.js';
 import { user_avatar } from '../../../personas.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.0.3';
+const VERSION = '3.0.4';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -2045,12 +2045,11 @@ function exitHistBatchMode() {
 // ============================================================
 function readCurrentUserPersona() {
     const ctx = SillyTavern.getContext();
-    const prefix = ctx.name1 ? `[用户名: ${ctx.name1}]\n` : '';
     const currentAvatar = user_avatar || ctx.user_avatar || ctx.userAvatar || window.user_avatar || '';
 
     const descriptor = currentAvatar ? power_user?.persona_descriptions?.[currentAvatar] : null;
     const currentDescription = descriptor ? (descriptor.description || '') : (power_user?.persona_description || '');
-    if (String(currentDescription).trim()) return (prefix + String(currentDescription).trim()).trim();
+    if (String(currentDescription).trim()) return String(currentDescription).trim();
 
     const fromDom = (() => {
         const selectors = [
@@ -2072,7 +2071,7 @@ function readCurrentUserPersona() {
         }
         return '';
     })();
-    if (fromDom) return (prefix + fromDom).trim();
+    if (fromDom) return fromDom.trim();
 
     const selectedPersonaSelects = [...document.querySelectorAll('#persona_select, #user_avatar_select, select')]
         .filter(el => !el.closest('.theater-popup') && /persona|avatar/i.test(el.id || el.name || '') && el.offsetParent !== null);
@@ -2102,7 +2101,7 @@ function readCurrentUserPersona() {
                 const keys = [item?.avatar, item?.name, item?.key, item?.id, item?.filename].filter(Boolean).map(v => String(v).trim());
                 if (keys.some(k => selectedKeys.includes(k))) {
                     const desc = item.description || item.persona_description || item.content || item.value || '';
-                    if (String(desc).trim()) return (prefix + String(desc).trim()).trim();
+                    if (String(desc).trim()) return String(desc).trim();
                 }
             }
         } else if (typeof store === 'object') {
@@ -2111,13 +2110,13 @@ function readCurrentUserPersona() {
                 const desc = typeof direct === 'string'
                     ? direct
                     : (direct?.description || direct?.persona_description || direct?.content || direct?.value || '');
-                if (String(desc).trim()) return (prefix + String(desc).trim()).trim();
+                if (String(desc).trim()) return String(desc).trim();
             }
         }
     }
 
     const cached = window.power_user?.persona_description || ctx.powerUserSettings?.persona_description || '';
-    return (prefix + String(cached || '').trim()).trim();
+    return String(cached || '').trim();
 }
 
 function loadPersona({ silent = false } = {}) {
