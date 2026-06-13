@@ -2,20 +2,13 @@
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 import { theaterError } from './notify.js';
+import { playSoundFile } from './notification-sound.js';
 import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follow.js';
+import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.1.0';
-const REMOTE_MANIFEST_URLS = [
-    // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
-    'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
-    // ghproxy 镜像：国内备胎
-    'https://ghproxy.net/https://raw.githubusercontent.com/koichole213-ui/st-theater/main/manifest.json',
-    // 原 raw：有梯子时能用，海外用户主路
-    'https://raw.githubusercontent.com/koichole213-ui/st-theater/main/manifest.json',
-];
+const VERSION = '3.1.1';
 let latestRemoteVersion = null;
-const SOUNDS_BASE_URL = '/scripts/extensions/third-party/st-theater/sounds/';
 const SOUND_PRESETS = [
     { id: 'chime',  label: '铃·清脆', file: 'freesound_community-chime-sound-7143.mp3' },
     { id: 'ping',   label: '铃·温和', file: 'dragon-studio-notification-ping-372479.mp3' },
@@ -378,43 +371,10 @@ async function init() {
     console.log(`[Theater] 🐾 禾禾的千夜浮梦，麓克永远在山脚下等你。`);
 }
 
-function compareVersion(a, b) {
-    const pa = String(a).split('.').map(n => parseInt(n) || 0);
-    const pb = String(b).split('.').map(n => parseInt(n) || 0);
-    const len = Math.max(pa.length, pb.length);
-    for (let i = 0; i < len; i++) {
-        const x = pa[i] || 0, y = pb[i] || 0;
-        if (x > y) return 1;
-        if (x < y) return -1;
-    }
-    return 0;
-}
-
 async function checkRemoteVersion() {
-    // 三个镜像并行 race——谁先返回有效 manifest 就用谁。
-    // 每路 5 秒超时，避免某一路 hang 着把 Promise.any 整个拖死。
-    const fetchManifest = async (url) => {
-        const ctrl = new AbortController();
-        const to = setTimeout(() => ctrl.abort(), 5000);
-        try {
-            const resp = await fetch(`${url}?_=${Date.now()}`, { cache: 'no-store', signal: ctrl.signal });
-            if (!resp.ok) throw new Error(`${new URL(url).host}: status ${resp.status}`);
-            const data = await resp.json();
-            if (!data?.version) throw new Error(`${new URL(url).host}: no version field`);
-            return { url, data };
-        } catch (e) {
-            if (e?.name === 'AbortError') throw new Error(`${new URL(url).host}: timeout 5s`);
-            throw e;
-        } finally {
-            clearTimeout(to);
-        }
-    };
-
     try {
-        const probes = REMOTE_MANIFEST_URLS.map(fetchManifest);
-        const { url, data } = await Promise.any(probes);
-        latestRemoteVersion = String(data.version);
-        const host = (() => { try { return new URL(url).host; } catch { return url; } })();
+        const { version, host } = await fetchLatestRemoteVersion();
+        latestRemoteVersion = version;
         console.log(`[Theater] remote v${latestRemoteVersion}, local v${VERSION} (via ${host})`);
         // popup 已经打开过的话给「设置」tab 实时挂个 dot；没打开过的话 buildPopupHTML 下次会读 latestRemoteVersion 渲染
         if (compareVersion(latestRemoteVersion, VERSION) > 0) {
@@ -424,11 +384,7 @@ async function checkRemoteVersion() {
             }
         }
     } catch (e) {
-        // Promise.any 在全部 reject 时抛 AggregateError，把每一路具体原因都打出来
-        const reasons = Array.isArray(e?.errors)
-            ? e.errors.map(er => er?.message || String(er)).join(' | ')
-            : (e?.message || String(e));
-        console.log('[Theater] update check failed:', reasons);
+        console.log('[Theater] update check failed:', formatVersionCheckError(e));
     }
 }
 
@@ -504,21 +460,11 @@ function getSoundPreset(id) {
     return SOUND_PRESETS.find(p => p.id === id) || SOUND_PRESETS[0];
 }
 
-let _notifyAudio = null;
 function playNotificationSound({ force = false } = {}) {
     if (!force && !settings.soundEnabled) return;
     const preset = getSoundPreset(settings.soundPreset);
     if (!preset) return;
-    try {
-        if (_notifyAudio) { try { _notifyAudio.pause(); } catch (_) {} }
-        const audio = new Audio(SOUNDS_BASE_URL + preset.file);
-        const vol = Math.max(0, Math.min(100, Number(settings.soundVolume) || 0));
-        audio.volume = vol / 100;
-        _notifyAudio = audio;
-        audio.play().catch(err => console.warn('[Theater] sound play blocked:', err?.message || err));
-    } catch (e) {
-        console.warn('[Theater] sound play failed:', e);
-    }
+    playSoundFile(preset.file, settings.soundVolume);
 }
 
 function createFloatingBall() {
