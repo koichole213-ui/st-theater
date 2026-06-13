@@ -1709,3 +1709,55 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     box-shadow: 0 0 0 2px rgba(255, 246, 228, .95);
     pointer-events: none;
 }
+
+/* Follow-ST skin: give selects and world-book panels a real surface so ST blur themes do not smear text. */
+.theater-popup[data-skin="theater"] .theater-select,
+.theater-popup[data-skin="theater"] .theater-select option {
+    background-color: var(--SmartThemeBlurTintColor, var(--SmartThemeBgColor, #ffffff)) !important;
+    color: var(--SmartThemeBodyColor, #2a2a2a) !important;
+}
+.theater-popup[data-skin="theater"] #theater-wb-books,
+.theater-popup[data-skin="theater"] .theater-wb-group-body,
+.theater-popup[data-skin="theater"] .theater-wb-entry,
+.theater-popup[data-skin="theater"] .theater-wb-book-row.active {
+    background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor, var(--SmartThemeBgColor, #ffffff)) 88%, var(--SmartThemeBodyColor, #2a2a2a) 12%);
+}
+
+#theater-error-notice {
+    position: fixed;
+    top: 18px;
+    right: 18px;
+    z-index: 2147483647;
+    width: min(420px, calc(100vw - 36px));
+    max-height: min(360px, calc(100vh - 36px));
+    overflow: auto;
+    padding: 14px 38px 14px 16px;
+    border: 1px solid rgba(194, 85, 85, .45);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #fff) 92%, #C25555 8%);
+    color: var(--SmartThemeBodyColor, #2a2a2a);
+    box-shadow: 0 14px 36px rgba(0, 0, 0, .24);
+    white-space: normal;
+}
+#theater-error-notice .theater-error-title {
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: #C25555;
+}
+#theater-error-notice .theater-error-text {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+#theater-error-notice .theater-error-close {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+}

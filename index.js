@@ -141,7 +141,9 @@ const defaultSettings = Object.freeze({
     selectedWorldBooks: [],     // 勾选的世界书名列表（v2.8.0 起支持多本）
     manualWBEntries: [],        // 手动添加的条目 [{ name, content, on }]
     followCharCard: false,      // 切角色时自动选中角色卡绑定的世界书
+    followUserPersona: false,   // 生成时自动读取当前 user 人设
     floatingBall: false,
+    floatingBallTuck: true,
     soundEnabled: true,
     soundPreset: 'chime',
     soundVolume: 70,
@@ -514,6 +516,23 @@ function playNotificationSound({ force = false } = {}) {
     }
 }
 
+function theaterError(message, title = '', opts = {}) {
+    const text = String(message || '');
+    toastr.error(text, title, { timeOut: 12000, extendedTimeOut: 8000, closeButton: true, ...opts });
+    console.error('[Theater]', title || 'Error', text);
+
+    let box = document.getElementById('theater-error-notice');
+    if (!box) {
+        box = document.createElement('div');
+        box.id = 'theater-error-notice';
+        box.innerHTML = '<button type="button" class="theater-error-close" title="Close">&times;</button><div class="theater-error-title"></div><pre class="theater-error-text"></pre>';
+        document.documentElement.appendChild(box);
+        box.querySelector('.theater-error-close')?.addEventListener('click', () => box.remove());
+    }
+    box.querySelector('.theater-error-title').textContent = title || '小剧场报错';
+    box.querySelector('.theater-error-text').textContent = text;
+}
+
 function createFloatingBall() {
     try {
         document.querySelectorAll('#theater-floating-ball').forEach(el => el.remove());
@@ -540,6 +559,7 @@ function createFloatingBall() {
         }
         function scheduleTuck() {
             cancelTuck();
+            if (!settings.floatingBallTuck) return;
             tuckTimer = setTimeout(() => {
                 const side = ball.dataset.side || 'right';
                 ball.style.transform = side === 'left' ? 'translateX(-58%)' : 'translateX(58%)';
@@ -553,7 +573,7 @@ function createFloatingBall() {
             ball.dataset.side = onLeft ? 'left' : 'right';
             ball.style.transition = SNAP_TRANSITION;
             ball.style.left = (onLeft ? 6 : w - 54) + 'px';
-            scheduleTuck();
+            if (settings.floatingBallTuck) scheduleTuck();
         }
 
         // 暖底 + 焦糖色油灯 + 软阴影
@@ -807,6 +827,9 @@ function buildPopupHTML() {
         <!-- User Persona -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-user"></i> User 人设</label>
+            <div class="theater-toggle-row" style="margin-bottom:8px;">
+                <label class="theater-toggle-label"><input type="checkbox" id="theater-persona-follow" ${settings.followUserPersona ? 'checked' : ''}><span>跟随当前 User 人设</span></label>
+            </div>
             <div class="theater-btn-row" style="margin:0 0 8px;"><div id="theater-load-persona-btn" class="theater-btn"><i class="fa-solid fa-download"></i><span>从酒馆读取</span></div></div>
             <textarea id="theater-user-persona" class="theater-textarea" rows="3" placeholder="用户人设信息…">${esc(settings.userPersona || '')}</textarea>
             <div class="theater-btn-row"><div id="theater-save-persona-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存</span></div></div>
@@ -1024,6 +1047,9 @@ function buildPopupHTML() {
             <label class="theater-label"><i class="fa-solid fa-arrows-rotate"></i> 扩展管理</label>
             <div class="theater-toggle-row" style="margin-bottom:10px;">
                 <label class="theater-toggle-label"><input type="checkbox" id="theater-floating-ball-toggle" ${settings.floatingBall ? 'checked' : ''}><span>悬浮球</span></label>
+            </div>
+            <div class="theater-toggle-row" style="margin-bottom:10px;">
+                <label class="theater-toggle-label"><input type="checkbox" id="theater-floating-ball-tuck-toggle" ${settings.floatingBallTuck !== false ? 'checked' : ''}><span>悬浮球贴边收纳</span></label>
             </div>
             <div class="theater-btn-row">
                 <div id="theater-update-btn" class="theater-btn primary"><i class="fa-solid fa-cloud-arrow-down"></i><span>检查更新</span></div>
@@ -1287,8 +1313,7 @@ function updateWBCount() {
     }
     const roughTokens = Math.ceil(chars / 1.5);
     const tokenStr = roughTokens >= 1000 ? `${(roughTokens / 1000).toFixed(1)}k` : String(roughTokens);
-    const warn = roughTokens > 20000;
-    $('#theater-wb-count').html(`${active}/${total} 个条目已启用 · 约 ${tokenStr} token${warn ? ' <span class="theater-wb-count-warn">⚠ 偏多</span>' : ''}`);
+    $('#theater-wb-count').html(`${active}/${total} 个条目已启用 · 约 ${tokenStr} token`);
     $('#theater-wb-header').toggle(total > 0);
     updateWBGroupCounts();
 }
@@ -1477,6 +1502,11 @@ function bindEvents() {
 
     // ---- Material: Persona ----
     $d.off('click.tlp').on('click.tlp', '#theater-load-persona-btn', loadPersona);
+    $d.off('change.tpf').on('change.tpf', '#theater-persona-follow', function () {
+        settings.followUserPersona = $(this).is(':checked');
+        save();
+        if (settings.followUserPersona) loadPersona({ silent: true });
+    });
     $d.off('click.tsper').on('click.tsper', '#theater-save-persona-btn', function () {
         settings.userPersona = $('#theater-user-persona').val(); save(); toastr.success('已保存');
     });
@@ -1886,6 +1916,9 @@ function bindEvents() {
     $d.off('change.tfb').on('change.tfb', '#theater-floating-ball-toggle', function () {
         settings.floatingBall = $(this).is(':checked'); save(); createFloatingBall();
     });
+    $d.off('change.tfbt').on('change.tfbt', '#theater-floating-ball-tuck-toggle', function () {
+        settings.floatingBallTuck = $(this).is(':checked'); save(); createFloatingBall();
+    });
 
     // ---- Sound ----
     $d.off('change.tse').on('change.tse', '#theater-sound-enabled', function () {
@@ -1993,15 +2026,29 @@ function exitHistBatchMode() {
 // ============================================================
 // Persona
 // ============================================================
-function loadPersona() {
+function readCurrentUserPersona() {
+    const ctx = SillyTavern.getContext();
+    let persona = '';
+    if (ctx.name1) persona = `[用户名: ${ctx.name1}]\n`;
+    if (ctx.powerUserSettings?.persona_description) persona += ctx.powerUserSettings.persona_description;
+    return persona.trim();
+}
+
+function loadPersona({ silent = false } = {}) {
     try {
-        const ctx = SillyTavern.getContext();
-        let persona = '';
-        if (ctx.name1) persona = `[用户名: ${ctx.name1}]\n`;
-        if (ctx.powerUserSettings?.persona_description) persona += ctx.powerUserSettings.persona_description;
-        if (persona.trim()) { $('#theater-user-persona').val(persona.trim()); settings.userPersona = persona.trim(); save(); toastr.success('已读取'); }
-        else toastr.warning('未找到人设，请手动填写');
-    } catch (e) { toastr.error('读取失败'); }
+        const persona = readCurrentUserPersona();
+        if (persona) {
+            $('#theater-user-persona').val(persona);
+            settings.userPersona = persona;
+            save();
+            if (!silent) toastr.success('已读取');
+            return persona;
+        }
+        if (!silent) toastr.warning('未找到人设，请手动填写');
+    } catch (e) {
+        if (!silent) theaterError('读取失败');
+    }
+    return '';
 }
 
 // ============================================================
@@ -2921,6 +2968,12 @@ function htmlToPlainText(html) {
     return text;
 }
 
+function updateContinueHint() {
+    $('#theater-continue-hint').remove();
+    if (!continueContext) return;
+    $('#theater-instruction').before(`<div id="theater-continue-hint" style="font-size:.78em;opacity:.6;margin-bottom:6px;padding:6px 10px;border-radius:8px;background:rgba(128,128,128,.08);"><i class="fa-solid fa-forward" style="margin-right:4px;"></i>续写模式：已加载前情内容（${continueContext.length}字）<span id="theater-cancel-continue" style="margin-left:8px;cursor:pointer;opacity:.5;text-decoration:underline;">取消</span></div>`);
+}
+
 // 设置续写上下文并跳转到生成面板
 function startContinue(html) {
     const plainText = htmlToPlainText(html);
@@ -2943,8 +2996,7 @@ function startContinue(html) {
     // 跳转到生成面板
     $('.theater-tab[data-tab="generate"]').click();
     $('#theater-instruction').val('').attr('placeholder', '已加载前情，请输入续写指令…');
-    $('#theater-continue-hint').remove();
-    $('#theater-instruction').before(`<div id="theater-continue-hint" style="font-size:.78em;opacity:.6;margin-bottom:6px;padding:6px 10px;border-radius:8px;background:rgba(128,128,128,.08);"><i class="fa-solid fa-forward" style="margin-right:4px;"></i>续写模式：已加载前情内容（${continueContext.length}字）<span id="theater-cancel-continue" style="margin-left:8px;cursor:pointer;opacity:.5;text-decoration:underline;">取消</span></div>`);
+    updateContinueHint();
 }
 
 function stopGeneration() {
@@ -2987,7 +3039,8 @@ async function runGeneration(instruction, isAuto) {
         if (p) charInfo += `角色性格：\n${p}\n\n`;
     }
 
-    const personaInfo = settings.userPersona?.trim() ? `User人设：\n${settings.userPersona}\n\n` : '';
+    const currentPersona = settings.followUserPersona ? loadPersona({ silent: true }) : (settings.userPersona || '');
+    const personaInfo = currentPersona?.trim() ? `User人设：\n${currentPersona.trim()}\n\n` : '';
 
     const wbParts = wbEntries.filter((_e, i) => wbStates[i] !== false).map(e => e.content);
     const wbInfo = wbParts.length ? `世界书设定：\n${wbParts.join('\n\n')}\n\n` : '';
@@ -3011,12 +3064,6 @@ async function runGeneration(instruction, isAuto) {
     // Append custom addons
     if (settings.customStyleAddon?.trim()) systemPrompt += '\n\n【文风补充】\n' + settings.customStyleAddon.trim();
     if (settings.customNsfwAddon?.trim()) systemPrompt += '\n\n【NSFW补充】\n' + settings.customNsfwAddon.trim();
-
-    // Rough token estimate warning
-    const roughTokens = Math.ceil((systemPrompt.length + prompt.length) / 1.5);
-    if (roughTokens > 12000) {
-        toastr.warning(`上下文约 ${Math.round(roughTokens / 1000)}k token，较长，可能导致超时。可尝试减少消息数量或关闭部分世界书条目。`, '', { timeOut: 5000 });
-    }
 
     // 非续写生成时重置累积内容
     if (!contCtx) accumulatedTheater = '';
@@ -3052,6 +3099,7 @@ async function runGeneration(instruction, isAuto) {
             chunkThrottle = setTimeout(() => { chunkThrottle = null; flushStream(); }, 100);
         }
     };
+    let generationSucceeded = false;
 
     try {
         if (!settings.apiUrl || !settings.apiKey || !settings.apiModel) {
@@ -3059,14 +3107,16 @@ async function runGeneration(instruction, isAuto) {
             return;
         }
         const result = await callCustomAPIStream(systemPrompt, prompt, onChunk);
-        if (!result) { toastr.error('API未返回内容'); return; }
+        if (!result) { theaterError('API未返回内容'); return; }
         lastGeneratedHtml = extractHtml(result);
 
         // 更新累积内容（用于多次续写）
         const newText = htmlToPlainText(lastGeneratedHtml);
         if (newText) {
             accumulatedTheater = accumulatedTheater ? (accumulatedTheater + '\n\n---\n\n' + newText) : newText;
+            if (contCtx) continueContext = accumulatedTheater.length > 8000 ? '…（前文省略）\n\n' + accumulatedTheater.slice(-8000) : accumulatedTheater;
         }
+        generationSucceeded = true;
 
         // 自动保留到最近生成（最多 3 条）
         if (lastGeneratedHtml) {
@@ -3093,15 +3143,18 @@ async function runGeneration(instruction, isAuto) {
         if (err.name === 'AbortError') { toastr.info('已停止'); return; }
         console.error('[Theater]', err);
         bgError = err.message || '未知错误';
-        toastr.error('生成失败: ' + bgError);
+        theaterError('生成失败: ' + bgError);
     } finally {
         isGenerating = false;
         if (chunkThrottle) { clearTimeout(chunkThrottle); chunkThrottle = null; }
         flushStream();
-        if (!isAuto) {
+        if (!isAuto && !contCtx) {
             continueContext = '';
             $('#theater-continue-hint').remove();
             $('#theater-instruction').attr('placeholder', '输入指令…');
+        } else if (!isAuto && contCtx && generationSucceeded) {
+            $('#theater-instruction').attr('placeholder', '已加载前情，请输入续写指令…');
+            updateContinueHint();
         }
         if (popupAlive()) {
             $('#theater-generate-btn').show();
@@ -3382,7 +3435,7 @@ async function fetchModelList() {
         toastr.success(`找到 ${models.length} 个模型`);
     } catch (e) {
         console.error('[Theater] Fetch models error:', e);
-        toastr.error('获取模型失败: ' + (e.message || ''));
+        theaterError('获取模型失败: ' + (e.message || ''));
     } finally {
         $btn.removeClass('disabled');
         $btn.find('span').text('获取模型列表');
@@ -3414,7 +3467,7 @@ async function testAPIConnection() {
                 body: JSON.stringify({ model, max_tokens: 16, messages: [{ role: 'user', content: 'Hi' }] })
             });
             if (res.ok) toastr.success('连接成功！');
-            else toastr.error(`连接失败 (${res.status})`);
+            else theaterError(`连接失败 (${res.status})`);
         } else {
             const cleanBase = url.replace(/\/chat\/completions$/, '').replace(/\/$/, '');
             const ep = /\/v\d+$/.test(cleanBase) ? `${cleanBase}/chat/completions` : `${cleanBase}/v1/chat/completions`;
@@ -3424,10 +3477,10 @@ async function testAPIConnection() {
                 body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Hi' }], max_tokens: 5 })
             });
             if (res.ok) toastr.success('连接成功！');
-            else toastr.error(`连接失败 (${res.status})`);
+            else theaterError(`连接失败 (${res.status})`);
         }
     } catch (e) {
-        toastr.error('请求发送失败');
+        theaterError('请求发送失败');
     } finally {
         $btn.removeClass('disabled');
         $btn.find('span').text('测试连接');
@@ -3472,9 +3525,9 @@ async function updateExtension() {
         const tip = (resp.status === 409 || /already exists/i.test(detail))
             ? '插件目录被旧版残留卡住了。请在【扩展管理】卸载本插件，再用 Install from URL 输入 https://github.com/koichole213-ui/st-theater 重新安装（设置不会丢）。'
             : '如遇 Git 冲突或网络问题，可在【扩展管理】卸载后重新安装。';
-        toastr.error(`更新失败 (HTTP ${resp.status || 0})\n${detail}\n\n${tip}`, '更新失败', { timeOut: 12000, extendedTimeOut: 6000 });
+        theaterError(`更新失败 (HTTP ${resp.status || 0})\n${detail}\n\n${tip}`, '更新失败');
     } catch (e) {
-        toastr.error('更新失败: ' + e.message);
+        theaterError('更新失败: ' + e.message);
     } finally {
         btn.removeClass('disabled');
     }
