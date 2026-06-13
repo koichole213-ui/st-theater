@@ -1,11 +1,11 @@
 // 千夜浮梦 · 小剧场生成器 v3.0.0 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
-import { power_user } from '../../../power-user.js';
-import { user_avatar } from '../../../personas.js';
+import { theaterError } from './notify.js';
+import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follow.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.0.4';
+const VERSION = '3.1.0';
 const REMOTE_MANIFEST_URLS = [
     // jsdelivr CDN：国内大概率直连，偶尔有 5-10 分钟缓存延迟，可接受
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
@@ -360,19 +360,7 @@ async function init() {
         });
     }
 
-    const refreshFollowedPersona = () => {
-        if (!settings.followUserPersona) return;
-        try { loadPersona({ silent: true }); } catch (e) { console.warn('[Theater] 跟随 User 人设失败:', e); }
-    };
-    const scheduleFollowedPersonaRefresh = () => {
-        if (!settings.followUserPersona) return;
-        [0, 120, 500].forEach(ms => setTimeout(refreshFollowedPersona, ms));
-    };
-    if (event_types?.PERSONA_CHANGED) eventSource.on(event_types.PERSONA_CHANGED, scheduleFollowedPersonaRefresh);
-    if (event_types?.PERSONA_UPDATED) eventSource.on(event_types.PERSONA_UPDATED, scheduleFollowedPersonaRefresh);
-    $(document).on('click.theaterPersonaFollow change.theaterPersonaFollow input.theaterPersonaFollow',
-        '#user_avatar_block .avatar-container, #persona_description, #persona-management-dropdown, #persona_sort_order',
-        scheduleFollowedPersonaRefresh);
+    bindPersonaFollowRefresh({ eventSource, event_types, settings, save, theaterError });
 
     // 自动模式：AI 每回完一条就看看攒没攒够
     if (event_types?.MESSAGE_RECEIVED) {
@@ -531,23 +519,6 @@ function playNotificationSound({ force = false } = {}) {
     } catch (e) {
         console.warn('[Theater] sound play failed:', e);
     }
-}
-
-function theaterError(message, title = '', opts = {}) {
-    const text = String(message || '');
-    toastr.error(text, title, { timeOut: 12000, extendedTimeOut: 8000, closeButton: true, ...opts });
-    console.error('[Theater]', title || 'Error', text);
-
-    let box = document.getElementById('theater-error-notice');
-    if (!box) {
-        box = document.createElement('div');
-        box.id = 'theater-error-notice';
-        box.innerHTML = '<button type="button" class="theater-error-close" title="Close">&times;</button><div class="theater-error-title"></div><pre class="theater-error-text"></pre>';
-        document.documentElement.appendChild(box);
-        box.querySelector('.theater-error-close')?.addEventListener('click', () => box.remove());
-    }
-    box.querySelector('.theater-error-title').textContent = title || '小剧场报错';
-    box.querySelector('.theater-error-text').textContent = text;
 }
 
 function createFloatingBall() {
@@ -2043,97 +2014,8 @@ function exitHistBatchMode() {
 // ============================================================
 // Persona
 // ============================================================
-function readCurrentUserPersona() {
-    const ctx = SillyTavern.getContext();
-    const currentAvatar = user_avatar || ctx.user_avatar || ctx.userAvatar || window.user_avatar || '';
-
-    const descriptor = currentAvatar ? power_user?.persona_descriptions?.[currentAvatar] : null;
-    const currentDescription = descriptor ? (descriptor.description || '') : (power_user?.persona_description || '');
-    if (String(currentDescription).trim()) return String(currentDescription).trim();
-
-    const fromDom = (() => {
-        const selectors = [
-            '#persona_description',
-            '#personaDescription',
-            '#user_persona',
-            '#user-persona',
-            'textarea[name="persona_description"]',
-            'textarea[id*="persona"]',
-            'textarea[id*="Persona"]',
-            '[id*="persona"] textarea',
-            '[id*="Persona"] textarea',
-        ];
-        for (const sel of selectors) {
-            const el = [...document.querySelectorAll(sel)]
-                .find(node => !node.closest('.theater-popup') && !node.disabled && node.offsetParent !== null);
-            const val = el ? (el.value || el.textContent || '').trim() : '';
-            if (val) return val;
-        }
-        return '';
-    })();
-    if (fromDom) return fromDom.trim();
-
-    const selectedPersonaSelects = [...document.querySelectorAll('#persona_select, #user_avatar_select, select')]
-        .filter(el => !el.closest('.theater-popup') && /persona|avatar/i.test(el.id || el.name || '') && el.offsetParent !== null);
-
-    const selectedKeys = [
-        currentAvatar,
-        ctx.user_avatar,
-        ctx.userAvatar,
-        window.user_avatar,
-        power_user?.user_avatar,
-        window.power_user?.user_avatar,
-        $('#user_avatar_block img').attr('src')?.split('/').pop(),
-        ...selectedPersonaSelects.map(el => el.value),
-        ...selectedPersonaSelects.map(el => el.selectedOptions?.[0]?.textContent),
-        ctx.name1,
-    ].filter(Boolean).map(v => String(v).trim());
-
-    const stores = [
-        power_user?.persona_descriptions,
-        window.power_user?.persona_descriptions,
-        ctx.powerUserSettings?.persona_descriptions,
-    ].filter(Boolean);
-
-    for (const store of stores) {
-        if (Array.isArray(store)) {
-            for (const item of store) {
-                const keys = [item?.avatar, item?.name, item?.key, item?.id, item?.filename].filter(Boolean).map(v => String(v).trim());
-                if (keys.some(k => selectedKeys.includes(k))) {
-                    const desc = item.description || item.persona_description || item.content || item.value || '';
-                    if (String(desc).trim()) return String(desc).trim();
-                }
-            }
-        } else if (typeof store === 'object') {
-            for (const key of selectedKeys) {
-                const direct = store[key] ?? store[key.replace(/^.*[\\/]/, '')];
-                const desc = typeof direct === 'string'
-                    ? direct
-                    : (direct?.description || direct?.persona_description || direct?.content || direct?.value || '');
-                if (String(desc).trim()) return String(desc).trim();
-            }
-        }
-    }
-
-    const cached = window.power_user?.persona_description || ctx.powerUserSettings?.persona_description || '';
-    return String(cached || '').trim();
-}
-
-function loadPersona({ silent = false } = {}) {
-    try {
-        const persona = readCurrentUserPersona();
-        if (persona) {
-            $('#theater-user-persona').val(persona);
-            settings.userPersona = persona;
-            save();
-            if (!silent) toastr.success('已读取');
-            return persona;
-        }
-        if (!silent) toastr.warning('未找到人设，请手动填写');
-    } catch (e) {
-        if (!silent) theaterError('读取失败');
-    }
-    return '';
+function loadPersona(options = {}) {
+    return syncPersonaToSettings(settings, save, theaterError, options);
 }
 
 // ============================================================
