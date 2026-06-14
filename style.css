@@ -1348,6 +1348,53 @@
     letter-spacing: .5px;
 }
 .theater-launch-area { padding: var(--t-space-1) 0; }
+#theater-open-btn,
+#theater-wand-btn {
+    position: relative;
+}
+
+.theater-update-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #C25555;
+    box-shadow: 0 0 0 2px var(--SmartThemeBlurTintColor, #fff);
+    pointer-events: none;
+}
+
+#theater-wand-btn .theater-update-badge {
+    top: 7px;
+    right: 7px;
+}
+
+#theater-floating-ball .theater-update-badge-floating {
+    top: 1px;
+    right: 1px;
+    width: 11px;
+    height: 11px;
+    box-shadow: 0 0 0 2px rgba(255, 246, 228, .95);
+}
+
+.theater-update-notice {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    margin: 0 0 10px;
+    padding: 9px 11px;
+    border: 1px solid color-mix(in srgb, var(--t-accent) 28%, transparent);
+    border-radius: var(--t-radius-sm);
+    background: color-mix(in srgb, var(--t-accent) 10%, transparent);
+    color: var(--t-fg);
+    font-size: var(--t-text-sm);
+    font-weight: 600;
+}
+
+.theater-update-notice i {
+    color: var(--t-accent);
+}
 
 /* Magic-lamp icon (game-icons.net path leaves padding around the shape — bump size to match neighbor FA icons; +8deg rotation levels the artist's up-right tilt) */
 .theater-lamp-icon {

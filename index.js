@@ -7,7 +7,7 @@ import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follo
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.1.1';
+const VERSION = '3.1.2';
 let latestRemoteVersion = null;
 const SOUND_PRESETS = [
     { id: 'chime',  label: '铃·清脆', file: 'freesound_community-chime-sound-7143.mp3' },
@@ -341,6 +341,7 @@ async function init() {
         const $btn = $(`<div id="theater-wand-btn" class="list-group-item flex-container flexGap5"><div class="extensionsMenuExtensionButton">${LAMP_SVG_HTML}</div>千夜浮梦</div>`);
         $('#extensionsMenu').append($btn);
         $btn.on('click', e => { e.stopPropagation(); $(document).trigger('click'); setTimeout(openTheaterPopup, 150); });
+        refreshUpdateBadges();
     };
     addWand();
     if (event_types?.APP_READY) eventSource.on(event_types.APP_READY, addWand);
@@ -365,7 +366,7 @@ async function init() {
     applyCustomCSS();
     // 悬浮球延迟创建，避免干扰其他插件初始化
     setTimeout(() => { try { createFloatingBall(); } catch (e) { console.warn('[Theater] Floating ball error:', e); } }, 2000);
-    // 后台检查 github 上的最新版本，仅用于在「设置」tab 旁挂 new 标记
+    // 后台检查 github 上的最新版本，只挂入口红点，不弹窗打扰主界面
     setTimeout(() => { checkRemoteVersion(); }, 3000);
     console.log(`[Theater] v${VERSION} loaded`);
     console.log(`[Theater] 🐾 禾禾的千夜浮梦，麓克永远在山脚下等你。`);
@@ -376,16 +377,31 @@ async function checkRemoteVersion() {
         const { version, host } = await fetchLatestRemoteVersion();
         latestRemoteVersion = version;
         console.log(`[Theater] remote v${latestRemoteVersion}, local v${VERSION} (via ${host})`);
-        // popup 已经打开过的话给「设置」tab 实时挂个 dot；没打开过的话 buildPopupHTML 下次会读 latestRemoteVersion 渲染
-        if (compareVersion(latestRemoteVersion, VERSION) > 0) {
-            const $tab = $('.theater-tab[data-tab="config"]');
-            if ($tab.length && !$tab.find('.theater-tab-new-badge').length) {
-                $tab.append(`<span class="theater-tab-new-badge" title="发现新版本 v${latestRemoteVersion}"></span>`);
-            }
-        }
+        refreshUpdateBadges();
     } catch (e) {
         console.log('[Theater] update check failed:', formatVersionCheckError(e));
     }
+}
+
+function hasRemoteUpdate() {
+    return latestRemoteVersion && compareVersion(latestRemoteVersion, VERSION) > 0;
+}
+
+function updateBadgeHTML(className = 'theater-tab-new-badge') {
+    return `<span class="${className}" title="发现新版本 v${esc(latestRemoteVersion)}"></span>`;
+}
+
+function refreshUpdateBadges() {
+    const hasUpdate = hasRemoteUpdate();
+    $('.theater-update-badge').remove();
+    $('.theater-tab-new-badge').remove();
+
+    if (!hasUpdate) return;
+
+    $('#theater-open-btn').append(updateBadgeHTML('theater-update-badge'));
+    $('#theater-wand-btn').append(updateBadgeHTML('theater-update-badge'));
+    $('#theater-floating-ball').append(updateBadgeHTML('theater-update-badge theater-update-badge-floating'));
+    $('.theater-tab[data-tab="config"]').append(updateBadgeHTML('theater-tab-new-badge'));
 }
 
 // 把用户 CSS 限定在 .theater-popup 容器内，避免污染酒馆主界面。
@@ -611,6 +627,7 @@ function createFloatingBall() {
         });
 
         document.documentElement.appendChild(ball);
+        refreshUpdateBadges();
         snapToEdge();
     } catch (e) {
         console.warn('[Theater] Floating ball error:', e);
@@ -641,11 +658,7 @@ function buildPopupHTML() {
         <div class="theater-tab" data-tab="rules">规则</div>
         <div class="theater-tab" data-tab="history">历史</div>
         <div class="theater-tab" data-tab="theme">美化</div>
-        <div class="theater-tab" data-tab="config">设置${
-            latestRemoteVersion && compareVersion(latestRemoteVersion, VERSION) > 0
-                ? `<span class="theater-tab-new-badge" title="发现新版本 v${esc(latestRemoteVersion)}"></span>`
-                : ''
-        }</div>
+        <div class="theater-tab" data-tab="config">设置${hasRemoteUpdate() ? updateBadgeHTML() : ''}</div>
     </div>
     <div class="theater-panels-wrapper">
 
@@ -985,6 +998,11 @@ function buildPopupHTML() {
             <div class="theater-toggle-row" style="margin-bottom:10px;">
                 <label class="theater-toggle-label"><input type="checkbox" id="theater-floating-ball-tuck-toggle" ${settings.floatingBallTuck !== false ? 'checked' : ''}><span>悬浮球贴边收纳</span></label>
             </div>
+            ${hasRemoteUpdate() ? `
+            <div class="theater-update-notice">
+                <i class="fa-solid fa-circle-arrow-up"></i>
+                <span>发现新版本 v${esc(latestRemoteVersion)}</span>
+            </div>` : ''}
             <div class="theater-btn-row">
                 <div id="theater-update-btn" class="theater-btn primary"><i class="fa-solid fa-cloud-arrow-down"></i><span>检查更新</span></div>
             </div>
