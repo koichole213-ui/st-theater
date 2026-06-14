@@ -7,7 +7,7 @@ import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follo
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.1.3';
+const VERSION = '3.1.4';
 let latestRemoteVersion = null;
 const SOUND_PRESETS = [
     { id: 'chime',  label: '铃·清脆', file: 'freesound_community-chime-sound-7143.mp3' },
@@ -504,15 +504,27 @@ function createFloatingBall() {
 
         function cancelTuck() { if (tuckTimer) { clearTimeout(tuckTimer); tuckTimer = null; } }
         function untuck() {
+            const side = ball.dataset.side || 'right';
+            ball.dataset.tucked = 'false';
+            ball.style.left = untuckedLeft(side) + 'px';
             ball.style.transform = 'scale(1) rotate(0)';
             ball.style.opacity = '0.92';
+        }
+        function untuckedLeft(side) {
+            return side === 'left' ? 6 : window.innerWidth - 54;
+        }
+        function tuckedLeft(side) {
+            return side === 'left' ? -22 : window.innerWidth - 26;
         }
         function scheduleTuck() {
             cancelTuck();
             if (!settings.floatingBallTuck) return;
             tuckTimer = setTimeout(() => {
                 const side = ball.dataset.side || 'right';
-                ball.style.transform = side === 'left' ? 'translateX(-58%)' : 'translateX(58%)';
+                ball.dataset.tucked = 'true';
+                ball.style.transition = SNAP_TRANSITION;
+                ball.style.left = tuckedLeft(side) + 'px';
+                ball.style.transform = 'scale(1) rotate(0)';
                 ball.style.opacity = '0.45';
             }, TUCK_DELAY);
         }
@@ -521,8 +533,9 @@ function createFloatingBall() {
             const cur = parseInt(ball.style.left) || 0;
             const onLeft = cur + 24 < w / 2;
             ball.dataset.side = onLeft ? 'left' : 'right';
+            ball.dataset.tucked = 'false';
             ball.style.transition = SNAP_TRANSITION;
-            ball.style.left = (onLeft ? 6 : w - 54) + 'px';
+            ball.style.left = untuckedLeft(ball.dataset.side) + 'px';
             if (settings.floatingBallTuck) scheduleTuck();
         }
 
@@ -599,13 +612,20 @@ function createFloatingBall() {
             document.removeEventListener('touchend', onPointerUp);
             if (!isDragging) {
                 try { openTheaterPopup(); } catch (err) { console.warn('[Theater] Popup error:', err); }
+                untuck();
+                isDragging = false;
+                return;
             }
             isDragging = false;
             snapToEdge();
         }
 
-        ball.addEventListener('pointerdown', onPointerDown);
-        ball.addEventListener('touchstart', onPointerDown, { passive: true });
+        if (window.PointerEvent) {
+            ball.addEventListener('pointerdown', onPointerDown);
+        } else {
+            ball.addEventListener('mousedown', onPointerDown);
+            ball.addEventListener('touchstart', onPointerDown, { passive: true });
+        }
 
         ball.addEventListener('mouseenter', () => {
             cancelTuck();
@@ -622,8 +642,10 @@ function createFloatingBall() {
 
         window.addEventListener('resize', () => {
             if (!document.getElementById('theater-floating-ball')) return;
+            const side = ball.dataset.side || 'right';
+            const tucked = ball.dataset.tucked === 'true';
             ball.style.top = clamp(parseInt(ball.style.top), 0, window.innerHeight - 46) + 'px';
-            snapToEdge();  // 横向跟着窗口重新贴边
+            ball.style.left = (tucked ? tuckedLeft(side) : untuckedLeft(side)) + 'px';
         });
 
         document.documentElement.appendChild(ball);
