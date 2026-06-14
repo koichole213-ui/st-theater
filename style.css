@@ -1768,10 +1768,37 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     color: var(--SmartThemeBodyColor, #2a2a2a) !important;
 }
 .theater-popup[data-skin="theater"] #theater-wb-books,
+.theater-popup[data-skin="theater"] .theater-wb-list,
+.theater-popup[data-skin="theater"] .theater-wb-book-node,
+.theater-popup[data-skin="theater"] .theater-wb-book-row,
+.theater-popup[data-skin="theater"] .theater-wb-group-toggle,
 .theater-popup[data-skin="theater"] .theater-wb-group-body,
 .theater-popup[data-skin="theater"] .theater-wb-entry,
+.theater-popup[data-skin="theater"] .theater-wb-entry-header,
+.theater-popup[data-skin="theater"] .theater-wb-entry-body,
 .theater-popup[data-skin="theater"] .theater-wb-book-row.active {
-    background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor, var(--SmartThemeBgColor, #ffffff)) 88%, var(--SmartThemeBodyColor, #2a2a2a) 12%);
+    background-color: var(--SmartThemeBlurTintColor, var(--SmartThemeBgColor, #ffffff)) !important;
+    color: var(--SmartThemeBodyColor, #2a2a2a) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    text-shadow: none !important;
+}
+.theater-popup[data-skin="theater"] #theater-wb-books,
+.theater-popup[data-skin="theater"] .theater-wb-entry,
+.theater-popup[data-skin="theater"] .theater-wb-book-node .theater-wb-group-body {
+    border-color: var(--SmartThemeBorderColor, rgba(128, 128, 128, .35)) !important;
+}
+.theater-popup[data-skin="theater"] .theater-wb-book-row:hover,
+.theater-popup[data-skin="theater"] .theater-wb-book-row.active,
+.theater-popup[data-skin="theater"] .theater-wb-group-toggle:hover {
+    background-color: var(--SmartThemeQuoteColor, var(--SmartThemeBlurTintColor, var(--SmartThemeBgColor, #ffffff))) !important;
+}
+.theater-popup[data-skin="theater"] .theater-wb-entry-source,
+.theater-popup[data-skin="theater"] .theater-wb-entry-toggle,
+.theater-popup[data-skin="theater"] .theater-wb-action-link,
+.theater-popup[data-skin="theater"] .theater-wb-group-count,
+.theater-popup[data-skin="theater"] .theater-wb-group-arrow {
+    color: var(--SmartThemeEmColor, var(--SmartThemeBodyColor, #2a2a2a)) !important;
 }
 
 #theater-error-notice {

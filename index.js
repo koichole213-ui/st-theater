@@ -7,7 +7,7 @@ import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follo
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.1.2';
+const VERSION = '3.1.3';
 let latestRemoteVersion = null;
 const SOUND_PRESETS = [
     { id: 'chime',  label: '铃·清脆', file: 'freesound_community-chime-sound-7143.mp3' },
@@ -968,8 +968,8 @@ function buildPopupHTML() {
             </div>
             <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
                 <span class="theater-hint" style="min-width:48px;">间隔</span>
-                <input id="theater-auto-interval" type="range" min="3" max="50" value="${Math.max(3, Math.min(50, Number(settings.autoInterval) || 10))}" class="theater-slider" style="flex:1;">
-                <span class="theater-hint" style="white-space:nowrap;">每 <b id="theater-auto-interval-num">${Math.max(3, Math.min(50, Number(settings.autoInterval) || 10))}</b> 层 AI 楼</span>
+                <input id="theater-auto-interval" type="range" min="1" max="50" value="${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))}" class="theater-slider" style="flex:1;">
+                <span class="theater-hint" style="white-space:nowrap;">每 <b id="theater-auto-interval-num">${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))}</b> 层 AI 楼</span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <span class="theater-hint" style="min-width:48px;">指令来源</span>
@@ -1909,7 +1909,7 @@ function bindEvents() {
         if (settings.autoMode) toastr.info(`自动模式已开启：每攒 ${settings.autoInterval || 10} 层 AI 楼生成一次`, '', { timeOut: 4000 });
     });
     $d.off('input.tai').on('input.tai', '#theater-auto-interval', function () {
-        const v = Math.max(3, Math.min(50, parseInt($(this).val()) || 10));
+        const v = Math.max(1, Math.min(50, parseInt($(this).val()) || 10));
         settings.autoInterval = v;
         $('#theater-auto-interval-num').text(v);
         save();
