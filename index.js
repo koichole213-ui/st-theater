@@ -9,6 +9,11 @@ import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } fro
 const MODULE_NAME = 'theater_generator';
 const VERSION = '3.1.4';
 let latestRemoteVersion = null;
+const cloneDefaultSettings = () => {
+    if (typeof structuredClone === 'function') return structuredClone(defaultSettings);
+    return JSON.parse(JSON.stringify(defaultSettings));
+};
+const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 const SOUND_PRESETS = [
     { id: 'chime',  label: '铃·清脆', file: 'freesound_community-chime-sound-7143.mp3' },
     { id: 'ping',   label: '铃·温和', file: 'dragon-studio-notification-ping-372479.mp3' },
@@ -298,9 +303,9 @@ async function init() {
     const ctx = SillyTavern.getContext();
     const { extensionSettings, renderExtensionTemplateAsync, eventSource, event_types } = ctx;
 
-    if (!extensionSettings[MODULE_NAME]) extensionSettings[MODULE_NAME] = structuredClone(defaultSettings);
+    if (!extensionSettings[MODULE_NAME]) extensionSettings[MODULE_NAME] = cloneDefaultSettings();
     for (const k of Object.keys(defaultSettings)) {
-        if (!Object.hasOwn(extensionSettings[MODULE_NAME], k)) extensionSettings[MODULE_NAME][k] = defaultSettings[k];
+        if (!hasOwn(extensionSettings[MODULE_NAME], k)) extensionSettings[MODULE_NAME][k] = defaultSettings[k];
     }
     settings = extensionSettings[MODULE_NAME];
     // Migrate: clean up legacy fields
@@ -1029,6 +1034,15 @@ function buildPopupHTML() {
                 <div id="theater-update-btn" class="theater-btn primary"><i class="fa-solid fa-cloud-arrow-down"></i><span>检查更新</span></div>
             </div>
         </div>
+        <div class="theater-section">
+            <label class="theater-label"><i class="fa-solid fa-stethoscope"></i> 诊断</label>
+            <p class="theater-hint" style="margin-top:0;">遇到问题时点一下，把结果截图或复制给维护者。</p>
+            <div class="theater-btn-row">
+                <div id="theater-run-diagnostics-btn" class="theater-btn primary"><i class="fa-solid fa-list-check"></i><span>生成诊断报告</span></div>
+                <div id="theater-copy-diagnostics-btn" class="theater-btn" style="display:none;"><i class="fa-solid fa-copy"></i><span>复制报告</span></div>
+            </div>
+            <div id="theater-diagnostics-output" class="theater-diagnostic-report" style="display:none;"></div>
+        </div>
         <p class="theater-version">v${VERSION}</p>
     </div>
 
@@ -1631,7 +1645,14 @@ function bindEvents() {
     });
     $d.off('click.tin').on('click.tin', '.theater-inst-name', function () {
         const t = settings.instructionTemplates[$(this).data('index')];
-        if (t) { $('#theater-instruction').val(t.content); $('.theater-tab[data-tab="generate"]').click(); toastr.info('已加载指令'); }
+        if (t) {
+            $('#theater-instruction').val(t.content);
+            settings.lastInstruction = t.content;
+            clearContinueMode({ silent: true });
+            save();
+            $('.theater-tab[data-tab="generate"]').click();
+            toastr.info('已加载指令');
+        }
     });
     $d.off('click.tie').on('click.tie', '.theater-inst-edit', async function () {
         const idx = $(this).data('index');
@@ -1777,11 +1798,7 @@ function bindEvents() {
     });
     // 取消续写
     $d.off('click.tcc').on('click.tcc', '#theater-cancel-continue', function () {
-        continueContext = '';
-        accumulatedTheater = '';
-        $('#theater-continue-hint').remove();
-        $('#theater-instruction').attr('placeholder', '输入指令…');
-        toastr.info('已取消续写');
+        clearContinueMode();
     });
     $d.off('click.thv').on('click.thv', '.theater-history-view', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
@@ -1877,6 +1894,12 @@ function bindEvents() {
     $d.off('click.tup').on('click.tup', '#theater-update-btn', updateExtension);
     $d.off('click.tfm').on('click.tfm', '#theater-fetch-models-btn', fetchModelList);
     $d.off('click.ttest').on('click.ttest', '#theater-test-api-btn', testAPIConnection);
+    $d.off('click.tdiag').on('click.tdiag', '#theater-run-diagnostics-btn', runDiagnostics);
+    $d.off('click.tdiagcopy').on('click.tdiagcopy', '#theater-copy-diagnostics-btn', function () {
+        const text = $('#theater-diagnostics-output').data('report') || '';
+        if (!text) { toastr.warning('请先生成诊断报告'); return; }
+        copyToClipboard(text);
+    });
     $d.off('change.tams').on('change.tams', '#theater-api-model-select', function () {
         const val = $(this).val();
         if (val) {
@@ -2927,6 +2950,14 @@ function updateContinueHint() {
     $('#theater-instruction').before(`<div id="theater-continue-hint" style="font-size:.78em;opacity:.6;margin-bottom:6px;padding:6px 10px;border-radius:8px;background:rgba(128,128,128,.08);"><i class="fa-solid fa-forward" style="margin-right:4px;"></i>续写模式：已加载前情内容（${continueContext.length}字）<span id="theater-cancel-continue" style="margin-left:8px;cursor:pointer;opacity:.5;text-decoration:underline;">取消</span></div>`);
 }
 
+function clearContinueMode({ silent = false } = {}) {
+    continueContext = '';
+    accumulatedTheater = '';
+    $('#theater-continue-hint').remove();
+    $('#theater-instruction').attr('placeholder', '输入指令…');
+    if (!silent) toastr.info('已取消续写');
+}
+
 // 设置续写上下文并跳转到生成面板
 function startContinue(html) {
     const plainText = htmlToPlainText(html);
@@ -2968,6 +2999,9 @@ async function generateTheater() {
     if (isGenerating) { toastr.warning('正在生成中，请等待完成或点击停止'); return; }
     const instruction = $('#theater-instruction').val().trim();
     if (!instruction) { toastr.warning('请输入指令'); return; }
+    settings.lastInstruction = instruction;
+    save();
+    if (continueContext && !$('#theater-continue-hint').length) clearContinueMode({ silent: true });
     await runGeneration(instruction, false);
 }
 
@@ -3064,7 +3098,19 @@ async function runGeneration(instruction, isAuto) {
         lastGeneratedHtml = extractHtml(result);
 
         // 更新累积内容（用于多次续写）
-        const newText = htmlToPlainText(lastGeneratedHtml);
+        let newText = htmlToPlainText(lastGeneratedHtml);
+        if (!newText) {
+            const rawText = htmlToPlainText(result) || String(result || '').trim();
+            if (rawText) {
+                lastGeneratedHtml = textFallbackHtml(rawText);
+                newText = htmlToPlainText(lastGeneratedHtml);
+                toastr.warning('模型没有返回可显示的 HTML，已用原始文本兜底显示');
+            }
+        }
+        if (!newText) {
+            theaterError('生成完成但没有可显示内容。请换一个渲染模板，或让模型输出完整 HTML。');
+            return;
+        }
         if (newText) {
             accumulatedTheater = accumulatedTheater ? (accumulatedTheater + '\n\n---\n\n' + newText) : newText;
             if (contCtx) continueContext = accumulatedTheater.length > 8000 ? '…（前文省略）\n\n' + accumulatedTheater.slice(-8000) : accumulatedTheater;
@@ -3263,6 +3309,58 @@ async function readSSEStream(response, onChunk, isAnthropic) {
 }
 
 // ============================================================
+// Diagnostics
+// ============================================================
+function diagnosticLine(status, name, detail) {
+    const icon = status === 'ok' ? 'OK' : (status === 'warn' ? '注意' : '异常');
+    return { status, name, detail, text: `[${icon}] ${name}: ${detail}` };
+}
+
+function buildDiagnostics() {
+    const apiUrl = ($('#theater-api-url').val() || settings.apiUrl || '').trim();
+    const apiKey = ($('#theater-api-key').val() || settings.apiKey || '').trim();
+    const apiModel = ($('#theater-api-model').val() || settings.apiModel || '').trim();
+    const selectedRender = settings.selectedRenderIndex || '__default__';
+    const customRenderOk = selectedRender === '__default__'
+        || selectedRender === '__default_pc__'
+        || !!(settings.renderTemplates || [])[parseInt(selectedRender)];
+
+    const rows = [
+        diagnosticLine('ok', '插件版本', `本地 v${VERSION}${latestRemoteVersion ? `，远端 v${latestRemoteVersion}` : '，还没有拿到远端版本'}`),
+        diagnosticLine(apiUrl && apiKey && apiModel ? 'ok' : 'bad', 'API 配置', apiUrl && apiKey && apiModel ? `已填写，模型：${apiModel}` : 'API URL、Key、模型名至少有一项没填'),
+        diagnosticLine(typeof fetch === 'function' && typeof AbortController === 'function' ? 'ok' : 'bad', '请求能力', 'fetch / AbortController ' + (typeof fetch === 'function' && typeof AbortController === 'function' ? '可用' : '不可用')),
+        diagnosticLine(window.indexedDB ? (idb ? 'ok' : 'warn') : 'bad', '本地存档库', window.indexedDB ? (idb ? 'IndexedDB 已打开' : 'IndexedDB 存在，但当前未打开，可能会回退到 settings') : '浏览器不支持 IndexedDB'),
+        diagnosticLine(customRenderOk ? 'ok' : 'bad', '渲染模板', customRenderOk ? `当前模板：${selectedRender}` : `当前选择 ${selectedRender} 找不到对应模板`),
+        diagnosticLine(continueContext ? 'warn' : 'ok', '续写状态', continueContext ? `续写模式仍有前情：${continueContext.length} 字` : '未处于续写模式'),
+        diagnosticLine(isGenerating ? 'warn' : 'ok', '生成状态', isGenerating ? '正在生成中' : '空闲'),
+        diagnosticLine(bgError ? 'bad' : 'ok', '最近错误', bgError || '无'),
+        diagnosticLine('ok', '数据数量', `历史 ${historyCache.length} 条，最近生成 ${recentCache.length} 条，指令模板 ${(settings.instructionTemplates || []).length} 个`),
+        diagnosticLine('ok', '世界书', `已选 ${(settings.selectedWorldBooks || []).length} 本，当前加载 ${wbEntries.length} 条`),
+    ];
+
+    return {
+        rows,
+        text: [
+            `千夜浮梦诊断报告`,
+            `时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`,
+            ...rows.map(r => r.text),
+        ].join('\n'),
+    };
+}
+
+function runDiagnostics() {
+    const report = buildDiagnostics();
+    const html = report.rows.map(r => `
+        <div class="theater-diagnostic-row ${r.status}">
+            <span class="theater-diagnostic-status">${r.status === 'ok' ? 'OK' : (r.status === 'warn' ? '注意' : '异常')}</span>
+            <div><b>${esc(r.name)}</b><br><span>${esc(r.detail)}</span></div>
+        </div>
+    `).join('');
+    $('#theater-diagnostics-output').html(html).data('report', report.text).show();
+    $('#theater-copy-diagnostics-btn').show();
+}
+
+// ============================================================
 // HTML extraction & iframe
 // ============================================================
 function extractHtml(t) {
@@ -3283,6 +3381,11 @@ function extractHtml(t) {
     // 纯文字兜底
     const fallback = `<!DOCTYPE html><html><head><style>body{font-family:system-ui,sans-serif;padding:20px;max-width:480px;margin:0 auto;background:transparent}.card{background:#fafafa;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.1);line-height:1.7;font-size:15px}</style></head><body><div class="card">${t}</div></body></html>`;
     return fallback;
+}
+
+function textFallbackHtml(text) {
+    const body = esc(String(text || '')).replace(/\n/g, '<br>');
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:system-ui,sans-serif;padding:20px;max-width:640px;margin:0 auto;background:transparent;color:#222}.card{background:#fafafa;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.1);line-height:1.75;font-size:15px;white-space:normal}</style></head><body><div class="card">${body}</div></body></html>`;
 }
 
 let currentDisplayHtml = '';   // 当前iframe中显示的内容

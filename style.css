@@ -365,6 +365,45 @@
     font-style: normal;
 }
 
+.theater-diagnostic-report {
+    margin-top: var(--t-space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--t-space-2);
+}
+.theater-diagnostic-row {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    gap: var(--t-space-3);
+    align-items: start;
+    padding: var(--t-space-3);
+    border: 1px solid var(--t-border);
+    border-radius: var(--t-radius-md);
+    background: var(--t-surface-1);
+    color: var(--t-fg);
+    font-size: var(--t-text-sm);
+    line-height: 1.55;
+}
+.theater-diagnostic-row b {
+    font-weight: 650;
+}
+.theater-diagnostic-row span {
+    color: var(--t-fg-mute);
+}
+.theater-diagnostic-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 24px;
+    border-radius: var(--t-radius-sm);
+    font-size: var(--t-text-xs);
+    font-weight: 700;
+    color: #fff !important;
+}
+.theater-diagnostic-row.ok .theater-diagnostic-status { background: #2f8f5b; }
+.theater-diagnostic-row.warn .theater-diagnostic-status { background: #b7791f; }
+.theater-diagnostic-row.bad .theater-diagnostic-status { background: #b94444; }
+
 /* ============================================================
  * Inputs
  * ============================================================ */

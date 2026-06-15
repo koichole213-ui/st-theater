@@ -34,10 +34,24 @@ async function fetchManifest(url) {
 }
 
 export async function fetchLatestRemoteVersion() {
-    const probes = REMOTE_MANIFEST_URLS.map(fetchManifest);
-    const { url, data } = await Promise.any(probes);
-    const host = (() => { try { return new URL(url).host; } catch { return url; } })();
-    return { version: String(data.version), host };
+    const errors = [];
+    return await new Promise((resolve, reject) => {
+        let pending = REMOTE_MANIFEST_URLS.length;
+        REMOTE_MANIFEST_URLS.forEach(url => {
+            fetchManifest(url).then(({ url, data }) => {
+                const host = (() => { try { return new URL(url).host; } catch { return url; } })();
+                resolve({ version: String(data.version), host });
+            }).catch(error => {
+                errors.push(error);
+                pending -= 1;
+                if (pending === 0) {
+                    const finalError = new Error('All version checks failed');
+                    finalError.errors = errors;
+                    reject(finalError);
+                }
+            });
+        });
+    });
 }
 
 export function formatVersionCheckError(error) {
