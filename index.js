@@ -7,7 +7,7 @@ import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follo
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.1.4';
+const VERSION = '3.1.5';
 let latestRemoteVersion = null;
 const cloneDefaultSettings = () => {
     if (typeof structuredClone === 'function') return structuredClone(defaultSettings);
@@ -543,6 +543,9 @@ function createFloatingBall() {
             ball.style.left = untuckedLeft(ball.dataset.side) + 'px';
             if (settings.floatingBallTuck) scheduleTuck();
         }
+        function isExternalCaptureModeActive() {
+            return !!document.querySelector('.edge-panel-root .action-icon--active, .edge-panel-root [title*="捕获"].action-icon--active');
+        }
 
         // 暖底 + 焦糖色油灯 + 软阴影
         ball.setAttribute('style', [
@@ -570,12 +573,14 @@ function createFloatingBall() {
         ].join(';'));
 
         let isDragging = false;
+        let startedTucked = false;
         let startX, startY, startLeft, startTop;
 
         function clamp(val, min, max) { return Math.max(min, Math.min(max, val)); }
 
         function onPointerDown(e) {
             cancelTuck();
+            startedTucked = ball.dataset.tucked === 'true';
             untuck();
             ball.style.transition = BASE_TRANSITION;  // 拖动时 left 不能带动画，不然会"飘"
             isDragging = false;
@@ -616,12 +621,21 @@ function createFloatingBall() {
             document.removeEventListener('touchmove', onTouchMove);
             document.removeEventListener('touchend', onPointerUp);
             if (!isDragging) {
-                try { openTheaterPopup(); } catch (err) { console.warn('[Theater] Popup error:', err); }
-                untuck();
+                if (isExternalCaptureModeActive()) {
+                    untuck();
+                } else if (startedTucked) {
+                    untuck();
+                    scheduleTuck();
+                } else {
+                    try { openTheaterPopup(); } catch (err) { console.warn('[Theater] Popup error:', err); }
+                    untuck();
+                }
                 isDragging = false;
+                startedTucked = false;
                 return;
             }
             isDragging = false;
+            startedTucked = false;
             snapToEdge();
         }
 
@@ -1035,8 +1049,8 @@ function buildPopupHTML() {
             </div>
         </div>
         <div class="theater-section">
-            <label class="theater-label"><i class="fa-solid fa-stethoscope"></i> 诊断</label>
-            <p class="theater-hint" style="margin-top:0;">遇到问题时点一下，把结果截图或复制给维护者。</p>
+            <label class="theater-label"><i class="fa-solid fa-stethoscope"></i> 插件诊断</label>
+            <p class="theater-hint" style="margin-top:0;">只检查小剧场插件本身；酒馆正文生成失败要看酒馆主界面的报错。</p>
             <div class="theater-btn-row">
                 <div id="theater-run-diagnostics-btn" class="theater-btn primary"><i class="fa-solid fa-list-check"></i><span>生成诊断报告</span></div>
                 <div id="theater-copy-diagnostics-btn" class="theater-btn" style="display:none;"><i class="fa-solid fa-copy"></i><span>复制报告</span></div>
@@ -3089,8 +3103,8 @@ async function runGeneration(instruction, isAuto) {
     let generationSucceeded = false;
 
     try {
-        if (!settings.apiUrl || !settings.apiKey || !settings.apiModel) {
-            toastr.warning('请先在【设置】里填好 API URL、Key、模型再生成', '', { timeOut: 5000 });
+        if (!settings.apiUrl || !settings.apiModel) {
+            toastr.warning('请先在【设置】里填好 API URL 和模型再生成', '', { timeOut: 5000 });
             return;
         }
         const result = await callCustomAPIStream(systemPrompt, prompt, onChunk);
@@ -3244,13 +3258,15 @@ async function callCustomAPIStream(sys, user, onChunk) {
 
     let endpoint, body, headers;
     if (isAnthropic) {
+        if (!settings.apiKey) throw new Error('Anthropic 接口需要 API Key');
         endpoint = url.includes('/v1') ? url + '/messages' : url + '/v1/messages';
         headers = { 'Content-Type': 'application/json', 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01' };
         body = JSON.stringify({ model: settings.apiModel, max_tokens: 8192, stream: true, system: sys, messages: [{ role: 'user', content: user }] });
     } else {
         endpoint = url.includes('/v1') ? url + '/chat/completions' : url + '/v1/chat/completions';
-        headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings.apiKey}` };
-        body = JSON.stringify({ model: settings.apiModel, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], stream: true });
+        headers = { 'Content-Type': 'application/json' };
+        if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`;
+        body = JSON.stringify({ model: settings.apiModel, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], stream: true, max_tokens: 8192 });
     }
 
     const r = await fetch(endpoint, { method: 'POST', headers, body, signal: abortController?.signal });
@@ -3261,10 +3277,59 @@ async function callCustomAPIStream(sys, user, onChunk) {
 // ============================================================
 // SSE Reader
 // ============================================================
+function textFromContentPart(part) {
+    if (!part) return '';
+    if (typeof part === 'string') return part;
+    if (Array.isArray(part)) return part.map(textFromContentPart).join('');
+    if (typeof part === 'object') return part.text || part.content || part.value || '';
+    return '';
+}
+
+function extractStreamText(json, isAnthropic) {
+    if (!json || typeof json !== 'object') return '';
+
+    if (isAnthropic) {
+        if (json.type === 'content_block_delta') return textFromContentPart(json.delta?.text || json.delta);
+        if (json.type === 'message_delta') return textFromContentPart(json.delta?.text || json.delta?.content);
+    }
+
+    const choices = Array.isArray(json.choices) ? json.choices : [];
+    for (const choice of choices) {
+        const delta = choice?.delta || {};
+        const message = choice?.message || {};
+        const text = textFromContentPart(delta.content)
+            || textFromContentPart(delta.text)
+            || textFromContentPart(message.content)
+            || textFromContentPart(choice?.text);
+        if (text) return text;
+    }
+
+    return textFromContentPart(json.delta?.content)
+        || textFromContentPart(json.delta?.text)
+        || textFromContentPart(json.message?.content)
+        || textFromContentPart(json.content)
+        || textFromContentPart(json.response)
+        || textFromContentPart(json.output_text)
+        || '';
+}
+
 async function readSSEStream(response, onChunk, isAnthropic) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let full = '', buffer = '', rawText = '';
+
+    const consumePayload = (payload) => {
+        const text = String(payload || '').trim();
+        if (!text || text === '[DONE]') return;
+        try {
+            const json = JSON.parse(text);
+            const delta = extractStreamText(json, isAnthropic);
+            if (delta) {
+                full += delta;
+                onChunk(full);
+            }
+        } catch { }
+    };
 
     while (true) {
         const { done, value } = await reader.read();
@@ -3272,33 +3337,32 @@ async function readSSEStream(response, onChunk, isAnthropic) {
         const chunk = decoder.decode(value, { stream: true });
         rawText += chunk;
         buffer += chunk;
-        const lines = buffer.split('\n');
+        const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || '';
 
         for (const line of lines) {
             const t = line.trim();
             if (!t || t.startsWith('event:') || t === 'data: [DONE]') continue;
-            if (t.startsWith('data: ')) {
-                try {
-                    const json = JSON.parse(t.slice(6));
-                    let delta = '';
-                    if (isAnthropic) { if (json.type === 'content_block_delta') delta = json.delta?.text || ''; }
-                    else { delta = json.choices?.[0]?.delta?.content || ''; }
-                    if (delta) { full += delta; onChunk(full); }
-                } catch { }
-            }
+            if (t.startsWith('data:')) consumePayload(t.slice(5));
+            else if (t.startsWith('{') || t.startsWith('[')) consumePayload(t);
         }
+    }
+    if (buffer.trim()) {
+        const t = buffer.trim();
+        if (t.startsWith('data:')) consumePayload(t.slice(5));
+        else if (t.startsWith('{') || t.startsWith('[')) consumePayload(t);
     }
 
     // If SSE parsing got nothing, try treating raw response as JSON or plain text
     if (!full && rawText.trim()) {
         try {
             const json = JSON.parse(rawText.trim());
-            full = json?.choices?.[0]?.message?.content || json?.content?.[0]?.text || '';
+            full = extractStreamText(json, isAnthropic);
             if (full) { onChunk(full); return full; }
         } catch { }
         // Last resort: use raw text if it looks like content
-        if (rawText.length > 20 && !rawText.startsWith('{')) {
+        const raw = rawText.trim();
+        if (raw.length > 20 && !raw.startsWith('{') && !raw.startsWith('data:')) {
             full = rawText.trim();
             onChunk(full);
         }
@@ -3326,8 +3390,9 @@ function buildDiagnostics() {
         || !!(settings.renderTemplates || [])[parseInt(selectedRender)];
 
     const rows = [
+        diagnosticLine('ok', '诊断范围', '这份报告只检查小剧场插件，不检查酒馆正文生成链路'),
         diagnosticLine('ok', '插件版本', `本地 v${VERSION}${latestRemoteVersion ? `，远端 v${latestRemoteVersion}` : '，还没有拿到远端版本'}`),
-        diagnosticLine(apiUrl && apiKey && apiModel ? 'ok' : 'bad', 'API 配置', apiUrl && apiKey && apiModel ? `已填写，模型：${apiModel}` : 'API URL、Key、模型名至少有一项没填'),
+        diagnosticLine(apiUrl && apiModel ? 'ok' : 'bad', 'API 配置', apiUrl && apiModel ? `已填写，模型：${apiModel}${apiKey ? '，已填写 Key' : '，未填写 Key（OpenAI 兼容本地服务可为空）'}` : 'API URL 和模型名至少有一项没填'),
         diagnosticLine(typeof fetch === 'function' && typeof AbortController === 'function' ? 'ok' : 'bad', '请求能力', 'fetch / AbortController ' + (typeof fetch === 'function' && typeof AbortController === 'function' ? '可用' : '不可用')),
         diagnosticLine(window.indexedDB ? (idb ? 'ok' : 'warn') : 'bad', '本地存档库', window.indexedDB ? (idb ? 'IndexedDB 已打开' : 'IndexedDB 存在，但当前未打开，可能会回退到 settings') : '浏览器不支持 IndexedDB'),
         diagnosticLine(customRenderOk ? 'ok' : 'bad', '渲染模板', customRenderOk ? `当前模板：${selectedRender}` : `当前选择 ${selectedRender} 找不到对应模板`),
@@ -3341,7 +3406,7 @@ function buildDiagnostics() {
     return {
         rows,
         text: [
-            `千夜浮梦诊断报告`,
+            `千夜浮梦插件诊断报告`,
             `时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`,
             ...rows.map(r => r.text),
         ].join('\n'),
@@ -3424,7 +3489,7 @@ function updateRecentNav() {
 async function fetchModelList() {
     const url = ($('#theater-api-url').val() || settings.apiUrl || '').trim().replace(/\/+$/, '');
     const key = ($('#theater-api-key').val() || settings.apiKey || '').trim();
-    if (!url || !key) { toastr.warning('请先填写 API URL 和 API Key'); return; }
+    if (!url) { toastr.warning('请先填写 API URL'); return; }
 
     const $btn = $('#theater-fetch-models-btn');
     $btn.addClass('disabled');
@@ -3435,6 +3500,7 @@ async function fetchModelList() {
         let data = null;
 
         if (isAnthropic) {
+            if (!key) throw new Error('Anthropic 接口需要 API Key');
             // Anthropic: 先清理URL，再拼 /v1/models
             const base = url.replace(/\/v1\/messages$/, '').replace(/\/v1$/, '').replace(/\/$/, '');
             try {
@@ -3455,7 +3521,8 @@ async function fetchModelList() {
             ];
             for (const ep of endpoints) {
                 try {
-                    const res = await fetch(ep, { method: 'GET', headers: { 'Authorization': `Bearer ${key}` } });
+                    const headers = key ? { 'Authorization': `Bearer ${key}` } : {};
+                    const res = await fetch(ep, { method: 'GET', headers });
                     if (res.ok) { data = await res.json(); break; }
                 } catch { }
             }
@@ -3505,7 +3572,7 @@ async function testAPIConnection() {
     const url = ($('#theater-api-url').val() || settings.apiUrl || '').trim().replace(/\/+$/, '');
     const key = ($('#theater-api-key').val() || settings.apiKey || '').trim();
     const model = $('#theater-api-model-select').val() || $('#theater-api-model').val()?.trim();
-    if (!url || !key) { toastr.warning('请先填写 API URL 和 API Key'); return; }
+    if (!url) { toastr.warning('请先填写 API URL'); return; }
     if (!model) { toastr.warning('请先选择或填写模型名称'); return; }
 
     const $btn = $('#theater-test-api-btn');
@@ -3516,6 +3583,7 @@ async function testAPIConnection() {
         const isAnthropic = url.toLowerCase().includes('anthropic.com') || url.includes('/v1/messages');
 
         if (isAnthropic) {
+            if (!key) { toastr.warning('Anthropic 接口需要 API Key'); return; }
             const base = url.replace(/\/v1\/messages$/, '').replace(/\/v1$/, '').replace(/\/$/, '');
             const res = await fetch(`${base}/v1/messages`, {
                 method: 'POST',
@@ -3527,9 +3595,11 @@ async function testAPIConnection() {
         } else {
             const cleanBase = url.replace(/\/chat\/completions$/, '').replace(/\/$/, '');
             const ep = /\/v\d+$/.test(cleanBase) ? `${cleanBase}/chat/completions` : `${cleanBase}/v1/chat/completions`;
+            const headers = { 'Content-Type': 'application/json' };
+            if (key) headers.Authorization = `Bearer ${key}`;
             const res = await fetch(ep, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+                headers,
                 body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Hi' }], max_tokens: 5 })
             });
             if (res.ok) toastr.success('连接成功！');
