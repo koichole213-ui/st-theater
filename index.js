@@ -7,7 +7,7 @@ import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follo
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.2.0';
+const VERSION = '3.2.1';
 let latestRemoteVersion = null;
 const cloneDefaultSettings = () => {
     if (typeof structuredClone === 'function') return structuredClone(defaultSettings);
@@ -3406,7 +3406,16 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
 
     const CCS = ctx?.ChatCompletionService || window?.SillyTavern?.getContext?.()?.ChatCompletionService;
     if (CCS && typeof CCS.processRequest === 'function') {
-        return await callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk);
+        try {
+            return await callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk);
+        } catch (e) {
+            if (e?.name === 'AbortError') throw e;
+            console.warn('[Theater] ChatCompletionService failed, fallback to TavernHelper:', e);
+            if (window.TavernHelper && typeof window.TavernHelper.generateRaw === 'function') {
+                return await callViaGenerateRaw(messages, signal, onChunk);
+            }
+            throwFriendlyMainApi(e, onChunk);
+        }
     }
 
     if (!window.TavernHelper || typeof window.TavernHelper.generateRaw !== 'function') {
@@ -3428,7 +3437,6 @@ async function callViaChatCompletionService(CCS, messages, maxTokens, signal, on
         throw new Error(tip);
     }
 
-    onChunk('已开始调用酒馆主 API…');
     let result;
     try {
         result = await CCS.processRequest(
@@ -3438,7 +3446,7 @@ async function callViaChatCompletionService(CCS, messages, maxTokens, signal, on
             signal,
         );
     } catch (e) {
-        throwFriendlyMainApi(e, onChunk);
+        throw e;
     }
 
     if (typeof result === 'function') {
@@ -3446,7 +3454,7 @@ async function callViaChatCompletionService(CCS, messages, maxTokens, signal, on
             return await consumeStreamThunk(result, onChunk);
         } catch (e) {
             if (e?.name === 'AbortError') throw e;
-            throwFriendlyMainApi(e, onChunk);
+            throw e;
         }
     }
 
@@ -3491,15 +3499,6 @@ function throwFriendlyMainApi(e, onChunk) {
 
 async function callViaGenerateRaw(messages, signal, onChunk) {
     const TIMEOUT_MS = 5 * 60 * 1000;
-    const startedAt = Date.now();
-    onChunk('当前酒馆没有 quiet 主 API 接口，已退回 TavernHelper。旧环境可能会占用正文小飞机。');
-
-    const heartbeat = setInterval(() => {
-        const elapsed = Math.round((Date.now() - startedAt) / 1000);
-        const mins = Math.floor(elapsed / 60);
-        const secs = elapsed % 60;
-        onChunk(`主 API 已等待 ${mins ? `${mins} 分 ${secs} 秒` : `${elapsed} 秒`}…`);
-    }, 5000);
 
     const abortPromise = signal
         ? new Promise((_, reject) => {
@@ -3537,8 +3536,6 @@ async function callViaGenerateRaw(messages, signal, onChunk) {
     } catch (e) {
         if (e?.name === 'AbortError') throw e;
         throwFriendlyMainApi(e, onChunk);
-    } finally {
-        clearInterval(heartbeat);
     }
 }
 
