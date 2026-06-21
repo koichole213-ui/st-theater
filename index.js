@@ -1,13 +1,13 @@
 // 千夜浮梦 · 小剧场生成器 v3.0.0 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
-import { theaterError } from './notify.js';
+import { theaterError as notifyTheaterError } from './notify.js';
 import { playSoundFile } from './notification-sound.js';
 import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follow.js';
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.2.1';
+const VERSION = '3.2.2';
 let latestRemoteVersion = null;
 const cloneDefaultSettings = () => {
     if (typeof structuredClone === 'function') return structuredClone(defaultSettings);
@@ -173,6 +173,7 @@ let idb = null;            // 打不开时为 null，回退到 settings 存储
 let historyCache = [];     // [{ id, title, html, instruction, date }]
 let recentCache = [];      // 最近 3 条生成 [{ html, time, instruction }]
 let recentIndex = 0;       // 当前查看的最近生成索引（仅内存）
+let errorLog = [];         // 最近错误 [{ time, title, message }]
 
 function idbReq(req) {
     return new Promise((resolve, reject) => {
@@ -527,6 +528,40 @@ function playNotificationSound({ force = false } = {}) {
     playSoundFile(preset.file, settings.soundVolume);
 }
 
+function theaterError(message, title = '', opts = {}) {
+    const text = String(message || '');
+    const head = title || '小剧场报错';
+    errorLog.unshift({
+        time: new Date().toLocaleString('zh-CN', { hour12: false }),
+        title: head,
+        message: text,
+    });
+    if (errorLog.length > 20) errorLog.length = 20;
+    renderErrorLog();
+    notifyTheaterError(text, head, opts);
+}
+
+function errorLogText() {
+    if (!errorLog.length) return '暂无错误记录';
+    return errorLog.map(e => `[${e.time}] ${e.title}\n${e.message}`).join('\n\n---\n\n');
+}
+
+function renderErrorLog() {
+    const $list = $('#theater-error-log-list');
+    if (!$list.length) return;
+    if (!errorLog.length) {
+        $list.html('<p class="theater-empty">暂无错误记录</p>');
+        $('#theater-copy-error-log-btn, #theater-clear-error-log-btn').hide();
+        return;
+    }
+    $list.html(errorLog.map(e => `
+<div class="theater-error-log-item">
+    <div class="theater-error-log-meta">${esc(e.time)} · ${esc(e.title)}</div>
+    <pre>${esc(e.message)}</pre>
+</div>`).join(''));
+    $('#theater-copy-error-log-btn, #theater-clear-error-log-btn').show();
+}
+
 function createFloatingBall() {
     try {
         document.querySelectorAll('#theater-floating-ball').forEach(el => el.remove());
@@ -738,6 +773,7 @@ function buildPopupHTML() {
         <div class="theater-tab" data-tab="rules">规则</div>
         <div class="theater-tab" data-tab="history">历史</div>
         <div class="theater-tab" data-tab="theme">美化</div>
+        <div class="theater-tab" data-tab="diagnostics">诊断</div>
         <div class="theater-tab" data-tab="config">设置${hasRemoteUpdate() ? updateBadgeHTML() : ''}</div>
     </div>
     <div class="theater-panels-wrapper">
@@ -995,7 +1031,34 @@ function buildPopupHTML() {
         </div>
     </div>
 
-    <!-- ===== 6. 设置 ===== -->
+    <!-- ===== 6. 诊断 ===== -->
+    <div class="theater-panel" data-panel="diagnostics">
+        <div class="theater-section">
+            <label class="theater-label"><i class="fa-solid fa-triangle-exclamation"></i> 最近错误</label>
+            <div class="theater-btn-row">
+                <div id="theater-copy-error-log-btn" class="theater-btn" style="${errorLog.length ? '' : 'display:none;'}"><i class="fa-solid fa-copy"></i><span>复制日志</span></div>
+                <div id="theater-clear-error-log-btn" class="theater-btn" style="${errorLog.length ? '' : 'display:none;'}"><i class="fa-solid fa-eraser"></i><span>清空日志</span></div>
+            </div>
+            <div id="theater-error-log-list" class="theater-error-log-list">
+                ${errorLog.length ? errorLog.map(e => `
+                <div class="theater-error-log-item">
+                    <div class="theater-error-log-meta">${esc(e.time)} · ${esc(e.title)}</div>
+                    <pre>${esc(e.message)}</pre>
+                </div>`).join('') : '<p class="theater-empty">暂无错误记录</p>'}
+            </div>
+        </div>
+        <div class="theater-section">
+            <label class="theater-label"><i class="fa-solid fa-stethoscope"></i> 插件诊断</label>
+            <div class="theater-btn-row">
+                <div id="theater-run-diagnostics-btn" class="theater-btn primary"><i class="fa-solid fa-list-check"></i><span>生成诊断报告</span></div>
+                <div id="theater-copy-diagnostics-btn" class="theater-btn" style="display:none;"><i class="fa-solid fa-copy"></i><span>复制报告</span></div>
+                <div id="theater-toggle-diagnostics-btn" class="theater-btn" style="display:none;"><i class="fa-solid fa-chevron-up"></i><span>收起报告</span></div>
+            </div>
+            <div id="theater-diagnostics-output" class="theater-diagnostic-report" style="display:none;"></div>
+        </div>
+    </div>
+
+    <!-- ===== 7. 设置 ===== -->
     <div class="theater-panel" data-panel="config">
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-plug"></i> API 配置</label>
@@ -1110,16 +1173,6 @@ function buildPopupHTML() {
             <div class="theater-btn-row">
                 <div id="theater-update-btn" class="theater-btn primary"><i class="fa-solid fa-cloud-arrow-down"></i><span>检查更新</span></div>
             </div>
-        </div>
-        <div class="theater-section">
-            <label class="theater-label"><i class="fa-solid fa-stethoscope"></i> 插件诊断</label>
-            <p class="theater-hint" style="margin-top:0;">只检查小剧场插件本身；酒馆正文生成失败要看酒馆主界面的报错。</p>
-            <div class="theater-btn-row">
-                <div id="theater-run-diagnostics-btn" class="theater-btn primary"><i class="fa-solid fa-list-check"></i><span>生成诊断报告</span></div>
-                <div id="theater-copy-diagnostics-btn" class="theater-btn" style="display:none;"><i class="fa-solid fa-copy"></i><span>复制报告</span></div>
-                <div id="theater-toggle-diagnostics-btn" class="theater-btn" style="display:none;"><i class="fa-solid fa-chevron-up"></i><span>收起报告</span></div>
-            </div>
-            <div id="theater-diagnostics-output" class="theater-diagnostic-report" style="display:none;"></div>
         </div>
         <p class="theater-version">v${VERSION}</p>
     </div>
@@ -1440,6 +1493,7 @@ async function openTheaterPopup() {
     wbSearch = '';
     presetSearch = '';
     bindEvents();
+    renderErrorLog();
     await loadWorldBookList();
     await loadPresetNameList();
     // 世界书：跟随角色卡的话先按当前卡选书，然后把选中的书的条目现读进来
@@ -1489,6 +1543,7 @@ function bindEvents() {
         const t = $(this).data('tab');
         $('.theater-tab').removeClass('active'); $(this).addClass('active');
         $('.theater-panel').removeClass('active'); $(`.theater-panel[data-panel="${t}"]`).addClass('active');
+        if (t === 'diagnostics') renderErrorLog();
     });
 
     // ---- Generate ----
@@ -2005,6 +2060,14 @@ function bindEvents() {
         copyToClipboard(text);
     });
     $d.off('click.tdiagtoggle').on('click.tdiagtoggle', '#theater-toggle-diagnostics-btn', toggleDiagnosticsReport);
+    $d.off('click.telcopy').on('click.telcopy', '#theater-copy-error-log-btn', function () {
+        copyToClipboard(errorLogText());
+    });
+    $d.off('click.telclear').on('click.telclear', '#theater-clear-error-log-btn', function () {
+        errorLog = [];
+        renderErrorLog();
+        toastr.success('日志已清空');
+    });
     $d.off('change.tams').on('change.tams', '#theater-api-model-select', function () {
         const val = $(this).val();
         if (val) {

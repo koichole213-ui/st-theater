@@ -403,6 +403,32 @@
 .theater-diagnostic-row.ok .theater-diagnostic-status { background: #2f8f5b; }
 .theater-diagnostic-row.warn .theater-diagnostic-status { background: #b7791f; }
 .theater-diagnostic-row.bad .theater-diagnostic-status { background: #b94444; }
+.theater-error-log-list {
+    margin-top: var(--t-space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--t-space-2);
+}
+.theater-error-log-item {
+    padding: var(--t-space-3);
+    border: 1px solid var(--t-border);
+    border-radius: var(--t-radius-md);
+    background: var(--t-surface-1);
+}
+.theater-error-log-meta {
+    margin-bottom: var(--t-space-2);
+    color: var(--t-fg-mute);
+    font-size: var(--t-text-xs);
+}
+.theater-error-log-item pre {
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--t-fg);
+    font: inherit;
+    font-size: var(--t-text-sm);
+    line-height: 1.55;
+}
 
 /* ============================================================
  * Inputs
@@ -1864,43 +1890,4 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-popup[data-skin="theater"] .theater-wb-group-count,
 .theater-popup[data-skin="theater"] .theater-wb-group-arrow {
     color: var(--SmartThemeEmColor, var(--SmartThemeBodyColor, #2a2a2a)) !important;
-}
-
-#theater-error-notice {
-    position: fixed;
-    top: 18px;
-    right: 18px;
-    z-index: 2147483647;
-    width: min(420px, calc(100vw - 36px));
-    max-height: min(360px, calc(100vh - 36px));
-    overflow: auto;
-    padding: 14px 38px 14px 16px;
-    border: 1px solid rgba(194, 85, 85, .45);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #fff) 92%, #C25555 8%);
-    color: var(--SmartThemeBodyColor, #2a2a2a);
-    box-shadow: 0 14px 36px rgba(0, 0, 0, .24);
-    white-space: normal;
-}
-#theater-error-notice .theater-error-title {
-    font-weight: 700;
-    margin-bottom: 8px;
-    color: #C25555;
-}
-#theater-error-notice .theater-error-text {
-    margin: 0;
-    white-space: pre-wrap;
-    word-break: break-word;
-    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-#theater-error-notice .theater-error-close {
-    position: absolute;
-    top: 8px;
-    right: 10px;
-    border: 0;
-    background: transparent;
-    color: inherit;
-    font-size: 22px;
-    line-height: 1;
-    cursor: pointer;
 }
