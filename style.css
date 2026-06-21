@@ -1270,9 +1270,19 @@
     align-items: center;
     margin-bottom: var(--t-space-3);
 }
-.theater-history-top-bar .theater-label { flex: 1; }
+.theater-history-top-bar .theater-label {
+    flex: 0 0 100%;
+    margin-bottom: var(--t-space-1) !important;
+}
+.theater-history-top-bar > .theater-btn {
+    flex: 1 1 calc(50% - var(--t-space-2));
+    justify-content: center;
+    min-width: 118px;
+}
 #theater-hist-batch-bar {
     display: flex;
+    flex: 0 0 100%;
+    flex-wrap: wrap;
     gap: var(--t-space-2);
     align-items: center;
 }
@@ -1403,6 +1413,9 @@
 #theater-open-btn,
 #theater-wand-btn {
     position: relative;
+}
+#theater-wand-btn {
+    margin-top: -3px;
 }
 
 .theater-update-badge {

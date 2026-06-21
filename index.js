@@ -7,7 +7,7 @@ import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follo
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.1.7';
+const VERSION = '3.1.8';
 let latestRemoteVersion = null;
 const cloneDefaultSettings = () => {
     if (typeof structuredClone === 'function') return structuredClone(defaultSettings);
@@ -970,19 +970,6 @@ function buildPopupHTML() {
             </div>
         </div>
         <div class="theater-section">
-            <label class="theater-label"><i class="fa-solid fa-text-height"></i> 字体大小</label>
-            <div class="theater-inline-setting">
-                <span>插件界面字号</span>
-                <input id="theater-ui-font-size" class="theater-input theater-number-input" type="number" min="12" max="20" step="0.5" value="${normalizeUIFontSize(settings.uiFontSize)}">
-                <span>px</span>
-            </div>
-            <p class="theater-hint" style="margin:4px 0 8px;">调整弹窗、按钮、设置项和历史列表，不改生成出来的小剧场正文。</p>
-            <div class="theater-btn-row">
-                <div id="theater-save-font-size-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存字号</span></div>
-                <div id="theater-reset-font-size-btn" class="theater-btn"><i class="fa-solid fa-rotate-left"></i><span>恢复默认</span></div>
-            </div>
-        </div>
-        <div class="theater-section">
             <details class="theater-addon-details"${settings.customCSS || skin === 'custom' ? ' open' : ''}>
                 <summary class="theater-addon-summary"><i class="fa-solid fa-brush"></i> 自定义 CSS${settings.customCSS ? ' · 已填写' : ''}</summary>
                 <textarea id="theater-custom-css" class="theater-textarea theater-css-editor" rows="8" placeholder=".theater-popup { background: #1a1a2e; }">${esc(settings.customCSS || '')}</textarea>
@@ -992,6 +979,18 @@ function buildPopupHTML() {
                     <div id="theater-reset-css-btn" class="theater-btn danger"><i class="fa-solid fa-rotate-left"></i><span>重置</span></div>
                 </div>
             </details>
+        </div>
+        <div class="theater-section">
+            <label class="theater-label"><i class="fa-solid fa-text-height"></i> 字体大小</label>
+            <div class="theater-inline-setting">
+                <span>插件界面字号</span>
+                <input id="theater-ui-font-size" class="theater-input theater-number-input" type="number" min="12" max="20" step="0.5" value="${normalizeUIFontSize(settings.uiFontSize)}">
+                <span>px</span>
+            </div>
+            <div class="theater-btn-row">
+                <div id="theater-save-font-size-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存字号</span></div>
+                <div id="theater-reset-font-size-btn" class="theater-btn"><i class="fa-solid fa-rotate-left"></i><span>恢复默认</span></div>
+            </div>
         </div>
     </div>
 
@@ -1003,7 +1002,6 @@ function buildPopupHTML() {
                 <option value="custom" ${(settings.apiMode || 'custom') === 'custom' ? 'selected' : ''}>独立 API（推荐）</option>
                 <option value="main" ${settings.apiMode === 'main' ? 'selected' : ''}>酒馆主 API（实验）</option>
             </select>
-            <p id="theater-main-api-hint" class="theater-hint" style="${settings.apiMode === 'main' ? '' : 'display:none;'}margin:0 0 8px;">会尝试走酒馆当前 API 设置。新版酒馆通常不会抢正文小飞机；旧环境可能退回 TavernHelper，生成时可能影响主线生成。</p>
             <div id="theater-custom-api-area" style="${settings.apiMode === 'main' ? 'display:none;' : ''}margin-top:10px;">
                 <input id="theater-api-url" class="theater-input" placeholder="API URL" value="${esc(settings.apiUrl || '')}">
                 <input id="theater-api-key" class="theater-input" type="password" placeholder="API Key" value="${esc(settings.apiKey || '')}" style="margin-top:6px;">
@@ -1976,7 +1974,6 @@ function bindEvents() {
     $d.off('change.tamode').on('change.tamode', '#theater-api-mode', function () {
         settings.apiMode = $(this).val();
         $('#theater-custom-api-area').toggle(settings.apiMode !== 'main');
-        $('#theater-main-api-hint').toggle(settings.apiMode === 'main');
         save();
     });
     $d.off('click.tsa').on('click.tsa', '#theater-save-api-btn', function () {
