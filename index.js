@@ -7,7 +7,7 @@ import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follo
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.1.8';
+const VERSION = '3.2.0';
 let latestRemoteVersion = null;
 const cloneDefaultSettings = () => {
     if (typeof structuredClone === 'function') return structuredClone(defaultSettings);
@@ -142,6 +142,7 @@ const defaultSettings = Object.freeze({
     worldBookKnownEntriesByBook: {},  // { [bookName]: [entryKey, ...] }，记录"曾见过"的 key，用来识别新条目
     currentWorldBook: '',       // 旧版字段，v2.8.0 起仅用于迁移
     selectedWorldBooks: [],     // 勾选的世界书名列表（v2.8.0 起支持多本）
+    worldBookReadMode: 'all',   // 'all' 全部条目 | 'enabled' 只读取酒馆开启条目
     manualWBEntries: [],        // 手动添加的条目 [{ name, content, on }]
     followCharCard: false,      // 切角色时自动选中角色卡绑定的世界书
     followUserPersona: false,   // 生成时自动读取当前 user 人设
@@ -315,6 +316,7 @@ async function init() {
         settings.selectedPresetName = '';
     }
     settings.uiFontSize = normalizeUIFontSize(settings.uiFontSize);
+    if (!['all', 'enabled'].includes(settings.worldBookReadMode)) settings.worldBookReadMode = 'all';
     delete settings.customSystemPrompt;
     delete settings.presetMode;
     delete settings.savedPresets;
@@ -929,7 +931,6 @@ function buildPopupHTML() {
                 <label class="theater-label" style="margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> 保存的小剧场</label>
                 <div id="theater-export-all-history" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-download"></i><span>批量导出</span></div>
                 <div id="theater-import-history-btn" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入备份</span></div>
-                <div id="theater-restore-recent-btn" class="theater-btn" ${recentCache.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-clock"></i><span>恢复最近</span></div>
                 <div id="theater-hist-batch-enter" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-trash-can"></i><span>批量删除</span></div>
                 <div id="theater-hist-batch-bar" style="display:none;">
                     <div id="theater-hist-select-all" class="theater-btn"><i class="fa-solid fa-check-double"></i><span>全选</span></div>
@@ -1015,6 +1016,13 @@ function buildPopupHTML() {
                 </div>
                 <div class="theater-btn-row"><div id="theater-save-api-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存</span></div></div>
             </div>
+        </div>
+        <div class="theater-section">
+            <label class="theater-label"><i class="fa-solid fa-book-atlas"></i> 世界书读取</label>
+            <select id="theater-wb-read-mode" class="theater-select">
+                <option value="all" ${(settings.worldBookReadMode || 'all') === 'all' ? 'selected' : ''}>全部条目</option>
+                <option value="enabled" ${settings.worldBookReadMode === 'enabled' ? 'selected' : ''}>酒馆开启条目</option>
+            </select>
         </div>
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-bell"></i> 生成完毕提示音</label>
@@ -1894,7 +1902,6 @@ function bindEvents() {
     });
     $d.off('click.teah').on('click.teah', '#theater-export-all-history', exportAllHistory);
     $d.off('click.tih').on('click.tih', '#theater-import-history-btn', importHistoryBackup);
-    $d.off('click.trrh').on('click.trrh', '#theater-restore-recent-btn', restoreRecentToHistory);
     $d.off('click.thbe').on('click.thbe', '#theater-hist-batch-enter', function () {
         histBatchMode = true;
         histSelected.clear();
@@ -1975,6 +1982,11 @@ function bindEvents() {
         settings.apiMode = $(this).val();
         $('#theater-custom-api-area').toggle(settings.apiMode !== 'main');
         save();
+    });
+    $d.off('change.twbread').on('change.twbread', '#theater-wb-read-mode', async function () {
+        settings.worldBookReadMode = $(this).val() === 'enabled' ? 'enabled' : 'all';
+        save();
+        await reloadWorldBooks();
     });
     $d.off('click.tsa').on('click.tsa', '#theater-save-api-btn', function () {
         settings.apiMode = $('#theater-api-mode').val() || 'custom';
@@ -2083,7 +2095,6 @@ function refreshHistList() {
     const h = historyCache;
     $('#theater-history-list').html(h.length === 0 ? '<p class="theater-empty">暂无</p>' : h.map(item => historyItemHTML(item)).join(''));
     $('#theater-export-all-history').toggle(h.length > 0);
-    $('#theater-restore-recent-btn').toggle(recentCache.length > 0);
     $('#theater-hist-select-all').toggle(h.length > 0);
     updateHistBulkBar();
 }
@@ -2110,7 +2121,6 @@ function exitHistBatchMode() {
     const h = historyCache;
     $('#theater-hist-batch-enter').toggle(h.length > 0);
     $('#theater-export-all-history').toggle(h.length > 0);
-    $('#theater-restore-recent-btn').toggle(recentCache.length > 0);
     $('.theater-history-actions').show();
     updateHistBulkBar();
 }
@@ -2497,8 +2507,10 @@ async function reloadWorldBooks({ silent = false } = {}) {
                 const data = await resp.json();
                 if (!data?.entries) { loadedBooks++; continue; }
 
+                const readEnabledOnly = settings.worldBookReadMode === 'enabled';
                 const entries = Object.values(data.entries)
                     .filter(e => e.content)
+                    .filter(e => !readEnabledOnly || (e.disable !== true && e.enabled !== false))
                     .map(e => ({
                         book: name,
                         uid: e.uid,
@@ -3042,21 +3054,6 @@ function importHistoryBackup() {
         }
     };
     input.click();
-}
-
-async function restoreRecentToHistory() {
-    if (!recentCache.length) { toastr.warning('没有可恢复的最近生成'); return; }
-    const ok = await SillyTavern.getContext().Popup.show.confirm(`把最近 ${recentCache.length} 条生成结果追加保存到历史？`, '不会覆盖现有历史。');
-    if (!ok) return;
-    const items = recentCache.map((r, i) => ({
-        title: `最近生成 ${i + 1}`,
-        html: r.html,
-        instruction: r.instruction || '',
-        date: r.time || new Date().toLocaleString('zh-CN', { hour12: false }),
-    }));
-    const added = await addHistoryItems(items);
-    if (added) toastr.success(`已恢复 ${added} 条到历史`);
-    else toastr.warning('没有恢复任何内容');
 }
 
 function downloadFile(filename, content, type) {
