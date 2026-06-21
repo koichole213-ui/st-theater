@@ -7,7 +7,7 @@ import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follo
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.1.5';
+const VERSION = '3.1.6';
 let latestRemoteVersion = null;
 const cloneDefaultSettings = () => {
     if (typeof structuredClone === 'function') return structuredClone(defaultSettings);
@@ -133,6 +133,7 @@ const defaultSettings = Object.freeze({
     interactiveMode: false,
     customCSS: '',
     skinMode: 'default',  // 'default' (内置粉彩) | 'theater' (跟随酒馆) | 'custom' (用户CSS接管)
+    apiMode: 'custom',  // 'custom' 独立 API | 'main' 酒馆主 API（实验）
     apiUrl: '', apiKey: '', apiModel: '',
     userPersona: '',
     worldBookEntries: [], worldBookStates: [],  // 旧版字段，v2.8.0 起仅用于迁移
@@ -891,6 +892,8 @@ function buildPopupHTML() {
             <div class="theater-history-top-bar">
                 <label class="theater-label" style="margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> 保存的小剧场</label>
                 <div id="theater-export-all-history" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-download"></i><span>批量导出</span></div>
+                <div id="theater-import-history-btn" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入备份</span></div>
+                <div id="theater-restore-recent-btn" class="theater-btn" ${recentCache.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-clock"></i><span>恢复最近</span></div>
                 <div id="theater-hist-batch-enter" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-trash-can"></i><span>批量删除</span></div>
                 <div id="theater-hist-batch-bar" style="display:none;">
                     <div id="theater-hist-select-all" class="theater-btn"><i class="fa-solid fa-check-double"></i><span>全选</span></div>
@@ -947,7 +950,12 @@ function buildPopupHTML() {
     <div class="theater-panel" data-panel="config">
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-plug"></i> API 配置</label>
-            <div id="theater-custom-api-area" style="margin-top:10px;">
+            <select id="theater-api-mode" class="theater-select" style="margin-bottom:8px;">
+                <option value="custom" ${(settings.apiMode || 'custom') === 'custom' ? 'selected' : ''}>独立 API（推荐）</option>
+                <option value="main" ${settings.apiMode === 'main' ? 'selected' : ''}>酒馆主 API（实验）</option>
+            </select>
+            <p id="theater-main-api-hint" class="theater-hint" style="${settings.apiMode === 'main' ? '' : 'display:none;'}margin:0 0 8px;">会尝试走酒馆当前 API 设置。新版酒馆通常不会抢正文小飞机；旧环境可能退回 TavernHelper，生成时可能影响主线生成。</p>
+            <div id="theater-custom-api-area" style="${settings.apiMode === 'main' ? 'display:none;' : ''}margin-top:10px;">
                 <input id="theater-api-url" class="theater-input" placeholder="API URL" value="${esc(settings.apiUrl || '')}">
                 <input id="theater-api-key" class="theater-input" type="password" placeholder="API Key" value="${esc(settings.apiKey || '')}" style="margin-top:6px;">
                 <div style="margin-top:6px;">
@@ -1054,6 +1062,7 @@ function buildPopupHTML() {
             <div class="theater-btn-row">
                 <div id="theater-run-diagnostics-btn" class="theater-btn primary"><i class="fa-solid fa-list-check"></i><span>生成诊断报告</span></div>
                 <div id="theater-copy-diagnostics-btn" class="theater-btn" style="display:none;"><i class="fa-solid fa-copy"></i><span>复制报告</span></div>
+                <div id="theater-toggle-diagnostics-btn" class="theater-btn" style="display:none;"><i class="fa-solid fa-chevron-up"></i><span>收起报告</span></div>
             </div>
             <div id="theater-diagnostics-output" class="theater-diagnostic-report" style="display:none;"></div>
         </div>
@@ -1837,6 +1846,8 @@ function bindEvents() {
         if (await histDelete([id])) refreshHistList();
     });
     $d.off('click.teah').on('click.teah', '#theater-export-all-history', exportAllHistory);
+    $d.off('click.tih').on('click.tih', '#theater-import-history-btn', importHistoryBackup);
+    $d.off('click.trrh').on('click.trrh', '#theater-restore-recent-btn', restoreRecentToHistory);
     $d.off('click.thbe').on('click.thbe', '#theater-hist-batch-enter', function () {
         histBatchMode = true;
         histSelected.clear();
@@ -1899,7 +1910,14 @@ function bindEvents() {
     });
 
     // ---- Config ----
+    $d.off('change.tamode').on('change.tamode', '#theater-api-mode', function () {
+        settings.apiMode = $(this).val();
+        $('#theater-custom-api-area').toggle(settings.apiMode !== 'main');
+        $('#theater-main-api-hint').toggle(settings.apiMode === 'main');
+        save();
+    });
     $d.off('click.tsa').on('click.tsa', '#theater-save-api-btn', function () {
+        settings.apiMode = $('#theater-api-mode').val() || 'custom';
         settings.apiUrl = $('#theater-api-url').val().trim().replace(/\/+$/, '');
         settings.apiKey = $('#theater-api-key').val().trim();
         settings.apiModel = $('#theater-api-model').val().trim();
@@ -1914,6 +1932,7 @@ function bindEvents() {
         if (!text) { toastr.warning('请先生成诊断报告'); return; }
         copyToClipboard(text);
     });
+    $d.off('click.tdiagtoggle').on('click.tdiagtoggle', '#theater-toggle-diagnostics-btn', toggleDiagnosticsReport);
     $d.off('change.tams').on('change.tams', '#theater-api-model-select', function () {
         const val = $(this).val();
         if (val) {
@@ -2004,6 +2023,7 @@ function refreshHistList() {
     const h = historyCache;
     $('#theater-history-list').html(h.length === 0 ? '<p class="theater-empty">暂无</p>' : h.map(item => historyItemHTML(item)).join(''));
     $('#theater-export-all-history').toggle(h.length > 0);
+    $('#theater-restore-recent-btn').toggle(recentCache.length > 0);
     $('#theater-hist-select-all').toggle(h.length > 0);
     updateHistBulkBar();
 }
@@ -2030,6 +2050,7 @@ function exitHistBatchMode() {
     const h = historyCache;
     $('#theater-hist-batch-enter').toggle(h.length > 0);
     $('#theater-export-all-history').toggle(h.length > 0);
+    $('#theater-restore-recent-btn').toggle(recentCache.length > 0);
     $('.theater-history-actions').show();
     updateHistBulkBar();
 }
@@ -2918,6 +2939,66 @@ async function exportAllHistory() {
     }
 }
 
+async function addHistoryItems(items) {
+    let added = 0;
+    for (const item of items) {
+        if (!item?.html) continue;
+        const ok = await histAdd({
+            title: item.title || `导入的小剧场 ${historyCache.length + 1}`,
+            html: item.html,
+            instruction: item.instruction || '',
+            date: item.date || new Date().toLocaleString('zh-CN', { hour12: false }),
+        });
+        if (ok) added++;
+    }
+    if (added) refreshHistList();
+    return added;
+}
+
+function normalizeHistoryBackup(data) {
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.history)) return data.history;
+    if (Array.isArray(data?.items)) return data.items;
+    if (data?.html) return [data];
+    return [];
+}
+
+function importHistoryBackup() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async e => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        try {
+            const text = await file.text();
+            const items = normalizeHistoryBackup(JSON.parse(text));
+            if (!items.length) { toastr.warning('这个文件里没有找到可导入的小剧场历史'); return; }
+            const added = await addHistoryItems(items);
+            if (added) toastr.success(`已导入 ${added} 条历史`);
+            else toastr.warning('没有导入任何内容');
+        } catch (err) {
+            theaterError('导入历史备份失败：' + (err?.message || err));
+        }
+    };
+    input.click();
+}
+
+async function restoreRecentToHistory() {
+    if (!recentCache.length) { toastr.warning('没有可恢复的最近生成'); return; }
+    const ok = await SillyTavern.getContext().Popup.show.confirm(`把最近 ${recentCache.length} 条生成结果追加保存到历史？`, '不会覆盖现有历史。');
+    if (!ok) return;
+    const items = recentCache.map((r, i) => ({
+        title: `最近生成 ${i + 1}`,
+        html: r.html,
+        instruction: r.instruction || '',
+        date: r.time || new Date().toLocaleString('zh-CN', { hour12: false }),
+    }));
+    const added = await addHistoryItems(items);
+    if (added) toastr.success(`已恢复 ${added} 条到历史`);
+    else toastr.warning('没有恢复任何内容');
+}
+
 function downloadFile(filename, content, type) {
     const blob = new Blob([content], { type });
     const url = URL.createObjectURL(blob);
@@ -3103,11 +3184,16 @@ async function runGeneration(instruction, isAuto) {
     let generationSucceeded = false;
 
     try {
-        if (!settings.apiUrl || !settings.apiModel) {
-            toastr.warning('请先在【设置】里填好 API URL 和模型再生成', '', { timeOut: 5000 });
-            return;
+        let result;
+        if (settings.apiMode === 'main') {
+            result = await generateWithMainAPI(ctx, systemPrompt, prompt, onChunk);
+        } else {
+            if (!settings.apiUrl || !settings.apiModel) {
+                toastr.warning('请先在【设置】里填好 API URL 和模型再生成', '', { timeOut: 5000 });
+                return;
+            }
+            result = await callCustomAPIStream(systemPrompt, prompt, onChunk);
         }
-        const result = await callCustomAPIStream(systemPrompt, prompt, onChunk);
         if (!result) { theaterError('API未返回内容'); return; }
         lastGeneratedHtml = extractHtml(result);
 
@@ -3250,6 +3336,156 @@ function setBallDot(on) {
 }
 
 // ============================================================
+// Main API bridge (experimental)
+// ============================================================
+async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
+    const messages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt },
+    ];
+    const signal = abortController?.signal;
+    const oai = ctx?.oai_settings || globalThis.oai_settings;
+    const maxTokens = oai?.openai_max_tokens ?? 8192;
+
+    const CCS = ctx?.ChatCompletionService || window?.SillyTavern?.getContext?.()?.ChatCompletionService;
+    if (CCS && typeof CCS.processRequest === 'function') {
+        return await callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk);
+    }
+
+    if (!window.TavernHelper || typeof window.TavernHelper.generateRaw !== 'function') {
+        const tip = '当前酒馆没有可用的主 API 扩展接口。\n\n请改用【独立 API】模式，填写 API URL 和模型。';
+        onChunk(tip);
+        throw new Error(tip);
+    }
+    return await callViaGenerateRaw(messages, signal, onChunk);
+}
+
+async function callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk) {
+    const ctx = SillyTavern.getContext();
+    const oai = ctx?.oai_settings || globalThis.oai_settings;
+    const source = oai?.chat_completion_source;
+    const model = ctx?.getChatCompletionModel ? ctx.getChatCompletionModel() : (oai?.openai_model || oai?.model);
+    if (!source || !model) {
+        const tip = '酒馆主 API 还没选好 source 或模型。\n\n请先在酒馆 API 设置里选好模型并确认正文能正常生成。';
+        onChunk(tip);
+        throw new Error(tip);
+    }
+
+    onChunk('已开始调用酒馆主 API…');
+    let result;
+    try {
+        result = await CCS.processRequest(
+            { messages, model, chat_completion_source: source, max_tokens: maxTokens, stream: true },
+            { signal },
+            false,
+            signal,
+        );
+    } catch (e) {
+        throwFriendlyMainApi(e, onChunk);
+    }
+
+    if (typeof result === 'function') {
+        try {
+            return await consumeStreamThunk(result, onChunk);
+        } catch (e) {
+            if (e?.name === 'AbortError') throw e;
+            throwFriendlyMainApi(e, onChunk);
+        }
+    }
+
+    const txt = typeof result === 'string'
+        ? result
+        : (result?.text || result?.content || result?.choices?.[0]?.message?.content || '');
+    if (!txt) throw new Error('酒馆主 API 返回空内容');
+    onChunk(txt);
+    return txt;
+}
+
+async function consumeStreamThunk(streamThunk, onChunk) {
+    let full = '';
+    for await (const chunk of streamThunk()) {
+        const delta = typeof chunk === 'string'
+            ? chunk
+            : extractStreamText(chunk, false);
+        if (delta) {
+            full += delta;
+            onChunk(full);
+        }
+    }
+    if (!full) throw new Error('酒馆主 API 流式返回空');
+    return full;
+}
+
+function throwFriendlyMainApi(e, onChunk) {
+    if (e?.name === 'AbortError') throw e;
+    const msg = String(e?.message || e || '');
+    if (/api[_\s]?key[_\s]?missing|401|unauthorized/i.test(msg)) {
+        const tip = '酒馆主 API 的 Key 没有保存好。\n\n请回酒馆 API 设置里填写并保存 Key，再回来生成。';
+        onChunk(tip);
+        throw new Error(tip);
+    }
+    if (/502|524|529|gateway|timeout|ECONNRESET|socket hang up/i.test(msg)) {
+        const tip = `酒馆主 API 网关错误：${msg.substring(0, 200)}\n\n建议改用【独立 API】模式直接填写 endpoint。`;
+        onChunk(tip);
+        throw new Error(tip);
+    }
+    throw e;
+}
+
+async function callViaGenerateRaw(messages, signal, onChunk) {
+    const TIMEOUT_MS = 5 * 60 * 1000;
+    const startedAt = Date.now();
+    onChunk('当前酒馆没有 quiet 主 API 接口，已退回 TavernHelper。旧环境可能会占用正文小飞机。');
+
+    const heartbeat = setInterval(() => {
+        const elapsed = Math.round((Date.now() - startedAt) / 1000);
+        const mins = Math.floor(elapsed / 60);
+        const secs = elapsed % 60;
+        onChunk(`主 API 已等待 ${mins ? `${mins} 分 ${secs} 秒` : `${elapsed} 秒`}…`);
+    }, 5000);
+
+    const abortPromise = signal
+        ? new Promise((_, reject) => {
+            if (signal.aborted) reject(new DOMException('Aborted', 'AbortError'));
+            else signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        })
+        : new Promise(() => {});
+    const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('主 API 5 分钟未返回，已放弃等待。')), TIMEOUT_MS)
+    );
+
+    try {
+        const result = await Promise.race([
+            window.TavernHelper.generateRaw({
+                user_input: '',
+                ordered_prompts: messages,
+                overrides: {
+                    world_info_before: '', world_info_after: '',
+                    persona_description: '', char_description: '',
+                    char_personality: '', scenario: '',
+                    dialogue_examples: '',
+                    chat_history: { prompts: [], with_depth_entries: false, author_note: '' },
+                },
+                injects: [],
+                max_chat_history: 0,
+                should_stream: true,
+                signal,
+            }),
+            abortPromise,
+            timeoutPromise,
+        ]);
+        if (!result) throw new Error('主 API 返回空内容');
+        onChunk(result);
+        return result;
+    } catch (e) {
+        if (e?.name === 'AbortError') throw e;
+        throwFriendlyMainApi(e, onChunk);
+    } finally {
+        clearInterval(heartbeat);
+    }
+}
+
+// ============================================================
 // Custom API streaming
 // ============================================================
 async function callCustomAPIStream(sys, user, onChunk) {
@@ -3381,6 +3617,7 @@ function diagnosticLine(status, name, detail) {
 }
 
 function buildDiagnostics() {
+    const apiMode = settings.apiMode || 'custom';
     const apiUrl = ($('#theater-api-url').val() || settings.apiUrl || '').trim();
     const apiKey = ($('#theater-api-key').val() || settings.apiKey || '').trim();
     const apiModel = ($('#theater-api-model').val() || settings.apiModel || '').trim();
@@ -3392,9 +3629,11 @@ function buildDiagnostics() {
     const rows = [
         diagnosticLine('ok', '诊断范围', '这份报告只检查小剧场插件，不检查酒馆正文生成链路'),
         diagnosticLine('ok', '插件版本', `本地 v${VERSION}${latestRemoteVersion ? `，远端 v${latestRemoteVersion}` : '，还没有拿到远端版本'}`),
-        diagnosticLine(apiUrl && apiModel ? 'ok' : 'bad', 'API 配置', apiUrl && apiModel ? `已填写，模型：${apiModel}${apiKey ? '，已填写 Key' : '，未填写 Key（OpenAI 兼容本地服务可为空）'}` : 'API URL 和模型名至少有一项没填'),
+        diagnosticLine('ok', 'API 模式', apiMode === 'main' ? '酒馆主 API（实验）' : '独立 API'),
+        diagnosticLine(apiMode === 'main' || (apiUrl && apiModel) ? 'ok' : 'bad', 'API 配置', apiMode === 'main' ? '使用酒馆当前 API 设置' : (apiUrl && apiModel ? `已填写，模型：${apiModel}${apiKey ? '，已填写 Key' : '，未填写 Key（OpenAI 兼容本地服务可为空）'}` : 'API URL 和模型名至少有一项没填')),
         diagnosticLine(typeof fetch === 'function' && typeof AbortController === 'function' ? 'ok' : 'bad', '请求能力', 'fetch / AbortController ' + (typeof fetch === 'function' && typeof AbortController === 'function' ? '可用' : '不可用')),
         diagnosticLine(window.indexedDB ? (idb ? 'ok' : 'warn') : 'bad', '本地存档库', window.indexedDB ? (idb ? 'IndexedDB 已打开' : 'IndexedDB 存在，但当前未打开，可能会回退到 settings') : '浏览器不支持 IndexedDB'),
+        diagnosticLine('warn', '历史存储提示', '历史存在浏览器本地存储里。夸克等手机浏览器崩溃或清理后可能丢失，建议定期批量导出备份'),
         diagnosticLine(customRenderOk ? 'ok' : 'bad', '渲染模板', customRenderOk ? `当前模板：${selectedRender}` : `当前选择 ${selectedRender} 找不到对应模板`),
         diagnosticLine(continueContext ? 'warn' : 'ok', '续写状态', continueContext ? `续写模式仍有前情：${continueContext.length} 字` : '未处于续写模式'),
         diagnosticLine(isGenerating ? 'warn' : 'ok', '生成状态', isGenerating ? '正在生成中' : '空闲'),
@@ -3423,6 +3662,17 @@ function runDiagnostics() {
     `).join('');
     $('#theater-diagnostics-output').html(html).data('report', report.text).show();
     $('#theater-copy-diagnostics-btn').show();
+    $('#theater-toggle-diagnostics-btn').show().find('i').removeClass('fa-chevron-down').addClass('fa-chevron-up');
+    $('#theater-toggle-diagnostics-btn').find('span').text('收起报告');
+}
+
+function toggleDiagnosticsReport() {
+    const $out = $('#theater-diagnostics-output');
+    if (!$out.data('report')) { toastr.warning('请先生成诊断报告'); return; }
+    const show = !$out.is(':visible');
+    $out.toggle(show);
+    $('#theater-toggle-diagnostics-btn').find('i').toggleClass('fa-chevron-up', show).toggleClass('fa-chevron-down', !show);
+    $('#theater-toggle-diagnostics-btn').find('span').text(show ? '收起报告' : '展开报告');
 }
 
 // ============================================================
