@@ -452,6 +452,19 @@
     font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
     font-size: var(--t-text-sm);
 }
+.theater-inline-setting {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    margin-bottom: var(--t-space-2);
+    color: var(--t-fg-soft);
+    font-size: var(--t-text-sm);
+}
+.theater-inline-setting .theater-number-input {
+    width: 88px;
+    flex: 0 0 88px;
+    text-align: center;
+}
 .theater-select {
     cursor: pointer;
     -webkit-appearance: none;

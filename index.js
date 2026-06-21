@@ -7,7 +7,7 @@ import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follo
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.1.6';
+const VERSION = '3.1.7';
 let latestRemoteVersion = null;
 const cloneDefaultSettings = () => {
     if (typeof structuredClone === 'function') return structuredClone(defaultSettings);
@@ -133,6 +133,7 @@ const defaultSettings = Object.freeze({
     interactiveMode: false,
     customCSS: '',
     skinMode: 'default',  // 'default' (内置粉彩) | 'theater' (跟随酒馆) | 'custom' (用户CSS接管)
+    uiFontSize: 13.5,
     apiMode: 'custom',  // 'custom' 独立 API | 'main' 酒馆主 API（实验）
     apiUrl: '', apiKey: '', apiModel: '',
     userPersona: '',
@@ -313,6 +314,7 @@ async function init() {
     if (settings.selectedPresetName === '__builtin__' || settings.selectedPresetName === '__custom__' || settings.selectedPresetName === '__follow__') {
         settings.selectedPresetName = '';
     }
+    settings.uiFontSize = normalizeUIFontSize(settings.uiFontSize);
     delete settings.customSystemPrompt;
     delete settings.presetMode;
     delete settings.savedPresets;
@@ -337,6 +339,7 @@ async function init() {
     }
 
     await storageInit();
+    applyUIFontSize();
 
     const html = await renderExtensionTemplateAsync('third-party/st-theater', 'settings');
     $('#extensions_settings2').append(html);
@@ -476,6 +479,39 @@ function applyCustomCSS() {
         console.warn('[Theater] custom CSS scope failed:', e);
         toastr?.warning('自定义 CSS 解析失败，已跳过应用。请检查语法。');
     }
+}
+
+function normalizeUIFontSize(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return defaultSettings.uiFontSize;
+    return Math.min(20, Math.max(12, Math.round(n * 2) / 2));
+}
+
+function fontSizeVars(size = settings.uiFontSize) {
+    const base = normalizeUIFontSize(size);
+    return {
+        xs: Math.max(10.5, base - 2),
+        sm: Math.max(11.5, base - 1),
+        base,
+        md: base + 1.5,
+        lg: base + 5.5,
+        xl: base + 10.5,
+    };
+}
+
+function applyUIFontSize() {
+    $('#theater-font-size-inject').remove();
+    const s = fontSizeVars();
+    $('head').append(`<style id="theater-font-size-inject">
+${THEATER_SCOPE} {
+    --t-text-xs: ${s.xs}px;
+    --t-text-sm: ${s.sm}px;
+    --t-text-base: ${s.base}px;
+    --t-text-md: ${s.md}px;
+    --t-text-lg: ${s.lg}px;
+    --t-text-xl: ${s.xl}px;
+}
+</style>`);
 }
 
 function getSoundPreset(id) {
@@ -931,6 +967,19 @@ function buildPopupHTML() {
                         <span class="theater-skin-row-desc">下方 CSS 完全接管</span>
                     </label>
                 </div>
+            </div>
+        </div>
+        <div class="theater-section">
+            <label class="theater-label"><i class="fa-solid fa-text-height"></i> 字体大小</label>
+            <div class="theater-inline-setting">
+                <span>插件界面字号</span>
+                <input id="theater-ui-font-size" class="theater-input theater-number-input" type="number" min="12" max="20" step="0.5" value="${normalizeUIFontSize(settings.uiFontSize)}">
+                <span>px</span>
+            </div>
+            <p class="theater-hint" style="margin:4px 0 8px;">调整弹窗、按钮、设置项和历史列表，不改生成出来的小剧场正文。</p>
+            <div class="theater-btn-row">
+                <div id="theater-save-font-size-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存字号</span></div>
+                <div id="theater-reset-font-size-btn" class="theater-btn"><i class="fa-solid fa-rotate-left"></i><span>恢复默认</span></div>
             </div>
         </div>
         <div class="theater-section">
@@ -1893,6 +1942,20 @@ function bindEvents() {
     // ---- Theme ----
     $d.off('click.tcss').on('click.tcss', '#theater-save-css-btn', function () { settings.customCSS = $('#theater-custom-css').val(); save(); applyCustomCSS(); toastr.success('样式已应用'); });
     $d.off('click.trcss').on('click.trcss', '#theater-reset-css-btn', function () { settings.customCSS = ''; $('#theater-custom-css').val(''); save(); applyCustomCSS(); toastr.success('已重置'); });
+    $d.off('click.tfsave').on('click.tfsave', '#theater-save-font-size-btn', function () {
+        settings.uiFontSize = normalizeUIFontSize($('#theater-ui-font-size').val());
+        $('#theater-ui-font-size').val(settings.uiFontSize);
+        save();
+        applyUIFontSize();
+        toastr.success(`字号已调整为 ${settings.uiFontSize}px`);
+    });
+    $d.off('click.tfreset').on('click.tfreset', '#theater-reset-font-size-btn', function () {
+        settings.uiFontSize = defaultSettings.uiFontSize;
+        $('#theater-ui-font-size').val(settings.uiFontSize);
+        save();
+        applyUIFontSize();
+        toastr.success('已恢复默认字号');
+    });
     // ---- Skin switcher ----
     $d.off('click.tskt').on('click.tskt', '#theater-skin-toggle', function () {
         $(this).next('.theater-drawer-body').slideToggle(150);
