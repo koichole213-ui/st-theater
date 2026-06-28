@@ -7,7 +7,7 @@ import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follo
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.2.2';
+const VERSION = '3.2.3';
 let latestRemoteVersion = null;
 const cloneDefaultSettings = () => {
     if (typeof structuredClone === 'function') return structuredClone(defaultSettings);
@@ -3159,6 +3159,74 @@ function htmlToPlainText(html) {
     return text;
 }
 
+function parseChineseNumber(raw) {
+    const text = String(raw || '').trim();
+    if (!text) return null;
+    if (/^\d+(?:\.\d+)?\s*[kK]$/.test(text)) return Math.round(parseFloat(text) * 1000);
+    if (/^\d[\d,]*(?:\.\d+)?$/.test(text)) return Math.round(parseFloat(text.replace(/,/g, '')));
+
+    const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+    const units = { 十: 10, 百: 100, 千: 1000, 万: 10000 };
+    let total = 0, section = 0, number = 0, seen = false;
+    for (const ch of text) {
+        if (digits[ch] !== undefined) {
+            number = digits[ch];
+            seen = true;
+        } else if (units[ch]) {
+            seen = true;
+            const unit = units[ch];
+            if (unit === 10000) {
+                section = (section + number) || 1;
+                total += section * unit;
+                section = 0;
+            } else {
+                section += (number || 1) * unit;
+            }
+            number = 0;
+        }
+    }
+    return seen ? total + section + number : null;
+}
+
+function parseTargetWordCount(instruction) {
+    const text = String(instruction || '').replace(/，/g, ',');
+    const num = '(\\d[\\d,]*(?:\\.\\d+)?\\s*[kK]?|[零〇一二两三四五六七八九十百千万]+)';
+    const patterns = [
+        new RegExp(`(?:至少|不少于|不低于|起码|最低|保底|大于|超过|写满|达到|达成)\\s*${num}\\s*(?:个)?字`),
+        new RegExp(`${num}\\s*(?:个)?字\\s*(?:以上|起|左右|上下|内)`),
+        new RegExp(`(?:写|生成|输出|正文|篇幅|字数)[^\\n。；;]{0,12}?${num}\\s*(?:个)?字`),
+    ];
+    for (const re of patterns) {
+        const match = text.match(re);
+        const value = parseChineseNumber(match?.[1]);
+        if (value && value >= 100) return value;
+    }
+    return null;
+}
+
+function readableCharCount(text) {
+    const matches = String(text || '').match(/[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7afA-Za-z0-9]/g);
+    return matches ? matches.length : 0;
+}
+
+function lengthRequirementPrompt(target) {
+    if (!target) return '';
+    return `\n\n【篇幅硬性要求】\n用户指令中包含字数要求。本次小剧场正文至少写满 ${target} 字；如果内容不足，不要提前结尾，请继续补充场景推进、动作、心理、对话和环境细节。不要用总结、略写、跳过剧情来压缩篇幅。`;
+}
+
+function checkLengthRequirement(target, actual) {
+    if (!target || actual >= Math.ceil(target * 0.9)) return;
+    const msg = `生成字数可能不足：目标约 ${target} 字，当前约 ${actual} 字。`;
+    errorLog.unshift({
+        time: new Date().toLocaleString('zh-CN', { hour12: false }),
+        title: '字数未达标',
+        message: msg,
+    });
+    if (errorLog.length > 20) errorLog.length = 20;
+    renderErrorLog();
+    toastr.warning(msg, '', { timeOut: 7000 });
+}
+
 function updateContinueHint() {
     $('#theater-continue-hint').remove();
     if (!continueContext) return;
@@ -3255,8 +3323,10 @@ async function runGeneration(instruction, isAuto) {
 
     const contCtx = isAuto ? '' : continueContext;  // 自动生成永远是全新的，不掺手动的续写上下文
     const continueInfo = contCtx ? `以下是已生成的小剧场的故事内容纯文本（请在此基础上续写故事，不要重复已有内容，保持相同的角色语气和叙事风格，但用全新的HTML结构输出）：\n${contCtx}\n\n---\n\n` : '';
+    const targetWordCount = parseTargetWordCount(instruction);
+    const lengthRules = lengthRequirementPrompt(targetWordCount);
 
-    const prompt = `${charInfo}${personaInfo}${wbInfo}以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}\n\n---\n\n${continueInfo}${renderRules}\n\n---\n\n用户指令：${instruction}\n\n请根据以上所有信息生成小剧场。${contCtx ? '严格续写上方小剧场的内容，保持相同的HTML结构、CSS样式和角色语气，不要从头开始，不要续写正文对话。' : '严格遵守渲染规则。'}`;
+    const prompt = `${charInfo}${personaInfo}${wbInfo}以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}\n\n---\n\n${continueInfo}${renderRules}${lengthRules}\n\n---\n\n用户指令：${instruction}\n\n请根据以上所有信息生成小剧场。${contCtx ? '严格续写上方小剧场的内容，保持相同的HTML结构、CSS样式和角色语气，不要从头开始，不要续写正文对话。' : '严格遵守渲染规则。'}`;
     let systemPrompt;
     // All preset modes now produce entries
     if (!cachedPresetEntries.length) await loadPresetEntries();
@@ -3331,6 +3401,7 @@ async function runGeneration(instruction, isAuto) {
             theaterError('生成完成但没有可显示内容。请换一个渲染模板，或让模型输出完整 HTML。');
             return;
         }
+        checkLengthRequirement(targetWordCount, readableCharCount(newText));
         if (newText) {
             accumulatedTheater = accumulatedTheater ? (accumulatedTheater + '\n\n---\n\n' + newText) : newText;
             if (contCtx) continueContext = accumulatedTheater.length > 8000 ? '…（前文省略）\n\n' + accumulatedTheater.slice(-8000) : accumulatedTheater;
