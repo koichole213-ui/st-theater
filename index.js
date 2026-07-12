@@ -108,6 +108,33 @@ const DEFAULT_RENDER_TEMPLATE_PC = `小剧场输出规范（PC端）：
 6. 输出完整HTML文档（DOCTYPE→html→head+style→body+内容）
 输出格式：直接输出完整HTML代码，不要用markdown代码块包裹。`;
 
+const DEFAULT_RENDER_TEMPLATE_TEXT = `小剧场输出规范（纯文字版）：
+请输出一个完整、可独立阅读的小剧场正文。
+
+1. 只输出正文纯文字。
+不要输出 HTML 标签、CSS、JavaScript、Markdown 代码块、标题说明、创作备注或“以下是……”之类的前言。
+
+2. 段落与换行：
+- 每个自然段之间空一行。
+- 场景、时间或叙述视角明显切换时，额外空一行。
+- 每段聚焦一个主要动作、一个画面、一个心理变化或一轮对话，不要写成一整堵文字。
+- 不使用列表、编号、项目符号或分隔线。
+
+3. 对话：
+- 对话使用中文直角引号「」。
+- 角色说话时，台词与叙述自然结合；同一段里不要塞进太多角色的长台词。
+- 角色、旁白和动作不需要用“角色名：”或“旁白：”作标题。
+- 不使用 Markdown 的星号来包裹动作或心理。
+
+4. 内容：
+- 用简体中文。
+- 保持人物语气与前文一致。
+- 场景切换应自然，不要用“第一幕”“场景一”等标题。
+- 结尾停在一个动作、画面或对话上，不要额外总结或解释。
+
+输出格式：
+直接从小剧场正文开始，不要使用 Markdown 代码块包裹。`;
+
 const INTERACTIVE_ADDON = `
 额外要求 - 交互模式：
 - 必须包含可交互元素（按钮、选择、切换、展开收起等）
@@ -119,6 +146,7 @@ const INTERACTIVE_ADDON = `
 let settings = {};
 const defaultSettings = Object.freeze({
     contextRange: 10,
+    readChatContext: true,
     instructionTemplates: [],
     instructionGroups: [],            // 用户创建的分组名列表
     instructionGroupFilter: '__all__', // 当前筛选：'__all__' | '__none__'(未分组) | 组名
@@ -135,7 +163,7 @@ const defaultSettings = Object.freeze({
     skinMode: 'default',  // 'default' (内置粉彩) | 'theater' (跟随酒馆) | 'custom' (用户CSS接管)
     uiFontSize: 13.5,
     apiMode: 'custom',  // 'custom' 独立 API | 'main' 酒馆主 API（实验）
-    apiUrl: '', apiKey: '', apiModel: '',
+    apiUrl: '', apiKey: '', apiModel: '', streamEnabled: true,
     userPersona: '',
     worldBookEntries: [], worldBookStates: [],  // 旧版字段，v2.8.0 起仅用于迁移
     worldBookStatesByBook: {},  // { [bookName]: { [entryKey]: false } }，缺省 true
@@ -796,6 +824,7 @@ function buildPopupHTML() {
                 <div id="theater-generate-btn" class="theater-btn primary generate">${LAMP_SVG_HTML}<span>生成</span></div>
                 <div id="theater-stop-btn" class="theater-btn danger generate" style="display:none;"><i class="fa-solid fa-stop"></i><span>停止</span></div>
             </div>
+            <div id="theater-token-hint" class="theater-hint-inline" style="display:none; margin:8px 0 0;"></div>
         </div>
         <div class="theater-section" id="theater-stream-section" style="display:none;">
             <label class="theater-label"><i class="fa-solid fa-feather"></i> 实时输出</label>
@@ -808,6 +837,7 @@ function buildPopupHTML() {
                 <span id="theater-recent-next" class="theater-recent-arrow" title="下一条"><i class="fa-solid fa-chevron-right"></i></span>
             </div>
             <label class="theater-label">生成结果</label>
+            <div id="theater-length-hint" class="theater-hint-inline" style="display:none; margin:-4px 0 8px;"></div>
             <div id="theater-output-container"><iframe id="theater-output-frame" sandbox="allow-scripts allow-same-origin" class="theater-iframe"></iframe></div>
             <div class="theater-btn-row">
                 <div id="theater-save-history-btn" class="theater-btn"><i class="fa-solid fa-bookmark"></i><span>保存</span></div>
@@ -900,8 +930,15 @@ function buildPopupHTML() {
 
         <!-- Context Range -->
         <div class="theater-section">
-            <label class="theater-label"><i class="fa-solid fa-layer-group"></i> 上下文消息数量 · <span id="theater-range-val">${settings.contextRange}</span> 条</label>
-            <input id="theater-context-range" type="range" min="5" max="100" value="${settings.contextRange}" class="theater-slider">
+            <label class="theater-label"><i class="fa-solid fa-layer-group"></i> 聊天前文</label>
+            <div class="theater-toggle-row" style="margin-bottom:8px;">
+                <label class="theater-toggle-label"><input type="checkbox" id="theater-read-chat-context" ${settings.readChatContext !== false ? 'checked' : ''}><span>读取聊天前文</span></label>
+                <span class="theater-hint-inline">关闭后只使用角色设定、世界书和指令</span>
+            </div>
+            <div id="theater-context-range-row" style="${settings.readChatContext === false ? 'opacity:.45;pointer-events:none;' : ''}">
+                <label class="theater-hint">读取最近 <span id="theater-range-val">${settings.contextRange}</span> 条消息</label>
+                <input id="theater-context-range" type="range" min="5" max="100" value="${settings.contextRange}" class="theater-slider">
+            </div>
         </div>
     </div>
 
@@ -950,9 +987,10 @@ function buildPopupHTML() {
             <select id="theater-render-select" class="theater-select">
                 <option value="__default__" ${selRender === '__default__' ? 'selected' : ''}>默认模板（移动端）</option>
                 <option value="__default_pc__" ${selRender === '__default_pc__' ? 'selected' : ''}>默认模板（PC端）</option>
+                <option value="__plain_text__" ${selRender === '__plain_text__' ? 'selected' : ''}>内置纯文字模板</option>
                 ${render.map((t, i) => `<option value="${i}" ${String(selRender) === String(i) ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
             </select>
-            <textarea id="theater-render-content" class="theater-textarea" rows="6" style="margin-top:10px;">${esc(selRender === '__default_pc__' ? DEFAULT_RENDER_TEMPLATE_PC : (selRender !== '__default__' && render[parseInt(selRender)] ? render[parseInt(selRender)].content : DEFAULT_RENDER_TEMPLATE))}</textarea>
+            <textarea id="theater-render-content" class="theater-textarea" rows="6" style="margin-top:10px;">${esc(selRender === '__default_pc__' ? DEFAULT_RENDER_TEMPLATE_PC : (selRender === '__plain_text__' ? DEFAULT_RENDER_TEMPLATE_TEXT : (selRender !== '__default__' && render[parseInt(selRender)] ? render[parseInt(selRender)].content : DEFAULT_RENDER_TEMPLATE)))}</textarea>
             <div class="theater-btn-row">
                 <div id="theater-save-render-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存为新模板</span></div>
                 <div id="theater-delete-render-btn" class="theater-btn danger" style="${selRender !== '__default__' && selRender !== '__default_pc__' ? '' : 'display:none;'}"><i class="fa-solid fa-trash"></i><span>删除当前</span></div>
@@ -1066,6 +1104,10 @@ function buildPopupHTML() {
                 <option value="custom" ${(settings.apiMode || 'custom') === 'custom' ? 'selected' : ''}>独立 API（推荐）</option>
                 <option value="main" ${settings.apiMode === 'main' ? 'selected' : ''}>酒馆主 API（实验）</option>
             </select>
+            <div class="theater-toggle-row" style="margin-bottom:8px;">
+                <label class="theater-toggle-label"><input type="checkbox" id="theater-stream-enabled" ${settings.streamEnabled !== false ? 'checked' : ''}><span>流式实时显示</span></label>
+                <span class="theater-hint-inline">关闭后等待完整内容返回；不保证解决模型字数截断</span>
+            </div>
             <div id="theater-custom-api-area" style="${settings.apiMode === 'main' ? 'display:none;' : ''}margin-top:10px;">
                 <input id="theater-api-url" class="theater-input" placeholder="API URL" value="${esc(settings.apiUrl || '')}">
                 <input id="theater-api-key" class="theater-input" type="password" placeholder="API Key" value="${esc(settings.apiKey || '')}" style="margin-top:6px;">
@@ -1760,6 +1802,11 @@ function bindEvents() {
     $d.off('input.trng').on('input.trng', '#theater-context-range', function () {
         $('#theater-range-val').text($(this).val()); settings.contextRange = parseInt($(this).val()); save();
     });
+    $d.off('change.trcc').on('change.trcc', '#theater-read-chat-context', function () {
+        settings.readChatContext = this.checked;
+        $('#theater-context-range-row').css({ opacity: this.checked ? '' : '.45', pointerEvents: this.checked ? '' : 'none' });
+        save();
+    });
 
     // ---- Rules: Instruction templates ----
     $d.off('click.tsi').on('click.tsi', '#theater-save-instruction-btn', saveInstructionTpl);
@@ -1860,6 +1907,7 @@ function bindEvents() {
         settings.selectedRenderIndex = v; save();
         if (v === '__default__') { $('#theater-render-content').val(DEFAULT_RENDER_TEMPLATE); $('#theater-delete-render-btn').hide(); }
         else if (v === '__default_pc__') { $('#theater-render-content').val(DEFAULT_RENDER_TEMPLATE_PC); $('#theater-delete-render-btn').hide(); }
+        else if (v === '__plain_text__') { $('#theater-render-content').val(DEFAULT_RENDER_TEMPLATE_TEXT); $('#theater-delete-render-btn').hide(); }
         else { const t = settings.renderTemplates[parseInt(v)]; if (t) $('#theater-render-content').val(t.content); $('#theater-delete-render-btn').show(); }
     });
     $d.off('click.tsr').on('click.tsr', '#theater-save-render-btn', saveRenderTpl);
@@ -2037,6 +2085,9 @@ function bindEvents() {
         settings.apiMode = $(this).val();
         $('#theater-custom-api-area').toggle(settings.apiMode !== 'main');
         save();
+    });
+    $d.off('change.tstream').on('change.tstream', '#theater-stream-enabled', function () {
+        settings.streamEnabled = this.checked; save();
     });
     $d.off('change.twbread').on('change.twbread', '#theater-wb-read-mode', async function () {
         settings.worldBookReadMode = $(this).val() === 'enabled' ? 'enabled' : 'all';
@@ -2893,9 +2944,9 @@ async function saveRenderTpl() {
 }
 
 function deleteRenderTpl() {
-    const v = $('#theater-render-select').val(); if (v === '__default__' || v === '__default_pc__') return;
+    const v = $('#theater-render-select').val(); if (v === '__default__' || v === '__default_pc__' || v === '__plain_text__') return;
     settings.renderTemplates.splice(parseInt(v), 1); save();
-    const s = $('#theater-render-select'); s.find('option:not([value="__default__"]):not([value="__default_pc__"])').remove();
+    const s = $('#theater-render-select'); s.find('option:not([value="__default__"]):not([value="__default_pc__"]):not([value="__plain_text__"])').remove();
     settings.renderTemplates.forEach((t, i) => s.append(`<option value="${i}">${esc(t.name)}</option>`));
     s.val('__default__'); settings.selectedRenderIndex = '__default__'; save();
     $('#theater-render-content').val(DEFAULT_RENDER_TEMPLATE); $('#theater-delete-render-btn').hide();
@@ -2904,6 +2955,38 @@ function deleteRenderTpl() {
 // ============================================================
 // Instruction Template Import / Export
 // ============================================================
+function splitImportedTemplate(content, suggestedName = '') {
+    const original = String(content || '').replace(/^\uFEFF/, '').trim();
+    const lines = original.replace(/\r\n?/g, '\n').split('\n');
+    const firstIndex = lines.findIndex(line => line.trim());
+    if (firstIndex < 0) return { name: suggestedName || '导入指令', content: '', stripped: false };
+
+    const firstLine = lines[firstIndex].trim();
+    const normalize = value => String(value || '').replace(/[【】#:\s：]/g, '').toLowerCase();
+    const titleMatch = firstLine.match(/^(?:#+\s*)?(?:标题|模板(?:名称)?|名称)\s*[:：]\s*(.+)$/i)
+        || firstLine.match(/^【(.+)】$/)
+        || firstLine.match(/^#{1,6}\s+(.+)$/);
+    const creditLine = line => /^(?:by\b|作者|author\b|创作(?:者)?|制作(?:者)?|模板作者|来源)\s*[:：]?/i.test(String(line || '').trim());
+    const nextIndex = lines.findIndex((line, index) => index > firstIndex && line.trim());
+    const duplicateSuggestedName = suggestedName && normalize(firstLine) === normalize(suggestedName);
+    const titleFollowedByCredit = nextIndex >= 0 && creditLine(lines[nextIndex]);
+    const isExplicitTitle = !!titleMatch;
+    const shouldStripFirst = isExplicitTitle || duplicateSuggestedName || titleFollowedByCredit;
+
+    if (shouldStripFirst) lines[firstIndex] = '';
+    let creditIndex = lines.findIndex(line => line.trim());
+    while (creditIndex >= 0 && creditLine(lines[creditIndex])) {
+        lines[creditIndex] = '';
+        creditIndex = lines.findIndex(line => line.trim());
+    }
+
+    const cleaned = lines.join('\n').trim();
+    const name = String(suggestedName || titleMatch?.[1] || firstLine).trim().substring(0, 60) || '导入指令';
+    // 识别失误时宁可保留原文，也不要导入一条空指令。
+    if (!cleaned) return { name, content: original, stripped: false };
+    return { name, content: cleaned, stripped: shouldStripFirst || cleaned !== original };
+}
+
 function importInstructionTemplates() {
     const input = document.createElement('input');
     input.type = 'file';
@@ -2913,6 +2996,13 @@ function importInstructionTemplates() {
         try {
             const text = await file.text();
             let imported = [];
+            let strippedCount = 0;
+            const addImported = (content, suggestedName = '') => {
+                const parsed = splitImportedTemplate(content, suggestedName);
+                if (!parsed.content.trim()) return;
+                if (parsed.stripped) strippedCount++;
+                imported.push({ name: parsed.name, content: parsed.content });
+            };
 
             if (file.name.endsWith('.json')) {
                 const data = JSON.parse(text);
@@ -2922,8 +3012,8 @@ function importInstructionTemplates() {
                     Object.values(data.entries).forEach(entry => {
                         const content = entry.content || '';
                         if (!content.trim()) return;
-                        const name = entry.comment || (Array.isArray(entry.key) ? entry.key.join(', ') : String(entry.key || '')) || content.split('\n')[0].substring(0, 30).trim() || '导入指令';
-                        imported.push({ name, content: content.trim() });
+                        const name = entry.comment || (Array.isArray(entry.key) ? entry.key.join(', ') : String(entry.key || ''));
+                        addImported(content, name);
                     });
                 }
                 // 数组格式: [{ name, content }, ...]
@@ -2932,23 +3022,22 @@ function importInstructionTemplates() {
                     arr.forEach(item => {
                         const content = item.content || item.instruction || '';
                         if (!content.trim()) return;
-                        const name = item.name || item.title || content.split('\n')[0].substring(0, 30).trim() || '导入指令';
-                        imported.push({ name, content: content.trim() });
+                        const name = item.name || item.title || '';
+                        addImported(content, name);
                     });
                 }
             } else {
                 // TXT格式：--- 分隔
                 const parts = text.split(/\n---\n/).map(s => s.trim()).filter(Boolean);
                 parts.forEach(p => {
-                    const firstLine = p.split('\n')[0].substring(0, 30).trim() || '导入指令';
-                    imported.push({ name: firstLine, content: p });
+                    addImported(p);
                 });
             }
 
             if (!imported.length) { toastr.warning('文件中没有找到指令'); return; }
             settings.instructionTemplates.push(...imported);
             save(); refreshInstUI();
-            toastr.success(`导入了 ${imported.length} 条指令`);
+            toastr.success(`导入了 ${imported.length} 条指令${strippedCount ? `，已排除 ${strippedCount} 条标题或署名` : ''}`);
         } catch (err) { toastr.error('导入失败: ' + err.message); }
     };
     input.click();
@@ -2983,6 +3072,10 @@ function copyHtml() {
     // 只从已知干净的变量取 HTML，不读 iframe.srcdoc（酒馆环境里可能被改写/清空）
     const html = lastGeneratedHtml || currentDisplayHtml;
     if (!html) { toastr.warning('没有可复制的内容'); return; }
+    if (currentOutputMode === 'text') {
+        copyToClipboard(lastGeneratedText || htmlToPlainText(html));
+        return;
+    }
     console.log('[Theater] copyHtml (first 200):', html.slice(0, 200));
     copyToClipboard(html);
 }
@@ -3135,6 +3228,8 @@ function downloadFile(filename, content, type) {
 // Generation
 // ============================================================
 let lastGeneratedHtml = '';
+let lastGeneratedText = '';
+let currentOutputMode = 'html';
 let abortController = null;
 let isGenerating = false;      // 是否正在生成
 let bgStreamText = '';         // 后台生成时保存的流式文本
@@ -3209,22 +3304,32 @@ function readableCharCount(text) {
     return matches ? matches.length : 0;
 }
 
-function lengthRequirementPrompt(target) {
-    if (!target) return '';
-    return `\n\n【篇幅硬性要求】\n用户指令中包含字数要求。本次小剧场正文至少写满 ${target} 字；如果内容不足，不要提前结尾，请继续补充场景推进、动作、心理、对话和环境细节。不要用总结、略写、跳过剧情来压缩篇幅。`;
+function estimateTokenCount(text) {
+    const value = String(text || '');
+    const cjk = (value.match(/[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/g) || []).length;
+    const other = Math.max(0, value.length - cjk);
+    return Math.max(1, Math.ceil(cjk * 1.5 + other / 4));
 }
 
-function checkLengthRequirement(target, actual) {
-    if (!target || actual >= Math.ceil(target * 0.9)) return;
-    const msg = `生成字数可能不足：目标约 ${target} 字，当前约 ${actual} 字。`;
-    errorLog.unshift({
-        time: new Date().toLocaleString('zh-CN', { hour12: false }),
-        title: '字数未达标',
-        message: msg,
-    });
-    if (errorLog.length > 20) errorLog.length = 20;
-    renderErrorLog();
-    toastr.warning(msg, '', { timeOut: 7000 });
+function updateTokenHint(inputTokens, outputTokens) {
+    const $hint = $('#theater-token-hint');
+    if (!$hint.length) return;
+    const total = inputTokens + outputTokens;
+    $hint.text(`Token 预估：输入 ${inputTokens.toLocaleString()} · 输出 ${outputTokens.toLocaleString()} · 合计 ${total.toLocaleString()}（不同模型会有误差）`).show();
+}
+
+function updateLengthHint(target, actual) {
+    const $hint = $('#theater-length-hint');
+    if (!$hint.length) return;
+    if (!target || !actual) {
+        $hint.hide().empty();
+        return;
+    }
+    const enough = actual >= Math.ceil(target * 0.9);
+    const text = enough
+        ? `本次约 ${actual} 字（指令目标约 ${target} 字）`
+        : `本次约 ${actual} 字（指令目标约 ${target} 字）。如想延长内容，可点击下方“续写”。`;
+    $hint.text(text).toggleClass('theater-length-hint-short', !enough).show();
 }
 
 function updateContinueHint() {
@@ -3246,8 +3351,9 @@ function startContinue(html) {
     const plainText = htmlToPlainText(html);
     if (!plainText) { toastr.warning('没有可续写的内容'); return; }
 
-    // 使用累积内容（如果有的话），否则用当前传入的内容
-    const fullText = accumulatedTheater || plainText;
+    // 从当前看到的内容开始续写，避免切到另一条历史时串入旧内容。
+    const fullText = plainText;
+    accumulatedTheater = plainText;
 
     // 如果超过8000字，只取后半段
     if (fullText.length > 8000) {
@@ -3256,9 +3362,6 @@ function startContinue(html) {
     } else {
         continueContext = fullText;
     }
-
-    // 如果累积内容为空，初始化它
-    if (!accumulatedTheater) accumulatedTheater = plainText;
 
     // 跳转到生成面板
     $('.theater-tab[data-tab="generate"]').click();
@@ -3296,9 +3399,14 @@ async function runGeneration(instruction, isAuto) {
     const { chat, characters, characterId, name1, name2 } = ctx;
     if (!chat?.length) { if (!isAuto) toastr.warning('无聊天记录'); return; }
 
-    const chatCtx = chat.slice(-(settings.contextRange || 10)).map(m =>
+    const contextCount = Number.isFinite(Number(settings.contextRange)) ? Math.max(0, Number(settings.contextRange)) : 10;
+    const readChatContext = settings.readChatContext !== false;
+    const chatCtx = readChatContext ? chat.slice(-contextCount).map(m =>
         `${m.is_user ? (name1 || 'User') : (m.name || name2 || 'Char')}: ${extractMesContent(m.mes)}`
-    ).join('\n\n');
+    ).join('\n\n') : '';
+    const chatInfo = readChatContext
+        ? `以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}\n\n---\n\n`
+        : '本次不读取聊天前文，请只根据角色设定、世界书和用户指令生成小剧场。\n\n---\n\n';
 
     let charInfo = '';
     if (characterId !== undefined && characters[characterId]) {
@@ -3317,16 +3425,17 @@ async function runGeneration(instruction, isAuto) {
 
     let renderRules = DEFAULT_RENDER_TEMPLATE;
     const rs = settings.selectedRenderIndex || '__default__';
+    const isPlainTextRender = rs === '__plain_text__';
     if (rs === '__default_pc__') renderRules = DEFAULT_RENDER_TEMPLATE_PC;
+    else if (isPlainTextRender) renderRules = DEFAULT_RENDER_TEMPLATE_TEXT;
     else if (rs !== '__default__') { const t = settings.renderTemplates[parseInt(rs)]; if (t) renderRules = t.content; }
-    if (settings.interactiveMode) renderRules += INTERACTIVE_ADDON;
+    if (settings.interactiveMode && !isPlainTextRender) renderRules += INTERACTIVE_ADDON;
 
     const contCtx = isAuto ? '' : continueContext;  // 自动生成永远是全新的，不掺手动的续写上下文
     const continueInfo = contCtx ? `以下是已生成的小剧场的故事内容纯文本（请在此基础上续写故事，不要重复已有内容，保持相同的角色语气和叙事风格，但用全新的HTML结构输出）：\n${contCtx}\n\n---\n\n` : '';
     const targetWordCount = parseTargetWordCount(instruction);
-    const lengthRules = lengthRequirementPrompt(targetWordCount);
 
-    const prompt = `${charInfo}${personaInfo}${wbInfo}以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}\n\n---\n\n${continueInfo}${renderRules}${lengthRules}\n\n---\n\n用户指令：${instruction}\n\n请根据以上所有信息生成小剧场。${contCtx ? '严格续写上方小剧场的内容，保持相同的HTML结构、CSS样式和角色语气，不要从头开始，不要续写正文对话。' : '严格遵守渲染规则。'}`;
+    const prompt = `${charInfo}${personaInfo}${wbInfo}${chatInfo}${continueInfo}${renderRules}\n\n---\n\n用户指令：${instruction}\n\n请根据以上所有信息生成小剧场。${contCtx ? '严格续写上方小剧场的内容，保持相同的HTML结构、CSS样式和角色语气，不要从头开始，不要续写正文对话。' : '严格遵守渲染规则。'}`;
     let systemPrompt;
     // All preset modes now produce entries
     if (!cachedPresetEntries.length) await loadPresetEntries();
@@ -3336,6 +3445,7 @@ async function runGeneration(instruction, isAuto) {
     // Append custom addons
     if (settings.customStyleAddon?.trim()) systemPrompt += '\n\n【文风补充】\n' + settings.customStyleAddon.trim();
     if (settings.customNsfwAddon?.trim()) systemPrompt += '\n\n【NSFW补充】\n' + settings.customNsfwAddon.trim();
+    const estimatedInputTokens = estimateTokenCount(systemPrompt + '\n' + prompt);
 
     // 非续写生成时重置累积内容
     if (!contCtx) accumulatedTheater = '';
@@ -3345,6 +3455,8 @@ async function runGeneration(instruction, isAuto) {
     bgStreamText = '';
     bgError = '';
     lastGeneratedHtml = '';
+    lastGeneratedText = '';
+    currentOutputMode = isPlainTextRender ? 'text' : 'html';
 
     // UI（面板可能在生成过程中被关掉，所以用函数判断面板是否还在）
     const popupAlive = () => $('#theater-generate-btn').length > 0;
@@ -3352,6 +3464,8 @@ async function runGeneration(instruction, isAuto) {
     $('#theater-output-section').hide();
     $('#theater-stream-section').show();
     $('#theater-stream-text').text('');
+    $('#theater-length-hint').hide().empty();
+    $('#theater-token-hint').hide().empty();
     $('#theater-generate-btn').hide();
     $('#theater-stop-btn').show();
     abortController = new AbortController();
@@ -3376,34 +3490,46 @@ async function runGeneration(instruction, isAuto) {
     try {
         let result;
         if (settings.apiMode === 'main') {
-            result = await generateWithMainAPI(ctx, systemPrompt, prompt, onChunk);
+            result = await generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, settings.streamEnabled !== false);
         } else {
             if (!settings.apiUrl || !settings.apiModel) {
                 toastr.warning('请先在【设置】里填好 API URL 和模型再生成', '', { timeOut: 5000 });
                 return;
             }
-            result = await callCustomAPIStream(systemPrompt, prompt, onChunk);
+            result = await callCustomAPIStream(systemPrompt, prompt, onChunk, settings.streamEnabled !== false);
         }
         if (!result) { theaterError('API未返回内容'); return; }
-        lastGeneratedHtml = extractHtml(result);
-
-        // 更新累积内容（用于多次续写）
-        let newText = htmlToPlainText(lastGeneratedHtml);
-        if (!newText) {
-            const rawText = htmlToPlainText(result) || String(result || '').trim();
-            if (rawText) {
-                lastGeneratedHtml = textFallbackHtml(rawText);
-                newText = htmlToPlainText(lastGeneratedHtml);
-                toastr.warning('模型没有返回可显示的 HTML，已用原始文本兜底显示');
+        let newText = '';
+        if (isPlainTextRender) {
+            newText = htmlToPlainText(String(result || '')) || String(result || '').trim();
+            lastGeneratedText = newText;
+            lastGeneratedHtml = textFallbackHtml(newText);
+        } else {
+            lastGeneratedHtml = extractHtml(result);
+            newText = htmlToPlainText(lastGeneratedHtml);
+            if (!newText) {
+                const rawText = htmlToPlainText(result) || String(result || '').trim();
+                if (rawText) {
+                    lastGeneratedHtml = textFallbackHtml(rawText);
+                    newText = htmlToPlainText(lastGeneratedHtml);
+                    toastr.warning('模型没有返回可显示的 HTML，已用原始文本兜底显示');
+                }
             }
+            lastGeneratedText = newText;
         }
         if (!newText) {
             theaterError('生成完成但没有可显示内容。请换一个渲染模板，或让模型输出完整 HTML。');
             return;
         }
-        checkLengthRequirement(targetWordCount, readableCharCount(newText));
+        updateLengthHint(targetWordCount, readableCharCount(newText));
+        updateTokenHint(estimatedInputTokens, estimateTokenCount(String(result || '')));
         if (newText) {
             accumulatedTheater = accumulatedTheater ? (accumulatedTheater + '\n\n---\n\n' + newText) : newText;
+            if (contCtx) {
+                const combinedText = accumulatedTheater;
+                lastGeneratedHtml = textFallbackHtml(combinedText);
+                lastGeneratedText = combinedText;
+            }
             if (contCtx) continueContext = accumulatedTheater.length > 8000 ? '…（前文省略）\n\n' + accumulatedTheater.slice(-8000) : accumulatedTheater;
         }
         generationSucceeded = true;
@@ -3421,7 +3547,7 @@ async function runGeneration(instruction, isAuto) {
         }
 
         if (popupAlive()) {
-            showInIframe(lastGeneratedHtml);
+            showInIframe(lastGeneratedHtml, currentOutputMode);
             $('#theater-stream-section').hide();
             $('#theater-output-section').show();
             updateRecentNav();
@@ -3529,7 +3655,7 @@ function setBallDot(on) {
 // ============================================================
 // Main API bridge (experimental)
 // ============================================================
-async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
+async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStream = true) {
     const messages = [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt },
@@ -3541,12 +3667,12 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
     const CCS = ctx?.ChatCompletionService || window?.SillyTavern?.getContext?.()?.ChatCompletionService;
     if (CCS && typeof CCS.processRequest === 'function') {
         try {
-            return await callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk);
+            return await callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk, shouldStream);
         } catch (e) {
             if (e?.name === 'AbortError') throw e;
             console.warn('[Theater] ChatCompletionService failed, fallback to TavernHelper:', e);
             if (window.TavernHelper && typeof window.TavernHelper.generateRaw === 'function') {
-                return await callViaGenerateRaw(messages, signal, onChunk);
+                return await callViaGenerateRaw(messages, signal, onChunk, shouldStream);
             }
             throwFriendlyMainApi(e, onChunk);
         }
@@ -3557,10 +3683,10 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk) {
         onChunk(tip);
         throw new Error(tip);
     }
-    return await callViaGenerateRaw(messages, signal, onChunk);
+    return await callViaGenerateRaw(messages, signal, onChunk, shouldStream);
 }
 
-async function callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk) {
+async function callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk, shouldStream = true) {
     const ctx = SillyTavern.getContext();
     const oai = ctx?.oai_settings || globalThis.oai_settings;
     const source = oai?.chat_completion_source;
@@ -3574,7 +3700,7 @@ async function callViaChatCompletionService(CCS, messages, maxTokens, signal, on
     let result;
     try {
         result = await CCS.processRequest(
-            { messages, model, chat_completion_source: source, max_tokens: maxTokens, stream: true },
+            { messages, model, chat_completion_source: source, max_tokens: maxTokens, stream: shouldStream },
             { signal },
             false,
             signal,
@@ -3631,7 +3757,7 @@ function throwFriendlyMainApi(e, onChunk) {
     throw e;
 }
 
-async function callViaGenerateRaw(messages, signal, onChunk) {
+async function callViaGenerateRaw(messages, signal, onChunk, shouldStream = true) {
     const TIMEOUT_MS = 5 * 60 * 1000;
 
     const abortPromise = signal
@@ -3658,7 +3784,7 @@ async function callViaGenerateRaw(messages, signal, onChunk) {
                 },
                 injects: [],
                 max_chat_history: 0,
-                should_stream: true,
+                should_stream: shouldStream,
                 signal,
             }),
             abortPromise,
@@ -3676,26 +3802,39 @@ async function callViaGenerateRaw(messages, signal, onChunk) {
 // ============================================================
 // Custom API streaming
 // ============================================================
-async function callCustomAPIStream(sys, user, onChunk) {
+function buildCustomEndpoint(url, path) {
+    const base = String(url || '').replace(/\/+$/, '');
+    if (base.endsWith(path)) return base;
+    if (base.endsWith('/v1')) return base + path;
+    return base + '/v1' + path;
+}
+
+async function callCustomAPIStream(sys, user, onChunk, shouldStream = true) {
     const url = settings.apiUrl.replace(/\/+$/, '');
     const isAnthropic = /anthropic|claude/i.test(url);
 
     let endpoint, body, headers;
     if (isAnthropic) {
         if (!settings.apiKey) throw new Error('Anthropic 接口需要 API Key');
-        endpoint = url.includes('/v1') ? url + '/messages' : url + '/v1/messages';
+        endpoint = buildCustomEndpoint(url, '/messages');
         headers = { 'Content-Type': 'application/json', 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01' };
-        body = JSON.stringify({ model: settings.apiModel, max_tokens: 8192, stream: true, system: sys, messages: [{ role: 'user', content: user }] });
+        body = JSON.stringify({ model: settings.apiModel, max_tokens: 8192, stream: shouldStream, system: sys, messages: [{ role: 'user', content: user }] });
     } else {
-        endpoint = url.includes('/v1') ? url + '/chat/completions' : url + '/v1/chat/completions';
+        endpoint = buildCustomEndpoint(url, '/chat/completions');
         headers = { 'Content-Type': 'application/json' };
         if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`;
-        body = JSON.stringify({ model: settings.apiModel, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], stream: true, max_tokens: 8192 });
+        body = JSON.stringify({ model: settings.apiModel, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], stream: shouldStream, max_tokens: 8192 });
     }
 
     const r = await fetch(endpoint, { method: 'POST', headers, body, signal: abortController?.signal });
     if (!r.ok) throw new Error(`API ${r.status}: ${(await r.text().catch(() => '')).substring(0, 200)}`);
-    return await readSSEStream(r, onChunk, isAnthropic);
+    if (shouldStream) return await readSSEStream(r, onChunk, isAnthropic);
+    const raw = await r.text();
+    let result = raw.trim();
+    try { result = extractStreamText(JSON.parse(result), isAnthropic) || result; } catch {}
+    if (!result) throw new Error('API 返回空内容');
+    onChunk(result);
+    return result;
 }
 
 // ============================================================
@@ -3812,6 +3951,7 @@ function buildDiagnostics() {
     const selectedRender = settings.selectedRenderIndex || '__default__';
     const customRenderOk = selectedRender === '__default__'
         || selectedRender === '__default_pc__'
+        || selectedRender === '__plain_text__'
         || !!(settings.renderTemplates || [])[parseInt(selectedRender)];
 
     const rows = [
@@ -3893,14 +4033,26 @@ function textFallbackHtml(text) {
 
 let currentDisplayHtml = '';   // 当前iframe中显示的内容
 
-function showInIframe(html) {
+function showInIframe(html, mode = 'html', allowTextFallback = true) {
     const f = document.getElementById('theater-output-frame'); if (!f) return;
     currentDisplayHtml = html;
+    currentOutputMode = mode;
+    if (mode === 'text') lastGeneratedText = htmlToPlainText(html);
+    $('#theater-copy-html-btn span').text(mode === 'text' ? '复制文字' : '复制HTML');
     f.srcdoc = html;
     f.onload = () => {
         try {
+            const doc = f.contentDocument || f.contentWindow.document;
+            const visibleText = (doc.body?.innerText || '').trim();
+            const sourceText = htmlToPlainText(html);
+            // 某些模型生成的 CSS 会把正文整体隐藏；流式区有内容而结果区空白时，保住文字优先。
+            if (allowTextFallback && sourceText && !visibleText) {
+                toastr.warning('生成内容无法正常显示，已切换为纯文字兜底展示');
+                showInIframe(textFallbackHtml(sourceText), 'text', false);
+                return;
+            }
             const isMobile = window.innerWidth <= 768;
-            const scrollH = (f.contentDocument || f.contentWindow.document).documentElement.scrollHeight + 20;
+            const scrollH = doc.documentElement.scrollHeight + 20;
             const minH = isMobile ? 320 : 240;
             const maxH = isMobile ? window.innerHeight * 0.75 : 720;
             f.style.height = Math.min(Math.max(scrollH, minH), maxH) + 'px';
