@@ -1,14 +1,32 @@
-// 千夜浮梦 · 小剧场生成器 v3.0.0 — by 禾禾 & 麓克
+// 千夜浮梦 · 小剧场生成器 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 import { theaterError as notifyTheaterError } from './notify.js';
 import { playSoundFile } from './notification-sound.js';
 import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follow.js';
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
+import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
+import { API_PROTOCOLS, buildApiEndpoint, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, normalizeMaxTokens, resolveProtocol } from './api-client.js';
+import { buildContinuationInstruction, buildGenerationPayload } from './generation-payload.js';
+import { debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
+import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
+import { abortGenerationJob, addGenerationSegment, createGenerationJob, shouldContinueJob } from './generation-job.js';
+import { tailText } from './text-counter.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.2.3';
+const VERSION = '3.2.4';
 let latestRemoteVersion = null;
+let lastRequestMetrics = null;
+const requestMetricsLog = [];
+let currentGenerationJob = null;
+installSafeResizeListener();
+
+function recordRequestMetrics(metrics) {
+    if (!metrics || metrics._recorded) return;
+    metrics._recorded = true;
+    requestMetricsLog.unshift(metrics);
+    if (requestMetricsLog.length > 5) requestMetricsLog.length = 5;
+}
 const cloneDefaultSettings = () => {
     if (typeof structuredClone === 'function') return structuredClone(defaultSettings);
     return JSON.parse(JSON.stringify(defaultSettings));
@@ -163,7 +181,10 @@ const defaultSettings = Object.freeze({
     skinMode: 'default',  // 'default' (内置粉彩) | 'theater' (跟随酒馆) | 'custom' (用户CSS接管)
     uiFontSize: 13.5,
     apiMode: 'custom',  // 'custom' 独立 API | 'main' 酒馆主 API（实验）
-    apiUrl: '', apiKey: '', apiModel: '', streamEnabled: true,
+    apiUrl: '', apiKey: '', apiModel: '', apiProtocol: 'auto', streamEnabled: true,
+    maxOutputTokens: 8192,
+    autoContinue: false,
+    maxAutoRounds: 3,
     userPersona: '',
     worldBookEntries: [], worldBookStates: [],  // 旧版字段，v2.8.0 起仅用于迁移
     worldBookStatesByBook: {},  // { [bookName]: { [entryKey]: false } }，缺省 true
@@ -210,6 +231,14 @@ function idbReq(req) {
     });
 }
 
+function idbTransactionDone(transaction) {
+    return new Promise((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error || new Error('IndexedDB transaction failed'));
+        transaction.onabort = () => reject(transaction.error || new Error('IndexedDB transaction aborted'));
+    });
+}
+
 async function storageInit() {
     try {
         idb = await new Promise((resolve, reject) => {
@@ -241,10 +270,13 @@ async function storageInit() {
     try {
         if (Array.isArray(settings.history) && settings.history.length) {
             const n = settings.history.length;
+            const transaction = idb.transaction('history', 'readwrite');
+            const completed = idbTransactionDone(transaction);
+            const store = transaction.objectStore('history');
             for (const h of settings.history) {
-                await idbReq(idb.transaction('history', 'readwrite').objectStore('history')
-                    .add({ title: h.title, html: h.html, instruction: h.instruction, date: h.date }));
+                store.add({ title: h.title, html: h.html, instruction: h.instruction, date: h.date });
             }
+            await completed;
             settings.history = [];
             save();
             console.log(`[Theater] ${n} 条历史已迁移到 IndexedDB`);
@@ -335,11 +367,14 @@ async function init() {
     const ctx = SillyTavern.getContext();
     const { extensionSettings, renderExtensionTemplateAsync, eventSource, event_types } = ctx;
 
-    if (!extensionSettings[MODULE_NAME]) extensionSettings[MODULE_NAME] = cloneDefaultSettings();
+    const existingSettings = extensionSettings[MODULE_NAME];
+    const upgradeNeedsProtocolCompatibility = !!existingSettings && !hasOwn(existingSettings, 'apiProtocol');
+    if (!existingSettings) extensionSettings[MODULE_NAME] = cloneDefaultSettings();
     for (const k of Object.keys(defaultSettings)) {
         if (!hasOwn(extensionSettings[MODULE_NAME], k)) extensionSettings[MODULE_NAME][k] = defaultSettings[k];
     }
     settings = extensionSettings[MODULE_NAME];
+    if (upgradeNeedsProtocolCompatibility) settings.apiProtocol = 'auto';
     // Migrate: clean up legacy fields
     if (settings.selectedPresetName === '__builtin__' || settings.selectedPresetName === '__custom__' || settings.selectedPresetName === '__follow__') {
         settings.selectedPresetName = '';
@@ -374,6 +409,7 @@ async function init() {
 
     const html = await renderExtensionTemplateAsync('third-party/st-theater', 'settings');
     $('#extensions_settings2').append(html);
+    $('#theater-settings-version').text(`v${VERSION}`);
     $('#theater-open-btn').on('click', openTheaterPopup);
 
     const addWand = () => {
@@ -389,6 +425,7 @@ async function init() {
     // 跟随角色卡：切聊天/角色时自动换成这张卡绑定的世界书
     if (event_types?.CHAT_CHANGED) {
         eventSource.on(event_types.CHAT_CHANGED, async () => {
+            scheduleTokenEstimate();
             if (!settings.followCharCard) return;
             try { await applyCharBoundBooks(); } catch (e) { console.warn('[Theater] 跟随角色卡失败:', e); }
         });
@@ -811,6 +848,10 @@ function buildPopupHTML() {
         <div class="theater-section">
             <label class="theater-label">小剧场指令</label>
             <textarea id="theater-instruction" class="theater-textarea" rows="4" placeholder="例如：生成一个角色们一起吃火锅的番外小剧场">${esc(settings.lastInstruction || '')}</textarea>
+            <div id="theater-token-summary" style="display:flex;justify-content:space-between;gap:8px;font-size:.78em;opacity:.68;margin:5px 1px 7px;cursor:pointer;white-space:nowrap;overflow:hidden;">
+                <span id="theater-token-summary-value">正在估算…</span><span>明细 ▾</span>
+            </div>
+            <div id="theater-token-details" class="theater-hint-inline" style="display:none;margin:-2px 1px 8px;line-height:1.6;"></div>
             <div class="theater-toggle-row">
                 <label class="theater-toggle-label"><input type="checkbox" id="theater-interactive-toggle" ${settings.interactiveMode ? 'checked' : ''}><span>交互模式</span></label>
                 <span class="theater-hint-inline">生成可交互的小剧场</span>
@@ -824,7 +865,6 @@ function buildPopupHTML() {
                 <div id="theater-generate-btn" class="theater-btn primary generate">${LAMP_SVG_HTML}<span>生成</span></div>
                 <div id="theater-stop-btn" class="theater-btn danger generate" style="display:none;"><i class="fa-solid fa-stop"></i><span>停止</span></div>
             </div>
-            <div id="theater-token-hint" class="theater-hint-inline" style="display:none; margin:8px 0 0;"></div>
         </div>
         <div class="theater-section" id="theater-stream-section" style="display:none;">
             <label class="theater-label"><i class="fa-solid fa-feather"></i> 实时输出</label>
@@ -838,10 +878,13 @@ function buildPopupHTML() {
             </div>
             <label class="theater-label">生成结果</label>
             <div id="theater-length-hint" class="theater-hint-inline" style="display:none; margin:-4px 0 8px;"></div>
-            <div id="theater-output-container"><iframe id="theater-output-frame" sandbox="allow-scripts allow-same-origin" class="theater-iframe"></iframe></div>
+            <div id="theater-output-token-hint" class="theater-hint-inline" style="display:none; margin:-4px 0 8px;"></div>
+            <div id="theater-output-container"><iframe id="theater-output-frame" sandbox="" class="theater-iframe"></iframe></div>
+            <textarea id="theater-result-text-editor" class="theater-textarea" rows="12" style="display:none;margin-top:8px;" placeholder="编辑小剧场正文…"></textarea>
             <div class="theater-btn-row">
                 <div id="theater-save-history-btn" class="theater-btn"><i class="fa-solid fa-bookmark"></i><span>保存</span></div>
                 <div id="theater-copy-html-btn" class="theater-btn"><i class="fa-solid fa-copy"></i><span>复制HTML</span></div>
+                <div id="theater-view-text-btn" class="theater-btn"><i class="fa-solid fa-align-left"></i><span>纯文字查看</span></div>
                 <div id="theater-continue-btn" class="theater-btn"><i class="fa-solid fa-forward"></i><span>续写</span></div>
                 <div id="theater-edit-result-btn" class="theater-btn"><i class="fa-solid fa-pen-to-square"></i><span>编辑文字</span></div>
                 <div id="theater-save-edit-btn" class="theater-btn primary" style="display:none;"><i class="fa-solid fa-check"></i><span>完成编辑</span></div>
@@ -1109,6 +1152,11 @@ function buildPopupHTML() {
                 <span class="theater-hint-inline">关闭后等待完整内容返回；不保证解决模型字数截断</span>
             </div>
             <div id="theater-custom-api-area" style="${settings.apiMode === 'main' ? 'display:none;' : ''}margin-top:10px;">
+                <select id="theater-api-protocol" class="theater-select" style="margin-bottom:6px;">
+                    <option value="auto" ${(settings.apiProtocol || 'auto') === 'auto' ? 'selected' : ''}>自动判断（默认）</option>
+                    <option value="openai" ${settings.apiProtocol === 'openai' ? 'selected' : ''}>OpenAI Chat Completions 兼容格式</option>
+                    <option value="anthropic" ${settings.apiProtocol === 'anthropic' ? 'selected' : ''}>Anthropic Messages 兼容格式</option>
+                </select>
                 <input id="theater-api-url" class="theater-input" placeholder="API URL" value="${esc(settings.apiUrl || '')}">
                 <input id="theater-api-key" class="theater-input" type="password" placeholder="API Key" value="${esc(settings.apiKey || '')}" style="margin-top:6px;">
                 <div style="margin-top:6px;">
@@ -1119,7 +1167,19 @@ function buildPopupHTML() {
                     <select id="theater-api-model-select" class="theater-select" style="display:none;"></select>
                     <input id="theater-api-model" class="theater-input" placeholder="模型名称（可手动输入，或点上方按钮自动获取）" value="${esc(settings.apiModel || '')}">
                 </div>
+                <div class="theater-inline-setting" style="margin-top:8px;">
+                    <span>最大输出 Token</span>
+                    <input id="theater-max-output-tokens" class="theater-input theater-number-input" type="number" min="256" max="131072" step="256" value="${normalizeMaxTokens(settings.maxOutputTokens)}">
+                </div>
                 <div class="theater-btn-row"><div id="theater-save-api-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存</span></div></div>
+            </div>
+            <div class="theater-toggle-row" style="margin-top:8px;">
+                <label class="theater-toggle-label"><input type="checkbox" id="theater-auto-continue" ${settings.autoContinue ? 'checked' : ''}><span>字数不足时自动补写</span></label>
+                <span class="theater-hint-inline">会增加 API 请求次数和消耗</span>
+            </div>
+            <div class="theater-inline-setting" style="margin-top:6px;">
+                <span>最多生成轮数</span>
+                <input id="theater-max-auto-rounds" class="theater-input theater-number-input" type="number" min="1" max="10" step="1" value="${Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3))}">
             </div>
         </div>
         <div class="theater-section">
@@ -1216,7 +1276,7 @@ function buildPopupHTML() {
                 <div id="theater-update-btn" class="theater-btn primary"><i class="fa-solid fa-cloud-arrow-down"></i><span>检查更新</span></div>
             </div>
         </div>
-        <p class="theater-version">v${VERSION}</p>
+        <p class="theater-version">当前版本 v${VERSION}</p>
     </div>
 
     </div>
@@ -1287,6 +1347,7 @@ function rollRandomInstruction() {
     $('#theater-instruction').val(t.content);
     settings.lastInstruction = t.content;
     save();
+    scheduleTokenEstimate();
     toastr.info(`已填入：${t.name || '未命名'}`, '', { timeOut: 3000 });
 }
 
@@ -1544,8 +1605,9 @@ async function openTheaterPopup() {
     // Restore selected preset
     if (settings.selectedPresetName) {
         $('#theater-preset-name-select').val(settings.selectedPresetName);
-        loadPresetEntries();
+        await loadPresetEntries();
     }
+    await refreshTokenEstimate();
 
     // === 恢复后台生成状态 ===
     if (isGenerating) {
@@ -1579,6 +1641,8 @@ async function openTheaterPopup() {
 // ============================================================
 function bindEvents() {
     const $d = $(document);
+    const tokenAffectingSelectors = '#theater-interactive-toggle,#theater-context-range,#theater-read-chat-context,#theater-render-select,#theater-preset-name-select,#theater-style-addon,#theater-nsfw-addon,.theater-preset-check,.theater-wb-check';
+    $d.off('change.ttoken').on('change.ttoken', tokenAffectingSelectors, scheduleTokenEstimate);
 
     // Tabs
     $d.off('click.tt').on('click.tt', '.theater-tab', function () {
@@ -1592,7 +1656,8 @@ function bindEvents() {
     $d.off('click.tg').on('click.tg', '#theater-generate-btn', generateTheater);
     $d.off('click.tstop').on('click.tstop', '#theater-stop-btn', stopGeneration);
     $d.off('change.ti').on('change.ti', '#theater-interactive-toggle', function () { settings.interactiveMode = $(this).is(':checked'); save(); });
-    $d.off('input.tii').on('input.tii', '#theater-instruction', function () { settings.lastInstruction = $(this).val(); save(); });
+    $d.off('input.tii').on('input.tii', '#theater-instruction', function () { settings.lastInstruction = $(this).val(); save(); scheduleTokenEstimate(); });
+    $d.off('click.ttsum').on('click.ttsum', '#theater-token-summary', function () { $('#theater-token-details').toggle(); });
 
     // ---- Material: Preset ----
     $d.off('input.tpsq').on('input.tpsq', '#theater-preset-search', function () {
@@ -1916,60 +1981,55 @@ function bindEvents() {
     // ---- History ----
     $d.off('click.tsh').on('click.tsh', '#theater-save-history-btn', saveToHistory);
     $d.off('click.tch').on('click.tch', '#theater-copy-html-btn', copyHtml);
+    $d.off('click.tvtext').on('click.tvtext', '#theater-view-text-btn', function () {
+        const text = htmlToPlainText(lastGeneratedHtml || currentDisplayHtml);
+        if (!text) { toastr.warning('当前结果里没有可提取的正文'); return; }
+        lastGeneratedText = text;
+        currentOutputMode = 'text';
+        showInIframe(textFallbackHtml(text), 'text');
+        toastr.info('已切换为纯文字安全查看；原始生成结果仍可从最近记录或历史中打开');
+    });
     // ---- Recent generations nav ----
     $d.off('click.trp').on('click.trp', '#theater-recent-prev', function () {
         if (recentIndex <= 0) return;
         recentIndex--;
-        showInIframe(recentCache[recentIndex].html);
+        showInIframe(recentCache[recentIndex].html, recentCache[recentIndex].mode || 'html');
         lastGeneratedHtml = recentCache[recentIndex].html;
         updateRecentNav();
     });
     $d.off('click.trn').on('click.trn', '#theater-recent-next', function () {
         if (recentIndex >= recentCache.length - 1) return;
         recentIndex++;
-        showInIframe(recentCache[recentIndex].html);
+        showInIframe(recentCache[recentIndex].html, recentCache[recentIndex].mode || 'html');
         lastGeneratedHtml = recentCache[recentIndex].html;
         updateRecentNav();
     });
     // ---- Edit result text ----
     $d.off('click.ter').on('click.ter', '#theater-edit-result-btn', function () {
-        const f = document.getElementById('theater-output-frame');
-        if (!f) return;
-        try {
-            const doc = f.contentDocument || f.contentWindow.document;
-            doc.querySelectorAll('p, span, h1, h2, h3, h4, h5, h6, li, td, th, div, blockquote').forEach(el => {
-                if (!el.querySelector('p, span, h1, h2, h3, h4, h5, h6, li, td, th, div, blockquote')) {
-                    el.setAttribute('contenteditable', 'true');
-                    el.style.outline = '1px dashed rgba(128,128,128,.3)';
-                    el.style.outlineOffset = '2px';
-                    el.style.cursor = 'text';
-                }
-            });
-            $('#theater-edit-result-btn').hide();
-            $('#theater-save-edit-btn').show();
-            toastr.info('点击小剧场里的文字即可编辑，改完点「完成编辑」');
-        } catch { toastr.error('无法进入编辑模式'); }
+        const html = lastGeneratedHtml || currentDisplayHtml;
+        const text = htmlToPlainText(html);
+        if (!text) { toastr.warning('没有可编辑的正文'); return; }
+        $('#theater-result-text-editor').val(text).show().trigger('focus');
+        $('#theater-output-frame').hide();
+        $('#theater-edit-result-btn').hide();
+        $('#theater-save-edit-btn').show();
+        toastr.info('正在父页面安全编辑正文；保存后使用纯文字卡片显示');
     });
     $d.off('click.tse').on('click.tse', '#theater-save-edit-btn', function () {
-        const f = document.getElementById('theater-output-frame');
-        if (!f) return;
-        try {
-            const doc = f.contentDocument || f.contentWindow.document;
-            doc.querySelectorAll('[contenteditable]').forEach(el => {
-                el.removeAttribute('contenteditable');
-                el.style.outline = '';
-                el.style.outlineOffset = '';
-                el.style.cursor = '';
-            });
-            const newHtml = '<!DOCTYPE html>' + doc.documentElement.outerHTML;
-            lastGeneratedHtml = newHtml;
-            currentDisplayHtml = newHtml;
-            // 同步更新 recentGenerations
-            if (recentCache[recentIndex]) { recentCache[recentIndex].html = newHtml; recentPersist(); }
-            $('#theater-save-edit-btn').hide();
-            $('#theater-edit-result-btn').show();
-            toastr.success('编辑已保存');
-        } catch { toastr.error('保存失败'); }
+        const text = $('#theater-result-text-editor').val().trim();
+        if (!text) { toastr.warning('正文不能为空'); return; }
+        const newHtml = textFallbackHtml(text);
+        lastGeneratedHtml = newHtml;
+        lastGeneratedText = text;
+        currentDisplayHtml = newHtml;
+        currentOutputMode = 'text';
+        if (recentCache[recentIndex]) { recentCache[recentIndex].html = newHtml; recentCache[recentIndex].mode = 'text'; recentPersist(); }
+        $('#theater-result-text-editor').hide();
+        $('#theater-output-frame').show();
+        showInIframe(newHtml, 'text');
+        $('#theater-save-edit-btn').hide();
+        $('#theater-edit-result-btn').show();
+        toastr.success('编辑已保存');
     });
     // 续写：从当前生成结果
     $d.off('click.tcont').on('click.tcont', '#theater-continue-btn', function () {
@@ -2089,6 +2149,14 @@ function bindEvents() {
     $d.off('change.tstream').on('change.tstream', '#theater-stream-enabled', function () {
         settings.streamEnabled = this.checked; save();
     });
+    $d.off('change.tautocont').on('change.tautocont', '#theater-auto-continue', function () {
+        settings.autoContinue = this.checked; save();
+    });
+    $d.off('change.tautorounds').on('change.tautorounds', '#theater-max-auto-rounds', function () {
+        settings.maxAutoRounds = Math.min(10, Math.max(1, parseInt(this.value) || 3));
+        this.value = settings.maxAutoRounds;
+        save();
+    });
     $d.off('change.twbread').on('change.twbread', '#theater-wb-read-mode', async function () {
         settings.worldBookReadMode = $(this).val() === 'enabled' ? 'enabled' : 'all';
         save();
@@ -2099,6 +2167,12 @@ function bindEvents() {
         settings.apiUrl = $('#theater-api-url').val().trim().replace(/\/+$/, '');
         settings.apiKey = $('#theater-api-key').val().trim();
         settings.apiModel = $('#theater-api-model').val().trim();
+        settings.apiProtocol = $('#theater-api-protocol').val() || 'auto';
+        settings.maxOutputTokens = normalizeMaxTokens($('#theater-max-output-tokens').val());
+        settings.autoContinue = $('#theater-auto-continue').is(':checked');
+        settings.maxAutoRounds = Math.min(10, Math.max(1, parseInt($('#theater-max-auto-rounds').val()) || 3));
+        $('#theater-max-output-tokens').val(settings.maxOutputTokens);
+        $('#theater-max-auto-rounds').val(settings.maxAutoRounds);
         save(); toastr.success('API 已保存');
     });
     $d.off('click.tup').on('click.tup', '#theater-update-btn', updateExtension);
@@ -2516,6 +2590,7 @@ async function loadPresetEntries() {
 
     $('#theater-preset-current').show();
     $('#theater-preset-entries').html(renderPresetEntries());
+    scheduleTokenEstimate();
 }
 
 function renderPresetEntries() {
@@ -2659,6 +2734,7 @@ async function reloadWorldBooks({ silent = false } = {}) {
     syncManualIntoWB();
     save();
     refreshWBUI();
+    scheduleTokenEstimate();
     if (!silent && books.length) toastr.success(`已加载 ${loadedBooks} 本世界书 · ${all.length} 个条目`);
 }
 
@@ -3304,19 +3380,85 @@ function readableCharCount(text) {
     return matches ? matches.length : 0;
 }
 
-function estimateTokenCount(text) {
-    const value = String(text || '');
-    const cjk = (value.match(/[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/g) || []).length;
-    const other = Math.max(0, value.length - cjk);
-    return Math.max(1, Math.ceil(cjk * 1.5 + other / 4));
-}
-
 function updateTokenHint(inputTokens, outputTokens) {
-    const $hint = $('#theater-token-hint');
+    const $hint = $('#theater-output-token-hint');
     if (!$hint.length) return;
     const total = inputTokens + outputTokens;
     $hint.text(`Token 预估：输入 ${inputTokens.toLocaleString()} · 输出 ${outputTokens.toLocaleString()} · 合计 ${total.toLocaleString()}（不同模型会有误差）`).show();
 }
+
+async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, loadPreset = true, includeLengthRequirement = true } = {}) {
+    const ctx = SillyTavern.getContext();
+    const { chat = [], characters = [], characterId, name1, name2 } = ctx;
+    const contextCount = Number.isFinite(Number(settings.contextRange)) ? Math.max(0, Number(settings.contextRange)) : 10;
+    const readChatContext = settings.readChatContext !== false;
+    const chatCtx = readChatContext ? chat.slice(-contextCount).map(m =>
+        `${m.is_user ? (name1 || 'User') : (m.name || name2 || 'Char')}: ${extractMesContent(m.mes)}`
+    ).join('\n\n') : '';
+    const context = readChatContext
+        ? `以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}`
+        : '本次不读取聊天前文，请只根据角色设定、世界书和用户指令生成小剧场。';
+
+    let role = '';
+    if (characterId !== undefined && characters[characterId]) {
+        const c = characters[characterId];
+        const description = c.data?.description || c.description || '';
+        const personality = c.data?.personality || c.personality || '';
+        if (description) role += `角色设定：\n${description}\n\n`;
+        if (personality) role += `角色性格：\n${personality}`;
+    }
+    const currentPersona = settings.followUserPersona ? loadPersona({ silent: true }) : (settings.userPersona || '');
+    const persona = currentPersona?.trim() ? `User人设：\n${currentPersona.trim()}` : '';
+    const wbParts = wbEntries.filter((_entry, index) => wbStates[index] !== false).map(entry => entry.content);
+    const worldBook = wbParts.length ? `世界书设定：\n${wbParts.join('\n\n')}` : '';
+
+    const selectedRender = settings.selectedRenderIndex || '__default__';
+    const isPlainTextRender = forcePlainText || selectedRender === '__plain_text__';
+    let rules = isPlainTextRender ? DEFAULT_RENDER_TEMPLATE_TEXT : DEFAULT_RENDER_TEMPLATE;
+    if (!isPlainTextRender && selectedRender === '__default_pc__') rules = DEFAULT_RENDER_TEMPLATE_PC;
+    else if (!isPlainTextRender && selectedRender !== '__default__') {
+        const template = settings.renderTemplates[parseInt(selectedRender)];
+        if (template) rules = template.content;
+    }
+    if (settings.interactiveMode && !isPlainTextRender) rules += INTERACTIVE_ADDON;
+
+    if (loadPreset && !cachedPresetEntries.length) await loadPresetEntries();
+    const preset = getSelectedPresetPrompt() || DEFAULT_SYSTEM_PROMPT;
+    const addons = [
+        settings.customStyleAddon?.trim() ? `【文风补充】\n${settings.customStyleAddon.trim()}` : '',
+        settings.customNsfwAddon?.trim() ? `【NSFW补充】\n${settings.customNsfwAddon.trim()}` : '',
+    ].filter(Boolean).join('\n\n');
+    const contCtx = continuationText === null ? continueContext : continuationText;
+    const targetWordCount = parseTargetWordCount(instruction);
+    const continuation = contCtx ? `以下是已有正文，请承接结尾、不要重复：\n${contCtx}` : '';
+    let fixed = contCtx
+        ? '只输出新增内容，保持人物语气、视角和时态，不要复述前文。'
+        : '请根据以上所有信息生成小剧场，严格遵守渲染规则。';
+    if (targetWordCount && includeLengthRequirement) {
+        fixed += `\n【篇幅要求】将约 ${targetWordCount} 字视为应尽量写满的正文目标，而不是允许提前结束的上限。在正文接近并达到该目标前，不要提前总结或收束；请用新的动作、对白、心理变化和情节推进充实篇幅，不要靠复述、空话或重复内容凑字数。允许为了自然完成而略微超出。`;
+    }
+    const payload = buildGenerationPayload({
+        preset, role, persona, worldBook, context, continuation, rules, addons,
+        fixed,
+        instruction: `用户指令：${instruction}`,
+    });
+    return { ...payload, isPlainTextRender, targetWordCount, ctx };
+}
+
+async function refreshTokenEstimate() {
+    if (!$('#theater-token-summary-value').length) return;
+    try {
+        const payload = await assembleGenerationPayload($('#theater-instruction').val() || '', { continuationText: continueContext, loadPreset: false });
+        const estimate = estimateTokenBreakdown(payload.tokenParts);
+        $('#theater-token-summary-value').text(`预计输入约 ${formatTokenCount(estimate.total)} Token`);
+        $('#theater-token-details').text(`预设 ${formatTokenCount(estimate.preset)} · 角色/人设 ${formatTokenCount(estimate.role)} · 世界书 ${formatTokenCount(estimate.worldBook)} · 上下文 ${formatTokenCount(estimate.context)} · 续写 ${formatTokenCount(estimate.continuation)} · 规则 ${formatTokenCount(estimate.rules)} · 当前指令 ${formatTokenCount(estimate.instruction)}`);
+    } catch (error) {
+        console.warn('[Theater] Token estimate failed:', error);
+        $('#theater-token-summary-value').text('Token 预估暂不可用');
+    }
+}
+
+const scheduleTokenEstimate = debounce(refreshTokenEstimate, 220);
 
 function updateLengthHint(target, actual) {
     const $hint = $('#theater-length-hint');
@@ -3325,7 +3467,7 @@ function updateLengthHint(target, actual) {
         $hint.hide().empty();
         return;
     }
-    const enough = actual >= Math.ceil(target * 0.9);
+    const enough = actual >= target;
     const text = enough
         ? `本次约 ${actual} 字（指令目标约 ${target} 字）`
         : `本次约 ${actual} 字（指令目标约 ${target} 字）。如想延长内容，可点击下方“续写”。`;
@@ -3343,6 +3485,7 @@ function clearContinueMode({ silent = false } = {}) {
     accumulatedTheater = '';
     $('#theater-continue-hint').remove();
     $('#theater-instruction').attr('placeholder', '输入指令…');
+    scheduleTokenEstimate();
     if (!silent) toastr.info('已取消续写');
 }
 
@@ -3367,9 +3510,11 @@ function startContinue(html) {
     $('.theater-tab[data-tab="generate"]').click();
     $('#theater-instruction').val('').attr('placeholder', '已加载前情，请输入续写指令…');
     updateContinueHint();
+    scheduleTokenEstimate();
 }
 
 function stopGeneration() {
+    if (currentGenerationJob) abortGenerationJob(currentGenerationJob);
     if (abortController) { abortController.abort(); abortController = null; }
     isGenerating = false;
     bgStreamText = '';
@@ -3394,58 +3539,15 @@ async function generateTheater() {
 // 生成核心。isAuto = 自动模式触发（弹窗可能根本没开，所有 UI 操作都已有 popupAlive 保护）
 async function runGeneration(instruction, isAuto) {
     if (isGenerating) return;
-
-    const ctx = SillyTavern.getContext();
-    const { chat, characters, characterId, name1, name2 } = ctx;
-    if (!chat?.length) { if (!isAuto) toastr.warning('无聊天记录'); return; }
-
-    const contextCount = Number.isFinite(Number(settings.contextRange)) ? Math.max(0, Number(settings.contextRange)) : 10;
-    const readChatContext = settings.readChatContext !== false;
-    const chatCtx = readChatContext ? chat.slice(-contextCount).map(m =>
-        `${m.is_user ? (name1 || 'User') : (m.name || name2 || 'Char')}: ${extractMesContent(m.mes)}`
-    ).join('\n\n') : '';
-    const chatInfo = readChatContext
-        ? `以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}\n\n---\n\n`
-        : '本次不读取聊天前文，请只根据角色设定、世界书和用户指令生成小剧场。\n\n---\n\n';
-
-    let charInfo = '';
-    if (characterId !== undefined && characters[characterId]) {
-        const c = characters[characterId];
-        const d = c.data?.description || c.description || '';
-        const p = c.data?.personality || c.personality || '';
-        if (d) charInfo += `角色设定：\n${d}\n\n`;
-        if (p) charInfo += `角色性格：\n${p}\n\n`;
-    }
-
-    const currentPersona = settings.followUserPersona ? loadPersona({ silent: true }) : (settings.userPersona || '');
-    const personaInfo = currentPersona?.trim() ? `User人设：\n${currentPersona.trim()}\n\n` : '';
-
-    const wbParts = wbEntries.filter((_e, i) => wbStates[i] !== false).map(e => e.content);
-    const wbInfo = wbParts.length ? `世界书设定：\n${wbParts.join('\n\n')}\n\n` : '';
-
-    let renderRules = DEFAULT_RENDER_TEMPLATE;
-    const rs = settings.selectedRenderIndex || '__default__';
-    const isPlainTextRender = rs === '__plain_text__';
-    if (rs === '__default_pc__') renderRules = DEFAULT_RENDER_TEMPLATE_PC;
-    else if (isPlainTextRender) renderRules = DEFAULT_RENDER_TEMPLATE_TEXT;
-    else if (rs !== '__default__') { const t = settings.renderTemplates[parseInt(rs)]; if (t) renderRules = t.content; }
-    if (settings.interactiveMode && !isPlainTextRender) renderRules += INTERACTIVE_ADDON;
-
     const contCtx = isAuto ? '' : continueContext;  // 自动生成永远是全新的，不掺手动的续写上下文
-    const continueInfo = contCtx ? `以下是已生成的小剧场的故事内容纯文本（请在此基础上续写故事，不要重复已有内容，保持相同的角色语气和叙事风格，但用全新的HTML结构输出）：\n${contCtx}\n\n---\n\n` : '';
-    const targetWordCount = parseTargetWordCount(instruction);
-
-    const prompt = `${charInfo}${personaInfo}${wbInfo}${chatInfo}${continueInfo}${renderRules}\n\n---\n\n用户指令：${instruction}\n\n请根据以上所有信息生成小剧场。${contCtx ? '严格续写上方小剧场的内容，保持相同的HTML结构、CSS样式和角色语气，不要从头开始，不要续写正文对话。' : '严格遵守渲染规则。'}`;
-    let systemPrompt;
-    // All preset modes now produce entries
-    if (!cachedPresetEntries.length) await loadPresetEntries();
-    systemPrompt = getSelectedPresetPrompt();
-    if (!systemPrompt) systemPrompt = DEFAULT_SYSTEM_PROMPT;
-
-    // Append custom addons
-    if (settings.customStyleAddon?.trim()) systemPrompt += '\n\n【文风补充】\n' + settings.customStyleAddon.trim();
-    if (settings.customNsfwAddon?.trim()) systemPrompt += '\n\n【NSFW补充】\n' + settings.customNsfwAddon.trim();
-    const estimatedInputTokens = estimateTokenCount(systemPrompt + '\n' + prompt);
+    let payload = await assembleGenerationPayload(instruction, { continuationText: contCtx });
+    const targetWordCount = payload.targetWordCount;
+    const autoLongText = !isAuto && !contCtx && !!targetWordCount && settings.autoContinue && !settings.interactiveMode;
+    if (autoLongText && !payload.isPlainTextRender) {
+        payload = await assembleGenerationPayload(instruction, { continuationText: '', forcePlainText: true });
+    }
+    let { ctx, systemPrompt, userPrompt: prompt, isPlainTextRender } = payload;
+    const estimatedInputTokens = estimateTokenBreakdown(payload.tokenParts).total;
 
     // 非续写生成时重置累积内容
     if (!contCtx) accumulatedTheater = '';
@@ -3465,72 +3567,126 @@ async function runGeneration(instruction, isAuto) {
     $('#theater-stream-section').show();
     $('#theater-stream-text').text('');
     $('#theater-length-hint').hide().empty();
-    $('#theater-token-hint').hide().empty();
+    $('#theater-output-token-hint').hide().empty();
     $('#theater-generate-btn').hide();
     $('#theater-stop-btn').show();
     abortController = new AbortController();
-
     let chunkThrottle = null;
+    let firstChunkShown = false;
+    let renderedStreamText = '';
     const flushStream = () => {
-        const $el = $('#theater-stream-text');
-        if ($el.length) {
-            $el.text(bgStreamText);
-            const el = $el[0];
-            if (el) el.scrollTop = el.scrollHeight;
+        const el = document.getElementById('theater-stream-text');
+        if (!el) return;
+        const domText = el.textContent || '';
+        if (domText !== renderedStreamText) renderedStreamText = domText;
+        const nextText = String(bgStreamText || '');
+        const wasNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+        if (nextText.startsWith(renderedStreamText)) {
+            const delta = nextText.slice(renderedStreamText.length);
+            if (delta) el.appendChild(document.createTextNode(delta));
+        } else {
+            // 某些非标准接口会从全量文本切回较短内容，此时只做一次整体校正。
+            el.textContent = nextText;
         }
+        renderedStreamText = nextText;
+        if (wasNearBottom) el.scrollTop = el.scrollHeight;
     };
     const onChunk = (text) => {
         bgStreamText = text;
+        if (!firstChunkShown && String(text || '').trim()) {
+            firstChunkShown = true;
+            markFirstToken(lastRequestMetrics);
+            flushStream();
+            return;
+        }
         if (!chunkThrottle) {
             chunkThrottle = setTimeout(() => { chunkThrottle = null; flushStream(); }, 100);
         }
     };
     let generationSucceeded = false;
+    currentGenerationJob = createGenerationJob({
+        targetChars: targetWordCount,
+        maxRounds: Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3)),
+        autoContinue: autoLongText,
+    });
 
     try {
-        let result;
-        if (settings.apiMode === 'main') {
-            result = await generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, settings.streamEnabled !== false);
-        } else {
-            if (!settings.apiUrl || !settings.apiModel) {
-                toastr.warning('请先在【设置】里填好 API URL 和模型再生成', '', { timeOut: 5000 });
-                return;
+        let firstHtml = '';
+        let outputTokenEstimate = 0;
+        let roundPayload = payload;
+        while (true) {
+            if (currentGenerationJob.aborted) throw new DOMException('Aborted', 'AbortError');
+            const round = currentGenerationJob.round;
+            if (popupAlive()) {
+                const current = readableCharCount(currentGenerationJob.segments.join('\n\n'));
+                const shownMaxRounds = currentGenerationJob.autoContinue ? currentGenerationJob.maxRounds : 1;
+                $('#theater-stream-text').text(round === 1
+                    ? `正在生成第 1/${shownMaxRounds} 轮……`
+                    : `正在补写第 ${round}/${shownMaxRounds} 轮 · 当前约 ${current}/${targetWordCount} 字`);
             }
-            result = await callCustomAPIStream(systemPrompt, prompt, onChunk, settings.streamEnabled !== false);
-        }
-        if (!result) { theaterError('API未返回内容'); return; }
-        let newText = '';
-        if (isPlainTextRender) {
-            newText = htmlToPlainText(String(result || '')) || String(result || '').trim();
-            lastGeneratedText = newText;
-            lastGeneratedHtml = textFallbackHtml(newText);
-        } else {
-            lastGeneratedHtml = extractHtml(result);
-            newText = htmlToPlainText(lastGeneratedHtml);
-            if (!newText) {
-                const rawText = htmlToPlainText(result) || String(result || '').trim();
-                if (rawText) {
-                    lastGeneratedHtml = textFallbackHtml(rawText);
-                    newText = htmlToPlainText(lastGeneratedHtml);
-                    toastr.warning('模型没有返回可显示的 HTML，已用原始文本兜底显示');
+            systemPrompt = roundPayload.systemPrompt;
+            prompt = roundPayload.userPrompt;
+            ctx = roundPayload.ctx;
+            lastRequestMetrics = createRequestMetrics(settings.apiMode === 'main' ? 'main:ChatCompletionService' : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}`);
+            let result;
+            if (settings.apiMode === 'main') {
+                result = await generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, settings.streamEnabled !== false);
+            } else {
+                if (!settings.apiUrl || !settings.apiModel) {
+                    toastr.warning('请先在【设置】里填好 API URL 和模型再生成', '', { timeOut: 5000 });
+                    return;
                 }
+                result = await callCustomAPIStream(systemPrompt, prompt, onChunk, settings.streamEnabled !== false);
             }
-            lastGeneratedText = newText;
-        }
-        if (!newText) {
-            theaterError('生成完成但没有可显示内容。请换一个渲染模板，或让模型输出完整 HTML。');
-            return;
-        }
-        updateLengthHint(targetWordCount, readableCharCount(newText));
-        updateTokenHint(estimatedInputTokens, estimateTokenCount(String(result || '')));
-        if (newText) {
-            accumulatedTheater = accumulatedTheater ? (accumulatedTheater + '\n\n---\n\n' + newText) : newText;
-            if (contCtx) {
-                const combinedText = accumulatedTheater;
-                lastGeneratedHtml = textFallbackHtml(combinedText);
-                lastGeneratedText = combinedText;
+            const responseText = typeof result === 'string' ? result : result?.text;
+            if (!responseText) throw new Error('API未返回内容');
+            markCompleted(lastRequestMetrics);
+            recordRequestMetrics(lastRequestMetrics);
+            outputTokenEstimate += estimateTokenCount(responseText);
+
+            let segmentText;
+            if (round === 1 && !autoLongText && !isPlainTextRender) {
+                firstHtml = extractHtml(responseText);
+                segmentText = htmlToPlainText(firstHtml) || htmlToPlainText(responseText) || String(responseText).trim();
+            } else {
+                segmentText = htmlToPlainText(responseText) || String(responseText).trim();
             }
-            if (contCtx) continueContext = accumulatedTheater.length > 8000 ? '…（前文省略）\n\n' + accumulatedTheater.slice(-8000) : accumulatedTheater;
+            if (!segmentText) throw new Error('生成完成但没有可显示内容');
+            addGenerationSegment(currentGenerationJob, segmentText, result?.stopReason || 'unknown', result?.rawStopReason || null);
+
+            if (!shouldContinueJob(currentGenerationJob, readableCharCount)) break;
+            currentGenerationJob.round++;
+            const continuationInstruction = buildContinuationInstruction({
+                originalInstruction: instruction,
+                targetChars: targetWordCount,
+                actualChars: currentGenerationJob.actualChars,
+                round: currentGenerationJob.round,
+                maxRounds: currentGenerationJob.maxRounds,
+                tail: tailText(currentGenerationJob.segments.join('\n\n'), 1600),
+                finishThisRound: currentGenerationJob.round === currentGenerationJob.maxRounds,
+            });
+            roundPayload = await assembleGenerationPayload(continuationInstruction, { continuationText: '', forcePlainText: true, includeLengthRequirement: false });
+            firstChunkShown = false;
+            bgStreamText = '';
+        }
+
+        let newText = currentGenerationJob.segments.join('\n\n').trim();
+        currentGenerationJob.actualChars = readableCharCount(newText);
+        if (currentGenerationJob.segments.length > 1 || autoLongText || isPlainTextRender) {
+            lastGeneratedHtml = textFallbackHtml(newText);
+            currentOutputMode = 'text';
+        } else {
+            lastGeneratedHtml = firstHtml || textFallbackHtml(newText);
+        }
+        lastGeneratedText = newText;
+        updateLengthHint(targetWordCount, currentGenerationJob.actualChars);
+        updateTokenHint(estimatedInputTokens, outputTokenEstimate);
+        accumulatedTheater = accumulatedTheater ? (accumulatedTheater + '\n\n---\n\n' + newText) : newText;
+        if (contCtx) {
+            lastGeneratedHtml = textFallbackHtml(accumulatedTheater);
+            lastGeneratedText = accumulatedTheater;
+            currentOutputMode = 'text';
+            continueContext = accumulatedTheater.length > 8000 ? '…（前文省略）\n\n' + accumulatedTheater.slice(-8000) : accumulatedTheater;
         }
         generationSucceeded = true;
 
@@ -3538,6 +3694,7 @@ async function runGeneration(instruction, isAuto) {
         if (lastGeneratedHtml) {
             recentCache.unshift({
                 html: lastGeneratedHtml,
+                mode: currentOutputMode,
                 time: new Date().toLocaleString('zh-CN', { hour12: false }),
                 instruction: instruction || '',
             });
@@ -3552,14 +3709,33 @@ async function runGeneration(instruction, isAuto) {
             $('#theater-output-section').show();
             updateRecentNav();
         }
-        toastr.success(isAuto ? '自动小剧场生成完成！打开面板查看' : '小剧场生成完成！点击打开面板查看', '', { timeOut: 6000 });
+        const reached = !targetWordCount || currentGenerationJob.actualChars >= targetWordCount;
+        const stopText = currentGenerationJob.stopReason === 'length' ? '（达到输出 Token 上限）' : '';
+        const summary = targetWordCount
+            ? `目标约 ${targetWordCount} 字 · 实际约 ${currentGenerationJob.actualChars} 字 · 共 ${currentGenerationJob.round} 轮${stopText}`
+            : `生成完成 · 共 ${currentGenerationJob.round} 轮${stopText}`;
+        if (reached) toastr.success(summary, '', { timeOut: 7000 });
+        else toastr.warning(`${summary}${currentGenerationJob.round >= currentGenerationJob.maxRounds && currentGenerationJob.autoContinue ? ' · 已达到自动补写上限' : ' · 未达到目标'}`, '', { timeOut: 9000 });
         playNotificationSound();
         if (isAuto) setBallDot(true);
     } catch (err) {
-        if (err.name === 'AbortError') { toastr.info('已停止'); return; }
+        recordRequestMetrics(lastRequestMetrics);
+        const partialText = currentGenerationJob?.segments?.join('\n\n').trim() || '';
+        if (partialText) {
+            lastGeneratedText = partialText;
+            lastGeneratedHtml = textFallbackHtml(partialText);
+            currentOutputMode = 'text';
+            accumulatedTheater = partialText;
+            if (popupAlive()) {
+                showInIframe(lastGeneratedHtml, 'text');
+                $('#theater-stream-section').hide();
+                $('#theater-output-section').show();
+            }
+        }
+        if (err.name === 'AbortError') { toastr.info(partialText ? '已停止，已保留当前生成内容，不会继续请求' : '已停止，不会继续发起下一轮请求'); return; }
         console.error('[Theater]', err);
         bgError = err.message || '未知错误';
-        theaterError('生成失败: ' + bgError);
+        theaterError(`生成失败: ${bgError}${partialText ? '\n\n已保留此前生成的正文。' : ''}`);
     } finally {
         isGenerating = false;
         if (chunkThrottle) { clearTimeout(chunkThrottle); chunkThrottle = null; }
@@ -3577,6 +3753,7 @@ async function runGeneration(instruction, isAuto) {
             $('#theater-stop-btn').hide();
         }
         abortController = null;
+        currentGenerationJob = null;
     }
 }
 
@@ -3666,15 +3843,45 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
 
     const CCS = ctx?.ChatCompletionService || window?.SillyTavern?.getContext?.()?.ChatCompletionService;
     if (CCS && typeof CCS.processRequest === 'function') {
+        const firstPathController = new AbortController();
+        if (signal) {
+            if (signal.aborted) firstPathController.abort();
+            else signal.addEventListener('abort', () => firstPathController.abort(), { once: true });
+        }
+        let timeoutId;
+        let rejectTimeout;
+        const armTimeout = (milliseconds, code) => {
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => rejectTimeout?.(new Error(code)), milliseconds);
+        };
+        const firstAwareChunk = text => {
+            if (String(text || '').trim()) {
+                if (shouldStream) armTimeout(45000, 'MAIN_STREAM_IDLE_TIMEOUT');
+            }
+            onChunk(text);
+        };
         try {
-            return await callViaChatCompletionService(CCS, messages, maxTokens, signal, onChunk, shouldStream);
+            const timeout = new Promise((_, reject) => {
+                rejectTimeout = reject;
+                armTimeout(shouldStream ? 10000 : 45000, shouldStream ? 'MAIN_FIRST_TOKEN_TIMEOUT' : 'MAIN_RESPONSE_TIMEOUT');
+            });
+            return await Promise.race([
+                callViaChatCompletionService(CCS, messages, maxTokens, firstPathController.signal, firstAwareChunk, shouldStream),
+                timeout,
+            ]);
         } catch (e) {
-            if (e?.name === 'AbortError') throw e;
+            clearTimeout(timeoutId);
+            if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+            firstPathController.abort();
+            markFallback(lastRequestMetrics, 'main:ChatCompletionService');
             console.warn('[Theater] ChatCompletionService failed, fallback to TavernHelper:', e);
             if (window.TavernHelper && typeof window.TavernHelper.generateRaw === 'function') {
+                lastRequestMetrics.path = 'main:TavernHelper';
                 return await callViaGenerateRaw(messages, signal, onChunk, shouldStream);
             }
             throwFriendlyMainApi(e, onChunk);
+        } finally {
+            clearTimeout(timeoutId);
         }
     }
 
@@ -3683,6 +3890,7 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
         onChunk(tip);
         throw new Error(tip);
     }
+    lastRequestMetrics.path = 'main:TavernHelper';
     return await callViaGenerateRaw(messages, signal, onChunk, shouldStream);
 }
 
@@ -3723,22 +3931,28 @@ async function callViaChatCompletionService(CCS, messages, maxTokens, signal, on
         : (result?.text || result?.content || result?.choices?.[0]?.message?.content || '');
     if (!txt) throw new Error('酒馆主 API 返回空内容');
     onChunk(txt);
-    return txt;
+    return { text: txt, ...extractResponseMeta(typeof result === 'object' ? result : {}, API_PROTOCOLS.OPENAI) };
 }
 
 async function consumeStreamThunk(streamThunk, onChunk) {
     let full = '';
+    let meta = { stopReason: 'unknown', rawStopReason: null, usage: null };
     for await (const chunk of streamThunk()) {
         const delta = typeof chunk === 'string'
             ? chunk
             : extractStreamText(chunk, false);
+        if (typeof chunk === 'object') {
+            const nextMeta = extractResponseMeta(chunk, API_PROTOCOLS.OPENAI);
+            if (nextMeta.rawStopReason) meta = nextMeta;
+            else if (nextMeta.usage) meta.usage = nextMeta.usage;
+        }
         if (delta) {
             full += delta;
             onChunk(full);
         }
     }
     if (!full) throw new Error('酒馆主 API 流式返回空');
-    return full;
+    return { text: full, ...meta };
 }
 
 function throwFriendlyMainApi(e, onChunk) {
@@ -3791,50 +4005,44 @@ async function callViaGenerateRaw(messages, signal, onChunk, shouldStream = true
             timeoutPromise,
         ]);
         if (!result) throw new Error('主 API 返回空内容');
-        onChunk(result);
-        return result;
+        const text = typeof result === 'string' ? result : (result?.text || result?.content || '');
+        if (!text) throw new Error('主 API 返回空内容');
+        onChunk(text);
+        return { text, ...extractResponseMeta(typeof result === 'object' ? result : {}, API_PROTOCOLS.OPENAI) };
     } catch (e) {
         if (e?.name === 'AbortError') throw e;
         throwFriendlyMainApi(e, onChunk);
     }
 }
 
-// ============================================================
-// Custom API streaming
-// ============================================================
-function buildCustomEndpoint(url, path) {
-    const base = String(url || '').replace(/\/+$/, '');
-    if (base.endsWith(path)) return base;
-    if (base.endsWith('/v1')) return base + path;
-    return base + '/v1' + path;
-}
-
 async function callCustomAPIStream(sys, user, onChunk, shouldStream = true) {
     const url = settings.apiUrl.replace(/\/+$/, '');
-    const isAnthropic = /anthropic|claude/i.test(url);
-
-    let endpoint, body, headers;
-    if (isAnthropic) {
-        if (!settings.apiKey) throw new Error('Anthropic 接口需要 API Key');
-        endpoint = buildCustomEndpoint(url, '/messages');
-        headers = { 'Content-Type': 'application/json', 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01' };
-        body = JSON.stringify({ model: settings.apiModel, max_tokens: 8192, stream: shouldStream, system: sys, messages: [{ role: 'user', content: user }] });
-    } else {
-        endpoint = buildCustomEndpoint(url, '/chat/completions');
-        headers = { 'Content-Type': 'application/json' };
-        if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`;
-        body = JSON.stringify({ model: settings.apiModel, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], stream: shouldStream, max_tokens: 8192 });
-    }
-
-    const r = await fetch(endpoint, { method: 'POST', headers, body, signal: abortController?.signal });
+    const request = buildApiRequest({
+        url,
+        protocol: settings.apiProtocol || API_PROTOCOLS.AUTO,
+        key: settings.apiKey,
+        model: settings.apiModel,
+        systemPrompt: sys,
+        userPrompt: user,
+        maxTokens: normalizeMaxTokens(settings.maxOutputTokens),
+        stream: shouldStream,
+    });
+    if (request.protocol === API_PROTOCOLS.ANTHROPIC && !settings.apiKey) throw new Error('Anthropic 接口需要 API Key');
+    const r = await fetch(request.endpoint, { method: 'POST', headers: request.headers, body: JSON.stringify(request.body), signal: abortController?.signal });
     if (!r.ok) throw new Error(`API ${r.status}: ${(await r.text().catch(() => '')).substring(0, 200)}`);
-    if (shouldStream) return await readSSEStream(r, onChunk, isAnthropic);
+    if (shouldStream) return await readSSEStream(r, onChunk, request.protocol);
     const raw = await r.text();
-    let result = raw.trim();
-    try { result = extractStreamText(JSON.parse(result), isAnthropic) || result; } catch {}
-    if (!result) throw new Error('API 返回空内容');
-    onChunk(result);
-    return result;
+    if (isHtmlErrorResponse(r.headers.get('content-type'), raw)) throw htmlResponseError(raw);
+    let text = raw.trim();
+    let meta = { stopReason: 'unknown', rawStopReason: null, usage: null };
+    try {
+        const json = JSON.parse(text);
+        text = extractStreamText(json, request.protocol === API_PROTOCOLS.ANTHROPIC) || text;
+        meta = extractResponseMeta(json, request.protocol);
+    } catch {}
+    if (!text) throw new Error('API 返回空内容');
+    onChunk(text);
+    return { text, ...meta };
 }
 
 // ============================================================
@@ -3876,16 +4084,28 @@ function extractStreamText(json, isAnthropic) {
         || '';
 }
 
-async function readSSEStream(response, onChunk, isAnthropic) {
+function htmlResponseError(raw) {
+    const excerpt = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    return new Error(`API 返回了 HTML 错误页${excerpt ? `：${excerpt}` : ''}`);
+}
+
+async function readSSEStream(response, onChunk, protocol) {
+    const contentType = response.headers.get('content-type') || '';
+    if (isHtmlErrorResponse(contentType)) throw htmlResponseError(await response.text());
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let full = '', buffer = '', rawText = '';
+    let meta = { stopReason: 'unknown', rawStopReason: null, usage: null };
+    const isAnthropic = protocol === API_PROTOCOLS.ANTHROPIC;
 
     const consumePayload = (payload) => {
         const text = String(payload || '').trim();
         if (!text || text === '[DONE]') return;
         try {
             const json = JSON.parse(text);
+            const nextMeta = extractResponseMeta(json, protocol);
+            if (nextMeta.rawStopReason) meta = nextMeta;
+            else if (nextMeta.usage) meta.usage = nextMeta.usage;
             const delta = extractStreamText(json, isAnthropic);
             if (delta) {
                 full += delta;
@@ -3921,10 +4141,11 @@ async function readSSEStream(response, onChunk, isAnthropic) {
         try {
             const json = JSON.parse(rawText.trim());
             full = extractStreamText(json, isAnthropic);
-            if (full) { onChunk(full); return full; }
+            if (full) { onChunk(full); return { text: full, ...extractResponseMeta(json, protocol) }; }
         } catch { }
         // Last resort: use raw text if it looks like content
         const raw = rawText.trim();
+        if (isHtmlErrorResponse(contentType, raw)) throw htmlResponseError(raw);
         if (raw.length > 20 && !raw.startsWith('{') && !raw.startsWith('data:')) {
             full = rawText.trim();
             onChunk(full);
@@ -3932,7 +4153,7 @@ async function readSSEStream(response, onChunk, isAnthropic) {
     }
 
     if (!full) throw new Error('Stream empty');
-    return full;
+    return { text: full, ...meta };
 }
 
 // ============================================================
@@ -3953,11 +4174,17 @@ function buildDiagnostics() {
         || selectedRender === '__default_pc__'
         || selectedRender === '__plain_text__'
         || !!(settings.renderTemplates || [])[parseInt(selectedRender)];
+    const timingDetail = requestMetricsLog.length
+        ? requestMetricsLog.slice(0, 3).reverse().map((metrics, index, list) => `请求${requestMetricsLog.length - list.length + index + 1}：${summarizeMetrics(metrics)}`).join('；')
+        : summarizeMetrics(lastRequestMetrics);
 
     const rows = [
         diagnosticLine('ok', '诊断范围', '这份报告只检查小剧场插件，不检查酒馆正文生成链路'),
         diagnosticLine('ok', '插件版本', `本地 v${VERSION}${latestRemoteVersion ? `，远端 v${latestRemoteVersion}` : '，还没有拿到远端版本'}`),
         diagnosticLine('ok', 'API 模式', apiMode === 'main' ? '酒馆主 API（实验）' : '独立 API'),
+        diagnosticLine('ok', '独立 API 协议', apiMode === 'main' ? '不适用' : `${settings.apiProtocol || 'auto'}（实际：${resolveProtocol(settings.apiProtocol, apiUrl)}）`),
+        diagnosticLine('ok', '最大输出 Token', apiMode === 'main' ? '遵循酒馆当前设置' : String(normalizeMaxTokens(settings.maxOutputTokens))),
+        diagnosticLine(lastRequestMetrics?.firstTokenAt ? 'ok' : 'warn', '最近请求计时', timingDetail),
         diagnosticLine(apiMode === 'main' || (apiUrl && apiModel) ? 'ok' : 'bad', 'API 配置', apiMode === 'main' ? '使用酒馆当前 API 设置' : (apiUrl && apiModel ? `已填写，模型：${apiModel}${apiKey ? '，已填写 Key' : '，未填写 Key（OpenAI 兼容本地服务可为空）'}` : 'API URL 和模型名至少有一项没填')),
         diagnosticLine(typeof fetch === 'function' && typeof AbortController === 'function' ? 'ok' : 'bad', '请求能力', 'fetch / AbortController ' + (typeof fetch === 'function' && typeof AbortController === 'function' ? '可用' : '不可用')),
         diagnosticLine(window.indexedDB ? (idb ? 'ok' : 'warn') : 'bad', '本地存档库', window.indexedDB ? (idb ? 'IndexedDB 已打开' : 'IndexedDB 存在，但当前未打开，可能会回退到 settings') : '浏览器不支持 IndexedDB'),
@@ -4037,29 +4264,16 @@ function showInIframe(html, mode = 'html', allowTextFallback = true) {
     const f = document.getElementById('theater-output-frame'); if (!f) return;
     currentDisplayHtml = html;
     currentOutputMode = mode;
-    if (mode === 'text') lastGeneratedText = htmlToPlainText(html);
+    const sourceText = htmlToPlainText(html);
+    if (mode === 'text') lastGeneratedText = sourceText;
     $('#theater-copy-html-btn span').text(mode === 'text' ? '复制文字' : '复制HTML');
-    f.srcdoc = html;
-    f.onload = () => {
-        try {
-            const doc = f.contentDocument || f.contentWindow.document;
-            const visibleText = (doc.body?.innerText || '').trim();
-            const sourceText = htmlToPlainText(html);
-            // 某些模型生成的 CSS 会把正文整体隐藏；流式区有内容而结果区空白时，保住文字优先。
-            if (allowTextFallback && sourceText && !visibleText) {
-                toastr.warning('生成内容无法正常显示，已切换为纯文字兜底展示');
-                showInIframe(textFallbackHtml(sourceText), 'text', false);
-                return;
-            }
-            const isMobile = window.innerWidth <= 768;
-            const scrollH = doc.documentElement.scrollHeight + 20;
-            const minH = isMobile ? 320 : 240;
-            const maxH = isMobile ? window.innerHeight * 0.75 : 720;
-            f.style.height = Math.min(Math.max(scrollH, minH), maxH) + 'px';
-        } catch {
-            f.style.height = window.innerWidth <= 768 ? '60vh' : '420px';
-        }
-    };
+    renderSafeIframe(f, html, {
+        sourceHasText: !!sourceText,
+        onBlank: allowTextFallback && sourceText ? () => {
+            toastr.warning('生成内容无法正常显示，已切换为纯文字兜底展示');
+            showInIframe(textFallbackHtml(sourceText), 'text', false);
+        } : null,
+    });
 }
 
 function updateRecentNav() {
@@ -4086,37 +4300,15 @@ async function fetchModelList() {
     $btn.find('span').text('获取中…');
 
     try {
-        const isAnthropic = url.toLowerCase().includes('anthropic.com') || url.includes('/v1/messages');
-        let data = null;
-
-        if (isAnthropic) {
-            if (!key) throw new Error('Anthropic 接口需要 API Key');
-            // Anthropic: 先清理URL，再拼 /v1/models
-            const base = url.replace(/\/v1\/messages$/, '').replace(/\/v1$/, '').replace(/\/$/, '');
-            try {
-                const res = await fetch(`${base}/v1/models`, {
-                    method: 'GET',
-                    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
-                });
-                if (res.ok) data = await res.json();
-            } catch { }
-        }
-
-        if (!data) {
-            // OpenAI兼容格式：清理URL尾巴，尝试多个可能的路径
-            const cleanBase = url.replace(/\/chat\/completions$/, '').replace(/\/$/, '');
-            const endpoints = [
-                /\/v\d+$/.test(cleanBase) ? `${cleanBase}/models` : `${cleanBase}/v1/models`,
-                `${cleanBase}/models`
-            ];
-            for (const ep of endpoints) {
-                try {
-                    const headers = key ? { 'Authorization': `Bearer ${key}` } : {};
-                    const res = await fetch(ep, { method: 'GET', headers });
-                    if (res.ok) { data = await res.json(); break; }
-                } catch { }
-            }
-        }
+        const protocol = resolveProtocol($('#theater-api-protocol').val() || settings.apiProtocol, url);
+        if (protocol === API_PROTOCOLS.ANTHROPIC && !key) throw new Error('Anthropic 接口需要 API Key');
+        const apiEndpoint = buildApiEndpoint(url, protocol);
+        const modelsEndpoint = apiEndpoint.replace(/\/(chat\/completions|messages)$/, '/models');
+        const headers = protocol === API_PROTOCOLS.ANTHROPIC
+            ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
+            : (key ? { 'Authorization': `Bearer ${key}` } : {});
+        const res = await fetch(modelsEndpoint, { method: 'GET', headers });
+        const data = res.ok ? await res.json() : null;
 
         if (!data) throw new Error('连接失败或无法获取模型列表');
 
@@ -4170,31 +4362,11 @@ async function testAPIConnection() {
     $btn.find('span').text('测试中…');
 
     try {
-        const isAnthropic = url.toLowerCase().includes('anthropic.com') || url.includes('/v1/messages');
-
-        if (isAnthropic) {
-            if (!key) { toastr.warning('Anthropic 接口需要 API Key'); return; }
-            const base = url.replace(/\/v1\/messages$/, '').replace(/\/v1$/, '').replace(/\/$/, '');
-            const res = await fetch(`${base}/v1/messages`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-                body: JSON.stringify({ model, max_tokens: 16, messages: [{ role: 'user', content: 'Hi' }] })
-            });
-            if (res.ok) toastr.success('连接成功！');
-            else theaterError(`连接失败 (${res.status})`);
-        } else {
-            const cleanBase = url.replace(/\/chat\/completions$/, '').replace(/\/$/, '');
-            const ep = /\/v\d+$/.test(cleanBase) ? `${cleanBase}/chat/completions` : `${cleanBase}/v1/chat/completions`;
-            const headers = { 'Content-Type': 'application/json' };
-            if (key) headers.Authorization = `Bearer ${key}`;
-            const res = await fetch(ep, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Hi' }], max_tokens: 5 })
-            });
-            if (res.ok) toastr.success('连接成功！');
-            else theaterError(`连接失败 (${res.status})`);
-        }
+        const request = buildApiRequest({ url, protocol: $('#theater-api-protocol').val() || settings.apiProtocol, key, model, systemPrompt: '', userPrompt: 'Hi', maxTokens: 16, stream: false });
+        if (request.protocol === API_PROTOCOLS.ANTHROPIC && !key) { toastr.warning('Anthropic 接口需要 API Key'); return; }
+        const res = await fetch(request.endpoint, { method: 'POST', headers: request.headers, body: JSON.stringify(request.body) });
+        if (res.ok) toastr.success('连接成功！');
+        else theaterError(`连接失败 (${res.status}): ${(await res.text().catch(() => '')).slice(0, 160)}`);
     } catch (e) {
         theaterError('请求发送失败');
     } finally {

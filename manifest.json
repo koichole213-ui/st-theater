@@ -6,7 +6,7 @@
     "js": "index.js",
     "css": "style.css",
     "author": "Theater Generator",
-    "version": "3.2.3",
+    "version": "3.2.4",
     "homePage": "https://github.com/koichole213-ui/st-theater",
     "auto_update": true
 }
