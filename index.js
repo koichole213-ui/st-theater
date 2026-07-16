@@ -15,7 +15,7 @@ import { tailText } from './text-counter.js';
 import { clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.2.5';
+const VERSION = '3.2.6';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -630,7 +630,7 @@ function theaterError(message, title = '', opts = {}) {
 function renderRuntimeLog() {
     const $list = $('#theater-runtime-log-list');
     if (!$list.length) return;
-    const entries = getRuntimeLogEntries().slice().reverse();
+    const entries = getRuntimeLogEntries();
     $('#theater-runtime-log-count').text(entries.length);
     if (!entries.length) {
         $list.html('<p class="theater-empty">暂无运行日志</p>');
@@ -638,9 +638,12 @@ function renderRuntimeLog() {
     }
     $list.html(entries.map(entry => `
 <div class="theater-error-log-item theater-runtime-log-${entry.level}">
-    <div class="theater-error-log-meta">${esc(entry.time)} · ${esc(entry.level.toUpperCase())}</div>
-    <pre>${esc(entry.message)}</pre>
+    <span class="theater-error-log-meta">${esc(entry.time)}</span>
+    <span class="theater-runtime-log-level">[${esc(entry.level.toUpperCase())}]</span>
+    <span class="theater-runtime-log-message">${esc(entry.message)}</span>
 </div>`).join(''));
+    const list = $list[0];
+    if (list) list.scrollTop = list.scrollHeight;
 }
 
 function createFloatingBall() {
@@ -838,7 +841,7 @@ function buildPopupHTML() {
     const render = settings.renderTemplates || [];
     const hist = historyCache;
     const selRender = settings.selectedRenderIndex || '__default__';
-    const runtimeEntries = getRuntimeLogEntries().slice().reverse();
+    const runtimeEntries = getRuntimeLogEntries();
 
     const skin = settings.skinMode || 'default';
     return `
@@ -1130,7 +1133,7 @@ function buildPopupHTML() {
     <!-- ===== 6. 诊断 ===== -->
     <div class="theater-panel" data-panel="diagnostics">
         <div class="theater-section">
-            <label class="theater-label"><i class="fa-solid fa-clipboard-list"></i> 运行日志（<span id="theater-runtime-log-count">${runtimeEntries.length}</span>/200）</label>
+            <label class="theater-label"><i class="fa-solid fa-terminal"></i> 运行日志终端（<span id="theater-runtime-log-count">${runtimeEntries.length}</span>/200）</label>
             <div class="theater-btn-row">
                 <div class="theater-copy-runtime-log-btn theater-btn"><i class="fa-solid fa-copy"></i><span>复制日志</span></div>
                 <div id="theater-clear-runtime-log-btn" class="theater-btn"><i class="fa-solid fa-eraser"></i><span>清空日志</span></div>
@@ -1138,8 +1141,9 @@ function buildPopupHTML() {
             <div id="theater-runtime-log-list" class="theater-error-log-list">
                 ${runtimeEntries.length ? runtimeEntries.map(entry => `
                 <div class="theater-error-log-item theater-runtime-log-${entry.level}">
-                    <div class="theater-error-log-meta">${esc(entry.time)} · ${esc(entry.level.toUpperCase())}</div>
-                    <pre>${esc(entry.message)}</pre>
+                    <span class="theater-error-log-meta">${esc(entry.time)}</span>
+                    <span class="theater-runtime-log-level">[${esc(entry.level.toUpperCase())}]</span>
+                    <span class="theater-runtime-log-message">${esc(entry.message)}</span>
                 </div>`).join('') : '<p class="theater-empty">暂无运行日志</p>'}
             </div>
         </div>

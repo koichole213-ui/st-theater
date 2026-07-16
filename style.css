@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v3.2.5
+/* 千夜浮梦 · 小剧场生成器 v3.2.6
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -407,29 +407,57 @@
     margin-top: var(--t-space-3);
     display: flex;
     flex-direction: column;
-    gap: var(--t-space-2);
+    gap: 0;
+    min-height: 220px;
+    max-height: 420px;
+    overflow: auto;
+    padding: 12px 14px;
+    border: 1px solid #253044;
+    border-radius: var(--t-radius-md);
+    background: #080c12;
+    box-shadow: inset 0 0 24px rgba(0, 0, 0, .55), 0 6px 18px rgba(0, 0, 0, .16);
+    color: #c9d1d9;
+    font-family: "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    scrollbar-color: #3b465a #080c12;
 }
 .theater-error-log-item {
-    padding: var(--t-space-3);
-    border: 1px solid var(--t-border);
-    border-radius: var(--t-radius-md);
-    background: var(--t-surface-1);
+    display: grid;
+    grid-template-columns: max-content 7ch minmax(0, 1fr);
+    gap: 9px;
+    align-items: start;
+    padding: 3px 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
 }
-.theater-runtime-log-warn { border-left: 3px solid #b7791f; }
-.theater-runtime-log-error { border-left: 3px solid #b94444; }
 .theater-error-log-meta {
-    margin-bottom: var(--t-space-2);
-    color: var(--t-fg-mute);
-    font-size: var(--t-text-xs);
+    color: #697386;
+    white-space: nowrap;
 }
-.theater-error-log-item pre {
-    margin: 0;
+.theater-runtime-log-level {
+    color: #58a6ff;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.theater-runtime-log-warn .theater-runtime-log-level { color: #e3b341; }
+.theater-runtime-log-error .theater-runtime-log-level { color: #ff7b72; }
+.theater-runtime-log-message {
+    min-width: 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    color: var(--t-fg);
-    font: inherit;
-    font-size: var(--t-text-sm);
-    line-height: 1.55;
+    color: #c9d1d9;
+}
+.theater-error-log-list .theater-empty {
+    margin: auto;
+    color: #697386;
+    font-family: inherit;
+}
+@media (max-width: 600px) {
+    .theater-error-log-list { min-height: 200px; max-height: 55vh; padding: 10px; }
+    .theater-error-log-item { grid-template-columns: 7ch minmax(0, 1fr); gap: 7px; }
+    .theater-error-log-meta { grid-column: 1 / -1; }
 }
 
 /* ============================================================
