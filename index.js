@@ -6,15 +6,16 @@ import { playSoundFile } from './notification-sound.js';
 import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follow.js';
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
-import { API_PROTOCOLS, buildApiEndpoint, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, normalizeMaxTokens, resolveProtocol } from './api-client.js';
+import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, isMaxTokenLimitError, maxTokenFallbackSequence, normalizeMaxTokens, resolveProtocol } from './api-client.js';
 import { buildContinuationInstruction, buildGenerationPayload } from './generation-payload.js';
-import { debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
+import { debounce, estimateTokenBreakdown, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { abortGenerationJob, addGenerationSegment, createGenerationJob, shouldContinueJob } from './generation-job.js';
 import { tailText } from './text-counter.js';
+import { clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.2.4';
+const VERSION = '3.2.5';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -182,7 +183,8 @@ const defaultSettings = Object.freeze({
     uiFontSize: 13.5,
     apiMode: 'custom',  // 'custom' 独立 API | 'main' 酒馆主 API（实验）
     apiUrl: '', apiKey: '', apiModel: '', apiProtocol: 'auto', streamEnabled: true,
-    maxOutputTokens: 8192,
+    maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    maxOutputTokensSchema: 2,
     autoContinue: false,
     maxAutoRounds: 3,
     userPersona: '',
@@ -222,7 +224,6 @@ let idb = null;            // 打不开时为 null，回退到 settings 存储
 let historyCache = [];     // [{ id, title, html, instruction, date }]
 let recentCache = [];      // 最近 3 条生成 [{ html, time, instruction }]
 let recentIndex = 0;       // 当前查看的最近生成索引（仅内存）
-let errorLog = [];         // 最近错误 [{ time, title, message }]
 
 function idbReq(req) {
     return new Promise((resolve, reject) => {
@@ -253,10 +254,12 @@ async function storageInit() {
         });
     } catch (e) {
         console.warn('[Theater] IndexedDB 不可用，回退到 settings 存储:', e);
+        runtimeLog('warn', '本地存档：IndexedDB 不可用，回退到 settings 内存储');
         idb = null;
     }
 
     if (!idb) {
+        runtimeLog('info', '存档迁移：使用 settings 回退路径，无需迁移');
         // 回退模式：直接引用 settings 里的数组，行为和旧版一致
         if (!Array.isArray(settings.history)) settings.history = [];
         if (!Array.isArray(settings.recentGenerations)) settings.recentGenerations = [];
@@ -270,6 +273,7 @@ async function storageInit() {
     try {
         if (Array.isArray(settings.history) && settings.history.length) {
             const n = settings.history.length;
+            runtimeLog('info', '存档迁移开始', { type: 'history', count: n });
             const transaction = idb.transaction('history', 'readwrite');
             const completed = idbTransactionDone(transaction);
             const store = transaction.objectStore('history');
@@ -279,15 +283,19 @@ async function storageInit() {
             await completed;
             settings.history = [];
             save();
+            runtimeLog('info', '存档迁移完成', { type: 'history', count: n });
             console.log(`[Theater] ${n} 条历史已迁移到 IndexedDB`);
         }
         if (Array.isArray(settings.recentGenerations) && settings.recentGenerations.length) {
+            runtimeLog('info', '存档迁移开始', { type: 'recent', count: settings.recentGenerations.length });
             await idbReq(idb.transaction('kv', 'readwrite').objectStore('kv').put(settings.recentGenerations.slice(0, 3), 'recent'));
             settings.recentGenerations = [];
             save();
+            runtimeLog('info', '存档迁移完成', { type: 'recent' });
         }
     } catch (e) {
         console.error('[Theater] 存档迁移失败:', e);
+        runtimeLog('error', '存档迁移失败', { message: e?.message || String(e) });
         toastr.error('小剧场存档迁移失败，旧数据保留在原位：' + (e?.message || e));
     }
 
@@ -369,12 +377,22 @@ async function init() {
 
     const existingSettings = extensionSettings[MODULE_NAME];
     const upgradeNeedsProtocolCompatibility = !!existingSettings && !hasOwn(existingSettings, 'apiProtocol');
+    const upgradeNeedsMaxOutputDefault = !!existingSettings && !hasOwn(existingSettings, 'maxOutputTokensSchema');
     if (!existingSettings) extensionSettings[MODULE_NAME] = cloneDefaultSettings();
     for (const k of Object.keys(defaultSettings)) {
         if (!hasOwn(extensionSettings[MODULE_NAME], k)) extensionSettings[MODULE_NAME][k] = defaultSettings[k];
     }
     settings = extensionSettings[MODULE_NAME];
+    setRuntimeLogSecretProvider(() => [settings?.apiKey]);
     if (upgradeNeedsProtocolCompatibility) settings.apiProtocol = 'auto';
+    if (upgradeNeedsMaxOutputDefault) {
+        if (Number(settings.maxOutputTokens) === 8192) {
+            settings.maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS;
+            runtimeLog('info', '单轮输出上限默认值升级', { from: 8192, to: DEFAULT_MAX_OUTPUT_TOKENS });
+        }
+        settings.maxOutputTokensSchema = 2;
+        save();
+    }
     // Migrate: clean up legacy fields
     if (settings.selectedPresetName === '__builtin__' || settings.selectedPresetName === '__custom__' || settings.selectedPresetName === '__follow__') {
         settings.selectedPresetName = '';
@@ -447,6 +465,7 @@ async function init() {
     setTimeout(() => { checkRemoteVersion(); }, 3000);
     console.log(`[Theater] v${VERSION} loaded`);
     console.log(`[Theater] 🐾 禾禾的千夜浮梦，麓克永远在山脚下等你。`);
+    runtimeLog('info', '插件加载完成', { version: VERSION });
 }
 
 async function checkRemoteVersion() {
@@ -593,38 +612,35 @@ function playNotificationSound({ force = false } = {}) {
     playSoundFile(preset.file, settings.soundVolume);
 }
 
+function runtimeLog(level, message, details) {
+    const entry = writeRuntimeLog(level, message, details);
+    renderRuntimeLog();
+    const method = level === 'error' ? 'error' : (level === 'warn' ? 'warn' : 'info');
+    console[method]('[Theater]', entry.message);
+    return entry;
+}
+
 function theaterError(message, title = '', opts = {}) {
     const text = String(message || '');
     const head = title || '小剧场报错';
-    errorLog.unshift({
-        time: new Date().toLocaleString('zh-CN', { hour12: false }),
-        title: head,
-        message: text,
-    });
-    if (errorLog.length > 20) errorLog.length = 20;
-    renderErrorLog();
+    runtimeLog('error', head, { message: text });
     notifyTheaterError(text, head, opts);
 }
 
-function errorLogText() {
-    if (!errorLog.length) return '暂无错误记录';
-    return errorLog.map(e => `[${e.time}] ${e.title}\n${e.message}`).join('\n\n---\n\n');
-}
-
-function renderErrorLog() {
-    const $list = $('#theater-error-log-list');
+function renderRuntimeLog() {
+    const $list = $('#theater-runtime-log-list');
     if (!$list.length) return;
-    if (!errorLog.length) {
-        $list.html('<p class="theater-empty">暂无错误记录</p>');
-        $('#theater-copy-error-log-btn, #theater-clear-error-log-btn').hide();
+    const entries = getRuntimeLogEntries().slice().reverse();
+    $('#theater-runtime-log-count').text(entries.length);
+    if (!entries.length) {
+        $list.html('<p class="theater-empty">暂无运行日志</p>');
         return;
     }
-    $list.html(errorLog.map(e => `
-<div class="theater-error-log-item">
-    <div class="theater-error-log-meta">${esc(e.time)} · ${esc(e.title)}</div>
-    <pre>${esc(e.message)}</pre>
+    $list.html(entries.map(entry => `
+<div class="theater-error-log-item theater-runtime-log-${entry.level}">
+    <div class="theater-error-log-meta">${esc(entry.time)} · ${esc(entry.level.toUpperCase())}</div>
+    <pre>${esc(entry.message)}</pre>
 </div>`).join(''));
-    $('#theater-copy-error-log-btn, #theater-clear-error-log-btn').show();
 }
 
 function createFloatingBall() {
@@ -822,6 +838,7 @@ function buildPopupHTML() {
     const render = settings.renderTemplates || [];
     const hist = historyCache;
     const selRender = settings.selectedRenderIndex || '__default__';
+    const runtimeEntries = getRuntimeLogEntries().slice().reverse();
 
     const skin = settings.skinMode || 'default';
     return `
@@ -878,13 +895,11 @@ function buildPopupHTML() {
             </div>
             <label class="theater-label">生成结果</label>
             <div id="theater-length-hint" class="theater-hint-inline" style="display:none; margin:-4px 0 8px;"></div>
-            <div id="theater-output-token-hint" class="theater-hint-inline" style="display:none; margin:-4px 0 8px;"></div>
             <div id="theater-output-container"><iframe id="theater-output-frame" sandbox="" class="theater-iframe"></iframe></div>
             <textarea id="theater-result-text-editor" class="theater-textarea" rows="12" style="display:none;margin-top:8px;" placeholder="编辑小剧场正文…"></textarea>
             <div class="theater-btn-row">
                 <div id="theater-save-history-btn" class="theater-btn"><i class="fa-solid fa-bookmark"></i><span>保存</span></div>
                 <div id="theater-copy-html-btn" class="theater-btn"><i class="fa-solid fa-copy"></i><span>复制HTML</span></div>
-                <div id="theater-view-text-btn" class="theater-btn"><i class="fa-solid fa-align-left"></i><span>纯文字查看</span></div>
                 <div id="theater-continue-btn" class="theater-btn"><i class="fa-solid fa-forward"></i><span>续写</span></div>
                 <div id="theater-edit-result-btn" class="theater-btn"><i class="fa-solid fa-pen-to-square"></i><span>编辑文字</span></div>
                 <div id="theater-save-edit-btn" class="theater-btn primary" style="display:none;"><i class="fa-solid fa-check"></i><span>完成编辑</span></div>
@@ -1115,17 +1130,17 @@ function buildPopupHTML() {
     <!-- ===== 6. 诊断 ===== -->
     <div class="theater-panel" data-panel="diagnostics">
         <div class="theater-section">
-            <label class="theater-label"><i class="fa-solid fa-triangle-exclamation"></i> 最近错误</label>
+            <label class="theater-label"><i class="fa-solid fa-clipboard-list"></i> 运行日志（<span id="theater-runtime-log-count">${runtimeEntries.length}</span>/200）</label>
             <div class="theater-btn-row">
-                <div id="theater-copy-error-log-btn" class="theater-btn" style="${errorLog.length ? '' : 'display:none;'}"><i class="fa-solid fa-copy"></i><span>复制日志</span></div>
-                <div id="theater-clear-error-log-btn" class="theater-btn" style="${errorLog.length ? '' : 'display:none;'}"><i class="fa-solid fa-eraser"></i><span>清空日志</span></div>
+                <div class="theater-copy-runtime-log-btn theater-btn"><i class="fa-solid fa-copy"></i><span>复制日志</span></div>
+                <div id="theater-clear-runtime-log-btn" class="theater-btn"><i class="fa-solid fa-eraser"></i><span>清空日志</span></div>
             </div>
-            <div id="theater-error-log-list" class="theater-error-log-list">
-                ${errorLog.length ? errorLog.map(e => `
-                <div class="theater-error-log-item">
-                    <div class="theater-error-log-meta">${esc(e.time)} · ${esc(e.title)}</div>
-                    <pre>${esc(e.message)}</pre>
-                </div>`).join('') : '<p class="theater-empty">暂无错误记录</p>'}
+            <div id="theater-runtime-log-list" class="theater-error-log-list">
+                ${runtimeEntries.length ? runtimeEntries.map(entry => `
+                <div class="theater-error-log-item theater-runtime-log-${entry.level}">
+                    <div class="theater-error-log-meta">${esc(entry.time)} · ${esc(entry.level.toUpperCase())}</div>
+                    <pre>${esc(entry.message)}</pre>
+                </div>`).join('') : '<p class="theater-empty">暂无运行日志</p>'}
             </div>
         </div>
         <div class="theater-section">
@@ -1167,10 +1182,14 @@ function buildPopupHTML() {
                     <select id="theater-api-model-select" class="theater-select" style="display:none;"></select>
                     <input id="theater-api-model" class="theater-input" placeholder="模型名称（可手动输入，或点上方按钮自动获取）" value="${esc(settings.apiModel || '')}">
                 </div>
-                <div class="theater-inline-setting" style="margin-top:8px;">
-                    <span>最大输出 Token</span>
-                    <input id="theater-max-output-tokens" class="theater-input theater-number-input" type="number" min="256" max="131072" step="256" value="${normalizeMaxTokens(settings.maxOutputTokens)}">
-                </div>
+                <details class="theater-addon-details" style="margin-top:8px;">
+                    <summary class="theater-addon-summary"><i class="fa-solid fa-sliders"></i> 高级设置</summary>
+                    <div class="theater-inline-setting" style="margin-top:8px;">
+                        <span>单轮输出上限（一般不用改）</span>
+                        <input id="theater-max-output-tokens" class="theater-input theater-number-input" type="number" min="256" max="131072" step="256" value="${normalizeMaxTokens(settings.maxOutputTokens)}">
+                    </div>
+                    <p class="theater-hint" style="margin-top:6px;">默认 ${DEFAULT_MAX_OUTPUT_TOKENS} Token；模型不支持时会自动降低后重试。</p>
+                </details>
                 <div class="theater-btn-row"><div id="theater-save-api-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存</span></div></div>
             </div>
             <div class="theater-toggle-row" style="margin-top:8px;">
@@ -1274,6 +1293,13 @@ function buildPopupHTML() {
             </div>` : ''}
             <div class="theater-btn-row">
                 <div id="theater-update-btn" class="theater-btn primary"><i class="fa-solid fa-cloud-arrow-down"></i><span>检查更新</span></div>
+            </div>
+        </div>
+        <div class="theater-section">
+            <label class="theater-label"><i class="fa-solid fa-clipboard-list"></i> 运行日志</label>
+            <p class="theater-hint" style="margin-bottom:8px;">仅保存在内存中，最多 200 条；复制内容已统一脱敏，可直接用于反馈问题。</p>
+            <div class="theater-btn-row">
+                <div class="theater-copy-runtime-log-btn theater-btn"><i class="fa-solid fa-copy"></i><span>复制日志</span></div>
             </div>
         </div>
         <p class="theater-version">当前版本 v${VERSION}</p>
@@ -1596,7 +1622,7 @@ async function openTheaterPopup() {
     wbSearch = '';
     presetSearch = '';
     bindEvents();
-    renderErrorLog();
+    renderRuntimeLog();
     await loadWorldBookList();
     await loadPresetNameList();
     // 世界书：跟随角色卡的话先按当前卡选书，然后把选中的书的条目现读进来
@@ -1649,7 +1675,7 @@ function bindEvents() {
         const t = $(this).data('tab');
         $('.theater-tab').removeClass('active'); $(this).addClass('active');
         $('.theater-panel').removeClass('active'); $(`.theater-panel[data-panel="${t}"]`).addClass('active');
-        if (t === 'diagnostics') renderErrorLog();
+        if (t === 'diagnostics') renderRuntimeLog();
     });
 
     // ---- Generate ----
@@ -1981,14 +2007,6 @@ function bindEvents() {
     // ---- History ----
     $d.off('click.tsh').on('click.tsh', '#theater-save-history-btn', saveToHistory);
     $d.off('click.tch').on('click.tch', '#theater-copy-html-btn', copyHtml);
-    $d.off('click.tvtext').on('click.tvtext', '#theater-view-text-btn', function () {
-        const text = htmlToPlainText(lastGeneratedHtml || currentDisplayHtml);
-        if (!text) { toastr.warning('当前结果里没有可提取的正文'); return; }
-        lastGeneratedText = text;
-        currentOutputMode = 'text';
-        showInIframe(textFallbackHtml(text), 'text');
-        toastr.info('已切换为纯文字安全查看；原始生成结果仍可从最近记录或历史中打开');
-    });
     // ---- Recent generations nav ----
     $d.off('click.trp').on('click.trp', '#theater-recent-prev', function () {
         if (recentIndex <= 0) return;
@@ -2185,12 +2203,13 @@ function bindEvents() {
         copyToClipboard(text);
     });
     $d.off('click.tdiagtoggle').on('click.tdiagtoggle', '#theater-toggle-diagnostics-btn', toggleDiagnosticsReport);
-    $d.off('click.telcopy').on('click.telcopy', '#theater-copy-error-log-btn', function () {
-        copyToClipboard(errorLogText());
+    $d.off('click.telcopy').on('click.telcopy', '.theater-copy-runtime-log-btn', function () {
+        if (!getRuntimeLogEntries().length) { toastr.warning('暂无运行日志'); return; }
+        copyToClipboard(formatRuntimeLogs());
     });
-    $d.off('click.telclear').on('click.telclear', '#theater-clear-error-log-btn', function () {
-        errorLog = [];
-        renderErrorLog();
+    $d.off('click.telclear').on('click.telclear', '#theater-clear-runtime-log-btn', function () {
+        clearRuntimeLogs();
+        renderRuntimeLog();
         toastr.success('日志已清空');
     });
     $d.off('change.tams').on('change.tams', '#theater-api-model-select', function () {
@@ -3380,13 +3399,6 @@ function readableCharCount(text) {
     return matches ? matches.length : 0;
 }
 
-function updateTokenHint(inputTokens, outputTokens) {
-    const $hint = $('#theater-output-token-hint');
-    if (!$hint.length) return;
-    const total = inputTokens + outputTokens;
-    $hint.text(`Token 预估：输入 ${inputTokens.toLocaleString()} · 输出 ${outputTokens.toLocaleString()} · 合计 ${total.toLocaleString()}（不同模型会有误差）`).show();
-}
-
 async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, loadPreset = true, includeLengthRequirement = true } = {}) {
     const ctx = SillyTavern.getContext();
     const { chat = [], characters = [], characterId, name1, name2 } = ctx;
@@ -3514,6 +3526,7 @@ function startContinue(html) {
 }
 
 function stopGeneration() {
+    runtimeLog('warn', '用户请求停止生成');
     if (currentGenerationJob) abortGenerationJob(currentGenerationJob);
     if (abortController) { abortController.abort(); abortController = null; }
     isGenerating = false;
@@ -3547,7 +3560,27 @@ async function runGeneration(instruction, isAuto) {
         payload = await assembleGenerationPayload(instruction, { continuationText: '', forcePlainText: true });
     }
     let { ctx, systemPrompt, userPrompt: prompt, isPlainTextRender } = payload;
-    const estimatedInputTokens = estimateTokenBreakdown(payload.tokenParts).total;
+    const selectedRender = settings.selectedRenderIndex || '__default__';
+    const customRender = (settings.renderTemplates || [])[parseInt(selectedRender)];
+    const renderTemplate = isPlainTextRender
+        ? (autoLongText ? '纯文字（长文本自动补写）' : '纯文字')
+        : (selectedRender === '__default_pc__' ? '内置 PC' : (selectedRender === '__default__' ? '内置默认' : (customRender?.name || `自定义 ${selectedRender}`)));
+    const mainOai = ctx?.oai_settings || globalThis.oai_settings;
+    const resolvedProtocol = settings.apiMode === 'main' ? 'main' : resolveProtocol(settings.apiProtocol, settings.apiUrl);
+    const modelName = settings.apiMode === 'main'
+        ? (ctx?.getChatCompletionModel ? ctx.getChatCompletionModel() : (mainOai?.openai_model || mainOai?.model || '未识别'))
+        : (settings.apiModel || '未填写');
+    const configuredMaxTokens = settings.apiMode === 'main'
+        ? (mainOai?.openai_max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS)
+        : normalizeMaxTokens(settings.maxOutputTokens);
+    runtimeLog('info', '生成开始', {
+        trigger: isAuto ? 'auto' : (contCtx ? 'continue' : 'manual'),
+        render: renderTemplate,
+        protocol: resolvedProtocol,
+        model: modelName,
+        max_tokens: configuredMaxTokens,
+        target_chars: targetWordCount || null,
+    });
 
     // 非续写生成时重置累积内容
     if (!contCtx) accumulatedTheater = '';
@@ -3567,13 +3600,15 @@ async function runGeneration(instruction, isAuto) {
     $('#theater-stream-section').show();
     $('#theater-stream-text').text('');
     $('#theater-length-hint').hide().empty();
-    $('#theater-output-token-hint').hide().empty();
     $('#theater-generate-btn').hide();
     $('#theater-stop-btn').show();
     abortController = new AbortController();
     let chunkThrottle = null;
     let firstChunkShown = false;
     let renderedStreamText = '';
+    let activeRound = 1;
+    let progressLogged = false;
+    let nextProgressAt = 1000;
     const flushStream = () => {
         const el = document.getElementById('theater-stream-text');
         if (!el) return;
@@ -3593,6 +3628,12 @@ async function runGeneration(instruction, isAuto) {
     };
     const onChunk = (text) => {
         bgStreamText = text;
+        const cumulativeChars = String(text || '').length;
+        if (cumulativeChars > 0 && (!progressLogged || cumulativeChars >= nextProgressAt)) {
+            runtimeLog('info', '流式进度', { round: activeRound, cumulative_chars: cumulativeChars });
+            progressLogged = true;
+            nextProgressAt = Math.max(1000, (Math.floor(cumulativeChars / 1000) + 1) * 1000);
+        }
         if (!firstChunkShown && String(text || '').trim()) {
             firstChunkShown = true;
             markFirstToken(lastRequestMetrics);
@@ -3612,11 +3653,13 @@ async function runGeneration(instruction, isAuto) {
 
     try {
         let firstHtml = '';
-        let outputTokenEstimate = 0;
         let roundPayload = payload;
         while (true) {
             if (currentGenerationJob.aborted) throw new DOMException('Aborted', 'AbortError');
             const round = currentGenerationJob.round;
+            activeRound = round;
+            progressLogged = false;
+            nextProgressAt = 1000;
             if (popupAlive()) {
                 const current = readableCharCount(currentGenerationJob.segments.join('\n\n'));
                 const shownMaxRounds = currentGenerationJob.autoContinue ? currentGenerationJob.maxRounds : 1;
@@ -3633,6 +3676,7 @@ async function runGeneration(instruction, isAuto) {
                 result = await generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, settings.streamEnabled !== false);
             } else {
                 if (!settings.apiUrl || !settings.apiModel) {
+                    runtimeLog('error', '生成停止', { reason: 'config_missing', round });
                     toastr.warning('请先在【设置】里填好 API URL 和模型再生成', '', { timeOut: 5000 });
                     return;
                 }
@@ -3642,7 +3686,6 @@ async function runGeneration(instruction, isAuto) {
             if (!responseText) throw new Error('API未返回内容');
             markCompleted(lastRequestMetrics);
             recordRequestMetrics(lastRequestMetrics);
-            outputTokenEstimate += estimateTokenCount(responseText);
 
             let segmentText;
             if (round === 1 && !autoLongText && !isPlainTextRender) {
@@ -3652,7 +3695,15 @@ async function runGeneration(instruction, isAuto) {
                 segmentText = htmlToPlainText(responseText) || String(responseText).trim();
             }
             if (!segmentText) throw new Error('生成完成但没有可显示内容');
-            addGenerationSegment(currentGenerationJob, segmentText, result?.stopReason || 'unknown', result?.rawStopReason || null);
+            const resolvedStopReason = result?.stopReason && result.stopReason !== 'unknown' ? result.stopReason : 'stop';
+            addGenerationSegment(currentGenerationJob, segmentText, resolvedStopReason, result?.rawStopReason || null);
+            runtimeLog(resolvedStopReason === 'length' ? 'warn' : 'info', '请求结束', {
+                round,
+                stop_reason: resolvedStopReason,
+                raw_stop_reason: result?.rawStopReason || null,
+                inferred: !result?.stopReason || result.stopReason === 'unknown',
+                segment_chars: readableCharCount(segmentText),
+            });
 
             if (!shouldContinueJob(currentGenerationJob, readableCharCount)) break;
             currentGenerationJob.round++;
@@ -3678,9 +3729,9 @@ async function runGeneration(instruction, isAuto) {
         } else {
             lastGeneratedHtml = firstHtml || textFallbackHtml(newText);
         }
+        runtimeLog('info', '渲染路径', { path: currentOutputMode === 'html' ? '正常 HTML' : '纯文字' });
         lastGeneratedText = newText;
         updateLengthHint(targetWordCount, currentGenerationJob.actualChars);
-        updateTokenHint(estimatedInputTokens, outputTokenEstimate);
         accumulatedTheater = accumulatedTheater ? (accumulatedTheater + '\n\n---\n\n' + newText) : newText;
         if (contCtx) {
             lastGeneratedHtml = textFallbackHtml(accumulatedTheater);
@@ -3710,6 +3761,13 @@ async function runGeneration(instruction, isAuto) {
             updateRecentNav();
         }
         const reached = !targetWordCount || currentGenerationJob.actualChars >= targetWordCount;
+        runtimeLog(currentGenerationJob.stopReason === 'length' && !reached ? 'warn' : 'info', '生成停止', {
+            reason: currentGenerationJob.stopReason || 'unknown',
+            rounds: currentGenerationJob.round,
+            actual_chars: currentGenerationJob.actualChars,
+            target_chars: targetWordCount || null,
+            reached_target: reached,
+        });
         const stopText = currentGenerationJob.stopReason === 'length' ? '（达到输出 Token 上限）' : '';
         const summary = targetWordCount
             ? `目标约 ${targetWordCount} 字 · 实际约 ${currentGenerationJob.actualChars} 字 · 共 ${currentGenerationJob.round} 轮${stopText}`
@@ -3722,6 +3780,7 @@ async function runGeneration(instruction, isAuto) {
         recordRequestMetrics(lastRequestMetrics);
         const partialText = currentGenerationJob?.segments?.join('\n\n').trim() || '';
         if (partialText) {
+            runtimeLog('warn', '渲染路径', { path: '错误兜底', retained_chars: readableCharCount(partialText) });
             lastGeneratedText = partialText;
             lastGeneratedHtml = textFallbackHtml(partialText);
             currentOutputMode = 'text';
@@ -3732,9 +3791,14 @@ async function runGeneration(instruction, isAuto) {
                 $('#theater-output-section').show();
             }
         }
-        if (err.name === 'AbortError') { toastr.info(partialText ? '已停止，已保留当前生成内容，不会继续请求' : '已停止，不会继续发起下一轮请求'); return; }
+        if (err.name === 'AbortError') {
+            runtimeLog('warn', '生成停止', { reason: 'abort', retained_chars: readableCharCount(partialText) });
+            toastr.info(partialText ? '已停止，已保留当前生成内容，不会继续请求' : '已停止，不会继续发起下一轮请求');
+            return;
+        }
         console.error('[Theater]', err);
         bgError = err.message || '未知错误';
+        runtimeLog('error', '生成停止', { reason: 'error', message: bgError, retained_chars: readableCharCount(partialText) });
         theaterError(`生成失败: ${bgError}${partialText ? '\n\n已保留此前生成的正文。' : ''}`);
     } finally {
         isGenerating = false;
@@ -3807,6 +3871,7 @@ async function autoTick() {
     }
     settings.autoAnchors[chatId] = floors;
     save();
+    runtimeLog('info', '自动模式触发', { chat: 'current', ai_floors: floors, interval: Math.max(1, Number(settings.autoInterval) || 10) });
     console.log(`[Theater] 自动生成触发：${chatId} @ ${floors} 层 AI 楼`);
 
     // 弹窗从没打开过的话世界书条目还没加载，先静默读一遍
@@ -3839,9 +3904,10 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
     ];
     const signal = abortController?.signal;
     const oai = ctx?.oai_settings || globalThis.oai_settings;
-    const maxTokens = oai?.openai_max_tokens ?? 8192;
+    const maxTokens = oai?.openai_max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
 
     const CCS = ctx?.ChatCompletionService || window?.SillyTavern?.getContext?.()?.ChatCompletionService;
+    runtimeLog('info', '请求发出', { mode: 'main', channel: CCS && typeof CCS.processRequest === 'function' ? 'ChatCompletionService' : 'TavernHelper', model, max_tokens: maxTokens });
     if (CCS && typeof CCS.processRequest === 'function') {
         const firstPathController = new AbortController();
         if (signal) {
@@ -3874,6 +3940,7 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
             if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
             firstPathController.abort();
             markFallback(lastRequestMetrics, 'main:ChatCompletionService');
+            runtimeLog('warn', '主 API 请求路径降级', { from: 'ChatCompletionService', to: 'TavernHelper' });
             console.warn('[Theater] ChatCompletionService failed, fallback to TavernHelper:', e);
             if (window.TavernHelper && typeof window.TavernHelper.generateRaw === 'function') {
                 lastRequestMetrics.path = 'main:TavernHelper';
@@ -4017,32 +4084,46 @@ async function callViaGenerateRaw(messages, signal, onChunk, shouldStream = true
 
 async function callCustomAPIStream(sys, user, onChunk, shouldStream = true) {
     const url = settings.apiUrl.replace(/\/+$/, '');
-    const request = buildApiRequest({
-        url,
-        protocol: settings.apiProtocol || API_PROTOCOLS.AUTO,
-        key: settings.apiKey,
-        model: settings.apiModel,
-        systemPrompt: sys,
-        userPrompt: user,
-        maxTokens: normalizeMaxTokens(settings.maxOutputTokens),
-        stream: shouldStream,
-    });
-    if (request.protocol === API_PROTOCOLS.ANTHROPIC && !settings.apiKey) throw new Error('Anthropic 接口需要 API Key');
-    const r = await fetch(request.endpoint, { method: 'POST', headers: request.headers, body: JSON.stringify(request.body), signal: abortController?.signal });
-    if (!r.ok) throw new Error(`API ${r.status}: ${(await r.text().catch(() => '')).substring(0, 200)}`);
-    if (shouldStream) return await readSSEStream(r, onChunk, request.protocol);
-    const raw = await r.text();
-    if (isHtmlErrorResponse(r.headers.get('content-type'), raw)) throw htmlResponseError(raw);
-    let text = raw.trim();
-    let meta = { stopReason: 'unknown', rawStopReason: null, usage: null };
-    try {
-        const json = JSON.parse(text);
-        text = extractStreamText(json, request.protocol === API_PROTOCOLS.ANTHROPIC) || text;
-        meta = extractResponseMeta(json, request.protocol);
-    } catch {}
-    if (!text) throw new Error('API 返回空内容');
-    onChunk(text);
-    return { text, ...meta };
+    const candidates = maxTokenFallbackSequence(settings.maxOutputTokens);
+    for (let index = 0; index < candidates.length; index++) {
+        const maxTokens = candidates[index];
+        const request = buildApiRequest({
+            url,
+            protocol: settings.apiProtocol || API_PROTOCOLS.AUTO,
+            key: settings.apiKey,
+            model: settings.apiModel,
+            systemPrompt: sys,
+            userPrompt: user,
+            maxTokens,
+            stream: shouldStream,
+        });
+        if (request.protocol === API_PROTOCOLS.ANTHROPIC && !settings.apiKey) throw new Error('Anthropic 接口需要 API Key');
+        runtimeLog('info', '请求发出', { mode: 'custom', url: request.endpoint, protocol: request.protocol, max_tokens: maxTokens });
+        const response = await fetch(request.endpoint, { method: 'POST', headers: request.headers, body: JSON.stringify(request.body), signal: abortController?.signal });
+        if (!response.ok) {
+            const errorBody = await response.text().catch(() => '');
+            const nextLimit = candidates[index + 1];
+            if (nextLimit && isMaxTokenLimitError(response.status, errorBody)) {
+                runtimeLog('warn', '模型拒绝单轮输出上限，自动降低后重试', { status: response.status, from: maxTokens, to: nextLimit });
+                continue;
+            }
+            throw new Error(`API ${response.status}: ${errorBody.substring(0, 200)}`);
+        }
+        if (shouldStream) return await readSSEStream(response, onChunk, request.protocol);
+        const raw = await response.text();
+        if (isHtmlErrorResponse(response.headers.get('content-type'), raw)) throw htmlResponseError(raw);
+        let text = raw.trim();
+        let meta = { stopReason: 'unknown', rawStopReason: null, usage: null };
+        try {
+            const json = JSON.parse(text);
+            text = extractStreamText(json, request.protocol === API_PROTOCOLS.ANTHROPIC) || text;
+            meta = extractResponseMeta(json, request.protocol);
+        } catch {}
+        if (!text) throw new Error('API 返回空内容');
+        onChunk(text);
+        return { text, ...meta };
+    }
+    throw new Error('模型不支持可用的单轮输出上限');
 }
 
 // ============================================================
@@ -4270,6 +4351,7 @@ function showInIframe(html, mode = 'html', allowTextFallback = true) {
     renderSafeIframe(f, html, {
         sourceHasText: !!sourceText,
         onBlank: allowTextFallback && sourceText ? () => {
+            runtimeLog('warn', '渲染路径', { path: '纯文字兜底', reason: 'HTML 正文不可见' });
             toastr.warning('生成内容无法正常显示，已切换为纯文字兜底展示');
             showInIframe(textFallbackHtml(sourceText), 'text', false);
         } : null,

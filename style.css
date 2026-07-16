@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v3.2.4
+/* 千夜浮梦 · 小剧场生成器 v3.2.5
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -415,6 +415,8 @@
     border-radius: var(--t-radius-md);
     background: var(--t-surface-1);
 }
+.theater-runtime-log-warn { border-left: 3px solid #b7791f; }
+.theater-runtime-log-error { border-left: 3px solid #b94444; }
 .theater-error-log-meta {
     margin-bottom: var(--t-space-2);
     color: var(--t-fg-mute);

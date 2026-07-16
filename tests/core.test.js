@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { estimateTokenBreakdown } from '../token-estimator.js';
 import { buildContinuationInstruction, buildGenerationPayload } from '../generation-payload.js';
-import { API_PROTOCOLS, buildApiRequest, extractResponseMeta, isHtmlErrorResponse } from '../api-client.js';
+import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, isMaxTokenLimitError, maxTokenFallbackSequence, normalizeMaxTokens } from '../api-client.js';
 import { abortGenerationJob, addGenerationSegment, createGenerationJob, shouldContinueJob } from '../generation-job.js';
 import { readableCharCount } from '../text-counter.js';
 import { injectResizeReporter, sandboxPermissions } from '../safe-renderer.js';
 import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from '../request-metrics.js';
+import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
 
 test('Token 分类相加等于总数', () => {
     const result = estimateTokenBreakdown({ preset: '预设内容', context: '聊天上下文', instruction: '写一段故事' });
@@ -24,6 +25,14 @@ test('OpenAI 请求使用 chat completions 与 Bearer', () => {
     assert.equal(req.endpoint, 'https://example.com/v1/chat/completions');
     assert.equal(req.headers.Authorization, 'Bearer secret');
     assert.equal(req.body.messages[0].role, 'system');
+});
+
+test('单轮输出默认 16384，低上限模型按标准档位回落', () => {
+    assert.equal(DEFAULT_MAX_OUTPUT_TOKENS, 16384);
+    assert.equal(normalizeMaxTokens(undefined), 16384);
+    assert.deepEqual(maxTokenFallbackSequence(16384), [16384, 8192, 4096, 2048, 1024, 512, 256]);
+    assert.equal(isMaxTokenLimitError(400, 'max_tokens must be less than or equal to 8192'), true);
+    assert.equal(isMaxTokenLimitError(401, 'invalid api key'), false);
 });
 
 test('Anthropic 请求使用 messages 与 x-api-key', () => {
@@ -130,4 +139,35 @@ test('请求诊断记录开始、首字、完成和 fallback 时间', () => {
     assert.match(summary, /首字 \+120ms/);
     assert.match(summary, /主体完成 \+800ms/);
     assert.match(summary, /fallback \+400ms/);
+});
+
+test('运行日志统一脱敏密钥、Authorization 与 URL 路径', () => {
+    clearRuntimeLogs();
+    const secret = 'sk-super-secret-value';
+    setRuntimeLogSecretProvider(() => [secret]);
+    writeRuntimeLog('info', '请求发出', {
+        url: 'https://api.example.com/v1/chat/completions?debug=1',
+        apiKey: secret,
+        key: 'bare-key-secret',
+        Authorization: 'Bearer another-secret',
+        max_tokens: 16384,
+    });
+    writeRuntimeLog('error', `Authorization: Bearer ${secret}; x-api-key=raw-secret`);
+    const output = formatRuntimeLogs();
+    assert.match(output, /\[INFO\] 请求发出/);
+    assert.match(output, /https:\/\/api\.example\.com/);
+    assert.match(output, /max_tokens/);
+    assert.doesNotMatch(output, /v1\/chat|debug=1|sk-super|another-secret|raw-secret|bare-key-secret/);
+    assert.match(output, /\[REDACTED\]/);
+});
+
+test('运行日志只保留最近 200 条且不写入外部设置', () => {
+    clearRuntimeLogs();
+    setRuntimeLogSecretProvider(() => []);
+    for (let index = 0; index < MAX_RUNTIME_LOGS + 5; index++) writeRuntimeLog('info', `entry-${index}`);
+    const entries = getRuntimeLogEntries();
+    assert.equal(entries.length, MAX_RUNTIME_LOGS);
+    assert.equal(entries[0].message, 'entry-5');
+    assert.equal(entries.at(-1).message, `entry-${MAX_RUNTIME_LOGS + 4}`);
+    clearRuntimeLogs();
 });

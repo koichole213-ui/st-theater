@@ -1,6 +1,7 @@
 export const API_PROTOCOLS = Object.freeze({ AUTO: 'auto', OPENAI: 'openai', ANTHROPIC: 'anthropic' });
+export const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 
-export function normalizeMaxTokens(value, fallback = 8192) {
+export function normalizeMaxTokens(value, fallback = DEFAULT_MAX_OUTPUT_TOKENS) {
     const parsed = Math.floor(Number(value));
     if (!Number.isFinite(parsed)) return fallback;
     return Math.min(131072, Math.max(256, parsed));
@@ -19,7 +20,7 @@ export function buildApiEndpoint(url, protocol) {
     return base + '/v1' + path;
 }
 
-export function buildApiRequest({ url, protocol, key, model, systemPrompt, userPrompt, maxTokens = 8192, stream = true }) {
+export function buildApiRequest({ url, protocol, key, model, systemPrompt, userPrompt, maxTokens = DEFAULT_MAX_OUTPUT_TOKENS, stream = true }) {
     const resolved = resolveProtocol(protocol, url);
     const endpoint = buildApiEndpoint(url, resolved);
     if (resolved === API_PROTOCOLS.ANTHROPIC) {
@@ -35,6 +36,20 @@ export function buildApiRequest({ url, protocol, key, model, systemPrompt, userP
         protocol: resolved, endpoint, headers,
         body: { model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], stream, max_tokens: maxTokens },
     };
+}
+
+export function maxTokenFallbackSequence(value) {
+    const requested = normalizeMaxTokens(value);
+    const standardLimits = [16384, 8192, 4096, 2048, 1024, 512, 256];
+    return [requested, ...standardLimits.filter(limit => limit < requested)]
+        .filter((limit, index, all) => all.indexOf(limit) === index);
+}
+
+export function isMaxTokenLimitError(status, body = '') {
+    if (![400, 413, 422].includes(Number(status))) return false;
+    const text = String(body || '');
+    return /max[_\s-]?tokens|max(?:imum)?\s+output\s+tokens|maximum\s+context\s+length|context[_\s-]?length|requested\s+tokens/i.test(text)
+        && /too\s+(?:large|high|many)|exceed|limit|maximum|at\s+most|less\s+than|must\s+be|<=|not\s+support/i.test(text);
 }
 
 export function normalizeStopReason(raw) {
