@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { estimateTokenBreakdown } from '../token-estimator.js';
-import { buildContinuationInstruction, buildGenerationPayload } from '../generation-payload.js';
+import { buildContinuationInstruction, buildFinalRenderPayload, buildGenerationPayload } from '../generation-payload.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, isMaxTokenLimitError, maxTokenFallbackSequence, normalizeMaxTokens } from '../api-client.js';
 import { abortGenerationJob, addGenerationSegment, createGenerationJob, shouldContinueJob } from '../generation-job.js';
 import { readableCharCount } from '../text-counter.js';
@@ -71,6 +71,14 @@ test('续写提示要求补足目标后再收束', () => {
     });
     assert.match(prompt, /距离目标还差：约 400 字/);
     assert.match(prompt, /达到或略微超过目标后再自然收束/);
+});
+
+test('多轮正文的最终 HTML 排版要求完整保留正文', () => {
+    const payload = buildFinalRenderPayload({ sourceText: '第一段。\n\n第二段。', rules: '输出完整 HTML。' });
+    assert.match(payload.systemPrompt, /不续写、不删减、不改写/);
+    assert.match(payload.userPrompt, /第一段。\n\n第二段。/);
+    assert.match(payload.userPrompt, /逐段保留全部正文/);
+    assert.match(payload.userPrompt, /输出完整 HTML/);
 });
 
 test('达到最大轮数或用户停止后不再续写', () => {

@@ -7,7 +7,7 @@ import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follo
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, isMaxTokenLimitError, maxTokenFallbackSequence, normalizeMaxTokens, resolveProtocol } from './api-client.js';
-import { buildContinuationInstruction, buildGenerationPayload } from './generation-payload.js';
+import { buildContinuationInstruction, buildFinalRenderPayload, buildGenerationPayload } from './generation-payload.js';
 import { debounce, estimateTokenBreakdown, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { abortGenerationJob, addGenerationSegment, createGenerationJob, shouldContinueJob } from './generation-job.js';
@@ -15,7 +15,7 @@ import { tailText } from './text-counter.js';
 import { clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.2.6';
+const VERSION = '3.2.7';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -3403,6 +3403,20 @@ function readableCharCount(text) {
     return matches ? matches.length : 0;
 }
 
+function resolveRenderSelection(forcePlainText = false) {
+    const selectedRender = settings.selectedRenderIndex || '__default__';
+    const isPlainTextRender = forcePlainText || selectedRender === '__plain_text__';
+    const customRender = (settings.renderTemplates || [])[parseInt(selectedRender)];
+    let rules = isPlainTextRender ? DEFAULT_RENDER_TEMPLATE_TEXT : DEFAULT_RENDER_TEMPLATE;
+    if (!isPlainTextRender && selectedRender === '__default_pc__') rules = DEFAULT_RENDER_TEMPLATE_PC;
+    else if (!isPlainTextRender && selectedRender !== '__default__' && customRender) rules = customRender.content;
+    if (settings.interactiveMode && !isPlainTextRender) rules += INTERACTIVE_ADDON;
+    const label = isPlainTextRender
+        ? '纯文字'
+        : (selectedRender === '__default_pc__' ? '内置 PC' : (selectedRender === '__default__' ? '内置默认' : (customRender?.name || `自定义 ${selectedRender}`)));
+    return { selectedRender, isPlainTextRender, rules, label };
+}
+
 async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, loadPreset = true, includeLengthRequirement = true } = {}) {
     const ctx = SillyTavern.getContext();
     const { chat = [], characters = [], characterId, name1, name2 } = ctx;
@@ -3428,15 +3442,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     const wbParts = wbEntries.filter((_entry, index) => wbStates[index] !== false).map(entry => entry.content);
     const worldBook = wbParts.length ? `世界书设定：\n${wbParts.join('\n\n')}` : '';
 
-    const selectedRender = settings.selectedRenderIndex || '__default__';
-    const isPlainTextRender = forcePlainText || selectedRender === '__plain_text__';
-    let rules = isPlainTextRender ? DEFAULT_RENDER_TEMPLATE_TEXT : DEFAULT_RENDER_TEMPLATE;
-    if (!isPlainTextRender && selectedRender === '__default_pc__') rules = DEFAULT_RENDER_TEMPLATE_PC;
-    else if (!isPlainTextRender && selectedRender !== '__default__') {
-        const template = settings.renderTemplates[parseInt(selectedRender)];
-        if (template) rules = template.content;
-    }
-    if (settings.interactiveMode && !isPlainTextRender) rules += INTERACTIVE_ADDON;
+    const { isPlainTextRender, rules } = resolveRenderSelection(forcePlainText);
 
     if (loadPreset && !cachedPresetEntries.length) await loadPresetEntries();
     const preset = getSelectedPresetPrompt() || DEFAULT_SYSTEM_PROMPT;
@@ -3557,18 +3563,11 @@ async function generateTheater() {
 async function runGeneration(instruction, isAuto) {
     if (isGenerating) return;
     const contCtx = isAuto ? '' : continueContext;  // 自动生成永远是全新的，不掺手动的续写上下文
-    let payload = await assembleGenerationPayload(instruction, { continuationText: contCtx });
+    const payload = await assembleGenerationPayload(instruction, { continuationText: contCtx });
     const targetWordCount = payload.targetWordCount;
-    const autoLongText = !isAuto && !contCtx && !!targetWordCount && settings.autoContinue && !settings.interactiveMode;
-    if (autoLongText && !payload.isPlainTextRender) {
-        payload = await assembleGenerationPayload(instruction, { continuationText: '', forcePlainText: true });
-    }
+    const autoTargetContinue = !isAuto && !contCtx && !!targetWordCount && settings.autoContinue && !settings.interactiveMode;
     let { ctx, systemPrompt, userPrompt: prompt, isPlainTextRender } = payload;
-    const selectedRender = settings.selectedRenderIndex || '__default__';
-    const customRender = (settings.renderTemplates || [])[parseInt(selectedRender)];
-    const renderTemplate = isPlainTextRender
-        ? (autoLongText ? '纯文字（长文本自动补写）' : '纯文字')
-        : (selectedRender === '__default_pc__' ? '内置 PC' : (selectedRender === '__default__' ? '内置默认' : (customRender?.name || `自定义 ${selectedRender}`)));
+    const { label: renderTemplate } = resolveRenderSelection(false);
     const mainOai = ctx?.oai_settings || globalThis.oai_settings;
     const resolvedProtocol = settings.apiMode === 'main' ? 'main' : resolveProtocol(settings.apiProtocol, settings.apiUrl);
     const modelName = settings.apiMode === 'main'
@@ -3652,7 +3651,7 @@ async function runGeneration(instruction, isAuto) {
     currentGenerationJob = createGenerationJob({
         targetChars: targetWordCount,
         maxRounds: Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3)),
-        autoContinue: autoLongText,
+        autoContinue: autoTargetContinue,
     });
 
     try {
@@ -3692,7 +3691,7 @@ async function runGeneration(instruction, isAuto) {
             recordRequestMetrics(lastRequestMetrics);
 
             let segmentText;
-            if (round === 1 && !autoLongText && !isPlainTextRender) {
+            if (round === 1 && !isPlainTextRender) {
                 firstHtml = extractHtml(responseText);
                 segmentText = htmlToPlainText(firstHtml) || htmlToPlainText(responseText) || String(responseText).trim();
             } else {
@@ -3727,11 +3726,52 @@ async function runGeneration(instruction, isAuto) {
 
         let newText = currentGenerationJob.segments.join('\n\n').trim();
         currentGenerationJob.actualChars = readableCharCount(newText);
-        if (currentGenerationJob.segments.length > 1 || autoLongText || isPlainTextRender) {
+        if (isPlainTextRender) {
             lastGeneratedHtml = textFallbackHtml(newText);
             currentOutputMode = 'text';
-        } else {
+        } else if (currentGenerationJob.segments.length === 1) {
             lastGeneratedHtml = firstHtml || textFallbackHtml(newText);
+        } else {
+            const { rules } = resolveRenderSelection(false);
+            const finalRenderPayload = buildFinalRenderPayload({ sourceText: newText, rules });
+            runtimeLog('info', '最终 HTML 渲染开始', {
+                render: renderTemplate,
+                source_chars: currentGenerationJob.actualChars,
+            });
+            if (popupAlive()) $('#theater-stream-text').text('正文已补足，正在套用所选 HTML 模板……');
+            activeRound = 'render';
+            firstChunkShown = false;
+            bgStreamText = '';
+            renderedStreamText = '';
+            try {
+                lastRequestMetrics = createRequestMetrics(settings.apiMode === 'main' ? 'main:final-render' : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}:final-render`);
+                const renderResult = settings.apiMode === 'main'
+                    ? await generateWithMainAPI(ctx, finalRenderPayload.systemPrompt, finalRenderPayload.userPrompt, onChunk, settings.streamEnabled !== false)
+                    : await callCustomAPIStream(finalRenderPayload.systemPrompt, finalRenderPayload.userPrompt, onChunk, settings.streamEnabled !== false);
+                const renderText = typeof renderResult === 'string' ? renderResult : renderResult?.text;
+                if (!renderText) throw new Error('最终渲染未返回内容');
+                markCompleted(lastRequestMetrics);
+                recordRequestMetrics(lastRequestMetrics);
+                const finalHtml = extractHtml(renderText);
+                const renderedChars = readableCharCount(htmlToPlainText(finalHtml));
+                const minimumPreservedChars = Math.floor(currentGenerationJob.actualChars * 0.95);
+                if (!/<(?:!doctype|html|head|body|style|main|section|article|div)\b/i.test(renderText) || renderedChars < minimumPreservedChars) {
+                    throw new Error(`最终渲染未完整保留正文（${renderedChars}/${currentGenerationJob.actualChars} 字）`);
+                }
+                lastGeneratedHtml = finalHtml;
+                currentOutputMode = 'html';
+                runtimeLog(renderResult?.stopReason === 'length' ? 'warn' : 'info', '最终 HTML 渲染完成', {
+                    stop_reason: renderResult?.stopReason || 'stop',
+                    rendered_chars: renderedChars,
+                });
+            } catch (renderError) {
+                recordRequestMetrics(lastRequestMetrics);
+                if (renderError?.name === 'AbortError') throw renderError;
+                lastGeneratedHtml = textFallbackHtml(newText);
+                currentOutputMode = 'text';
+                runtimeLog('warn', '最终 HTML 渲染失败', { message: renderError?.message || String(renderError), fallback: '纯文字' });
+                toastr.warning('正文已补足，但最终 HTML 排版失败，已保留完整正文');
+            }
         }
         runtimeLog('info', '渲染路径', { path: currentOutputMode === 'html' ? '正常 HTML' : '纯文字' });
         lastGeneratedText = newText;
