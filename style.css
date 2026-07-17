@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v3.2.7
+/* 千夜浮梦 · 小剧场生成器 v3.3.0
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -531,6 +531,65 @@
     padding-right: var(--t-space-7);
     color: var(--t-fg);
 }
+
+.theater-api-preset-card {
+    position: relative;
+    margin-bottom: var(--t-space-3);
+    padding: var(--t-space-3);
+    border: 1px solid color-mix(in srgb, var(--t-accent) 30%, var(--t-border));
+    border-radius: var(--t-radius-lg);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--t-accent) 8%, var(--t-surface-1)), var(--t-surface-1) 62%);
+    box-shadow:
+        4px 4px 0 color-mix(in srgb, var(--t-accent) 8%, transparent),
+        8px 8px 0 color-mix(in srgb, var(--t-accent) 4%, transparent);
+}
+.theater-api-preset-card::before {
+    content: '';
+    position: absolute;
+    inset: 10px auto 10px 0;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: linear-gradient(var(--t-accent), var(--t-accent-deep));
+    opacity: .8;
+}
+.theater-api-preset-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--t-space-2);
+    margin: 0 2px var(--t-space-2);
+    color: var(--t-fg-soft);
+    font-size: var(--t-text-sm);
+    font-weight: 650;
+    letter-spacing: .2px;
+}
+.theater-api-preset-heading i { color: var(--t-accent-deep); margin-right: 5px; }
+.theater-api-preset-count {
+    flex: 0 0 auto;
+    padding: 2px 7px;
+    border: 1px solid color-mix(in srgb, var(--t-accent) 25%, var(--t-border));
+    border-radius: var(--t-radius-pill);
+    color: var(--t-fg-mute);
+    background: color-mix(in srgb, var(--t-surface-1) 85%, transparent);
+    font-size: var(--t-text-xs);
+    font-variant-numeric: tabular-nums;
+}
+.theater-api-preset-actions {
+    margin-top: var(--t-space-2);
+    gap: 6px;
+}
+.theater-api-preset-actions .theater-btn {
+    min-height: 31px;
+    padding: 5px 10px;
+    font-size: var(--t-text-xs);
+}
+.theater-api-preset-note {
+    margin: var(--t-space-2) 2px 0;
+    color: var(--t-fg-faint);
+    font-size: var(--t-text-xs);
+    line-height: 1.55;
+}
+.theater-api-preset-note i { margin-right: 4px; color: var(--t-fg-mute); }
 
 /* ============================================================
  * Buttons
@@ -1556,6 +1615,14 @@
  * Mobile / Tablet — let the popup breathe on narrow screens
  * ============================================================ */
 @media (max-width: 768px) {
+    .theater-api-preset-card {
+        padding: var(--t-space-3);
+        box-shadow: 3px 3px 0 color-mix(in srgb, var(--t-accent) 7%, transparent);
+    }
+    .theater-api-preset-actions .theater-btn {
+        flex: 1 1 calc(50% - 6px);
+        justify-content: center;
+    }
     .theater-popup {
         min-height: 0;
         border-radius: var(--t-radius-lg);

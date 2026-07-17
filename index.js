@@ -13,9 +13,10 @@ import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summ
 import { abortGenerationJob, addGenerationSegment, createGenerationJob, shouldContinueJob } from './generation-job.js';
 import { tailText } from './text-counter.js';
 import { clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
+import { MAX_API_PRESETS, apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from './api-presets.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.2.7';
+const VERSION = '3.3.0';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -183,6 +184,7 @@ const defaultSettings = Object.freeze({
     uiFontSize: 13.5,
     apiMode: 'custom',  // 'custom' 独立 API | 'main' 酒馆主 API（实验）
     apiUrl: '', apiKey: '', apiModel: '', apiProtocol: 'auto', streamEnabled: true,
+    apiPresets: [], selectedApiPresetId: '',
     maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
     maxOutputTokensSchema: 2,
     autoContinue: false,
@@ -383,8 +385,10 @@ async function init() {
         if (!hasOwn(extensionSettings[MODULE_NAME], k)) extensionSettings[MODULE_NAME][k] = defaultSettings[k];
     }
     settings = extensionSettings[MODULE_NAME];
-    setRuntimeLogSecretProvider(() => [settings?.apiKey]);
+    setRuntimeLogSecretProvider(() => [settings?.apiKey, ...apiPresetSecretValues(settings?.apiPresets)]);
     if (upgradeNeedsProtocolCompatibility) settings.apiProtocol = 'auto';
+    settings.apiPresets = normalizeApiPresetList(settings.apiPresets);
+    if (!settings.apiPresets.some(preset => preset.id === settings.selectedApiPresetId)) settings.selectedApiPresetId = '';
     if (upgradeNeedsMaxOutputDefault) {
         if (Number(settings.maxOutputTokens) === 8192) {
             settings.maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS;
@@ -842,6 +846,7 @@ function buildPopupHTML() {
     const hist = historyCache;
     const selRender = settings.selectedRenderIndex || '__default__';
     const runtimeEntries = getRuntimeLogEntries();
+    const apiPresets = normalizeApiPresetList(settings.apiPresets);
 
     const skin = settings.skinMode || 'default';
     return `
@@ -1171,6 +1176,23 @@ function buildPopupHTML() {
                 <span class="theater-hint-inline">关闭后等待完整内容返回；不保证解决模型字数截断</span>
             </div>
             <div id="theater-custom-api-area" style="${settings.apiMode === 'main' ? 'display:none;' : ''}margin-top:10px;">
+                <div class="theater-api-preset-card">
+                    <div class="theater-api-preset-heading">
+                        <span><i class="fa-solid fa-layer-group"></i> API 快速切换</span>
+                        <span id="theater-api-preset-count" class="theater-api-preset-count">${apiPresets.length}/${MAX_API_PRESETS}</span>
+                    </div>
+                    <select id="theater-api-preset-select" class="theater-select">
+                        <option value="">选择已保存的 API 预设</option>
+                        ${apiPresets.map(preset => `<option value="${esc(preset.id)}" ${preset.id === settings.selectedApiPresetId ? 'selected' : ''}>${esc(apiPresetDisplayLabel(preset))}</option>`).join('')}
+                    </select>
+                    <div class="theater-btn-row theater-api-preset-actions">
+                        <div id="theater-save-api-preset-btn" class="theater-btn primary"><i class="fa-solid fa-bookmark"></i><span>保存当前</span></div>
+                        <div id="theater-update-api-preset-btn" class="theater-btn ${settings.selectedApiPresetId ? '' : 'disabled'}"><i class="fa-solid fa-arrows-rotate"></i><span>更新</span></div>
+                        <div id="theater-rename-api-preset-btn" class="theater-btn ${settings.selectedApiPresetId ? '' : 'disabled'}"><i class="fa-solid fa-pen"></i><span>改名</span></div>
+                        <div id="theater-delete-api-preset-btn" class="theater-btn danger ${settings.selectedApiPresetId ? '' : 'disabled'}"><i class="fa-solid fa-trash"></i><span>删除</span></div>
+                    </div>
+                    <p class="theater-api-preset-note"><i class="fa-solid fa-shield-halved"></i> 预设会保存地址、协议、Key、模型和单轮输出上限；请勿把 settings.json 分享给他人。</p>
+                </div>
                 <select id="theater-api-protocol" class="theater-select" style="margin-bottom:6px;">
                     <option value="auto" ${(settings.apiProtocol || 'auto') === 'auto' ? 'selected' : ''}>自动判断（默认）</option>
                     <option value="openai" ${settings.apiProtocol === 'openai' ? 'selected' : ''}>OpenAI Chat Completions 兼容格式</option>
@@ -1669,6 +1691,75 @@ async function openTheaterPopup() {
 // ============================================================
 // Events
 // ============================================================
+function readApiFormConfig() {
+    return {
+        apiUrl: ($('#theater-api-url').val() || '').trim().replace(/\/+$/, ''),
+        apiKey: ($('#theater-api-key').val() || '').trim(),
+        apiModel: ($('#theater-api-model').val() || '').trim(),
+        apiProtocol: $('#theater-api-protocol').val() || 'auto',
+        maxOutputTokens: normalizeMaxTokens($('#theater-max-output-tokens').val()),
+    };
+}
+
+function writeApiFormConfig(config) {
+    $('#theater-api-url').val(config.apiUrl || '');
+    $('#theater-api-key').val(config.apiKey || '');
+    $('#theater-api-model').val(config.apiModel || '');
+    $('#theater-api-protocol').val(config.apiProtocol || 'auto');
+    $('#theater-max-output-tokens').val(normalizeMaxTokens(config.maxOutputTokens));
+    $('#theater-api-model-select').empty().hide();
+}
+
+function apiPresetDefaultName(config) {
+    if (config.apiModel) return config.apiModel.slice(0, 40);
+    try { return new URL(config.apiUrl).hostname.slice(0, 40); } catch { return '我的 API'; }
+}
+
+function apiPresetDisplayLabel(preset) {
+    const model = String(preset?.apiModel || '').trim();
+    return `${preset?.name || '未命名'}${model ? ` · ${model.slice(0, 60)}` : ''}`;
+}
+
+function validateApiPresetConfig(config) {
+    if (!config.apiUrl) { toastr.warning('请先填写 API URL'); return false; }
+    if (!config.apiModel) { toastr.warning('请先填写模型名称'); return false; }
+    return true;
+}
+
+function persistCurrentApiConfig(config = readApiFormConfig()) {
+    settings.apiMode = $('#theater-api-mode').val() || 'custom';
+    settings.apiUrl = config.apiUrl;
+    settings.apiKey = config.apiKey;
+    settings.apiModel = config.apiModel;
+    settings.apiProtocol = config.apiProtocol;
+    settings.maxOutputTokens = config.maxOutputTokens;
+    settings.autoContinue = $('#theater-auto-continue').is(':checked');
+    settings.maxAutoRounds = Math.min(10, Math.max(1, parseInt($('#theater-max-auto-rounds').val()) || 3));
+    $('#theater-max-output-tokens').val(settings.maxOutputTokens);
+    $('#theater-max-auto-rounds').val(settings.maxAutoRounds);
+    save();
+}
+
+function refreshApiPresetControls(selectedId = settings.selectedApiPresetId || '') {
+    settings.apiPresets = normalizeApiPresetList(settings.apiPresets);
+    if (!settings.apiPresets.some(preset => preset.id === selectedId)) selectedId = '';
+    settings.selectedApiPresetId = selectedId;
+    const $select = $('#theater-api-preset-select');
+    if ($select.length) {
+        $select.empty().append('<option value="">选择已保存的 API 预设</option>');
+        settings.apiPresets.forEach(preset => {
+            $select.append($('<option>').val(preset.id).text(apiPresetDisplayLabel(preset)));
+        });
+        $select.val(selectedId);
+    }
+    $('#theater-api-preset-count').text(`${settings.apiPresets.length}/${MAX_API_PRESETS}`);
+    $('#theater-update-api-preset-btn,#theater-rename-api-preset-btn,#theater-delete-api-preset-btn').toggleClass('disabled', !selectedId);
+}
+
+function findApiPreset(id = settings.selectedApiPresetId) {
+    return normalizeApiPresetList(settings.apiPresets).find(preset => preset.id === id) || null;
+}
+
 function bindEvents() {
     const $d = $(document);
     const tokenAffectingSelectors = '#theater-interactive-toggle,#theater-context-range,#theater-read-chat-context,#theater-render-select,#theater-preset-name-select,#theater-style-addon,#theater-nsfw-addon,.theater-preset-check,.theater-wb-check';
@@ -2185,17 +2276,90 @@ function bindEvents() {
         await reloadWorldBooks();
     });
     $d.off('click.tsa').on('click.tsa', '#theater-save-api-btn', function () {
-        settings.apiMode = $('#theater-api-mode').val() || 'custom';
-        settings.apiUrl = $('#theater-api-url').val().trim().replace(/\/+$/, '');
-        settings.apiKey = $('#theater-api-key').val().trim();
-        settings.apiModel = $('#theater-api-model').val().trim();
-        settings.apiProtocol = $('#theater-api-protocol').val() || 'auto';
-        settings.maxOutputTokens = normalizeMaxTokens($('#theater-max-output-tokens').val());
-        settings.autoContinue = $('#theater-auto-continue').is(':checked');
-        settings.maxAutoRounds = Math.min(10, Math.max(1, parseInt($('#theater-max-auto-rounds').val()) || 3));
-        $('#theater-max-output-tokens').val(settings.maxOutputTokens);
-        $('#theater-max-auto-rounds').val(settings.maxAutoRounds);
-        save(); toastr.success('API 已保存');
+        persistCurrentApiConfig();
+        toastr.success('API 已保存');
+    });
+    $d.off('change.tapreset').on('change.tapreset', '#theater-api-preset-select', function () {
+        const id = $(this).val() || '';
+        if (!id) {
+            settings.selectedApiPresetId = '';
+            refreshApiPresetControls('');
+            save();
+            return;
+        }
+        const preset = findApiPreset(id);
+        if (!preset) { refreshApiPresetControls(''); return; }
+        writeApiFormConfig(preset);
+        settings.selectedApiPresetId = preset.id;
+        persistCurrentApiConfig(preset);
+        refreshApiPresetControls(preset.id);
+        runtimeLog('info', 'API 预设切换', { preset: preset.name, protocol: preset.apiProtocol, model: preset.apiModel });
+        toastr.success(`已切换到「${preset.name}」`);
+    });
+    $d.off('click.tapreset-save').on('click.tapreset-save', '#theater-save-api-preset-btn', async function () {
+        const config = readApiFormConfig();
+        if (!validateApiPresetConfig(config)) return;
+        const { Popup } = SillyTavern.getContext();
+        const input = await Popup.show.input('保存 API 预设', '给这套 API 配置起个名字：', apiPresetDefaultName(config));
+        const name = String(input || '').trim().slice(0, 40);
+        if (!name) return;
+        const duplicate = normalizeApiPresetList(settings.apiPresets).find(preset => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+        if (duplicate) {
+            const overwrite = await Popup.show.confirm(`已经有一个叫「${duplicate.name}」的预设`, '要用当前填写的配置覆盖它吗？');
+            if (!overwrite) return;
+        } else if (normalizeApiPresetList(settings.apiPresets).length >= MAX_API_PRESETS) {
+            toastr.warning(`最多保存 ${MAX_API_PRESETS} 个 API 预设`);
+            return;
+        }
+        const preset = createApiPresetFromConfig(name, config, duplicate?.id || '');
+        settings.apiPresets = duplicate
+            ? normalizeApiPresetList(settings.apiPresets).map(item => item.id === duplicate.id ? preset : item)
+            : [...normalizeApiPresetList(settings.apiPresets), preset];
+        settings.selectedApiPresetId = preset.id;
+        persistCurrentApiConfig(config);
+        refreshApiPresetControls(preset.id);
+        runtimeLog('info', duplicate ? 'API 预设覆盖' : 'API 预设保存', { preset: preset.name, protocol: preset.apiProtocol, model: preset.apiModel });
+        toastr.success(duplicate ? `已更新「${preset.name}」` : `已保存「${preset.name}」`);
+    });
+    $d.off('click.tapreset-update').on('click.tapreset-update', '#theater-update-api-preset-btn', function () {
+        const current = findApiPreset();
+        if (!current) { toastr.warning('请先选择一个 API 预设'); return; }
+        const config = readApiFormConfig();
+        if (!validateApiPresetConfig(config)) return;
+        const preset = createApiPresetFromConfig(current.name, config, current.id);
+        settings.apiPresets = normalizeApiPresetList(settings.apiPresets).map(item => item.id === current.id ? preset : item);
+        persistCurrentApiConfig(config);
+        refreshApiPresetControls(preset.id);
+        runtimeLog('info', 'API 预设更新', { preset: preset.name, protocol: preset.apiProtocol, model: preset.apiModel });
+        toastr.success(`已更新「${preset.name}」`);
+    });
+    $d.off('click.tapreset-rename').on('click.tapreset-rename', '#theater-rename-api-preset-btn', async function () {
+        const current = findApiPreset();
+        if (!current) { toastr.warning('请先选择一个 API 预设'); return; }
+        const { Popup } = SillyTavern.getContext();
+        const input = await Popup.show.input('重命名 API 预设', `把「${current.name}」改成：`, current.name);
+        const name = String(input || '').trim().slice(0, 40);
+        if (!name || name === current.name) return;
+        const duplicate = normalizeApiPresetList(settings.apiPresets).some(preset => preset.id !== current.id && preset.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+        if (duplicate) { toastr.warning('已经有同名的 API 预设'); return; }
+        settings.apiPresets = normalizeApiPresetList(settings.apiPresets).map(preset => preset.id === current.id ? { ...preset, name } : preset);
+        refreshApiPresetControls(current.id);
+        save();
+        runtimeLog('info', 'API 预设改名', { from: current.name, to: name });
+        toastr.success(`已改名为「${name}」`);
+    });
+    $d.off('click.tapreset-delete').on('click.tapreset-delete', '#theater-delete-api-preset-btn', async function () {
+        const current = findApiPreset();
+        if (!current) { toastr.warning('请先选择一个 API 预设'); return; }
+        const { Popup } = SillyTavern.getContext();
+        const ok = await Popup.show.confirm(`删除 API 预设「${current.name}」？`, '只会删除快捷预设，当前正在使用的 API 配置会保留。');
+        if (!ok) return;
+        settings.apiPresets = normalizeApiPresetList(settings.apiPresets).filter(preset => preset.id !== current.id);
+        settings.selectedApiPresetId = '';
+        refreshApiPresetControls('');
+        save();
+        runtimeLog('info', 'API 预设删除', { preset: current.name });
+        toastr.success(`已删除「${current.name}」`);
     });
     $d.off('click.tup').on('click.tup', '#theater-update-btn', updateExtension);
     $d.off('click.tfm').on('click.tfm', '#theater-fetch-models-btn', fetchModelList);
