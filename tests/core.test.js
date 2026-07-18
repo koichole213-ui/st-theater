@@ -9,6 +9,7 @@ import { injectResizeReporter, sandboxPermissions } from '../safe-renderer.js';
 import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from '../request-metrics.js';
 import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
 import { apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from '../api-presets.js';
+import { splitInstructionTextFile } from '../instruction-import.js';
 
 test('Token 分类相加等于总数', () => {
     const result = estimateTokenBreakdown({ preset: '预设内容', context: '聊天上下文', instruction: '写一段故事' });
@@ -70,6 +71,16 @@ test('未启用的 API 预设 Key 也不会进入可复制日志', () => {
     assert.doesNotMatch(output, /current-secret-key|inactive-secret-key/);
     assert.match(output, /\[REDACTED\]/);
     clearRuntimeLogs();
+});
+
+test('TXT 指令导入兼容 Windows、Unix 和旧式换行', () => {
+    assert.deepEqual(splitInstructionTextFile('第一条\r\n---\r\n第二条'), ['第一条', '第二条']);
+    assert.deepEqual(splitInstructionTextFile('第一条\n --- \n第二条'), ['第一条', '第二条']);
+    assert.deepEqual(splitInstructionTextFile('第一条\r---\r第二条'), ['第一条', '第二条']);
+});
+
+test('TXT 指令导入只把独立一行的三横线视为分隔符', () => {
+    assert.deepEqual(splitInstructionTextFile('正文里的---不是分隔符\r\n下一行'), ['正文里的---不是分隔符\n下一行']);
 });
 
 test('Anthropic 请求使用 messages 与 x-api-key', () => {

@@ -14,9 +14,10 @@ import { abortGenerationJob, addGenerationSegment, createGenerationJob, shouldCo
 import { tailText } from './text-counter.js';
 import { clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
 import { MAX_API_PRESETS, apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from './api-presets.js';
+import { splitInstructionTextFile } from './instruction-import.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.3.0';
+const VERSION = '3.3.1';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -3291,7 +3292,7 @@ function importInstructionTemplates() {
                 }
             } else {
                 // TXT格式：--- 分隔
-                const parts = text.split(/\n---\n/).map(s => s.trim()).filter(Boolean);
+                const parts = splitInstructionTextFile(text);
                 parts.forEach(p => {
                     addImported(p);
                 });
