@@ -14,6 +14,7 @@ import { LENGTH_TIERS, classifyLengthTier, firstRoundGuidance, parseTargetWordCo
 import { AUTO_CONTINUE_SCHEMA, migrateAutoContinueDefault } from '../settings-migration.js';
 import { createInstructionBackup, parseInstructionBackup } from '../instruction-backup.js';
 import { WORLD_BOOK_STRATEGIES, shouldReadWorldBookEntry, worldBookEntryStrategy } from '../world-book-policy.js';
+import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
 
 test('聊天前文楼层数支持 0、任意正整数并限制异常值', () => {
@@ -131,6 +132,39 @@ test('世界书读取并区分酒馆蓝灯、绿灯与链式策略', () => {
     assert.equal(shouldReadWorldBookEntry({ constant: false }, 'lights'), true);
     assert.equal(shouldReadWorldBookEntry({ vectorized: true }, 'lights'), false);
     assert.equal(shouldReadWorldBookEntry({ constant: true, disable: true }, 'lights'), false);
+});
+
+test('小剧场把勾选条目交给酒馆扫描，并只接回本轮触发结果', async () => {
+    let listener;
+    let removed = false;
+    const eventSource = {
+        on(_event, callback) { listener = callback; },
+        removeListener(_event, callback) { removed = callback === listener; listener = null; },
+    };
+    const entries = [
+        { uid: 1, world: '测试书', constant: true, content: '蓝灯内容' },
+        { uid: 2, world: '测试书', constant: false, key: ['月亮'], content: '命中绿灯' },
+        { uid: 3, world: '测试书', constant: false, key: ['太阳'], content: '未命中绿灯' },
+    ];
+    const activated = await scanWorldBookEntriesWithSillyTavern({
+        entries,
+        chat: ['User: 今晚一起看月亮'],
+        maxContext: 8192,
+        globalScanData: { trigger: 'quiet' },
+        eventSource,
+        eventType: 'worldinfo_entries_loaded',
+        checkWorldInfo: async chat => {
+            const payload = { globalLore: [{ uid: 99 }], characterLore: [{ uid: 98 }], chatLore: [], personaLore: [] };
+            await listener(payload);
+            assert.deepEqual(payload.globalLore.map(entry => entry.uid), [1, 2, 3]);
+            assert.deepEqual(payload.characterLore, []);
+            const scanText = chat.join('\n');
+            const matches = payload.globalLore.filter(entry => entry.constant || entry.key?.some(key => scanText.includes(key)));
+            return { allActivatedEntries: new Set(matches) };
+        },
+    });
+    assert.deepEqual(activated.map(entry => entry.content), ['蓝灯内容', '命中绿灯']);
+    assert.equal(removed, true);
 });
 
 test('Anthropic 请求使用 messages 与 x-api-key', () => {

@@ -19,10 +19,11 @@ import { splitInstructionTextFile } from './instruction-import.js';
 import { AUTO_CONTINUE_SCHEMA, migrateAutoContinueDefault } from './settings-migration.js';
 import { createInstructionBackup, parseInstructionBackup } from './instruction-backup.js';
 import { shouldReadWorldBookEntry, worldBookEntryStrategy } from './world-book-policy.js';
+import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.4.1';
+const VERSION = '3.4.2';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -1264,7 +1265,7 @@ function buildPopupHTML() {
             <select id="theater-wb-read-mode" class="theater-select">
                 <option value="all" ${(settings.worldBookReadMode || 'all') === 'all' ? 'selected' : ''}>全部条目</option>
                 <option value="enabled" ${settings.worldBookReadMode === 'enabled' ? 'selected' : ''}>酒馆开启条目（含链式）</option>
-                <option value="lights" ${settings.worldBookReadMode === 'lights' ? 'selected' : ''}>仅酒馆蓝灯与绿灯</option>
+                <option value="lights" ${settings.worldBookReadMode === 'lights' ? 'selected' : ''}>按酒馆蓝灯与绿灯触发</option>
             </select>
         </div>
         <div class="theater-section">
@@ -1635,7 +1636,7 @@ function updateWBCount() {
     }
     const roughTokens = Math.ceil(chars / 1.5);
     const tokenStr = roughTokens >= 1000 ? `${(roughTokens / 1000).toFixed(1)}k` : String(roughTokens);
-    $('#theater-wb-count').html(`${active}/${total} 个条目已启用 · 约 ${tokenStr} token`);
+    $('#theater-wb-count').html(`${active}/${total} 个条目已勾选 · 最多约 ${tokenStr} token`);
     $('#theater-wb-header').toggle(total > 0);
     updateWBGroupCounts();
 }
@@ -2961,19 +2962,23 @@ async function reloadWorldBooks({ silent = false } = {}) {
                 const data = await resp.json();
                 if (!data?.entries) { loadedBooks++; continue; }
 
-                const sourceEntries = Object.values(data.entries)
-                    .filter(e => e.content)
-                    .map(e => ({
-                        source: e,
-                        normalized: {
-                            book: name,
-                            uid: e.uid,
-                            name: e.comment || (Array.isArray(e.key) ? e.key.join(', ') : String(e.key || '')) || '未命名',
-                            content: e.content,
-                            disabled: !!e.disable,
-                            strategy: worldBookEntryStrategy(e),
-                        },
-                    }));
+                const sourceEntries = Object.entries(data.entries)
+                    .filter(([, entry]) => entry.content)
+                    .map(([entryId, entry]) => {
+                        const source = { ...entry, uid: entry.uid ?? entryId, world: name };
+                        return {
+                            source,
+                            normalized: {
+                                book: name,
+                                uid: source.uid,
+                                name: source.comment || (Array.isArray(source.key) ? source.key.join(', ') : String(source.key || '')) || '未命名',
+                                content: source.content,
+                                disabled: !!source.disable,
+                                strategy: worldBookEntryStrategy(source),
+                                raw: source,
+                            },
+                        };
+                    });
                 const entries = sourceEntries
                     .filter(({ source }) => shouldReadWorldBookEntry(source, settings.worldBookReadMode))
                     .map(({ normalized }) => normalized);
@@ -3635,7 +3640,7 @@ function resolveRenderSelection(forcePlainText = false) {
     return { selectedRender, isPlainTextRender, rules, label };
 }
 
-async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, loadPreset = true } = {}) {
+async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, loadPreset = true, evaluateWorldBook = true } = {}) {
     const ctx = SillyTavern.getContext();
     const { chat = [], characters = [], characterId, name1, name2 } = ctx;
     const contextCount = normalizeContextRange(settings.contextRange);
@@ -3649,17 +3654,63 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
             ? '本次聊天前文读取条数设为 0，请只根据角色设定、世界书和用户指令生成小剧场。'
         : '本次不读取聊天前文，请只根据角色设定、世界书和用户指令生成小剧场。';
 
+    const character = characterId !== undefined ? characters[characterId] : null;
+    const description = character?.data?.description || character?.description || '';
+    const personality = character?.data?.personality || character?.personality || '';
+    const scenario = character?.data?.scenario || character?.scenario || '';
+    const creatorNotes = character?.data?.creator_notes || character?.creator_notes || '';
     let role = '';
-    if (characterId !== undefined && characters[characterId]) {
-        const c = characters[characterId];
-        const description = c.data?.description || c.description || '';
-        const personality = c.data?.personality || c.personality || '';
+    if (character) {
         if (description) role += `角色设定：\n${description}\n\n`;
         if (personality) role += `角色性格：\n${personality}`;
     }
     const currentPersona = settings.followUserPersona ? loadPersona({ silent: true }) : (settings.userPersona || '');
     const persona = currentPersona?.trim() ? `User人设：\n${currentPersona.trim()}` : '';
-    const wbParts = wbEntries.filter((_entry, index) => wbStates[index] !== false).map(entry => entry.content);
+    const selectedWBEntries = wbEntries.filter((_entry, index) => wbStates[index] !== false);
+    let wbParts = selectedWBEntries.map(entry => entry.content);
+    if (evaluateWorldBook && settings.worldBookReadMode === 'lights') {
+        const rawEntries = selectedWBEntries.filter(entry => !entry.manual && entry.raw).map(entry => entry.raw);
+        const manualParts = selectedWBEntries.filter(entry => entry.manual).map(entry => entry.content);
+        try {
+            const instructionForScan = stripTargetWordCountRequirement(instruction) || String(instruction || '');
+            const reverseChat = [...chat].reverse();
+            const chatWithNames = [
+                `${name1 || 'User'}: ${instructionForScan}`,
+                ...reverseChat.map(message => `${message.is_user ? (name1 || 'User') : (message.name || name2 || 'Char')}: ${extractMesContent(message.mes)}`),
+            ];
+            const chatWithoutNames = [instructionForScan, ...reverseChat.map(message => extractMesContent(message.mes))];
+            const maxContext = ctx?.getMaxContextSize?.() || (ctx?.oai_settings || globalThis.oai_settings)?.openai_max_context || 65536;
+            const activated = await scanWithCurrentSillyTavern({
+                entries: rawEntries,
+                chatWithNames,
+                chatWithoutNames,
+                maxContext,
+                globalScanData: {
+                    personaDescription: currentPersona || '',
+                    characterDescription: description,
+                    characterPersonality: personality,
+                    characterDepthPrompt: '',
+                    scenario,
+                    creatorNotes,
+                    trigger: 'quiet',
+                },
+                eventSource: ctx?.eventSource,
+                eventType: ctx?.event_types?.WORLDINFO_ENTRIES_LOADED,
+            });
+            if (Array.isArray(activated)) {
+                const activatedKeys = new Set(activated.map(entry => `${entry.world}.${entry.uid}`));
+                wbParts = [
+                    ...selectedWBEntries
+                        .filter(entry => !entry.manual && activatedKeys.has(`${entry.book}.${entry.uid}`))
+                        .map(entry => entry.content),
+                    ...manualParts,
+                ];
+                runtimeLog('info', '世界书按酒馆规则触发', { candidates: rawEntries.length, activated: activatedKeys.size, manual: manualParts.length });
+            }
+        } catch (error) {
+            runtimeLog('warn', '酒馆世界书扫描不可用，回退为读取已勾选蓝绿灯', { message: String(error?.message || error) });
+        }
+    }
     const worldBook = wbParts.length ? `世界书设定：\n${wbParts.join('\n\n')}` : '';
 
     const { isPlainTextRender, rules } = resolveRenderSelection(forcePlainText);
@@ -3692,7 +3743,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
 async function refreshTokenEstimate() {
     if (!$('#theater-token-summary-value').length) return;
     try {
-        const payload = await assembleGenerationPayload($('#theater-instruction').val() || '', { continuationText: continueContext, loadPreset: false });
+        const payload = await assembleGenerationPayload($('#theater-instruction').val() || '', { continuationText: continueContext, loadPreset: false, evaluateWorldBook: false });
         const estimate = estimateTokenBreakdown(payload.tokenParts);
         $('#theater-token-summary-value').text(`预计输入约 ${formatTokenCount(estimate.total)} Token`);
         $('#theater-token-details').text(`预设 ${formatTokenCount(estimate.preset)} · 角色/人设 ${formatTokenCount(estimate.role)} · 世界书 ${formatTokenCount(estimate.worldBook)} · 上下文 ${formatTokenCount(estimate.context)} · 续写 ${formatTokenCount(estimate.continuation)} · 规则 ${formatTokenCount(estimate.rules)} · 当前指令 ${formatTokenCount(estimate.instruction)}`);
