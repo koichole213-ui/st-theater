@@ -1,6 +1,13 @@
 export const API_PROTOCOLS = Object.freeze({ AUTO: 'auto', OPENAI: 'openai', ANTHROPIC: 'anthropic' });
 export const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 
+export function resolveMainApiModel(ctx, oai = ctx?.oai_settings) {
+    const fromContext = typeof ctx?.getChatCompletionModel === 'function'
+        ? ctx.getChatCompletionModel()
+        : '';
+    return String(fromContext || oai?.openai_model || oai?.model || '').trim();
+}
+
 export function normalizeMaxTokens(value, fallback = DEFAULT_MAX_OUTPUT_TOKENS) {
     const parsed = Math.floor(Number(value));
     if (!Number.isFinite(parsed)) return fallback;

@@ -1,4 +1,4 @@
-export const MAX_CONTEXT_MESSAGES = 1000;
+export const MAX_CONTEXT_MESSAGES = 500;
 
 export function normalizeContextRange(value, fallback = 10) {
     const parsed = Number(value);

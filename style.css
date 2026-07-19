@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v3.4.0
+/* 千夜浮梦 · 小剧场生成器 v3.4.1
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -545,24 +545,56 @@
     flex: 1 1 220px;
     text-align: right;
 }
-.theater-target-control {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 4px var(--t-space-3);
+.theater-target-details {
     margin-top: var(--t-space-2);
-    padding: 9px 11px;
     border: 1px solid var(--t-border);
     border-radius: var(--t-radius-md);
     background: color-mix(in srgb, var(--t-surface) 88%, transparent);
     transition: border-color var(--t-dur-fast) var(--t-ease), background var(--t-dur-fast) var(--t-ease);
 }
-.theater-target-control.is-enabled {
+.theater-target-details.is-enabled {
     border-color: color-mix(in srgb, var(--t-accent) 48%, var(--t-border));
     background: color-mix(in srgb, var(--t-accent) 7%, var(--t-surface));
 }
-.theater-target-control .theater-toggle-label { min-width: 0; }
-.theater-target-control > .theater-hint-inline { grid-column: 1 / -1; padding-left: 26px; }
+.theater-target-summary {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    padding: 9px 11px;
+    cursor: pointer;
+    list-style: none;
+    color: var(--t-fg-soft);
+    font-size: var(--t-text-sm);
+    user-select: none;
+}
+.theater-target-summary::-webkit-details-marker { display: none; }
+.theater-target-summary::after {
+    content: '⌄';
+    color: var(--t-fg-mute);
+    font-size: 17px;
+    line-height: 1;
+    transform: translateY(-2px);
+    transition: transform var(--t-dur-base) var(--t-ease);
+}
+.theater-target-details[open] .theater-target-summary::after { transform: rotate(180deg) translateY(-1px); }
+.theater-target-summary i { color: var(--t-accent); margin-right: 4px; }
+.theater-target-summary-state {
+    margin-left: auto;
+    color: var(--t-fg-mute);
+    font-size: var(--t-text-xs);
+    white-space: nowrap;
+}
+.theater-target-details.is-enabled .theater-target-summary-state { color: var(--t-accent-deep, var(--t-accent)); }
+.theater-target-control-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px var(--t-space-3);
+    padding: 9px 11px 11px;
+    border-top: 1px solid var(--t-border);
+}
+.theater-target-control-body .theater-toggle-label { min-width: 0; }
+.theater-target-control-body > .theater-hint-inline { grid-column: 1 / -1; padding-left: 26px; }
 .theater-target-input-wrap {
     display: inline-flex;
     align-items: center;
@@ -967,6 +999,7 @@
     align-items: center;
     flex: 0 0 auto;
 }
+.theater-inst-more { display: none; }
 .theater-inst-delete {
     cursor: pointer;
     color: var(--t-fg-faint);
@@ -1211,9 +1244,6 @@
  * World Book / Preset entries
  * ============================================================ */
 .theater-wb-entries-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
     margin: var(--t-space-3) 0 var(--t-space-2);
     padding: 0 var(--t-space-1);
 }
@@ -1223,7 +1253,6 @@
     font-weight: 500;
     letter-spacing: .3px;
 }
-.theater-wb-entries-actions { display: flex; gap: var(--t-space-3); }
 .theater-wb-action-link {
     font-size: var(--t-text-xs);
     color: var(--t-fg-mute);
@@ -1777,29 +1806,60 @@
         min-height: 36px;
     }
     .theater-inst-item {
-        grid-template-columns: auto minmax(0, 1fr);
-        align-items: start;
-        padding: var(--t-space-3);
+        position: relative;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 6px;
+        min-height: 46px;
+        padding: 7px 9px;
     }
-    .theater-inst-info {
-        flex-wrap: wrap;
-        gap: 5px var(--t-space-2);
-    }
+    .theater-inst-item.theater-inst-actions-open { z-index: 5; }
+    .theater-inst-info { gap: 6px; }
     .theater-inst-name {
-        flex: 1 1 100%;
+        flex: 1 1 auto;
+        min-width: 0;
         padding-right: 0;
-        white-space: normal;
-        overflow-wrap: anywhere;
+        white-space: nowrap;
     }
+    .theater-inst-name i { margin-right: 6px; }
     .theater-inst-group-badge {
         margin-right: 0;
-        max-width: min(160px, 100%);
+        max-width: 72px;
+        padding: 1px 5px;
+    }
+    .theater-inst-more {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: 0;
+        border-radius: var(--t-radius-sm);
+        background: transparent;
+        color: var(--t-fg-mute);
+        cursor: pointer;
+    }
+    .theater-inst-more:hover,
+    .theater-inst-more[aria-expanded="true"] {
+        color: var(--t-accent);
+        background: color-mix(in srgb, var(--t-accent) 11%, transparent);
     }
     .theater-inst-actions {
-        grid-column: 2;
-        justify-self: end;
-        gap: var(--t-space-1);
+        display: none;
+        position: absolute;
+        right: 8px;
+        top: calc(100% - 4px);
+        z-index: 20;
+        align-items: center;
+        gap: 2px;
+        padding: 4px;
+        border: 1px solid var(--t-border);
+        border-radius: var(--t-radius-md);
+        background: var(--t-surface-1);
+        box-shadow: 0 8px 22px color-mix(in srgb, var(--t-fg) 15%, transparent);
     }
+    .theater-inst-actions-open .theater-inst-actions { display: flex; }
     .theater-inst-edit,
     .theater-inst-move,
     .theater-inst-delete {
@@ -1810,18 +1870,22 @@
         min-height: 32px;
         padding: var(--t-space-1);
     }
-    .theater-wb-entry-info {
-        align-items: flex-start;
-        flex-wrap: wrap;
-        gap: 4px var(--t-space-2);
-    }
+    .theater-wb-entry-header { padding: 7px 9px; min-height: 42px; }
+    .theater-wb-entry-info { flex-wrap: nowrap; gap: 6px; }
     .theater-wb-entry-name {
-        flex: 1 1 100%;
-        white-space: normal;
-        overflow-wrap: anywhere;
+        flex: 1 1 auto;
+        white-space: nowrap;
     }
-    .theater-wb-strategy { margin-right: auto; }
-    .theater-wb-entry-actions { align-self: start; }
+    .theater-wb-strategy { margin: 0; padding: 1px 5px; font-size: 9.5px; }
+    .theater-wb-entry-actions { align-self: center; }
+    .theater-wb-entries-header { margin: 9px 0 7px; }
+    .theater-wb-body-toolbar {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px var(--t-space-3);
+    }
+    .theater-wb-body-toolbar .theater-wb-entry-filter { flex: 1 1 100%; }
+    .theater-wb-body-toolbar .theater-wb-action-link { white-space: nowrap; }
     .theater-skin-option { flex: 1 1 100%; }
     .theater-iframe {
         height: 60vh;

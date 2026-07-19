@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { estimateTokenBreakdown } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload } from '../generation-payload.js';
-import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, isMaxTokenLimitError, maxTokenFallbackSequence, normalizeMaxTokens } from '../api-client.js';
+import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, isMaxTokenLimitError, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel } from '../api-client.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
 import { readableCharCount } from '../text-counter.js';
 import { injectResizeReporter, sandboxPermissions } from '../safe-renderer.js';
@@ -17,12 +17,20 @@ import { WORLD_BOOK_STRATEGIES, shouldReadWorldBookEntry, worldBookEntryStrategy
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
 
 test('聊天前文楼层数支持 0、任意正整数并限制异常值', () => {
+    assert.equal(MAX_CONTEXT_MESSAGES, 500);
     assert.equal(normalizeContextRange(0), 0);
     assert.equal(normalizeContextRange('5'), 5);
     assert.equal(normalizeContextRange(10.9), 10);
     assert.equal(normalizeContextRange(-4), 0);
     assert.equal(normalizeContextRange(MAX_CONTEXT_MESSAGES + 50), MAX_CONTEXT_MESSAGES);
     assert.equal(normalizeContextRange('not-a-number'), 10);
+});
+
+test('酒馆主 API 在请求日志和实际请求前都能解析出模型名', () => {
+    assert.equal(resolveMainApiModel({ getChatCompletionModel: () => 'main-model' }, { model: 'fallback' }), 'main-model');
+    assert.equal(resolveMainApiModel({}, { openai_model: 'openai-model' }), 'openai-model');
+    assert.equal(resolveMainApiModel({}, { model: 'legacy-model' }), 'legacy-model');
+    assert.equal(resolveMainApiModel({}, {}), '');
 });
 
 test('聊天前文设为 0 时不读取任何消息，而不是误读全部消息', () => {

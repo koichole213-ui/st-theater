@@ -6,7 +6,7 @@ import { playSoundFile } from './notification-sound.js';
 import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follow.js';
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
-import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, isMaxTokenLimitError, maxTokenFallbackSequence, normalizeMaxTokens, resolveProtocol } from './api-client.js';
+import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, isMaxTokenLimitError, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload } from './generation-payload.js';
 import { debounce, estimateTokenBreakdown, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
@@ -22,7 +22,7 @@ import { shouldReadWorldBookEntry, worldBookEntryStrategy } from './world-book-p
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.4.0';
+const VERSION = '3.4.1';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -185,6 +185,7 @@ const defaultSettings = Object.freeze({
     lastInstruction: '',
     manualTargetEnabled: false,
     manualTargetChars: 3000,
+    manualTargetPanelOpen: false,
     history: [],
     interactiveMode: false,
     customCSS: '',
@@ -889,17 +890,23 @@ function buildPopupHTML() {
         <div class="theater-section">
             <label class="theater-label">小剧场指令</label>
             <textarea id="theater-instruction" class="theater-textarea" rows="4" placeholder="例如：生成一个角色们一起吃火锅的番外小剧场">${esc(settings.lastInstruction || '')}</textarea>
-            <div id="theater-manual-target-control" class="theater-target-control ${settings.manualTargetEnabled ? 'is-enabled' : ''}">
-                <label class="theater-toggle-label">
-                    <input type="checkbox" id="theater-manual-target-enabled" ${settings.manualTargetEnabled ? 'checked' : ''}>
-                    <span>独立设置目标字数</span>
-                </label>
-                <div class="theater-target-input-wrap">
-                    <input id="theater-manual-target-chars" class="theater-input theater-number-input" type="number" min="100" max="100000" step="100" value="${normalizeManualTarget(settings.manualTargetChars)}" ${settings.manualTargetEnabled ? '' : 'disabled'}>
-                    <span>字</span>
+            <details id="theater-manual-target-control" class="theater-target-details ${settings.manualTargetEnabled ? 'is-enabled' : ''}" ${settings.manualTargetPanelOpen ? 'open' : ''}>
+                <summary class="theater-target-summary">
+                    <span><i class="fa-solid fa-bullseye"></i> 独立设置目标字数</span>
+                    <span id="theater-manual-target-state" class="theater-target-summary-state">${settings.manualTargetEnabled ? `约 ${normalizeManualTarget(settings.manualTargetChars)} 字` : '默认关闭'}</span>
+                </summary>
+                <div class="theater-target-control-body">
+                    <label class="theater-toggle-label">
+                        <input type="checkbox" id="theater-manual-target-enabled" ${settings.manualTargetEnabled ? 'checked' : ''}>
+                        <span>启用独立目标</span>
+                    </label>
+                    <div class="theater-target-input-wrap">
+                        <input id="theater-manual-target-chars" class="theater-input theater-number-input" type="number" min="100" max="100000" step="100" value="${normalizeManualTarget(settings.manualTargetChars)}" ${settings.manualTargetEnabled ? '' : 'disabled'}>
+                        <span>字</span>
+                    </div>
+                    <span class="theater-hint-inline">开启后覆盖指令里的字数；关闭时仍识别指令中的明确字数</span>
                 </div>
-                <span class="theater-hint-inline">开启后覆盖指令里的字数；默认关闭</span>
-            </div>
+            </details>
             <div id="theater-token-summary" style="display:flex;justify-content:space-between;gap:8px;font-size:.78em;opacity:.68;margin:5px 1px 7px;cursor:pointer;white-space:nowrap;overflow:hidden;">
                 <span id="theater-token-summary-value">正在估算…</span><span>明细 ▾</span>
             </div>
@@ -990,10 +997,6 @@ function buildPopupHTML() {
             <input id="theater-wb-search" class="theater-input" placeholder="搜索世界书…" style="margin-bottom:6px;">
             <div class="theater-wb-entries-header" id="theater-wb-header" style="display:none;">
                 <span id="theater-wb-count" class="theater-wb-entries-count"></span>
-                <div class="theater-wb-entries-actions">
-                    <span id="theater-wb-select-all" class="theater-wb-action-link"><i class="fa-solid fa-check-double"></i> 全选</span>
-                    <span id="theater-wb-deselect-all" class="theater-wb-action-link"><i class="fa-regular fa-square"></i> 全不选</span>
-                </div>
             </div>
             <div id="theater-wb-books" class="theater-wb-list"></div>
 
@@ -1492,6 +1495,7 @@ function renderInstList(arr) {
                 <span class="theater-inst-name" data-index="${i}"><i class="fa-solid fa-file-lines"></i> ${esc(item.name)}</span>
                 ${groupBadge}
             </div>
+            <button type="button" class="theater-inst-more" data-index="${i}" title="更多操作" aria-label="打开模板操作菜单" aria-expanded="false"><i class="fa-solid fa-ellipsis"></i></button>
             <div class="theater-inst-actions">
                 <span class="theater-inst-edit" data-index="${i}" title="编辑" aria-label="编辑模板"><i class="fa-solid fa-pen"></i></span>
                 <span class="theater-inst-move" data-index="${i}" title="改分组" aria-label="修改模板分组"><i class="fa-solid fa-folder-tree"></i></span>
@@ -1672,13 +1676,6 @@ function syncManualIntoWB() {
     wbStates = keepStates;
 }
 
-function setAllWBStates(on) {
-    wbEntries.forEach((_e, i) => setWBStateByIndex(i, on));
-    $('#theater-wb-books .theater-wb-check').prop('checked', on);
-    $('#theater-wb-books .theater-wb-entry').toggleClass('theater-wb-entry-off', !on);
-    save(); updateWBCount();
-}
-
 // ============================================================
 // Open popup
 // ============================================================
@@ -1826,12 +1823,18 @@ function bindEvents() {
         settings.manualTargetEnabled = this.checked;
         $('#theater-manual-target-control').toggleClass('is-enabled', this.checked);
         $('#theater-manual-target-chars').prop('disabled', !this.checked);
+        $('#theater-manual-target-state').text(this.checked ? `约 ${normalizeManualTarget($('#theater-manual-target-chars').val())} 字` : '默认关闭');
         save(); scheduleTokenEstimate();
     });
     $d.off('change.tmti').on('change.tmti', '#theater-manual-target-chars', function () {
         settings.manualTargetChars = normalizeManualTarget(this.value);
         this.value = settings.manualTargetChars;
+        if (settings.manualTargetEnabled) $('#theater-manual-target-state').text(`约 ${settings.manualTargetChars} 字`);
         save(); scheduleTokenEstimate();
+    });
+    $('#theater-manual-target-control').off('toggle.tmtd').on('toggle.tmtd', function () {
+        settings.manualTargetPanelOpen = this.open;
+        save();
     });
     $d.off('click.ttsum').on('click.ttsum', '#theater-token-summary', function () { $('#theater-token-details').toggle(); });
 
@@ -1964,8 +1967,6 @@ function bindEvents() {
         $(this).closest('.theater-wb-entry').toggleClass('theater-wb-entry-off', !checked);
         save(); updateWBCount();
     });
-    $d.off('click.twsa').on('click.twsa', '#theater-wb-select-all', () => setAllWBStates(true));
-    $d.off('click.twda').on('click.twda', '#theater-wb-deselect-all', () => setAllWBStates(false));
     // 书内条目筛选（大书救星）
     $d.off('input.twef').on('input.twef', '.theater-wb-entry-filter', function () {
         const q = ($(this).val() || '').toLowerCase().trim();
@@ -2078,6 +2079,24 @@ function bindEvents() {
             $('.theater-tab[data-tab="generate"]').click();
             toastr.info('已加载指令');
         }
+    });
+    $d.off('click.timore').on('click.timore', '.theater-inst-more', function (e) {
+        e.stopPropagation();
+        const $item = $(this).closest('.theater-inst-item');
+        const willOpen = !$item.hasClass('theater-inst-actions-open');
+        $('.theater-inst-item').not($item).removeClass('theater-inst-actions-open')
+            .find('.theater-inst-more').attr('aria-expanded', 'false');
+        $item.toggleClass('theater-inst-actions-open', willOpen);
+        $(this).attr('aria-expanded', String(willOpen));
+    });
+    $d.off('click.timoreclose').on('click.timoreclose', function (e) {
+        if ($(e.target).closest('.theater-inst-more, .theater-inst-actions').length) return;
+        $('.theater-inst-item').removeClass('theater-inst-actions-open')
+            .find('.theater-inst-more').attr('aria-expanded', 'false');
+    });
+    $d.off('click.tiaction').on('click.tiaction', '.theater-inst-actions > span', function () {
+        $(this).closest('.theater-inst-item').removeClass('theater-inst-actions-open')
+            .find('.theater-inst-more').attr('aria-expanded', 'false');
     });
     $d.off('click.tie').on('click.tie', '.theater-inst-edit', async function () {
         const idx = $(this).data('index');
@@ -3780,7 +3799,7 @@ async function runGeneration(instruction, isAuto) {
     const mainOai = ctx?.oai_settings || globalThis.oai_settings;
     const resolvedProtocol = settings.apiMode === 'main' ? 'main' : resolveProtocol(settings.apiProtocol, settings.apiUrl);
     const modelName = settings.apiMode === 'main'
-        ? (ctx?.getChatCompletionModel ? ctx.getChatCompletionModel() : (mainOai?.openai_model || mainOai?.model || '未识别'))
+        ? (resolveMainApiModel(ctx, mainOai) || '未识别')
         : (settings.apiModel || '未填写');
     const configuredMaxTokens = settings.apiMode === 'main'
         ? (mainOai?.openai_max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS)
@@ -4171,6 +4190,7 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
     const signal = abortController?.signal;
     const oai = ctx?.oai_settings || globalThis.oai_settings;
     const maxTokens = oai?.openai_max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+    const model = resolveMainApiModel(ctx, oai) || '未识别';
 
     const CCS = ctx?.ChatCompletionService || window?.SillyTavern?.getContext?.()?.ChatCompletionService;
     runtimeLog('info', '请求发出', { mode: 'main', channel: CCS && typeof CCS.processRequest === 'function' ? 'ChatCompletionService' : 'TavernHelper', model, max_tokens: maxTokens });
@@ -4231,7 +4251,7 @@ async function callViaChatCompletionService(CCS, messages, maxTokens, signal, on
     const ctx = SillyTavern.getContext();
     const oai = ctx?.oai_settings || globalThis.oai_settings;
     const source = oai?.chat_completion_source;
-    const model = ctx?.getChatCompletionModel ? ctx.getChatCompletionModel() : (oai?.openai_model || oai?.model);
+    const model = resolveMainApiModel(ctx, oai);
     if (!source || !model) {
         const tip = '酒馆主 API 还没选好 source 或模型。\n\n请先在酒馆 API 设置里选好模型并确认正文能正常生成。';
         onChunk(tip);
