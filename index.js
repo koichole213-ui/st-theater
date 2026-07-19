@@ -23,7 +23,7 @@ import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.4.2';
+const VERSION = '3.4.3';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -455,7 +455,8 @@ async function init() {
     const addWand = () => {
         if ($('#theater-wand-btn').length) return;
         const $btn = $(`<div id="theater-wand-btn" class="list-group-item flex-container flexGap5"><div class="extensionsMenuExtensionButton">${LAMP_SVG_HTML}</div>千夜浮梦</div>`);
-        $('#extensionsMenu').append($btn);
+        // 始终放在魔法棒菜单顶部，避免受其他扩展完成初始化的先后顺序影响。
+        $('#extensionsMenu').prepend($btn);
         $btn.on('click', e => { e.stopPropagation(); $(document).trigger('click'); setTimeout(openTheaterPopup, 150); });
         refreshUpdateBadges();
     };
