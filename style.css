@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v3.3.1
+/* 千夜浮梦 · 小剧场生成器 v3.4.0
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -521,6 +521,75 @@
     flex: 0 0 88px;
     text-align: center;
 }
+.theater-context-count-control {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--t-space-2);
+    color: var(--t-fg-soft);
+    font-size: var(--t-text-sm);
+    transition: opacity var(--t-dur-fast) var(--t-ease);
+}
+.theater-context-count-control.is-disabled {
+    opacity: .45;
+    pointer-events: none;
+}
+.theater-context-number {
+    width: 92px !important;
+    flex: 0 0 92px;
+    text-align: center;
+}
+.theater-context-count-label,
+.theater-context-count-unit { white-space: nowrap; }
+.theater-context-count-hint {
+    flex: 1 1 220px;
+    text-align: right;
+}
+.theater-target-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px var(--t-space-3);
+    margin-top: var(--t-space-2);
+    padding: 9px 11px;
+    border: 1px solid var(--t-border);
+    border-radius: var(--t-radius-md);
+    background: color-mix(in srgb, var(--t-surface) 88%, transparent);
+    transition: border-color var(--t-dur-fast) var(--t-ease), background var(--t-dur-fast) var(--t-ease);
+}
+.theater-target-control.is-enabled {
+    border-color: color-mix(in srgb, var(--t-accent) 48%, var(--t-border));
+    background: color-mix(in srgb, var(--t-accent) 7%, var(--t-surface));
+}
+.theater-target-control .theater-toggle-label { min-width: 0; }
+.theater-target-control > .theater-hint-inline { grid-column: 1 / -1; padding-left: 26px; }
+.theater-target-input-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--t-fg-soft);
+    font-size: var(--t-text-sm);
+}
+.theater-target-input-wrap .theater-number-input {
+    width: 92px;
+    min-width: 92px;
+    text-align: center;
+}
+.theater-target-input-wrap .theater-number-input:disabled { opacity: .45; cursor: not-allowed; }
+.theater-wb-strategy {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    line-height: 1.45;
+    border: 1px solid currentColor;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+}
+.theater-wb-strategy-blue { color: #4f8fda; }
+.theater-wb-strategy-green { color: #4f9b6d; }
+.theater-wb-strategy-chain { color: var(--t-fg-mute); }
 .theater-select {
     cursor: pointer;
     -webkit-appearance: none;
@@ -863,9 +932,10 @@
 .theater-drawer-body { padding: var(--t-space-2); }
 
 .theater-inst-item {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
+    gap: var(--t-space-2);
     padding: var(--t-space-2) var(--t-space-3);
     border-radius: var(--t-radius-sm);
     margin-bottom: var(--t-space-1);
@@ -875,6 +945,11 @@
     color: var(--t-fg);
 }
 .theater-inst-item:last-child { margin-bottom: 0; }
+.theater-inst-info {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
 .theater-inst-name {
     cursor: pointer;
     flex: 1;
@@ -887,6 +962,11 @@
 }
 .theater-inst-name i { margin-right: var(--t-space-2); color: var(--t-fg-mute); }
 .theater-inst-name:hover { color: var(--t-fg); }
+.theater-inst-actions {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+}
 .theater-inst-delete {
     cursor: pointer;
     color: var(--t-fg-faint);
@@ -1183,18 +1263,34 @@
     min-height: 40px;
     color: var(--t-fg);
 }
+.theater-wb-entry-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+}
 .theater-wb-entry-header input[type="checkbox"],
 .theater-preset-entry-header input[type="checkbox"] {
     flex-shrink: 0;
     margin: 0;
     accent-color: var(--t-accent);
 }
+.theater-wb-entry-info {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    min-width: 0;
+}
 .theater-wb-entry-name {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 0;
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+.theater-wb-entry-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-1);
 }
 .theater-wb-entry-source {
     flex-shrink: 0;
@@ -1680,6 +1776,52 @@
         font-size: var(--t-text-sm);
         min-height: 36px;
     }
+    .theater-inst-item {
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: start;
+        padding: var(--t-space-3);
+    }
+    .theater-inst-info {
+        flex-wrap: wrap;
+        gap: 5px var(--t-space-2);
+    }
+    .theater-inst-name {
+        flex: 1 1 100%;
+        padding-right: 0;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+    .theater-inst-group-badge {
+        margin-right: 0;
+        max-width: min(160px, 100%);
+    }
+    .theater-inst-actions {
+        grid-column: 2;
+        justify-self: end;
+        gap: var(--t-space-1);
+    }
+    .theater-inst-edit,
+    .theater-inst-move,
+    .theater-inst-delete {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 32px;
+        min-height: 32px;
+        padding: var(--t-space-1);
+    }
+    .theater-wb-entry-info {
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: 4px var(--t-space-2);
+    }
+    .theater-wb-entry-name {
+        flex: 1 1 100%;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+    .theater-wb-strategy { margin-right: auto; }
+    .theater-wb-entry-actions { align-self: start; }
     .theater-skin-option { flex: 1 1 100%; }
     .theater-iframe {
         height: 60vh;
@@ -1704,6 +1846,10 @@
     .theater-history-actions span {
         font-size: 10.5px;
         padding: 3px var(--t-space-2);
+    }
+    .theater-context-count-hint {
+        flex-basis: 100%;
+        text-align: left;
     }
 }
 

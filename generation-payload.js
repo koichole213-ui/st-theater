@@ -32,14 +32,15 @@ export function buildFinalRenderPayload({ sourceText = '', rules = '' } = {}) {
     };
 }
 
-export function buildContinuationInstruction({ originalInstruction, targetChars, actualChars, round, maxRounds, tail, finishThisRound }) {
-    const remaining = Math.max(0, targetChars - actualChars);
-    return `这是同一篇小剧场的第 ${round} 次续写。
+export function buildContinuationPayload({ instruction = '' } = {}) {
+    return {
+        systemPrompt: '你正在续写同一篇小剧场。只负责承接给出的结尾创作新增正文，保持人物、视角、时态与文风一致。',
+        userPrompt: String(instruction || '').trim(),
+    };
+}
 
-原始要求：${originalInstruction}
-目标总字数：约 ${targetChars} 字
-当前累计：约 ${actualChars} 字
-距离目标还差：约 ${remaining} 字
+export function buildContinuationInstruction({ round, tail, finishThisRound }) {
+    return `这是同一篇小剧场的第 ${round} 次续写。
 
 上一段结尾：
 ${tail}
@@ -48,8 +49,8 @@ ${tail}
 1. 不要复述、改写或总结已经发生的内容；
 2. 保持相同人物语气、视角、时态和叙事风格；
 3. 只输出新增正文片段，不要输出前文、HTML、CSS、JavaScript或标题；
-4. 目标总字数是应尽量写满的正文篇幅，不是可以提前收尾的上限。本轮尽量补足约 ${remaining} 字，允许为了自然完成而略微超出，但不要用复述、空话或重复情节凑字数；
+4. 用新的动作、对白、心理变化和情节推进继续展开，不要用复述、空话或重复情节填充；
 5. ${finishThisRound
-        ? '这是最后一轮自动补写：必须优先写足剩余篇幅，达到或略微超过目标后再自然收束，不要因为轮次将尽而提前结尾。'
-        : '继续展开有效情节；在累计正文达到目标字数前，不要总结、收束或写出明显的终章式结尾。'}`;
+        ? '本轮可以在情节充分展开后自然收束结局；如果故事已经完成，就直接结束，不要为了篇幅强行续接或注水。'
+        : '本轮继续推进有效情节，不要总结、收束或写出明显的终章式结尾。'}`;
 }

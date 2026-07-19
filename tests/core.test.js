@@ -1,15 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { estimateTokenBreakdown } from '../token-estimator.js';
-import { buildContinuationInstruction, buildFinalRenderPayload, buildGenerationPayload } from '../generation-payload.js';
+import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload } from '../generation-payload.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, isMaxTokenLimitError, maxTokenFallbackSequence, normalizeMaxTokens } from '../api-client.js';
-import { abortGenerationJob, addGenerationSegment, createGenerationJob, shouldContinueJob } from '../generation-job.js';
+import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
 import { readableCharCount } from '../text-counter.js';
 import { injectResizeReporter, sandboxPermissions } from '../safe-renderer.js';
 import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from '../request-metrics.js';
 import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
 import { apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from '../api-presets.js';
 import { splitInstructionTextFile } from '../instruction-import.js';
+import { LENGTH_TIERS, classifyLengthTier, firstRoundGuidance, parseTargetWordCount, resolveTargetWordCount, stripTargetWordCountRequirement } from '../length-policy.js';
+import { AUTO_CONTINUE_SCHEMA, migrateAutoContinueDefault } from '../settings-migration.js';
+import { createInstructionBackup, parseInstructionBackup } from '../instruction-backup.js';
+import { WORLD_BOOK_STRATEGIES, shouldReadWorldBookEntry, worldBookEntryStrategy } from '../world-book-policy.js';
+import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
+
+test('聊天前文楼层数支持 0、任意正整数并限制异常值', () => {
+    assert.equal(normalizeContextRange(0), 0);
+    assert.equal(normalizeContextRange('5'), 5);
+    assert.equal(normalizeContextRange(10.9), 10);
+    assert.equal(normalizeContextRange(-4), 0);
+    assert.equal(normalizeContextRange(MAX_CONTEXT_MESSAGES + 50), MAX_CONTEXT_MESSAGES);
+    assert.equal(normalizeContextRange('not-a-number'), 10);
+});
+
+test('聊天前文设为 0 时不读取任何消息，而不是误读全部消息', () => {
+    const messages = Array.from({ length: 12 }, (_, index) => `第${index + 1}条`);
+    assert.deepEqual(takeRecentMessages(messages, 0), []);
+    assert.deepEqual(takeRecentMessages(messages, 5), messages.slice(-5));
+    assert.deepEqual(takeRecentMessages(messages, 10), messages.slice(-10));
+});
 
 test('Token 分类相加等于总数', () => {
     const result = estimateTokenBreakdown({ preset: '预设内容', context: '聊天上下文', instruction: '写一段故事' });
@@ -83,6 +104,27 @@ test('TXT 指令导入只把独立一行的三横线视为分隔符', () => {
     assert.deepEqual(splitInstructionTextFile('正文里的---不是分隔符\r\n下一行'), ['正文里的---不是分隔符\n下一行']);
 });
 
+test('指令备份跨设备导入时保留分组与空文件夹', () => {
+    const exported = createInstructionBackup(['甜文', '空文件夹'], [
+        { name: '雨夜', content: '写雨夜重逢', group: '甜文' },
+        { name: '散装', content: '写一顿晚饭' },
+    ]);
+    const restored = parseInstructionBackup(JSON.parse(JSON.stringify(exported)));
+    assert.deepEqual(restored.groups, ['甜文', '空文件夹']);
+    assert.equal(restored.templates[0].group, '甜文');
+    assert.equal(restored.templates[1].group, undefined);
+});
+
+test('世界书读取并区分酒馆蓝灯、绿灯与链式策略', () => {
+    assert.equal(worldBookEntryStrategy({ constant: true }), WORLD_BOOK_STRATEGIES.BLUE);
+    assert.equal(worldBookEntryStrategy({ constant: false }), WORLD_BOOK_STRATEGIES.GREEN);
+    assert.equal(worldBookEntryStrategy({ vectorized: true }), WORLD_BOOK_STRATEGIES.CHAIN);
+    assert.equal(shouldReadWorldBookEntry({ constant: true }, 'lights'), true);
+    assert.equal(shouldReadWorldBookEntry({ constant: false }, 'lights'), true);
+    assert.equal(shouldReadWorldBookEntry({ vectorized: true }, 'lights'), false);
+    assert.equal(shouldReadWorldBookEntry({ constant: true, disable: true }, 'lights'), false);
+});
+
 test('Anthropic 请求使用 messages 与 x-api-key', () => {
     const req = buildApiRequest({ url: 'https://example.com', protocol: API_PROTOCOLS.ANTHROPIC, key: 'secret', model: 'm', systemPrompt: 's', userPrompt: 'u' });
     assert.equal(req.endpoint, 'https://example.com/v1/messages');
@@ -101,24 +143,91 @@ test('HTML 网关错误页不会被当作模型正文', () => {
     assert.equal(isHtmlErrorResponse('text/plain', '<article>合法的小剧场片段</article>'), false);
 });
 
-test('自动续写必须写满目标字数后才停止', () => {
+test('自动续写达到目标的 90% 后停止', () => {
     const job = createGenerationJob({ targetChars: 100, maxRounds: 3, autoContinue: true });
     addGenerationSegment(job, '字'.repeat(50), 'stop');
     assert.equal(shouldContinueJob(job, readableCharCount), true);
     job.round++;
-    addGenerationSegment(job, '字'.repeat(42), 'stop');
+    addGenerationSegment(job, '字'.repeat(39), 'stop');
     assert.equal(shouldContinueJob(job, readableCharCount), true);
-    addGenerationSegment(job, '字'.repeat(8), 'stop');
+    job.round++;
+    addGenerationSegment(job, '字', 'stop');
     assert.equal(shouldContinueJob(job, readableCharCount), false);
+    assert.equal(job.actualChars, 90);
+    assert.equal(targetCompletionChars(100), 90);
 });
 
-test('续写提示要求补足目标后再收束', () => {
+test('续写提示不携带总字数、原始指令或 HTML 结构', () => {
     const prompt = buildContinuationInstruction({
-        originalInstruction: '写约5000字', targetChars: 5000, actualChars: 4600,
-        round: 3, maxRounds: 3, tail: '上一段', finishThisRound: true,
+        round: 2, tail: '上一段结尾原文', finishThisRound: true,
     });
-    assert.match(prompt, /距离目标还差：约 400 字/);
-    assert.match(prompt, /达到或略微超过目标后再自然收束/);
+    const payload = buildContinuationPayload({ instruction: prompt });
+    assert.match(payload.userPrompt, /上一段结尾原文/);
+    assert.match(payload.userPrompt, /只输出新增正文片段/);
+    assert.match(payload.userPrompt, /可以.*自然收束结局/);
+    assert.doesNotMatch(payload.userPrompt, /5000|目标总字数|原始要求/);
+    assert.doesNotMatch(payload.userPrompt, /输出完整 HTML/);
+});
+
+test('四档分诊边界与轻量首轮引导符合定稿', () => {
+    assert.equal(classifyLengthTier(null), LENGTH_TIERS.UNSPECIFIED);
+    assert.equal(classifyLengthTier(3000), LENGTH_TIERS.SHORT);
+    assert.equal(classifyLengthTier(3001), LENGTH_TIERS.COMFORT);
+    assert.equal(classifyLengthTier(5000), LENGTH_TIERS.COMFORT);
+    assert.equal(classifyLengthTier(5001), LENGTH_TIERS.LONG);
+    assert.match(firstRoundGuidance(2000), /精悍的短篇/);
+    assert.doesNotMatch(firstRoundGuidance(2000), /充分展开剧情/);
+    assert.match(firstRoundGuidance(8000), /充分展开剧情，不急于收尾/);
+    assert.doesNotMatch(firstRoundGuidance(8000), /8000|必须|写满/);
+});
+
+test('明确字数会被程序解析，但不会进入发给首轮模型的指令', () => {
+    for (const source of ['写一个8000字的小剧场', '正文至少八千字，写雨夜重逢', '篇幅5000字左右；围绕误会展开']) {
+        assert.ok(parseTargetWordCount(source) >= 5000);
+        const cleaned = stripTargetWordCountRequirement(source);
+        assert.doesNotMatch(cleaned, /8000|5000|八千|字左右|至少.*字/);
+    }
+    assert.equal(stripTargetWordCountRequirement('写一个8000字的小剧场'), '写一个小剧场');
+});
+
+test('独立目标字数默认不接管，开启后覆盖指令中的目标', () => {
+    assert.equal(resolveTargetWordCount('写5000字'), 5000);
+    assert.equal(resolveTargetWordCount('写5000字', { manualEnabled: true, manualTarget: 8000 }), 8000);
+    assert.equal(resolveTargetWordCount('没有字数要求', { manualEnabled: true, manualTarget: 2000 }), 2000);
+});
+
+test('旧用户升级时默认开启目标字数自动补写，迁移只执行一次', () => {
+    const settings = { autoContinue: false };
+    assert.equal(migrateAutoContinueDefault(settings), true);
+    assert.equal(settings.autoContinue, true);
+    assert.equal(settings.autoContinueSchema, AUTO_CONTINUE_SCHEMA);
+    settings.autoContinue = false;
+    assert.equal(migrateAutoContinueDefault(settings), false);
+    assert.equal(settings.autoContinue, false);
+});
+
+test('动态收束轮正常完成但不足 90% 时直接结束，不再请求', () => {
+    const job = createGenerationJob({ targetChars: 1000, maxRounds: 3, autoContinue: true });
+    addGenerationSegment(job, '字'.repeat(500), 'stop');
+    assert.equal(shouldContinueJob(job, readableCharCount), true);
+    assert.equal(shouldAuthorizeFinishRound(job, readableCharCount), true);
+    job.round++;
+    authorizeFinish(job, true);
+    addGenerationSegment(job, '字'.repeat(300), 'stop');
+    assert.equal(shouldContinueJob(job, readableCharCount), false);
+    assert.equal(job.actualChars, 800);
+    assert.equal(job.completedBelowTarget, true);
+    assert.equal(job.round, 2);
+});
+
+test('动态收束轮若被 Token 截断，仍可在轮数范围内继续', () => {
+    const job = createGenerationJob({ targetChars: 1000, maxRounds: 3, autoContinue: true });
+    addGenerationSegment(job, '字'.repeat(500), 'stop');
+    job.round++;
+    authorizeFinish(job, true);
+    addGenerationSegment(job, '字'.repeat(300), 'length');
+    assert.equal(shouldContinueJob(job, readableCharCount), true);
+    assert.equal(job.completedBelowTarget, false);
 });
 
 test('多轮正文的最终 HTML 排版要求完整保留正文', () => {
