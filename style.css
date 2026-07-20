@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v3.4.5
+/* 千夜浮梦 · 小剧场生成器 v3.5.0
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -454,10 +454,115 @@
     color: #697386;
     font-family: inherit;
 }
+
+/* Clipboard fallback: a compact, mobile-friendly log sheet. */
+.theater-manual-copy-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483600;
+    display: grid;
+    place-items: center;
+    padding: 18px;
+}
+.theater-manual-copy-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(12, 10, 8, .58);
+    backdrop-filter: blur(7px);
+}
+.theater-manual-copy-sheet {
+    position: relative;
+    width: min(680px, 100%);
+    max-height: min(82vh, 720px);
+    display: flex;
+    flex-direction: column;
+    gap: var(--t-space-3);
+    padding: clamp(16px, 3vw, 24px);
+    border: 1px solid var(--t-border);
+    border-radius: calc(var(--t-radius-lg) + 4px);
+    background: var(--t-surface-1);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .32);
+    color: var(--t-fg);
+}
+.theater-manual-copy-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--t-space-4);
+}
+.theater-manual-copy-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--t-accent);
+    font-size: var(--t-text-xs);
+    font-weight: 700;
+    letter-spacing: .08em;
+}
+.theater-manual-copy-head h3 {
+    margin: 5px 0 0;
+    color: var(--t-fg);
+    font-size: clamp(18px, 3vw, 23px);
+    line-height: 1.25;
+}
+.theater-manual-copy-close {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--t-border);
+    border-radius: 50%;
+    background: var(--t-surface-2);
+    color: var(--t-fg-soft);
+    cursor: pointer;
+}
+.theater-manual-copy-hint {
+    margin: 0;
+    color: var(--t-fg-mute);
+    font-size: var(--t-text-sm);
+    line-height: 1.6;
+}
+.theater-manual-copy-text {
+    width: 100%;
+    min-height: 260px;
+    max-height: 52vh;
+    resize: vertical;
+    padding: 14px;
+    border: 1px solid #2b3649;
+    border-radius: var(--t-radius-md);
+    outline: none;
+    background: #080c12;
+    color: #d3dae6;
+    font: 12px/1.6 "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+    white-space: pre;
+    overflow: auto;
+    -webkit-user-select: text;
+    user-select: text;
+}
+.theater-manual-copy-text:focus {
+    border-color: color-mix(in srgb, var(--t-accent) 70%, #2b3649);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 14%, transparent);
+}
+.theater-manual-copy-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--t-space-2);
+}
 @media (max-width: 600px) {
     .theater-error-log-list { min-height: 200px; max-height: 55vh; padding: 10px; }
     .theater-error-log-item { grid-template-columns: 7ch minmax(0, 1fr); gap: 7px; }
     .theater-error-log-meta { grid-column: 1 / -1; }
+    .theater-manual-copy-overlay { place-items: end center; padding: 0; }
+    .theater-manual-copy-sheet {
+        width: 100%;
+        max-height: 88dvh;
+        padding: 18px 16px calc(16px + env(safe-area-inset-bottom));
+        border-width: 1px 0 0;
+        border-radius: 22px 22px 0 0;
+    }
+    .theater-manual-copy-text { min-height: 42vh; max-height: 58vh; }
+    .theater-manual-copy-actions .theater-btn { flex: 1; justify-content: center; }
 }
 
 /* ============================================================

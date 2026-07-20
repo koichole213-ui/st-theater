@@ -7,7 +7,7 @@ import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follo
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, isMaxTokenLimitError, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
-import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload } from './generation-payload.js';
+import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml } from './generation-payload.js';
 import { debounce, estimateTokenBreakdown, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from './generation-job.js';
@@ -23,7 +23,7 @@ import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.4.5';
+const VERSION = '3.5.0';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -2453,7 +2453,24 @@ function bindEvents() {
     $d.off('click.tdiagtoggle').on('click.tdiagtoggle', '#theater-toggle-diagnostics-btn', toggleDiagnosticsReport);
     $d.off('click.telcopy').on('click.telcopy', '.theater-copy-runtime-log-btn', function () {
         if (!getRuntimeLogEntries().length) { toastr.warning('暂无运行日志'); return; }
-        copyToClipboard(formatRuntimeLogs());
+        copyToClipboard(formatRuntimeLogs(), {
+            requireVerification: true,
+            manualTitle: '手动复制运行日志',
+            downloadName: `千夜浮梦-运行日志-${new Date().toISOString().slice(0, 10)}.txt`,
+        });
+    });
+    $d.off('click.tmcopyclose').on('click.tmcopyclose', '[data-theater-manual-copy-close]', function (event) {
+        if (event.target !== this && $(this).hasClass('theater-manual-copy-backdrop')) return;
+        $('#theater-manual-copy-overlay').remove();
+    });
+    $d.off('click.tmcopydownload').on('click.tmcopydownload', '#theater-manual-copy-download', function () {
+        const $overlay = $('#theater-manual-copy-overlay');
+        downloadTextContent($overlay.find('textarea').val() || '', $overlay.data('download-name') || '千夜浮梦-日志.txt');
+    });
+    $d.off('click.tmcopyselect').on('click.tmcopyselect', '#theater-manual-copy-text', function () {
+        this.focus();
+        this.select();
+        this.setSelectionRange(0, this.value.length);
     });
     $d.off('click.telclear').on('click.telclear', '#theater-clear-runtime-log-btn', function () {
         clearRuntimeLogs();
@@ -3453,18 +3470,44 @@ function copyHtml() {
     copyToClipboard(html);
 }
 
-function copyToClipboard(text) {
-    // 方案1：Clipboard API（需要安全上下文）
-    if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(text)
-            .then(() => toastr.success('已复制'))
-            .catch(() => fallbackCopy(text));
-        return;
+async function readClipboardMatch(text) {
+    if (!navigator.clipboard?.readText || !window.isSecureContext) return null;
+    try {
+        return (await navigator.clipboard.readText()) === text;
+    } catch {
+        return null;
     }
-    fallbackCopy(text);
+}
+
+async function copyToClipboard(text, { requireVerification = false, manualTitle = '手动复制', downloadName = '千夜浮梦-内容.txt' } = {}) {
+    const content = String(text || '');
+    if (!content) { toastr.warning('没有可复制的内容'); return false; }
+
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+        try {
+            await navigator.clipboard.writeText(content);
+            const verified = requireVerification ? await readClipboardMatch(content) : true;
+            if (verified === true) { toastr.success('已复制'); return true; }
+        } catch { }
+    }
+
+    const legacyOk = fallbackCopy(content);
+    if (legacyOk) {
+        const verified = requireVerification ? await readClipboardMatch(content) : true;
+        if (verified === true) { toastr.success('已复制'); return true; }
+    }
+
+    if (requireVerification) {
+        showManualCopyPanel(content, { title: manualTitle, downloadName });
+        toastr.warning('浏览器未确认复制，已打开手动复制');
+    } else {
+        toastr.error('复制失败，请重试');
+    }
+    return false;
 }
 
 function fallbackCopy(text) {
+    let ta = null;
     try {
         // 关键：先把当前焦点和选区清掉，避免 execCommand('copy') 复制到之前选中的输入框内容
         // 这是 v2.1.1 修的 bug——之前 #theater-instruction 处于焦点/有选区时，临时 textarea 抢不到 selection
@@ -3476,11 +3519,10 @@ function fallbackCopy(text) {
         if (sel) { try { sel.removeAllRanges(); } catch {} }
 
         // 创建临时textarea，挂到body最外层
-        const ta = document.createElement('textarea');
+        ta = document.createElement('textarea');
         ta.value = text;
-        ta.setAttribute('readonly', '');
-        // 用屏幕外定位 + 完全可见尺寸，确保 select() 在所有环境下都生效
-        ta.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;padding:0;border:none;outline:none;box-shadow:none;background:transparent;z-index:2147483647';
+        // 保持元素位于可渲染区域但完全透明，部分移动端 WebView 不会复制屏幕外元素。
+        ta.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;padding:0;border:none;outline:none;box-shadow:none;background:transparent;opacity:.01;z-index:2147483647';
         document.body.appendChild(ta);
 
         // iOS 需要特殊处理
@@ -3500,15 +3542,62 @@ function fallbackCopy(text) {
 
         const ok = document.execCommand('copy');
         document.body.removeChild(ta);
-        if (ok) {
-            toastr.success('已复制');
-        } else {
-            toastr.error('复制失败，请手动复制');
-        }
+        ta = null;
+        return !!ok;
     } catch (e) {
         console.warn('[Theater] Copy fallback error:', e);
-        toastr.error('复制失败');
+        return false;
+    } finally {
+        if (ta?.parentNode) ta.parentNode.removeChild(ta);
     }
+}
+
+function showManualCopyPanel(text, { title = '手动复制', downloadName = '千夜浮梦-内容.txt' } = {}) {
+    $('#theater-manual-copy-overlay').remove();
+    const $host = $('.theater-popup').last();
+    if (!$host.length) return;
+    const $overlay = $(`
+        <div id="theater-manual-copy-overlay" class="theater-manual-copy-overlay" role="dialog" aria-modal="true" aria-labelledby="theater-manual-copy-title">
+            <div class="theater-manual-copy-backdrop" data-theater-manual-copy-close></div>
+            <section class="theater-manual-copy-sheet">
+                <header class="theater-manual-copy-head">
+                    <div>
+                        <span class="theater-manual-copy-kicker"><i class="fa-solid fa-clipboard"></i> 剪贴板兜底</span>
+                        <h3 id="theater-manual-copy-title"></h3>
+                    </div>
+                    <button type="button" class="theater-manual-copy-close" data-theater-manual-copy-close aria-label="关闭"><i class="fa-solid fa-xmark"></i></button>
+                </header>
+                <p class="theater-manual-copy-hint">浏览器没有确认剪贴板已经更新。请点一下文本框后长按复制，或直接下载 TXT。</p>
+                <textarea id="theater-manual-copy-text" class="theater-manual-copy-text" readonly spellcheck="false"></textarea>
+                <footer class="theater-manual-copy-actions">
+                    <button type="button" id="theater-manual-copy-download" class="theater-btn"><i class="fa-solid fa-download"></i><span>下载 TXT</span></button>
+                    <button type="button" class="theater-btn primary" data-theater-manual-copy-close><span>完成</span></button>
+                </footer>
+            </section>
+        </div>`);
+    $overlay.find('#theater-manual-copy-title').text(title);
+    $overlay.find('textarea').val(text);
+    $overlay.data('download-name', downloadName);
+    $host.append($overlay);
+    requestAnimationFrame(() => {
+        const textarea = document.getElementById('theater-manual-copy-text');
+        textarea?.focus();
+        textarea?.select();
+        textarea?.setSelectionRange(0, textarea.value.length);
+    });
+}
+
+function downloadTextContent(text, fileName) {
+    const blob = new Blob([String(text || '')], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = String(fileName || '千夜浮梦-内容.txt').replace(/[\\/:*?"<>|]/g, '_');
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toastr.success('TXT 已下载');
 }
 
 async function exportAllHistory() {
@@ -4064,26 +4153,67 @@ async function runGeneration(instruction, isAuto) {
             bgStreamText = '';
             renderedStreamText = '';
             try {
-                lastRequestMetrics = createRequestMetrics(settings.apiMode === 'main' ? 'main:final-render' : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}:final-render`);
-                const renderResult = settings.apiMode === 'main'
-                    ? await generateWithMainAPI(ctx, finalRenderPayload.systemPrompt, finalRenderPayload.userPrompt, onChunk, settings.streamEnabled !== false)
-                    : await callCustomAPIStream(finalRenderPayload.systemPrompt, finalRenderPayload.userPrompt, onChunk, settings.streamEnabled !== false);
-                const renderText = typeof renderResult === 'string' ? renderResult : renderResult?.text;
-                if (!renderText) throw new Error('最终渲染未返回内容');
-                markCompleted(lastRequestMetrics);
-                recordRequestMetrics(lastRequestMetrics);
-                const finalHtml = extractHtml(renderText);
-                const renderedChars = readableCharCount(htmlToPlainText(finalHtml));
-                const minimumPreservedChars = Math.floor(currentGenerationJob.actualChars * 0.95);
-                if (!/<(?:!doctype|html|head|body|style|main|section|article|div)\b/i.test(renderText) || renderedChars < minimumPreservedChars) {
-                    throw new Error(`最终渲染未完整保留正文（${renderedChars}/${currentGenerationJob.actualChars} 字）`);
+                let renderCompleted = false;
+                let lastValidationError = null;
+                for (let renderAttempt = 1; renderAttempt <= 2; renderAttempt++) {
+                    const retryNote = renderAttempt === 1 ? '' : `\n\n---\n\n【排版修复】上一次输出未通过完整性检查：${lastValidationError?.message || '段落编号不完整'}。请重新生成整份 HTML，尤其确认所有 token 各出现一次、顺序正确且都位于可见文本节点中。`;
+                    const attemptUserPrompt = finalRenderPayload.userPrompt + retryNote;
+                    if (renderAttempt > 1) {
+                        runtimeLog('warn', '最终 HTML 排版校验失败，自动重试', { message: lastValidationError?.message || 'unknown' });
+                        if (popupAlive()) $('#theater-stream-text').text('排版完整性校验未通过，正在修复 HTML……');
+                        firstChunkShown = false;
+                        bgStreamText = '';
+                        renderedStreamText = '';
+                    }
+                    lastRequestMetrics = createRequestMetrics(settings.apiMode === 'main' ? 'main:final-render' : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}:final-render`);
+                    let renderResult;
+                    try {
+                        renderResult = settings.apiMode === 'main'
+                            ? await generateWithMainAPI(ctx, finalRenderPayload.systemPrompt, attemptUserPrompt, onChunk, settings.streamEnabled !== false)
+                            : await callCustomAPIStream(finalRenderPayload.systemPrompt, attemptUserPrompt, onChunk, settings.streamEnabled !== false);
+                        const renderText = typeof renderResult === 'string' ? renderResult : renderResult?.text;
+                        if (!renderText) throw new Error('最终渲染未返回内容');
+                        markCompleted(lastRequestMetrics);
+                        recordRequestMetrics(lastRequestMetrics);
+                        if (!/<(?:!doctype|html|head|body|style|main|section|article|div)\b/i.test(renderText)) {
+                            const invalidHtml = new Error('最终渲染未返回完整 HTML 页面');
+                            invalidHtml.code = 'THEATER_RENDER_VALIDATION';
+                            throw invalidHtml;
+                        }
+                        const templateHtml = extractHtml(renderText);
+                        const finalHtml = hydrateFinalRenderHtml(templateHtml, finalRenderPayload.placeholderPlan);
+                        const renderedChars = readableCharCount(htmlToPlainText(finalHtml));
+                        const minimumPreservedChars = Math.floor(currentGenerationJob.actualChars * 0.95);
+                        const maximumLayoutChars = Math.ceil(currentGenerationJob.actualChars * 1.25 + 600);
+                        if (renderedChars < minimumPreservedChars) {
+                            const incomplete = new Error(`最终渲染未完整保留正文（${renderedChars}/${currentGenerationJob.actualChars} 字）`);
+                            incomplete.code = 'THEATER_RENDER_VALIDATION';
+                            throw incomplete;
+                        }
+                        if (renderedChars > maximumLayoutChars) {
+                            const duplicated = new Error(`最终排版疑似重复正文或加入过多额外文字（${renderedChars}/${currentGenerationJob.actualChars} 字）`);
+                            duplicated.code = 'THEATER_RENDER_VALIDATION';
+                            throw duplicated;
+                        }
+                        lastGeneratedHtml = finalHtml;
+                        currentOutputMode = 'html';
+                        renderCompleted = true;
+                        runtimeLog(renderResult?.stopReason === 'length' ? 'warn' : 'info', '最终 HTML 渲染完成', {
+                            attempt: renderAttempt,
+                            stop_reason: renderResult?.stopReason || 'stop',
+                            rendered_chars: renderedChars,
+                            paragraphs: finalRenderPayload.placeholderPlan.paragraphs.length,
+                        });
+                        break;
+                    } catch (attemptError) {
+                        recordRequestMetrics(lastRequestMetrics);
+                        if (attemptError?.name === 'AbortError') throw attemptError;
+                        const validationFailure = ['THEATER_PLACEHOLDER_INVALID', 'THEATER_RENDER_VALIDATION'].includes(attemptError?.code);
+                        if (!validationFailure || renderAttempt >= 2) throw attemptError;
+                        lastValidationError = attemptError;
+                    }
                 }
-                lastGeneratedHtml = finalHtml;
-                currentOutputMode = 'html';
-                runtimeLog(renderResult?.stopReason === 'length' ? 'warn' : 'info', '最终 HTML 渲染完成', {
-                    stop_reason: renderResult?.stopReason || 'stop',
-                    rendered_chars: renderedChars,
-                });
+                if (!renderCompleted) throw lastValidationError || new Error('最终 HTML 排版未完成');
             } catch (renderError) {
                 recordRequestMetrics(lastRequestMetrics);
                 if (renderError?.name === 'AbortError') throw renderError;

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { estimateTokenBreakdown } from '../token-estimator.js';
-import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload } from '../generation-payload.js';
+import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, isMaxTokenLimitError, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel } from '../api-client.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
 import { readableCharCount } from '../text-counter.js';
@@ -16,6 +16,46 @@ import { createInstructionBackup, parseInstructionBackup } from '../instruction-
 import { WORLD_BOOK_STRATEGIES, shouldReadWorldBookEntry, worldBookEntryStrategy } from '../world-book-policy.js';
 import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
+
+test('final HTML renderer hydrates every paragraph without rewriting source text', () => {
+    const sourceText = '第一段有 <危险标签>。\n\n第二段继续。';
+    const plan = createFinalRenderPlan(sourceText);
+    assert.deepEqual(plan.paragraphs.map(item => item.token), [
+        '{{THEATER_P0001}}',
+        '{{THEATER_P0002}}',
+    ]);
+
+    const template = '<!doctype html><html><head><style>p{color:#432}</style></head><body><p>{{THEATER_P0001}}</p><p>{{THEATER_P0002}}</p></body></html>';
+    const hydrated = hydrateFinalRenderHtml(template, plan);
+    assert.match(hydrated, /第一段有 &lt;危险标签&gt;。/);
+    assert.match(hydrated, /第二段继续。/);
+    assert.doesNotMatch(hydrated, /\{\{THEATER_P/);
+    assert.ok(hydrated.indexOf('第一段') < hydrated.indexOf('第二段'));
+});
+
+test('final HTML renderer rejects missing, duplicate, reordered, or hidden placeholders', () => {
+    const plan = createFinalRenderPlan('第一段。\n\n第二段。');
+    const invalidTemplates = [
+        '<html><body><p>{{THEATER_P0001}}</p></body></html>',
+        '<html><body><p>{{THEATER_P0001}}</p><p>{{THEATER_P0001}}</p><p>{{THEATER_P0002}}</p></body></html>',
+        '<html><body><p>{{THEATER_P0002}}</p><p>{{THEATER_P0001}}</p></body></html>',
+        '<html><body><div data-copy="{{THEATER_P0001}}"></div><p>{{THEATER_P0002}}</p></body></html>',
+        '<html><head><style>.x::after{content:"{{THEATER_P0001}}"}</style></head><body><p>{{THEATER_P0002}}</p></body></html>',
+        '<html><body><script>const x = "{{THEATER_P0001}}"</script><p>{{THEATER_P0002}}</p></body></html>',
+    ];
+    for (const template of invalidTemplates) {
+        assert.throws(() => hydrateFinalRenderHtml(template, plan), error => error?.code === 'THEATER_PLACEHOLDER_INVALID');
+    }
+});
+
+test('final HTML payload tells the model to return layout tokens exactly once', () => {
+    const payload = buildFinalRenderPayload({ sourceText: '第一段。\n\n第二段。', rules: '输出完整 HTML。' });
+    assert.equal(payload.placeholderPlan.paragraphs.length, 2);
+    assert.match(payload.userPrompt, /\{\{THEATER_P0001\}\}/);
+    assert.match(payload.userPrompt, /不要在 HTML 中重新输出 text/);
+    assert.match(payload.userPrompt, /每个 token 必须且只能出现一次/);
+    assert.match(payload.userPrompt, /输出完整 HTML/);
+});
 
 test('聊天前文楼层数支持 0、任意正整数并限制异常值', () => {
     assert.equal(MAX_CONTEXT_MESSAGES, 500);
@@ -316,8 +356,8 @@ test('动态收束轮若被 Token 截断，仍可在轮数范围内继续', () =
 test('多轮正文的最终 HTML 排版要求完整保留正文', () => {
     const payload = buildFinalRenderPayload({ sourceText: '第一段。\n\n第二段。', rules: '输出完整 HTML。' });
     assert.match(payload.systemPrompt, /不续写、不删减、不改写/);
-    assert.match(payload.userPrompt, /第一段。\n\n第二段。/);
-    assert.match(payload.userPrompt, /逐段保留全部正文/);
+    assert.deepEqual(payload.placeholderPlan.paragraphs.map(item => item.text), ['第一段。', '第二段。']);
+    assert.match(payload.userPrompt, /段落占位|token/);
     assert.match(payload.userPrompt, /输出完整 HTML/);
 });
 
