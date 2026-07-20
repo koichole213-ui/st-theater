@@ -12,7 +12,7 @@ import { debounce, estimateTokenBreakdown, formatTokenCount } from './token-esti
 import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from './generation-job.js';
 import { readableCharCount, tailText } from './text-counter.js';
-import { classifyLengthTier, firstRoundGuidance, isLongFormTarget, longFormFirstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
+import { classifyLengthTier, firstRoundGuidance, isLongFormTarget, isStagedRenderTarget, longFormFirstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
 import { clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
 import { MAX_API_PRESETS, apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from './api-presets.js';
 import { splitInstructionTextFile } from './instruction-import.js';
@@ -23,7 +23,7 @@ import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.4.4';
+const VERSION = '3.4.5';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -3755,10 +3755,11 @@ async function refreshTokenEstimate() {
             manualTarget: settings.manualTargetChars,
         });
         const configuredRounds = Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3));
-        const longFormPlan = !continueContext && settings.autoContinue && configuredRounds >= 2 && isLongFormTarget(targetWordCount);
+        const stagedRenderPlan = !continueContext && isStagedRenderTarget(targetWordCount);
+        const longFormPlan = stagedRenderPlan && settings.autoContinue && configuredRounds >= 2 && isLongFormTarget(targetWordCount);
         const payload = await assembleGenerationPayload(instruction, {
             continuationText: continueContext,
-            forcePlainText: longFormPlan,
+            forcePlainText: stagedRenderPlan,
             longFormPlan,
             loadPreset: false,
             evaluateWorldBook: false,
@@ -3866,10 +3867,11 @@ async function runGeneration(instruction, isAuto) {
         manualTarget: settings.manualTargetChars,
     });
     const configuredMaxRounds = Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3));
-    const longFormMode = !contCtx && settings.autoContinue && configuredMaxRounds >= 2 && isLongFormTarget(plannedTargetWordCount);
+    const stagedRenderMode = !contCtx && isStagedRenderTarget(plannedTargetWordCount);
+    const longFormMode = stagedRenderMode && settings.autoContinue && configuredMaxRounds >= 2 && isLongFormTarget(plannedTargetWordCount);
     const payload = await assembleGenerationPayload(instruction, {
         continuationText: contCtx,
-        forcePlainText: longFormMode,
+        forcePlainText: stagedRenderMode,
         longFormPlan: longFormMode,
     });
     const targetWordCount = payload.targetWordCount;
@@ -3892,6 +3894,7 @@ async function runGeneration(instruction, isAuto) {
         max_tokens: configuredMaxTokens,
         target_chars: targetWordCount || null,
         length_tier: classifyLengthTier(targetWordCount),
+        staged_render_mode: stagedRenderMode,
         long_form_mode: longFormMode,
     });
 
@@ -4046,7 +4049,7 @@ async function runGeneration(instruction, isAuto) {
         if (selectedPlainTextRender) {
             lastGeneratedHtml = textFallbackHtml(newText);
             currentOutputMode = 'text';
-        } else if (!longFormMode && currentGenerationJob.segments.length === 1) {
+        } else if (!stagedRenderMode && currentGenerationJob.segments.length === 1) {
             lastGeneratedHtml = firstHtml || textFallbackHtml(newText);
         } else {
             const { rules } = resolveRenderSelection(false);

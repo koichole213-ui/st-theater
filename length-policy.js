@@ -13,7 +13,8 @@ export const LENGTH_TIERS = Object.freeze({
     UNSPECIFIED: 'unspecified',
 });
 
-export const LONG_FORM_SPLIT_THRESHOLD = 5000;
+export const STAGED_RENDER_THRESHOLD = 5000;
+export const LONG_FORM_SPLIT_THRESHOLD = 8000;
 
 export function parseChineseNumber(raw) {
     const text = String(raw || '').trim();
@@ -98,7 +99,12 @@ export function firstRoundGuidance(targetChars) {
 
 export function isLongFormTarget(targetChars) {
     const target = Math.round(Number(targetChars));
-    return Number.isFinite(target) && target > LONG_FORM_SPLIT_THRESHOLD;
+    return Number.isFinite(target) && target >= LONG_FORM_SPLIT_THRESHOLD;
+}
+
+export function isStagedRenderTarget(targetChars) {
+    const target = Math.round(Number(targetChars));
+    return Number.isFinite(target) && target >= STAGED_RENDER_THRESHOLD;
 }
 
 export function longFormFirstRoundTarget(targetChars) {

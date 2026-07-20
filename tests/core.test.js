@@ -10,7 +10,7 @@ import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summ
 import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
 import { apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from '../api-presets.js';
 import { splitInstructionTextFile } from '../instruction-import.js';
-import { LENGTH_TIERS, LONG_FORM_SPLIT_THRESHOLD, classifyLengthTier, firstRoundGuidance, isLongFormTarget, longFormFirstRoundGuidance, longFormFirstRoundTarget, parseTargetWordCount, resolveTargetWordCount, stripTargetWordCountRequirement } from '../length-policy.js';
+import { LENGTH_TIERS, LONG_FORM_SPLIT_THRESHOLD, STAGED_RENDER_THRESHOLD, classifyLengthTier, firstRoundGuidance, isLongFormTarget, isStagedRenderTarget, longFormFirstRoundGuidance, longFormFirstRoundTarget, parseTargetWordCount, resolveTargetWordCount, stripTargetWordCountRequirement } from '../length-policy.js';
 import { AUTO_CONTINUE_SCHEMA, migrateAutoContinueDefault } from '../settings-migration.js';
 import { createInstructionBackup, parseInstructionBackup } from '../instruction-backup.js';
 import { WORLD_BOOK_STRATEGIES, shouldReadWorldBookEntry, worldBookEntryStrategy } from '../world-book-policy.js';
@@ -244,10 +244,13 @@ test('四档分诊边界保留，首轮明确告诉模型目标正文字数', ()
     assert.doesNotMatch(firstRoundGuidance(8000), /写满|统计注释/);
 });
 
-test('超过 5000 字进入长篇两段模式，8000 字首轮规划约 4000 字且不收尾', () => {
-    assert.equal(LONG_FORM_SPLIT_THRESHOLD, 5000);
-    assert.equal(isLongFormTarget(5000), false);
-    assert.equal(isLongFormTarget(5001), true);
+test('5000 字起正文与 HTML 分离，8000 字起进入上下篇模式', () => {
+    assert.equal(STAGED_RENDER_THRESHOLD, 5000);
+    assert.equal(LONG_FORM_SPLIT_THRESHOLD, 8000);
+    assert.equal(isStagedRenderTarget(4999), false);
+    assert.equal(isStagedRenderTarget(5000), true);
+    assert.equal(isStagedRenderTarget(7500), true);
+    assert.equal(isLongFormTarget(7999), false);
     assert.equal(isLongFormTarget(8000), true);
     assert.equal(longFormFirstRoundTarget(8000), 4000);
     assert.equal(longFormFirstRoundTarget(6500), 3300);
