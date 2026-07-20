@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { estimateTokenBreakdown } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
-import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractResponseMeta, isHtmlErrorResponse, isMaxTokenLimitError, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel } from '../api-client.js';
+import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractApiErrorMessage, extractResponseMeta, extractStreamText, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
 import { readableCharCount } from '../text-counter.js';
 import { injectResizeReporter, sandboxPermissions } from '../safe-renderer.js';
@@ -55,6 +55,28 @@ test('final HTML payload tells the model to return layout tokens exactly once', 
     assert.match(payload.userPrompt, /不要在 HTML 中重新输出 text/);
     assert.match(payload.userPrompt, /每个 token 必须且只能出现一次/);
     assert.match(payload.userPrompt, /输出完整 HTML/);
+});
+
+test('流式解析兼容 OpenAI、Gemini 原生与 Responses API 正文格式', () => {
+    assert.equal(extractStreamText({ choices: [{ delta: { content: 'OpenAI 正文' } }] }), 'OpenAI 正文');
+    assert.equal(extractStreamText({ candidates: [{ content: { parts: [{ text: 'Gemini 正文' }] } }] }), 'Gemini 正文');
+    assert.equal(extractStreamText({ type: 'response.output_text.delta', delta: 'Responses 正文' }), 'Responses 正文');
+    assert.equal(extractStreamText({ output: [{ content: [{ type: 'output_text', text: '完整响应正文' }] }] }), '完整响应正文');
+});
+
+test('流式解析能取出状态为 200 的错误事件，而不是只报告空流', () => {
+    assert.equal(extractApiErrorMessage({ error: { message: 'upstream overloaded' } }), 'upstream overloaded');
+    assert.equal(extractApiErrorMessage({ type: 'error', message: 'model unavailable' }), 'model unavailable');
+    assert.equal(extractApiErrorMessage({ choices: [] }), '');
+});
+
+test('429 限流识别支持 Retry-After 秒数、日期和常见错误文字', () => {
+    assert.equal(retryAfterMilliseconds('2.5', 0), 2500);
+    assert.equal(retryAfterMilliseconds('Thu, 01 Jan 1970 00:00:08 GMT', 5000), 3000);
+    assert.equal(retryAfterMilliseconds('invalid', 0), null);
+    assert.equal(isRateLimitErrorMessage('429 Too Many Requests'), true);
+    assert.equal(isRateLimitErrorMessage('RESOURCE_EXHAUSTED: quota exceeded'), true);
+    assert.equal(isRateLimitErrorMessage('普通参数错误'), false);
 });
 
 test('聊天前文楼层数支持 0、任意正整数并限制异常值', () => {
@@ -217,6 +239,7 @@ test('Anthropic 请求使用 messages 与 x-api-key', () => {
 test('两种协议都能解析长度停止原因', () => {
     assert.equal(extractResponseMeta({ choices: [{ finish_reason: 'length' }] }, API_PROTOCOLS.OPENAI).stopReason, 'length');
     assert.equal(extractResponseMeta({ stop_reason: 'max_tokens' }, API_PROTOCOLS.ANTHROPIC).stopReason, 'length');
+    assert.equal(extractResponseMeta({ candidates: [{ finishReason: 'MAX_TOKENS' }] }, API_PROTOCOLS.OPENAI).stopReason, 'length');
 });
 
 test('HTML 网关错误页不会被当作模型正文', () => {
