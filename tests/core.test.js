@@ -10,7 +10,7 @@ import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summ
 import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
 import { apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from '../api-presets.js';
 import { splitInstructionTextFile } from '../instruction-import.js';
-import { LENGTH_TIERS, classifyLengthTier, firstRoundGuidance, parseTargetWordCount, resolveTargetWordCount, stripTargetWordCountRequirement } from '../length-policy.js';
+import { LENGTH_TIERS, LONG_FORM_SPLIT_THRESHOLD, classifyLengthTier, firstRoundGuidance, isLongFormTarget, longFormFirstRoundGuidance, longFormFirstRoundTarget, parseTargetWordCount, resolveTargetWordCount, stripTargetWordCountRequirement } from '../length-policy.js';
 import { AUTO_CONTINUE_SCHEMA, migrateAutoContinueDefault } from '../settings-migration.js';
 import { createInstructionBackup, parseInstructionBackup } from '../instruction-backup.js';
 import { WORLD_BOOK_STRATEGIES, shouldReadWorldBookEntry, worldBookEntryStrategy } from '../world-book-policy.js';
@@ -199,35 +199,73 @@ test('自动续写达到目标的 90% 后停止', () => {
     assert.equal(targetCompletionChars(100), 90);
 });
 
-test('续写提示不携带总字数、原始指令或 HTML 结构', () => {
+test('续写提示携带当前、目标和本轮篇幅，但不携带原始指令或 HTML 结构', () => {
     const prompt = buildContinuationInstruction({
-        round: 2, tail: '上一段结尾原文', finishThisRound: true,
+        round: 2,
+        tail: '上一段结尾原文',
+        finishThisRound: false,
+        currentChars: 3200,
+        targetChars: 5000,
+        roundsRemaining: 2,
     });
     const payload = buildContinuationPayload({ instruction: prompt });
     assert.match(payload.userPrompt, /上一段结尾原文/);
     assert.match(payload.userPrompt, /只输出新增正文片段/);
-    assert.match(payload.userPrompt, /可以.*自然收束结局/);
-    assert.doesNotMatch(payload.userPrompt, /5000|目标总字数|原始要求/);
+    assert.match(payload.userPrompt, /当前可读正文约 3200 字/);
+    assert.match(payload.userPrompt, /目标约 5000 字/);
+    assert.match(payload.userPrompt, /仍差约 1800 字/);
+    assert.match(payload.userPrompt, /本轮请新增约 1100 字/);
+    assert.doesNotMatch(payload.userPrompt, /原始要求/);
     assert.doesNotMatch(payload.userPrompt, /输出完整 HTML/);
+
+    const longFinalRound = buildContinuationInstruction({
+        round: 2,
+        tail: '长篇上半篇结尾',
+        finishThisRound: true,
+        currentChars: 3600,
+        targetChars: 8000,
+        roundsRemaining: 1,
+    });
+    assert.match(longFinalRound, /仍差约 4400 字/);
+    assert.match(longFinalRound, /本轮请新增约 5300 字/);
+    assert.match(longFinalRound, /可以.*自然收束结局/);
 });
 
-test('四档分诊边界与轻量首轮引导符合定稿', () => {
+test('四档分诊边界保留，首轮明确告诉模型目标正文字数', () => {
     assert.equal(classifyLengthTier(null), LENGTH_TIERS.UNSPECIFIED);
     assert.equal(classifyLengthTier(3000), LENGTH_TIERS.SHORT);
     assert.equal(classifyLengthTier(3001), LENGTH_TIERS.COMFORT);
     assert.equal(classifyLengthTier(5000), LENGTH_TIERS.COMFORT);
     assert.equal(classifyLengthTier(5001), LENGTH_TIERS.LONG);
-    assert.match(firstRoundGuidance(2000), /精悍的短篇/);
-    assert.doesNotMatch(firstRoundGuidance(2000), /充分展开剧情/);
-    assert.match(firstRoundGuidance(8000), /充分展开剧情，不急于收尾/);
-    assert.doesNotMatch(firstRoundGuidance(8000), /8000|必须|写满/);
+    assert.match(firstRoundGuidance(2000), /目标约为 2000 字/);
+    assert.match(firstRoundGuidance(8000), /目标约为 8000 字/);
+    assert.match(firstRoundGuidance(8000), /不含 HTML、CSS、JavaScript 和排版代码/);
+    assert.match(firstRoundGuidance(8000), /不要在正文中报告或标注字数/);
+    assert.doesNotMatch(firstRoundGuidance(8000), /写满|统计注释/);
 });
 
-test('明确字数会被程序解析，但不会进入发给首轮模型的指令', () => {
+test('超过 5000 字进入长篇两段模式，8000 字首轮规划约 4000 字且不收尾', () => {
+    assert.equal(LONG_FORM_SPLIT_THRESHOLD, 5000);
+    assert.equal(isLongFormTarget(5000), false);
+    assert.equal(isLongFormTarget(5001), true);
+    assert.equal(isLongFormTarget(8000), true);
+    assert.equal(longFormFirstRoundTarget(8000), 4000);
+    assert.equal(longFormFirstRoundTarget(6500), 3300);
+    const guidance = longFormFirstRoundGuidance(8000);
+    assert.match(guidance, /总目标约为 8000 字/);
+    assert.match(guidance, /上半篇纯文字正文，目标约 4000 字/);
+    assert.match(guidance, /停在剧情中段/);
+    assert.match(guidance, /不要总结、收束、写出结局/);
+    assert.match(guidance, /不要.*未完待续/);
+});
+
+test('明确字数由程序解析、从原指令清理后作为统一篇幅目标发给首轮模型', () => {
     for (const source of ['写一个8000字的小剧场', '正文至少八千字，写雨夜重逢', '篇幅5000字左右；围绕误会展开']) {
-        assert.ok(parseTargetWordCount(source) >= 5000);
+        const target = parseTargetWordCount(source);
+        assert.ok(target >= 5000);
         const cleaned = stripTargetWordCountRequirement(source);
         assert.doesNotMatch(cleaned, /8000|5000|八千|字左右|至少.*字/);
+        assert.match(firstRoundGuidance(target), new RegExp(`目标约为 ${target} 字`));
     }
     assert.equal(stripTargetWordCountRequirement('写一个8000字的小剧场'), '写一个小剧场');
 });

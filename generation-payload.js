@@ -39,11 +39,30 @@ export function buildContinuationPayload({ instruction = '' } = {}) {
     };
 }
 
-export function buildContinuationInstruction({ round, tail, finishThisRound }) {
+export function buildContinuationInstruction({
+    round,
+    tail,
+    finishThisRound,
+    currentChars = 0,
+    targetChars = 0,
+    roundsRemaining = 1,
+}) {
+    const current = Math.max(0, Math.round(Number(currentChars) || 0));
+    const target = Math.max(0, Math.round(Number(targetChars) || 0));
+    const remaining = Math.max(0, target - current);
+    const availableRounds = finishThisRound ? 1 : Math.max(1, Math.round(Number(roundsRemaining) || 1));
+    const suggestedChars = remaining
+        ? Math.ceil((remaining / availableRounds) * 1.2 / 100) * 100
+        : 0;
+    const lengthPlan = target
+        ? `【本轮篇幅】程序已统计当前可读正文约 ${current} 字，目标约 ${target} 字，仍差约 ${remaining} 字。本轮请新增约 ${suggestedChars} 字的有效正文；不需要自行计算、报告或标注字数。`
+        : '';
     return `这是同一篇小剧场的第 ${round} 次续写。
 
 上一段结尾：
 ${tail}
+
+${lengthPlan}
 
 请直接承接上一段结尾继续正文：
 1. 不要复述、改写或总结已经发生的内容；

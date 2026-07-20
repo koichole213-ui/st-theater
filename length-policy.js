@@ -13,6 +13,8 @@ export const LENGTH_TIERS = Object.freeze({
     UNSPECIFIED: 'unspecified',
 });
 
+export const LONG_FORM_SPLIT_THRESHOLD = 5000;
+
 export function parseChineseNumber(raw) {
     const text = String(raw || '').trim();
     if (!text) return null;
@@ -89,7 +91,23 @@ export function classifyLengthTier(targetChars) {
 }
 
 export function firstRoundGuidance(targetChars) {
-    return classifyLengthTier(targetChars) === LENGTH_TIERS.SHORT
-        ? '写成一篇精悍的短篇，围绕单一场景或核心冲突展开，保持结构完整和自然结尾。'
-        : '充分展开剧情，不急于收尾。';
+    const target = Math.round(Number(targetChars));
+    if (!Number.isFinite(target) || target <= 0) return '充分展开剧情，不急于收尾。';
+    return `本篇小剧场的可读中文正文目标约为 ${target} 字（不含 HTML、CSS、JavaScript 和排版代码）。请从开篇开始按照这一完整篇幅规划剧情，在接近目标前不要过早收束；用有效情节、动作、对白和心理变化充分展开，不要复述、注水，也不要在正文中报告或标注字数。`;
+}
+
+export function isLongFormTarget(targetChars) {
+    const target = Math.round(Number(targetChars));
+    return Number.isFinite(target) && target > LONG_FORM_SPLIT_THRESHOLD;
+}
+
+export function longFormFirstRoundTarget(targetChars) {
+    const target = Math.max(0, Math.round(Number(targetChars) || 0));
+    return target ? Math.ceil((target / 2) / 100) * 100 : 0;
+}
+
+export function longFormFirstRoundGuidance(targetChars) {
+    const target = Math.max(0, Math.round(Number(targetChars) || 0));
+    const firstRoundTarget = longFormFirstRoundTarget(target);
+    return `本篇长篇小剧场的可读中文正文总目标约为 ${target} 字。本轮只创作上半篇纯文字正文，目标约 ${firstRoundTarget} 字（不含 HTML、CSS、JavaScript 和排版代码）；请从开篇充分展开并停在剧情中段，保留明确的发展空间，不要总结、收束、写出结局或“未完待续”等提示。用有效情节、动作、对白和心理变化推进，不要复述、注水，也不要在正文中报告或标注字数。`;
 }

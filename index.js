@@ -12,7 +12,7 @@ import { debounce, estimateTokenBreakdown, formatTokenCount } from './token-esti
 import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from './generation-job.js';
 import { readableCharCount, tailText } from './text-counter.js';
-import { classifyLengthTier, firstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
+import { classifyLengthTier, firstRoundGuidance, isLongFormTarget, longFormFirstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
 import { clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
 import { MAX_API_PRESETS, apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from './api-presets.js';
 import { splitInstructionTextFile } from './instruction-import.js';
@@ -23,7 +23,7 @@ import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.4.3';
+const VERSION = '3.4.4';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -3641,7 +3641,7 @@ function resolveRenderSelection(forcePlainText = false) {
     return { selectedRender, isPlainTextRender, rules, label };
 }
 
-async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, loadPreset = true, evaluateWorldBook = true } = {}) {
+async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, longFormPlan = false, loadPreset = true, evaluateWorldBook = true } = {}) {
     const ctx = SillyTavern.getContext();
     const { chat = [], characters = [], characterId, name1, name2 } = ctx;
     const contextCount = normalizeContextRange(settings.contextRange);
@@ -3714,7 +3714,12 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     }
     const worldBook = wbParts.length ? `世界书设定：\n${wbParts.join('\n\n')}` : '';
 
-    const { isPlainTextRender, rules } = resolveRenderSelection(forcePlainText);
+    const renderSelection = resolveRenderSelection(forcePlainText);
+    const { isPlainTextRender } = renderSelection;
+    let { rules } = renderSelection;
+    if (longFormPlan) {
+        rules += '\n\n【长篇分段优先规则】本轮是同一篇长篇小剧场的上半篇，不要求独立完结。只输出正文并停在剧情中段；不要输出 HTML、标题、总结、结局或“未完待续”。';
+    }
 
     if (loadPreset && !cachedPresetEntries.length) await loadPresetEntries();
     const preset = getSelectedPresetPrompt() || DEFAULT_SYSTEM_PROMPT;
@@ -3732,7 +3737,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     let fixed = contCtx
         ? '只输出新增内容，保持人物语气、视角和时态，不要复述前文。'
         : '请根据以上所有信息生成小剧场，严格遵守渲染规则。';
-    fixed += `\n【创作节奏】${firstRoundGuidance(targetWordCount)}`;
+    fixed += `\n【创作节奏】${longFormPlan ? longFormFirstRoundGuidance(targetWordCount) : firstRoundGuidance(targetWordCount)}`;
     const payload = buildGenerationPayload({
         preset, role, persona, worldBook, context, continuation, rules, addons,
         fixed,
@@ -3744,7 +3749,20 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
 async function refreshTokenEstimate() {
     if (!$('#theater-token-summary-value').length) return;
     try {
-        const payload = await assembleGenerationPayload($('#theater-instruction').val() || '', { continuationText: continueContext, loadPreset: false, evaluateWorldBook: false });
+        const instruction = $('#theater-instruction').val() || '';
+        const targetWordCount = resolveTargetWordCount(instruction, {
+            manualEnabled: settings.manualTargetEnabled,
+            manualTarget: settings.manualTargetChars,
+        });
+        const configuredRounds = Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3));
+        const longFormPlan = !continueContext && settings.autoContinue && configuredRounds >= 2 && isLongFormTarget(targetWordCount);
+        const payload = await assembleGenerationPayload(instruction, {
+            continuationText: continueContext,
+            forcePlainText: longFormPlan,
+            longFormPlan,
+            loadPreset: false,
+            evaluateWorldBook: false,
+        });
         const estimate = estimateTokenBreakdown(payload.tokenParts);
         $('#theater-token-summary-value').text(`预计输入约 ${formatTokenCount(estimate.total)} Token`);
         $('#theater-token-details').text(`预设 ${formatTokenCount(estimate.preset)} · 角色/人设 ${formatTokenCount(estimate.role)} · 世界书 ${formatTokenCount(estimate.worldBook)} · 上下文 ${formatTokenCount(estimate.context)} · 续写 ${formatTokenCount(estimate.continuation)} · 规则 ${formatTokenCount(estimate.rules)} · 当前指令 ${formatTokenCount(estimate.instruction)}`);
@@ -3843,11 +3861,21 @@ async function generateTheater() {
 async function runGeneration(instruction, isAuto) {
     if (isGenerating) return;
     const contCtx = isAuto ? '' : continueContext;  // 自动生成永远是全新的，不掺手动的续写上下文
-    const payload = await assembleGenerationPayload(instruction, { continuationText: contCtx });
+    const plannedTargetWordCount = resolveTargetWordCount(instruction, {
+        manualEnabled: settings.manualTargetEnabled,
+        manualTarget: settings.manualTargetChars,
+    });
+    const configuredMaxRounds = Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3));
+    const longFormMode = !contCtx && settings.autoContinue && configuredMaxRounds >= 2 && isLongFormTarget(plannedTargetWordCount);
+    const payload = await assembleGenerationPayload(instruction, {
+        continuationText: contCtx,
+        forcePlainText: longFormMode,
+        longFormPlan: longFormMode,
+    });
     const targetWordCount = payload.targetWordCount;
     const autoTargetContinue = !!targetWordCount && settings.autoContinue;
     let { ctx, systemPrompt, userPrompt: prompt, isPlainTextRender } = payload;
-    const { label: renderTemplate } = resolveRenderSelection(false);
+    const { label: renderTemplate, isPlainTextRender: selectedPlainTextRender } = resolveRenderSelection(false);
     const mainOai = ctx?.oai_settings || globalThis.oai_settings;
     const resolvedProtocol = settings.apiMode === 'main' ? 'main' : resolveProtocol(settings.apiProtocol, settings.apiUrl);
     const modelName = settings.apiMode === 'main'
@@ -3864,6 +3892,7 @@ async function runGeneration(instruction, isAuto) {
         max_tokens: configuredMaxTokens,
         target_chars: targetWordCount || null,
         length_tier: classifyLengthTier(targetWordCount),
+        long_form_mode: longFormMode,
     });
 
     // 非续写生成时重置累积内容
@@ -3931,7 +3960,7 @@ async function runGeneration(instruction, isAuto) {
     let generationSucceeded = false;
     currentGenerationJob = createGenerationJob({
         targetChars: targetWordCount,
-        maxRounds: Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3)),
+        maxRounds: longFormMode ? 2 : configuredMaxRounds,
         autoContinue: autoTargetContinue,
     });
 
@@ -3948,7 +3977,9 @@ async function runGeneration(instruction, isAuto) {
                 const current = readableCharCount(currentGenerationJob.segments.join('\n\n'));
                 const shownMaxRounds = currentGenerationJob.autoContinue ? currentGenerationJob.maxRounds : 1;
                 $('#theater-stream-text').text(round === 1
-                    ? `正在生成第 1/${shownMaxRounds} 轮……`
+                    ? (longFormMode
+                        ? `正在创作长篇上半篇 · 第 1/${shownMaxRounds} 轮……`
+                        : `正在生成第 1/${shownMaxRounds} 轮……`)
                     : `正在补写第 ${round}/${shownMaxRounds} 轮 · 当前约 ${current}/${targetWordCount} 字`);
             }
             systemPrompt = roundPayload.systemPrompt;
@@ -3997,6 +4028,9 @@ async function runGeneration(instruction, isAuto) {
                 round: currentGenerationJob.round,
                 tail: tailText(currentGenerationJob.segments.join('\n\n'), 1500),
                 finishThisRound,
+                currentChars: currentGenerationJob.actualChars,
+                targetChars: currentGenerationJob.targetChars,
+                roundsRemaining: currentGenerationJob.maxRounds - currentGenerationJob.round + 1,
             });
             roundPayload = {
                 ...buildContinuationPayload({ instruction: continuationInstruction }),
@@ -4009,10 +4043,10 @@ async function runGeneration(instruction, isAuto) {
 
         let newText = currentGenerationJob.segments.join('\n\n').trim();
         currentGenerationJob.actualChars = readableCharCount(newText);
-        if (isPlainTextRender) {
+        if (selectedPlainTextRender) {
             lastGeneratedHtml = textFallbackHtml(newText);
             currentOutputMode = 'text';
-        } else if (currentGenerationJob.segments.length === 1) {
+        } else if (!longFormMode && currentGenerationJob.segments.length === 1) {
             lastGeneratedHtml = firstHtml || textFallbackHtml(newText);
         } else {
             const { rules } = resolveRenderSelection(false);
@@ -4021,7 +4055,7 @@ async function runGeneration(instruction, isAuto) {
                 render: renderTemplate,
                 source_chars: currentGenerationJob.actualChars,
             });
-            if (popupAlive()) $('#theater-stream-text').text('正文已补足，正在套用所选 HTML 模板……');
+            if (popupAlive()) $('#theater-stream-text').text('正文创作已结束，正在套用所选 HTML 模板……');
             activeRound = 'render';
             firstChunkShown = false;
             bgStreamText = '';
