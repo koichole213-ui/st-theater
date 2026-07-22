@@ -4,7 +4,7 @@ import { estimateTokenBreakdown } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractApiErrorMessage, extractResponseMeta, extractStreamText, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
-import { readableCharCount } from '../text-counter.js';
+import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, readableCharCount } from '../text-counter.js';
 import { injectResizeReporter, sandboxPermissions } from '../safe-renderer.js';
 import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from '../request-metrics.js';
 import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
@@ -68,6 +68,15 @@ test('流式解析能取出状态为 200 的错误事件，而不是只报告空
     assert.equal(extractApiErrorMessage({ error: { message: 'upstream overloaded' } }), 'upstream overloaded');
     assert.equal(extractApiErrorMessage({ type: 'error', message: 'model unavailable' }), 'model unavailable');
     assert.equal(extractApiErrorMessage({ choices: [] }), '');
+});
+
+test('连续续写只携带上一轮正文，并限制为最近 8000 字', () => {
+    const previousRound = 'B'.repeat(MAX_CONTINUATION_CONTEXT_CHARS + 200);
+    const context = continuationContextWindow(previousRound);
+    assert.equal(context.endsWith('B'.repeat(MAX_CONTINUATION_CONTEXT_CHARS)), true);
+    assert.equal(context.includes('A轮旧剧情'), false);
+    assert.match(context, /更早内容已省略/);
+    assert.equal(continuationContextWindow('本轮新增正文'), '本轮新增正文');
 });
 
 test('429 限流识别支持 Retry-After 秒数、日期和常见错误文字', () => {

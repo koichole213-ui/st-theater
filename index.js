@@ -11,7 +11,7 @@ import { buildContinuationInstruction, buildContinuationPayload, buildFinalRende
 import { debounce, estimateTokenBreakdown, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from './generation-job.js';
-import { readableCharCount, tailText } from './text-counter.js';
+import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, readableCharCount, tailText } from './text-counter.js';
 import { classifyLengthTier, firstRoundGuidance, isLongFormTarget, isStagedRenderTarget, longFormFirstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
 import { clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
 import { MAX_API_PRESETS, apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from './api-presets.js';
@@ -23,7 +23,7 @@ import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.5.1';
+const VERSION = '3.5.2';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -3697,7 +3697,6 @@ let isGenerating = false;      // 是否正在生成
 let bgStreamText = '';         // 后台生成时保存的流式文本
 let bgError = '';              // 后台生成时的错误信息
 let continueContext = '';      // 续写时的前情内容
-let accumulatedTheater = '';   // 累积多次续写的完整内容
 
 // 从HTML中提取纯文本（去掉标签，只留故事内容）
 function htmlToPlainText(html) {
@@ -3714,6 +3713,14 @@ function htmlToPlainText(html) {
         text = text.replace(/<[^>]+>/g, '').trim();
     }
     return text;
+}
+
+function prepareContinuationContext(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const containsHtml = /<(?:!doctype|\/?[a-z][^>]*)>/i.test(raw);
+    const plainText = containsHtml ? htmlToPlainText(raw) : raw;
+    return continuationContextWindow(plainText);
 }
 
 function resolveRenderSelection(forcePlainText = false) {
@@ -3816,7 +3823,8 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         settings.customStyleAddon?.trim() ? `【文风补充】\n${settings.customStyleAddon.trim()}` : '',
         settings.customNsfwAddon?.trim() ? `【NSFW补充】\n${settings.customNsfwAddon.trim()}` : '',
     ].filter(Boolean).join('\n\n');
-    const contCtx = continuationText === null ? continueContext : continuationText;
+    // 双重保险：续写前情只允许纯正文进入请求，绝不携带上一页的 HTML/CSS/脚本。
+    const contCtx = prepareContinuationContext(continuationText === null ? continueContext : continuationText);
     const targetWordCount = resolveTargetWordCount(instruction, {
         manualEnabled: settings.manualTargetEnabled,
         manualTarget: settings.manualTargetChars,
@@ -3888,7 +3896,6 @@ function updateContinueHint() {
 
 function clearContinueMode({ silent = false } = {}) {
     continueContext = '';
-    accumulatedTheater = '';
     $('#theater-continue-hint').remove();
     $('#theater-instruction').attr('placeholder', '输入指令…');
     scheduleTokenEstimate();
@@ -3900,16 +3907,10 @@ function startContinue(html) {
     const plainText = htmlToPlainText(html);
     if (!plainText) { toastr.warning('没有可续写的内容'); return; }
 
-    // 从当前看到的内容开始续写，避免切到另一条历史时串入旧内容。
-    const fullText = plainText;
-    accumulatedTheater = plainText;
-
-    // 如果超过8000字，只取后半段
-    if (fullText.length > 8000) {
-        continueContext = '…（前文省略）\n\n' + fullText.slice(-8000);
+    // 只读取当前结果的纯正文；不携带 HTML，也不累计更早的续写结果。
+    continueContext = prepareContinuationContext(plainText);
+    if (plainText.length > MAX_CONTINUATION_CONTEXT_CHARS) {
         toastr.info('前情内容较长，已自动截取后半段', '', { timeOut: 3000 });
-    } else {
-        continueContext = fullText;
     }
 
     // 跳转到生成面板
@@ -3986,9 +3987,6 @@ async function runGeneration(instruction, isAuto) {
         staged_render_mode: stagedRenderMode,
         long_form_mode: longFormMode,
     });
-
-    // 非续写生成时重置累积内容
-    if (!contCtx) accumulatedTheater = '';
 
     // 标记开始生成
     isGenerating = true;
@@ -4225,12 +4223,9 @@ async function runGeneration(instruction, isAuto) {
         }
         runtimeLog('info', '渲染路径', { path: currentOutputMode === 'html' ? '正常 HTML' : '纯文字' });
         lastGeneratedText = newText;
-        accumulatedTheater = accumulatedTheater ? (accumulatedTheater + '\n\n---\n\n' + newText) : newText;
         if (contCtx) {
-            lastGeneratedHtml = textFallbackHtml(accumulatedTheater);
-            lastGeneratedText = accumulatedTheater;
-            currentOutputMode = 'text';
-            continueContext = accumulatedTheater.length > 8000 ? '…（前文省略）\n\n' + accumulatedTheater.slice(-8000) : accumulatedTheater;
+            // 下一次只承接本轮新增正文；保留上面已经生成好的 HTML 展示。
+            continueContext = prepareContinuationContext(newText);
         } else {
             const finalVisibleChars = readableCharCount(htmlToPlainText(lastGeneratedHtml));
             if (finalVisibleChars) currentGenerationJob.actualChars = finalVisibleChars;
@@ -4288,7 +4283,6 @@ async function runGeneration(instruction, isAuto) {
             lastGeneratedText = partialText;
             lastGeneratedHtml = textFallbackHtml(partialText);
             currentOutputMode = 'text';
-            accumulatedTheater = partialText;
             if (popupAlive()) {
                 showInIframe(lastGeneratedHtml, 'text');
                 $('#theater-stream-section').hide();
