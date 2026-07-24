@@ -1,7 +1,10 @@
 const HEIGHT_MESSAGE = 'st-theater:height';
 const frames = new WeakMap();
 const frameStates = new WeakMap();
+const pendingStates = new Set();
 let installed = false;
+
+export const RENDER_REPORT_TIMEOUT_MS = 1000;
 
 export function sandboxPermissions() {
     return 'allow-scripts';
@@ -46,20 +49,29 @@ export function configureSafeIframe(frame) {
     frame.style.height = window.innerWidth <= 768 ? '60vh' : '420px';
 }
 
-export function renderSafeIframe(frame, html, { sourceHasText = false, onBlank = null } = {}) {
+export function renderSafeIframe(frame, html, { sourceHasText = false, onBlank = null, fixedHeight = false } = {}) {
     configureSafeIframe(frame);
+    if (fixedHeight) frame.style.height = '100%';
     const previousState = frameStates.get(frame);
-    if (previousState) clearTimeout(previousState.timeoutId);
+    if (previousState) {
+        clearTimeout(previousState.timeoutId);
+        pendingStates.delete(previousState);
+    }
+    frame.srcdoc = injectResizeReporter(html);
     const sourceWindow = frame.contentWindow;
-    const state = { frame, sourceWindow, sourceHasText, onBlank, blankHandled: false, received: false, timeoutId: null };
+    const state = { frame, sourceWindow, sourceHasText, onBlank, fixedHeight, blankHandled: false, received: false, timeoutId: null };
     frameStates.set(frame, state);
     frames.set(sourceWindow, state);
-    frame.srcdoc = injectResizeReporter(html);
+    pendingStates.add(state);
     state.timeoutId = setTimeout(() => {
-        if (!state.received && frame.contentWindow === sourceWindow) {
-            frame.style.height = window.innerWidth <= 768 ? '60vh' : '420px';
+        if (frameStates.get(frame) !== state || state.received) return;
+        pendingStates.delete(state);
+        if (!state.fixedHeight) frame.style.height = window.innerWidth <= 768 ? '60vh' : '420px';
+        if (state.sourceHasText && !state.blankHandled && typeof state.onBlank === 'function') {
+            state.blankHandled = true;
+            state.onBlank({ reason: 'no-report' });
         }
-    }, 500);
+    }, RENDER_REPORT_TIMEOUT_MS);
 }
 
 export function installSafeResizeListener() {
@@ -67,18 +79,29 @@ export function installSafeResizeListener() {
     installed = true;
     window.addEventListener('message', event => {
         if (event?.data?.type !== HEIGHT_MESSAGE) return;
-        const state = frames.get(event.source);
-        if (!state || frameStates.get(state.frame) !== state || state.sourceWindow !== event.source || state.frame.contentWindow !== event.source) return;
+        let state = frames.get(event.source);
+        if (!state || frameStates.get(state.frame) !== state || state.frame.contentWindow !== event.source) {
+            state = [...pendingStates].find(candidate =>
+                frameStates.get(candidate.frame) === candidate
+                && candidate.frame.contentWindow === event.source
+            );
+        }
+        if (!state || frameStates.get(state.frame) !== state || state.frame.contentWindow !== event.source) return;
+        state.sourceWindow = event.source;
+        frames.set(event.source, state);
+        pendingStates.delete(state);
         state.received = true;
         clearTimeout(state.timeoutId);
         const requested = Number(event.data.height);
         if (!Number.isFinite(requested)) return;
-        const max = window.innerWidth <= 768 ? window.innerHeight * 0.75 : 720;
-        state.frame.style.height = `${Math.min(Math.max(requested, 240), max)}px`;
+        if (!state.fixedHeight) {
+            const max = window.innerWidth <= 768 ? window.innerHeight * 0.75 : 720;
+            state.frame.style.height = `${Math.min(Math.max(requested, 240), max)}px`;
+        }
         const textLength = Number(event.data.textLength);
         if (state.sourceHasText && Number.isFinite(textLength) && textLength === 0 && !state.blankHandled && typeof state.onBlank === 'function') {
             state.blankHandled = true;
-            state.onBlank();
+            state.onBlank({ reason: 'empty-body' });
         }
     });
 }

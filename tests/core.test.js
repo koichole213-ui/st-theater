@@ -5,7 +5,7 @@ import { buildContinuationInstruction, buildContinuationPayload, buildFinalRende
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractApiErrorMessage, extractResponseMeta, extractStreamText, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
 import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, readableCharCount } from '../text-counter.js';
-import { injectResizeReporter, sandboxPermissions } from '../safe-renderer.js';
+import { RENDER_REPORT_TIMEOUT_MS, injectResizeReporter, installSafeResizeListener, renderSafeIframe, sandboxPermissions } from '../safe-renderer.js';
 import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from '../request-metrics.js';
 import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
 import { apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from '../api-presets.js';
@@ -16,6 +16,28 @@ import { createInstructionBackup, parseInstructionBackup } from '../instruction-
 import { WORLD_BOOK_STRATEGIES, shouldReadWorldBookEntry, worldBookEntryStrategy } from '../world-book-policy.js';
 import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
+import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from '../plain-text-renderer.js';
+
+test('纯文字亮色与暗色共用纯正文协议，但使用不同的本地阅读主题', () => {
+    assert.equal(isPlainTextSelection(PLAIN_TEXT_LIGHT_SELECTION), true);
+    assert.equal(isPlainTextSelection(PLAIN_TEXT_DARK_SELECTION), true);
+    assert.equal(plainTextThemeForSelection(PLAIN_TEXT_LIGHT_SELECTION), 'light');
+    assert.equal(plainTextThemeForSelection(PLAIN_TEXT_DARK_SELECTION), 'dark');
+    assert.equal(textOutputModeForTheme('light'), 'text');
+    assert.equal(textOutputModeForTheme('dark'), 'text-dark');
+    assert.equal(isTextOutputMode('text'), true);
+    assert.equal(isTextOutputMode('text-dark'), true);
+    assert.equal(textThemeForOutputMode('text-dark'), 'dark');
+});
+
+test('暗色纯文字阅读壳转义正文并声明夜间配色', () => {
+    const html = buildPlainTextHtml('夜里有一盏 <灯>。\n\n仍然亮着。', 'dark');
+    assert.match(html, /name="color-scheme" content="dark"/);
+    assert.match(html, /#0d0f12/);
+    assert.match(html, /夜里有一盏 &lt;灯&gt;。/);
+    assert.doesNotMatch(html, /<灯>/);
+    assert.match(html, /white-space:pre-wrap/);
+});
 
 test('final HTML renderer hydrates every paragraph without rewriting source text', () => {
     const sourceText = '第一段有 <危险标签>。\n\n第二段继续。';
@@ -55,6 +77,77 @@ test('final HTML payload tells the model to return layout tokens exactly once', 
     assert.match(payload.userPrompt, /不要在 HTML 中重新输出 text/);
     assert.match(payload.userPrompt, /每个 token 必须且只能出现一次/);
     assert.match(payload.userPrompt, /输出完整 HTML/);
+});
+
+test('iframe 没有回报渲染状态时会触发正文兜底', async () => {
+    const originalWindow = globalThis.window;
+    globalThis.window = { innerWidth: 390, innerHeight: 800 };
+    let fallbackReason = '';
+    const frame = {
+        contentWindow: {},
+        style: {},
+        setAttribute() {},
+        set srcdoc(value) { this.rendered = value; },
+    };
+    try {
+        renderSafeIframe(frame, '<html><body>已有正文</body></html>', {
+            sourceHasText: true,
+            onBlank: ({ reason }) => { fallbackReason = reason; },
+        });
+        await new Promise(resolve => setTimeout(resolve, RENDER_REPORT_TIMEOUT_MS + 50));
+        assert.equal(fallbackReason, 'no-report');
+        assert.match(frame.rendered, /已有正文/);
+    } finally {
+        globalThis.window = originalWindow;
+    }
+});
+
+test('iframe 导航更换窗口引用后仍能接收渲染回报', () => {
+    const originalWindow = globalThis.window;
+    let messageHandler = null;
+    globalThis.window = {
+        innerWidth: 390,
+        innerHeight: 800,
+        addEventListener(type, handler) {
+            if (type === 'message') messageHandler = handler;
+        },
+    };
+    const frame = {
+        contentWindow: {},
+        style: {},
+        setAttribute() {},
+        set srcdoc(value) { this.rendered = value; },
+    };
+    try {
+        installSafeResizeListener();
+        renderSafeIframe(frame, '<html><body>已有正文</body></html>', { sourceHasText: true });
+        const navigatedWindow = {};
+        frame.contentWindow = navigatedWindow;
+        messageHandler({
+            source: navigatedWindow,
+            data: { type: 'st-theater:height', height: 360, textLength: 4 },
+        });
+        assert.equal(frame.style.height, '360px');
+
+        const fullscreenWindow = {};
+        const fullscreenFrame = {
+            contentWindow: fullscreenWindow,
+            style: {},
+            setAttribute() {},
+            set srcdoc(value) { this.rendered = value; },
+        };
+        renderSafeIframe(fullscreenFrame, '<html><body>全屏正文</body></html>', {
+            sourceHasText: true,
+            fixedHeight: true,
+        });
+        messageHandler({
+            source: fullscreenWindow,
+            data: { type: 'st-theater:height', height: 480, textLength: 4 },
+        });
+        assert.equal(fullscreenFrame.style.height, '100%');
+    } finally {
+        globalThis.window = originalWindow;
+    }
 });
 
 test('流式解析兼容 OpenAI、Gemini 原生与 Responses API 正文格式', () => {

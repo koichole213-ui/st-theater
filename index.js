@@ -21,9 +21,10 @@ import { createInstructionBackup, parseInstructionBackup } from './instruction-b
 import { shouldReadWorldBookEntry, worldBookEntryStrategy } from './world-book-policy.js';
 import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
+import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from './plain-text-renderer.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.5.2';
+const VERSION = '3.6.0';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -162,6 +163,27 @@ const DEFAULT_RENDER_TEMPLATE_TEXT = `小剧场输出规范（纯文字版）：
 输出格式：
 直接从小剧场正文开始，不要使用 Markdown 代码块包裹。`;
 
+const BUILTIN_RENDER_SELECTIONS = new Set([
+    '__default__',
+    '__default_pc__',
+    PLAIN_TEXT_LIGHT_SELECTION,
+    PLAIN_TEXT_DARK_SELECTION,
+]);
+
+function isBuiltinRenderSelection(selection) {
+    return BUILTIN_RENDER_SELECTIONS.has(selection);
+}
+
+function renderTemplateContentForSelection(selection, customTemplates = []) {
+    if (selection === '__default_pc__') return DEFAULT_RENDER_TEMPLATE_PC;
+    if (isPlainTextSelection(selection)) return DEFAULT_RENDER_TEMPLATE_TEXT;
+    if (selection !== '__default__') {
+        const custom = customTemplates[parseInt(selection)];
+        if (custom) return custom.content;
+    }
+    return DEFAULT_RENDER_TEMPLATE;
+}
+
 const INTERACTIVE_ADDON = `
 额外要求 - 交互模式：
 - 必须包含可交互元素（按钮、选择、切换、展开收起等）
@@ -221,7 +243,7 @@ const defaultSettings = Object.freeze({
     autoInterval: 10,            // 每攒够 N 层 AI 楼自动生成一次
     autoSource: '__last__',      // '__last__' | '__all__' | '__none__' | 分组名
     autoAnchors: {},             // { [chatId]: 上次触发时的 AI 楼数 }
-    recentGenerations: [],  // 最近 3 条自动保留的生成结果 [{ html, time, instruction }]
+    recentGenerations: [],  // 最近 3 条自动保留的生成结果 [{ html, mode, time, instruction }]
     recentIndex: 0,         // 当前查看的 recentGenerations 索引
 });
 
@@ -234,8 +256,8 @@ const SKIN_LABELS = { default: '内置默认', theater: '跟随酒馆', custom: 
 // 所以历史和最近生成从 v2.7.1 起放进 IndexedDB，按条独立读写。
 // ============================================================
 let idb = null;            // 打不开时为 null，回退到 settings 存储
-let historyCache = [];     // [{ id, title, html, instruction, date }]
-let recentCache = [];      // 最近 3 条生成 [{ html, time, instruction }]
+let historyCache = [];     // [{ id, title, html, mode, instruction, date }]
+let recentCache = [];      // 最近 3 条生成 [{ html, mode, time, instruction }]
 let recentIndex = 0;       // 当前查看的最近生成索引（仅内存）
 
 function idbReq(req) {
@@ -291,7 +313,7 @@ async function storageInit() {
             const completed = idbTransactionDone(transaction);
             const store = transaction.objectStore('history');
             for (const h of settings.history) {
-                store.add({ title: h.title, html: h.html, instruction: h.instruction, date: h.date });
+                store.add({ title: h.title, html: h.html, mode: h.mode, instruction: h.instruction, date: h.date });
             }
             await completed;
             settings.history = [];
@@ -939,11 +961,15 @@ function buildPopupHTML() {
             </div>
             <label class="theater-label">生成结果</label>
             <div id="theater-length-hint" class="theater-hint-inline" style="display:none; margin:-4px 0 8px;"></div>
-            <div id="theater-output-container"><iframe id="theater-output-frame" sandbox="" class="theater-iframe"></iframe></div>
+            <div id="theater-output-container">
+                <iframe id="theater-output-frame" sandbox="" class="theater-iframe"></iframe>
+                <div id="theater-output-text-fallback" class="theater-output-text-fallback" role="document" style="display:none;"></div>
+            </div>
             <textarea id="theater-result-text-editor" class="theater-textarea" rows="12" style="display:none;margin-top:8px;" placeholder="编辑小剧场正文…"></textarea>
             <div class="theater-btn-row">
                 <div id="theater-save-history-btn" class="theater-btn"><i class="fa-solid fa-bookmark"></i><span>保存</span></div>
                 <div id="theater-copy-html-btn" class="theater-btn"><i class="fa-solid fa-copy"></i><span>复制HTML</span></div>
+                <div id="theater-fullscreen-btn" class="theater-btn"><i class="fa-solid fa-expand"></i><span>全屏阅读</span></div>
                 <div id="theater-continue-btn" class="theater-btn"><i class="fa-solid fa-forward"></i><span>续写</span></div>
                 <div id="theater-edit-result-btn" class="theater-btn"><i class="fa-solid fa-pen-to-square"></i><span>编辑文字</span></div>
                 <div id="theater-save-edit-btn" class="theater-btn primary" style="display:none;"><i class="fa-solid fa-check"></i><span>完成编辑</span></div>
@@ -1087,13 +1113,15 @@ function buildPopupHTML() {
             <select id="theater-render-select" class="theater-select">
                 <option value="__default__" ${selRender === '__default__' ? 'selected' : ''}>默认模板（移动端）</option>
                 <option value="__default_pc__" ${selRender === '__default_pc__' ? 'selected' : ''}>默认模板（PC端）</option>
-                <option value="__plain_text__" ${selRender === '__plain_text__' ? 'selected' : ''}>内置纯文字模板</option>
+                <option value="${PLAIN_TEXT_LIGHT_SELECTION}" ${selRender === PLAIN_TEXT_LIGHT_SELECTION ? 'selected' : ''}>纯文字模板（亮色）</option>
+                <option value="${PLAIN_TEXT_DARK_SELECTION}" ${selRender === PLAIN_TEXT_DARK_SELECTION ? 'selected' : ''}>纯文字模板（暗色夜读）</option>
                 ${render.map((t, i) => `<option value="${i}" ${String(selRender) === String(i) ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
             </select>
-            <textarea id="theater-render-content" class="theater-textarea" rows="6" style="margin-top:10px;">${esc(selRender === '__default_pc__' ? DEFAULT_RENDER_TEMPLATE_PC : (selRender === '__plain_text__' ? DEFAULT_RENDER_TEMPLATE_TEXT : (selRender !== '__default__' && render[parseInt(selRender)] ? render[parseInt(selRender)].content : DEFAULT_RENDER_TEMPLATE)))}</textarea>
+            <p class="theater-hint" style="margin:7px 1px 0;">纯文字亮色与暗色都只让模型输出正文；夜间配色由插件在本地显示，不会让模型生成 HTML。</p>
+            <textarea id="theater-render-content" class="theater-textarea" rows="6" style="margin-top:10px;">${esc(renderTemplateContentForSelection(selRender, render))}</textarea>
             <div class="theater-btn-row">
                 <div id="theater-save-render-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存为新模板</span></div>
-                <div id="theater-delete-render-btn" class="theater-btn danger" style="${selRender !== '__default__' && selRender !== '__default_pc__' ? '' : 'display:none;'}"><i class="fa-solid fa-trash"></i><span>删除当前</span></div>
+                <div id="theater-delete-render-btn" class="theater-btn danger" style="${isBuiltinRenderSelection(selRender) ? 'display:none;' : ''}"><i class="fa-solid fa-trash"></i><span>删除当前</span></div>
             </div>
         </div>
     </div>
@@ -1713,7 +1741,7 @@ async function openTheaterPopup() {
         $('#theater-stop-btn').show();
     } else if (lastGeneratedHtml || currentDisplayHtml) {
         const html = lastGeneratedHtml || currentDisplayHtml;
-        showInIframe(html);
+        showInIframe(html, currentOutputMode);
         $('#theater-output-section').show();
         updateRecentNav();
     } else if (recentCache.length) {
@@ -1722,13 +1750,14 @@ async function openTheaterPopup() {
         const item = recentCache[recentIndex];
         if (item) {
             lastGeneratedHtml = item.html;
-            showInIframe(item.html);
+            showInIframe(item.html, item.mode || 'html');
             $('#theater-output-section').show();
             updateRecentNav();
         }
     }
 
     await p;
+    closeFullscreenReader();
 }
 
 // ============================================================
@@ -2171,10 +2200,8 @@ function bindEvents() {
     $d.off('change.tr').on('change.tr', '#theater-render-select', function () {
         const v = $(this).val();
         settings.selectedRenderIndex = v; save();
-        if (v === '__default__') { $('#theater-render-content').val(DEFAULT_RENDER_TEMPLATE); $('#theater-delete-render-btn').hide(); }
-        else if (v === '__default_pc__') { $('#theater-render-content').val(DEFAULT_RENDER_TEMPLATE_PC); $('#theater-delete-render-btn').hide(); }
-        else if (v === '__plain_text__') { $('#theater-render-content').val(DEFAULT_RENDER_TEMPLATE_TEXT); $('#theater-delete-render-btn').hide(); }
-        else { const t = settings.renderTemplates[parseInt(v)]; if (t) $('#theater-render-content').val(t.content); $('#theater-delete-render-btn').show(); }
+        $('#theater-render-content').val(renderTemplateContentForSelection(v, settings.renderTemplates));
+        $('#theater-delete-render-btn').toggle(!isBuiltinRenderSelection(v));
     });
     $d.off('click.tsr').on('click.tsr', '#theater-save-render-btn', saveRenderTpl);
     $d.off('click.tdr').on('click.tdr', '#theater-delete-render-btn', deleteRenderTpl);
@@ -2182,6 +2209,7 @@ function bindEvents() {
     // ---- History ----
     $d.off('click.tsh').on('click.tsh', '#theater-save-history-btn', saveToHistory);
     $d.off('click.tch').on('click.tch', '#theater-copy-html-btn', copyHtml);
+    $d.off('click.tfs').on('click.tfs', '#theater-fullscreen-btn', openFullscreenReader);
     // ---- Recent generations nav ----
     $d.off('click.trp').on('click.trp', '#theater-recent-prev', function () {
         if (recentIndex <= 0) return;
@@ -2204,6 +2232,7 @@ function bindEvents() {
         if (!text) { toastr.warning('没有可编辑的正文'); return; }
         $('#theater-result-text-editor').val(text).show().trigger('focus');
         $('#theater-output-frame').hide();
+        $('#theater-output-text-fallback').hide();
         $('#theater-edit-result-btn').hide();
         $('#theater-save-edit-btn').show();
         toastr.info('正在父页面安全编辑正文；保存后使用纯文字卡片显示');
@@ -2211,15 +2240,17 @@ function bindEvents() {
     $d.off('click.tse').on('click.tse', '#theater-save-edit-btn', function () {
         const text = $('#theater-result-text-editor').val().trim();
         if (!text) { toastr.warning('正文不能为空'); return; }
-        const newHtml = textFallbackHtml(text);
+        const textTheme = textThemeForOutputMode(currentOutputMode);
+        const newMode = textOutputModeForTheme(textTheme);
+        const newHtml = textFallbackHtml(text, textTheme);
         lastGeneratedHtml = newHtml;
         lastGeneratedText = text;
         currentDisplayHtml = newHtml;
-        currentOutputMode = 'text';
-        if (recentCache[recentIndex]) { recentCache[recentIndex].html = newHtml; recentCache[recentIndex].mode = 'text'; recentPersist(); }
+        currentOutputMode = newMode;
+        if (recentCache[recentIndex]) { recentCache[recentIndex].html = newHtml; recentCache[recentIndex].mode = newMode; recentPersist(); }
         $('#theater-result-text-editor').hide();
         $('#theater-output-frame').show();
-        showInIframe(newHtml, 'text');
+        showInIframe(newHtml, newMode);
         $('#theater-save-edit-btn').hide();
         $('#theater-edit-result-btn').show();
         toastr.success('编辑已保存');
@@ -2237,7 +2268,7 @@ function bindEvents() {
     $d.off('click.thv').on('click.thv', '.theater-history-view', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
         lastGeneratedHtml = item.html;
-        showInIframe(item.html); $('.theater-tab[data-tab="generate"]').click(); $('#theater-output-section').show();
+        showInIframe(item.html, item.mode || 'html'); $('.theater-tab[data-tab="generate"]').click(); $('#theater-output-section').show();
     });
     // 续写：从历史记录
     $d.off('click.thc').on('click.thc', '.theater-history-continue', function () {
@@ -3313,9 +3344,10 @@ async function saveRenderTpl() {
 }
 
 function deleteRenderTpl() {
-    const v = $('#theater-render-select').val(); if (v === '__default__' || v === '__default_pc__' || v === '__plain_text__') return;
+    const v = $('#theater-render-select').val(); if (isBuiltinRenderSelection(v)) return;
     settings.renderTemplates.splice(parseInt(v), 1); save();
-    const s = $('#theater-render-select'); s.find('option:not([value="__default__"]):not([value="__default_pc__"]):not([value="__plain_text__"])').remove();
+    const s = $('#theater-render-select');
+    s.find('option').filter((_, option) => !isBuiltinRenderSelection(option.value)).remove();
     settings.renderTemplates.forEach((t, i) => s.append(`<option value="${i}">${esc(t.name)}</option>`));
     s.val('__default__'); settings.selectedRenderIndex = '__default__'; save();
     $('#theater-render-content').val(DEFAULT_RENDER_TEMPLATE); $('#theater-delete-render-btn').hide();
@@ -3452,7 +3484,7 @@ async function saveToHistory() {
     if (!t) return;
     const now = new Date(), pad = n => String(n).padStart(2, '0');
     const item = {
-        title: t, html: html, instruction: $('#theater-instruction').val(),
+        title: t, html: html, mode: currentOutputMode, instruction: $('#theater-instruction').val(),
         date: `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
     };
     if (await histAdd(item)) { refreshHistList(); toastr.success('已保存'); }
@@ -3462,7 +3494,7 @@ function copyHtml() {
     // 只从已知干净的变量取 HTML，不读 iframe.srcdoc（酒馆环境里可能被改写/清空）
     const html = lastGeneratedHtml || currentDisplayHtml;
     if (!html) { toastr.warning('没有可复制的内容'); return; }
-    if (currentOutputMode === 'text') {
+    if (isTextOutputMode(currentOutputMode)) {
         copyToClipboard(lastGeneratedText || htmlToPlainText(html));
         return;
     }
@@ -3554,8 +3586,6 @@ function fallbackCopy(text) {
 
 function showManualCopyPanel(text, { title = '手动复制', downloadName = '千夜浮梦-内容.txt' } = {}) {
     $('#theater-manual-copy-overlay').remove();
-    const $host = $('.theater-popup').last();
-    if (!$host.length) return;
     const $overlay = $(`
         <div id="theater-manual-copy-overlay" class="theater-manual-copy-overlay" role="dialog" aria-modal="true" aria-labelledby="theater-manual-copy-title">
             <div class="theater-manual-copy-backdrop" data-theater-manual-copy-close></div>
@@ -3578,7 +3608,7 @@ function showManualCopyPanel(text, { title = '手动复制', downloadName = '千
     $overlay.find('#theater-manual-copy-title').text(title);
     $overlay.find('textarea').val(text);
     $overlay.data('download-name', downloadName);
-    $host.append($overlay);
+    $('body').append($overlay);
     requestAnimationFrame(() => {
         const textarea = document.getElementById('theater-manual-copy-text');
         textarea?.focus();
@@ -3623,7 +3653,7 @@ async function exportAllHistory() {
     } catch (e) {
         console.error('[Theater] Export zip error:', e);
         // JSZip 不可用时回退为 JSON
-        const data = hist.map(h => ({ title: h.title, date: h.date, instruction: h.instruction, html: h.html }));
+        const data = hist.map(h => ({ title: h.title, date: h.date, instruction: h.instruction, html: h.html, mode: h.mode }));
         downloadFile(`theater-history-${Date.now()}.json`, JSON.stringify(data, null, 2), 'application/json');
         toastr.info('压缩包生成失败，已导出为 JSON 文件');
     }
@@ -3636,6 +3666,7 @@ async function addHistoryItems(items) {
         const ok = await histAdd({
             title: item.title || `导入的小剧场 ${historyCache.length + 1}`,
             html: item.html,
+            mode: item.mode || 'html',
             instruction: item.instruction || '',
             date: item.date || new Date().toLocaleString('zh-CN', { hour12: false }),
         });
@@ -3725,16 +3756,17 @@ function prepareContinuationContext(value) {
 
 function resolveRenderSelection(forcePlainText = false) {
     const selectedRender = settings.selectedRenderIndex || '__default__';
-    const isPlainTextRender = forcePlainText || selectedRender === '__plain_text__';
+    const isPlainTextRender = forcePlainText || isPlainTextSelection(selectedRender);
+    const textTheme = plainTextThemeForSelection(selectedRender);
     const customRender = (settings.renderTemplates || [])[parseInt(selectedRender)];
     let rules = isPlainTextRender ? DEFAULT_RENDER_TEMPLATE_TEXT : DEFAULT_RENDER_TEMPLATE;
     if (!isPlainTextRender && selectedRender === '__default_pc__') rules = DEFAULT_RENDER_TEMPLATE_PC;
     else if (!isPlainTextRender && selectedRender !== '__default__' && customRender) rules = customRender.content;
     if (settings.interactiveMode && !isPlainTextRender) rules += INTERACTIVE_ADDON;
     const label = isPlainTextRender
-        ? '纯文字'
+        ? (textTheme === 'dark' ? '纯文字·暗色夜读' : '纯文字·亮色')
         : (selectedRender === '__default_pc__' ? '内置 PC' : (selectedRender === '__default__' ? '内置默认' : (customRender?.name || `自定义 ${selectedRender}`)));
-    return { selectedRender, isPlainTextRender, rules, label };
+    return { selectedRender, isPlainTextRender, textTheme, rules, label };
 }
 
 async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, longFormPlan = false, loadPreset = true, evaluateWorldBook = true } = {}) {
@@ -3811,7 +3843,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     const worldBook = wbParts.length ? `世界书设定：\n${wbParts.join('\n\n')}` : '';
 
     const renderSelection = resolveRenderSelection(forcePlainText);
-    const { isPlainTextRender } = renderSelection;
+    const { isPlainTextRender, textTheme } = renderSelection;
     let { rules } = renderSelection;
     if (longFormPlan) {
         rules += '\n\n【长篇分段优先规则】本轮是同一篇长篇小剧场的上半篇，不要求独立完结。只输出正文并停在剧情中段；不要输出 HTML、标题、总结、结局或“未完待续”。';
@@ -3840,7 +3872,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         fixed,
         instruction: `用户指令：${cleanInstruction}`,
     });
-    return { ...payload, isPlainTextRender, targetWordCount, ctx };
+    return { ...payload, isPlainTextRender, textTheme, targetWordCount, ctx };
 }
 
 async function refreshTokenEstimate() {
@@ -3967,7 +3999,7 @@ async function runGeneration(instruction, isAuto) {
     const targetWordCount = payload.targetWordCount;
     const autoTargetContinue = !!targetWordCount && settings.autoContinue;
     let { ctx, systemPrompt, userPrompt: prompt, isPlainTextRender } = payload;
-    const { label: renderTemplate, isPlainTextRender: selectedPlainTextRender } = resolveRenderSelection(false);
+    const { label: renderTemplate, isPlainTextRender: selectedPlainTextRender, textTheme: selectedTextTheme } = resolveRenderSelection(false);
     const mainOai = ctx?.oai_settings || globalThis.oai_settings;
     const resolvedProtocol = settings.apiMode === 'main' ? 'main' : resolveProtocol(settings.apiProtocol, settings.apiUrl);
     const modelName = settings.apiMode === 'main'
@@ -3994,7 +4026,7 @@ async function runGeneration(instruction, isAuto) {
     bgError = '';
     lastGeneratedHtml = '';
     lastGeneratedText = '';
-    currentOutputMode = isPlainTextRender ? 'text' : 'html';
+    currentOutputMode = isPlainTextRender ? textOutputModeForTheme(payload.textTheme) : 'html';
 
     // UI（面板可能在生成过程中被关掉，所以用函数判断面板是否还在）
     const popupAlive = () => $('#theater-generate-btn').length > 0;
@@ -4134,8 +4166,8 @@ async function runGeneration(instruction, isAuto) {
         let newText = currentGenerationJob.segments.join('\n\n').trim();
         currentGenerationJob.actualChars = readableCharCount(newText);
         if (selectedPlainTextRender) {
-            lastGeneratedHtml = textFallbackHtml(newText);
-            currentOutputMode = 'text';
+            lastGeneratedHtml = textFallbackHtml(newText, selectedTextTheme);
+            currentOutputMode = textOutputModeForTheme(selectedTextTheme);
         } else if (!stagedRenderMode && currentGenerationJob.segments.length === 1) {
             lastGeneratedHtml = firstHtml || textFallbackHtml(newText);
         } else {
@@ -4859,11 +4891,16 @@ function buildDiagnostics() {
     const selectedRender = settings.selectedRenderIndex || '__default__';
     const customRenderOk = selectedRender === '__default__'
         || selectedRender === '__default_pc__'
-        || selectedRender === '__plain_text__'
+        || isPlainTextSelection(selectedRender)
         || !!(settings.renderTemplates || [])[parseInt(selectedRender)];
     const timingDetail = requestMetricsLog.length
         ? requestMetricsLog.slice(0, 3).reverse().map((metrics, index, list) => `请求${requestMetricsLog.length - list.length + index + 1}：${summarizeMetrics(metrics)}`).join('；')
         : summarizeMetrics(lastRequestMetrics);
+    const recentReadableCounts = recentCache.map(item => readableCharCount(htmlToPlainText(item?.html || '')));
+    const recentContentOk = recentReadableCounts.every(count => count > 0);
+    const recentContentDetail = recentReadableCounts.length
+        ? recentReadableCounts.map((count, index) => `第${index + 1}条约 ${count} 字`).join('；')
+        : '暂无最近生成';
 
     const rows = [
         diagnosticLine('ok', '诊断范围', '这份报告只检查小剧场插件，不检查酒馆正文生成链路'),
@@ -4881,6 +4918,7 @@ function buildDiagnostics() {
         diagnosticLine(isGenerating ? 'warn' : 'ok', '生成状态', isGenerating ? '正在生成中' : '空闲'),
         diagnosticLine(bgError ? 'bad' : 'ok', '最近错误', bgError || '无'),
         diagnosticLine('ok', '数据数量', `历史 ${historyCache.length} 条，最近生成 ${recentCache.length} 条，指令模板 ${(settings.instructionTemplates || []).length} 个`),
+        diagnosticLine(recentContentOk ? 'ok' : 'warn', '最近生成正文', recentContentDetail),
         diagnosticLine('ok', '世界书', `已选 ${(settings.selectedWorldBooks || []).length} 本，当前加载 ${wbEntries.length} 条`),
     ];
 
@@ -4940,28 +4978,123 @@ function extractHtml(t) {
     return fallback;
 }
 
-function textFallbackHtml(text) {
-    const body = esc(String(text || '')).replace(/\n/g, '<br>');
-    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:system-ui,sans-serif;padding:20px;max-width:640px;margin:0 auto;background:transparent;color:#222}.card{background:#fafafa;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.1);line-height:1.75;font-size:15px;white-space:normal}</style></head><body><div class="card">${body}</div></body></html>`;
+function textFallbackHtml(text, theme = 'light') {
+    return buildPlainTextHtml(text, theme);
 }
 
 let currentDisplayHtml = '';   // 当前iframe中显示的内容
 
 function showInIframe(html, mode = 'html', allowTextFallback = true) {
     const f = document.getElementById('theater-output-frame'); if (!f) return;
+    const $textFallback = $('#theater-output-text-fallback');
+    const textMode = isTextOutputMode(mode);
+    const textTheme = textThemeForOutputMode(mode);
+    $textFallback.hide().empty().toggleClass('is-dark', textTheme === 'dark');
+    $(f).show();
     currentDisplayHtml = html;
     currentOutputMode = mode;
     const sourceText = htmlToPlainText(html);
-    if (mode === 'text') lastGeneratedText = sourceText;
-    $('#theater-copy-html-btn span').text(mode === 'text' ? '复制文字' : '复制HTML');
+    if (textMode) lastGeneratedText = sourceText;
+    $('#theater-copy-html-btn span').text(textMode ? '复制文字' : '复制HTML');
     renderSafeIframe(f, html, {
         sourceHasText: !!sourceText,
-        onBlank: allowTextFallback && sourceText ? () => {
-            runtimeLog('warn', '渲染路径', { path: '纯文字兜底', reason: 'HTML 正文不可见' });
+        onBlank: allowTextFallback && sourceText ? ({ reason } = {}) => {
+            const fallbackReason = reason === 'no-report' ? 'iframe 未回报渲染状态' : 'HTML 正文不可见';
+            runtimeLog('warn', '渲染路径', { path: '父页面纯文字兜底', reason: fallbackReason });
             toastr.warning('生成内容无法正常显示，已切换为纯文字兜底展示');
-            showInIframe(textFallbackHtml(sourceText), 'text', false);
+            currentOutputMode = textMode ? mode : 'text';
+            lastGeneratedText = sourceText;
+            $('#theater-copy-html-btn span').text('复制文字');
+            $(f).hide();
+            $textFallback
+                .toggleClass('is-dark', textThemeForOutputMode(currentOutputMode) === 'dark')
+                .text(sourceText)
+                .show();
         } : null,
     });
+}
+
+function closeFullscreenReader() {
+    $('#theater-reader-overlay').remove();
+    $('body').removeClass('theater-reader-open');
+    $(document).off('keydown.treader');
+}
+
+function currentReaderPayload() {
+    const editing = $('#theater-result-text-editor').is(':visible');
+    if (editing) {
+        const text = $('#theater-result-text-editor').val().trim();
+        if (!text) return null;
+        const theme = textThemeForOutputMode(currentOutputMode);
+        return {
+            html: textFallbackHtml(text, theme),
+            mode: textOutputModeForTheme(theme),
+            text,
+        };
+    }
+    const html = lastGeneratedHtml || currentDisplayHtml;
+    if (!html) return null;
+    return {
+        html,
+        mode: currentOutputMode || 'html',
+        text: htmlToPlainText(html),
+    };
+}
+
+function openFullscreenReader() {
+    const payload = currentReaderPayload();
+    if (!payload?.html) {
+        toastr.warning('还没有可全屏阅读的内容');
+        return;
+    }
+    closeFullscreenReader();
+    const textMode = isTextOutputMode(payload.mode);
+    const textTheme = textThemeForOutputMode(payload.mode);
+    const isNight = textMode && textTheme === 'dark';
+    const modeLabel = textMode ? (isNight ? '纯文字 · 暗色夜读' : '纯文字 · 亮色') : 'HTML 小剧场';
+    const $overlay = $(`
+        <div id="theater-reader-overlay" class="theater-reader-overlay${isNight ? ' is-night' : ''}" role="dialog" aria-modal="true" aria-labelledby="theater-reader-title">
+            <div class="theater-reader-backdrop" data-theater-reader-close></div>
+            <section class="theater-reader-shell">
+                <header class="theater-reader-head">
+                    <div class="theater-reader-heading">
+                        <span class="theater-reader-kicker"><i class="fa-solid fa-book-open"></i> 沉浸阅读</span>
+                        <h2 id="theater-reader-title">千夜浮梦</h2>
+                        <span class="theater-reader-mode"></span>
+                    </div>
+                    <button type="button" class="theater-reader-close" data-theater-reader-close aria-label="退出全屏阅读">
+                        <i class="fa-solid fa-compress"></i><span>退出</span>
+                    </button>
+                </header>
+                <div class="theater-reader-canvas">
+                    <iframe id="theater-reader-frame" sandbox="" class="theater-reader-frame" title="小剧场全屏阅读内容"></iframe>
+                    <div id="theater-reader-text-fallback" class="theater-reader-text-fallback${isNight ? ' is-dark' : ''}" role="document" style="display:none;"></div>
+                </div>
+                <div class="theater-reader-shortcut">按 Esc 退出阅读</div>
+            </section>
+        </div>`);
+    $overlay.find('.theater-reader-mode').text(modeLabel);
+    $('body').append($overlay);
+    $('body').addClass('theater-reader-open');
+    $overlay.on('click', '[data-theater-reader-close]', closeFullscreenReader);
+    $(document).off('keydown.treader').on('keydown.treader', event => {
+        if (event.key === 'Escape') closeFullscreenReader();
+    });
+
+    const frame = document.getElementById('theater-reader-frame');
+    const $fallback = $('#theater-reader-text-fallback');
+    renderSafeIframe(frame, payload.html, {
+        sourceHasText: !!payload.text,
+        fixedHeight: true,
+        onBlank: payload.text ? ({ reason } = {}) => {
+            const fallbackReason = reason === 'no-report' ? 'iframe 未回报渲染状态' : 'HTML 正文不可见';
+            runtimeLog('warn', '全屏阅读兜底', { reason: fallbackReason });
+            $(frame).hide();
+            $fallback.text(payload.text).show();
+        } : null,
+    });
+    setTimeout(() => $overlay.addClass('is-open'), 0);
+    $overlay.find('.theater-reader-close').trigger('focus');
 }
 
 function updateRecentNav() {

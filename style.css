@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v3.5.2
+/* 千夜浮梦 · 小剧场生成器 v3.6.0
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -1579,6 +1579,23 @@
     background: #fff;
     display: block;
 }
+.theater-output-text-fallback {
+    min-height: 240px;
+    max-height: 70vh;
+    overflow: auto;
+    padding: 20px;
+    background: #fff;
+    color: #222;
+    font-family: system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.75;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.theater-output-text-fallback.is-dark {
+    background: #11151a;
+    color: #d9d4ca;
+}
 .theater-recent-nav {
     display: flex;
     align-items: center;
@@ -1603,6 +1620,222 @@
     opacity: .3;
     cursor: default;
     pointer-events: none;
+}
+
+/* ============================================================
+ * Immersive reader
+ * ============================================================ */
+body.theater-reader-open {
+    overflow: hidden !important;
+}
+.theater-reader-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483640;
+    display: grid;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+}
+.theater-reader-overlay.is-open {
+    opacity: 1;
+    pointer-events: auto;
+}
+.theater-reader-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(17, 14, 11, .72);
+    backdrop-filter: blur(12px);
+}
+.theater-reader-shell {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: #e9e4dc;
+    color: #2f2924;
+    transform: translateY(8px) scale(.995);
+    transition: transform 220ms cubic-bezier(.2, .8, .2, 1);
+}
+.theater-reader-overlay.is-open .theater-reader-shell {
+    transform: translateY(0) scale(1);
+}
+.theater-reader-head {
+    min-height: 72px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: calc(12px + env(safe-area-inset-top)) clamp(18px, 4vw, 42px) 12px;
+    border-bottom: 1px solid rgba(91, 69, 49, .14);
+    background:
+        linear-gradient(90deg, rgba(176, 122, 74, .08), transparent 42%),
+        #f8f4ec;
+}
+.theater-reader-heading {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: auto auto;
+    align-items: baseline;
+    column-gap: 12px;
+}
+.theater-reader-kicker {
+    grid-column: 1 / -1;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: #9b6b42;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: .16em;
+}
+.theater-reader-heading h2 {
+    margin: 2px 0 0;
+    font-family: var(--t-font-serif, ui-serif, "Songti SC", "STSong", serif);
+    font-size: clamp(18px, 2.8vw, 24px);
+    line-height: 1.1;
+    color: #2f2924;
+}
+.theater-reader-mode {
+    min-width: 0;
+    color: #8a7c6e;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.theater-reader-close {
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 9px 15px;
+    border: 1px solid rgba(91, 69, 49, .16);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .72);
+    color: #5d5147;
+    font: 600 12px/1 var(--t-font-sans, system-ui, sans-serif);
+    cursor: pointer;
+    transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.theater-reader-close:hover {
+    border-color: rgba(155, 107, 66, .42);
+    background: #fff;
+}
+.theater-reader-close:active {
+    transform: scale(.97);
+}
+.theater-reader-close:focus-visible {
+    outline: 3px solid rgba(176, 122, 74, .24);
+    outline-offset: 2px;
+}
+.theater-reader-canvas {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    background: #e9e4dc;
+}
+.theater-reader-frame {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    display: block;
+    border: 0;
+    background: transparent;
+}
+.theater-reader-text-fallback {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    padding: clamp(24px, 6vw, 64px) max(20px, calc((100vw - 760px) / 2));
+    background: #f4f0e8;
+    color: #302a25;
+    font-family: ui-serif, "Songti SC", "STSong", "Noto Serif CJK SC", serif;
+    font-size: clamp(16px, 2.2vw, 18px);
+    line-height: 1.95;
+    letter-spacing: .025em;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.theater-reader-shortcut {
+    position: absolute;
+    right: clamp(18px, 4vw, 42px);
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: rgba(33, 28, 24, .64);
+    color: rgba(255, 255, 255, .78);
+    font-size: 10.5px;
+    letter-spacing: .04em;
+    pointer-events: none;
+}
+.theater-reader-overlay.is-night .theater-reader-shell,
+.theater-reader-overlay.is-night .theater-reader-canvas {
+    background: #0d0f12;
+}
+.theater-reader-overlay.is-night .theater-reader-head {
+    border-bottom-color: rgba(222, 181, 116, .12);
+    background:
+        linear-gradient(90deg, rgba(198, 151, 82, .08), transparent 42%),
+        #12161a;
+}
+.theater-reader-overlay.is-night .theater-reader-kicker {
+    color: #c79757;
+}
+.theater-reader-overlay.is-night .theater-reader-heading h2 {
+    color: #e6dfd2;
+}
+.theater-reader-overlay.is-night .theater-reader-mode {
+    color: #8e9296;
+}
+.theater-reader-overlay.is-night .theater-reader-close {
+    border-color: rgba(222, 181, 116, .15);
+    background: rgba(255, 255, 255, .04);
+    color: #c9c2b6;
+}
+.theater-reader-overlay.is-night .theater-reader-close:hover {
+    border-color: rgba(222, 181, 116, .34);
+    background: rgba(255, 255, 255, .075);
+}
+.theater-reader-text-fallback.is-dark {
+    background: #0d0f12;
+    color: #d9d4ca;
+}
+
+@media (max-width: 600px) {
+    .theater-reader-head {
+        min-height: 62px;
+        padding: calc(8px + env(safe-area-inset-top)) 14px 8px;
+    }
+    .theater-reader-heading {
+        grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+        column-gap: 8px;
+    }
+    .theater-reader-kicker { font-size: 9px; letter-spacing: .12em; }
+    .theater-reader-heading h2 { font-size: 17px; }
+    .theater-reader-mode { font-size: 10.5px; }
+    .theater-reader-close {
+        min-width: 40px;
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border-radius: 50%;
+    }
+    .theater-reader-close span { display: none; }
+    .theater-reader-shortcut { display: none; }
+    .theater-reader-text-fallback {
+        padding: 26px 20px calc(42px + env(safe-area-inset-bottom));
+        font-size: 16px;
+        line-height: 1.9;
+    }
 }
 
 /* ============================================================
