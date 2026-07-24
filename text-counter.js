@@ -3,6 +3,16 @@ export function readableCharCount(text) {
     return matches ? matches.length : 0;
 }
 
+export function normalizeContinuationText(text) {
+    return String(text || '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/\u00a0/g, ' ')
+        .replace(/[ \t\f\v]+/g, ' ')
+        .replace(/ *\n */g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
 export function normalizeGeneratedText(text) {
     return String(text || '')
         .replace(/^```(?:html|markdown|text)?\s*/i, '')
@@ -18,8 +28,18 @@ export function tailText(text, maxChars = 1600) {
 export const MAX_CONTINUATION_CONTEXT_CHARS = 8000;
 
 export function continuationContextWindow(text, maxChars = MAX_CONTINUATION_CONTEXT_CHARS) {
-    const value = String(text || '').trim();
+    const value = normalizeContinuationText(text);
     const limit = Math.max(1, Math.floor(Number(maxChars) || MAX_CONTINUATION_CONTEXT_CHARS));
-    if (value.length <= limit) return value;
-    return `…（更早内容已省略）\n\n${value.slice(-limit)}`;
+    if (readableCharCount(value) <= limit) return value;
+
+    const characters = Array.from(value);
+    let readable = 0;
+    let start = characters.length;
+    for (let index = characters.length - 1; index >= 0; index--) {
+        const isReadable = readableCharCount(characters[index]) > 0;
+        if (isReadable && readable >= limit) break;
+        if (isReadable) readable++;
+        start = index;
+    }
+    return `…（更早内容已省略）\n\n${characters.slice(start).join('').trim()}`;
 }

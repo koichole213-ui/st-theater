@@ -5,7 +5,7 @@ import { estimateTokenBreakdown } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractApiErrorMessage, extractResponseMeta, extractStreamText, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
-import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, readableCharCount } from '../text-counter.js';
+import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, normalizeContinuationText, readableCharCount } from '../text-counter.js';
 import { RENDER_REPORT_TIMEOUT_MS, injectResizeReporter, installSafeResizeListener, renderSafeIframe, sandboxPermissions } from '../safe-renderer.js';
 import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from '../request-metrics.js';
 import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
@@ -180,6 +180,32 @@ test('连续续写只携带上一轮正文，并限制为最近 8000 字', () =>
     assert.equal(context.includes('A轮旧剧情'), false);
     assert.match(context, /更早内容已省略/);
     assert.equal(continuationContextWindow('本轮新增正文'), '本轮新增正文');
+});
+
+test('续写前情清理 HTML 排版空白，并按可读字符而非源码长度截取', () => {
+    const indented = '\n        第一段。\n\n            第二段！        \n';
+    assert.equal(normalizeContinuationText(indented), '第一段。\n\n第二段！');
+    assert.equal(readableCharCount(normalizeContinuationText(indented)), 6);
+
+    const whitespaceHeavy = `${'甲'.repeat(6)}\n\n${' '.repeat(200)}${'乙'.repeat(6)}`;
+    const context = continuationContextWindow(whitespaceHeavy, 6);
+    assert.equal(context.endsWith('乙'.repeat(6)), true);
+    assert.equal(context.includes('甲'), false);
+});
+
+test('用户本轮指令位于前情之后、最终规则之前', () => {
+    const payload = buildGenerationPayload({
+        preset: '系统预设',
+        context: '聊天前情',
+        continuation: '续写前情',
+        instruction: '用户本轮指令',
+        rules: '渲染规则',
+        fixed: '最终创作约束',
+    });
+    assert.equal(payload.systemPrompt, '系统预设');
+    assert.ok(payload.userPrompt.indexOf('续写前情') < payload.userPrompt.indexOf('用户本轮指令'));
+    assert.ok(payload.userPrompt.indexOf('用户本轮指令') < payload.userPrompt.indexOf('渲染规则'));
+    assert.ok(payload.userPrompt.indexOf('渲染规则') < payload.userPrompt.indexOf('最终创作约束'));
 });
 
 test('429 限流识别支持 Retry-After 秒数、日期和常见错误文字', () => {

@@ -11,7 +11,9 @@ export function buildGenerationPayload(parts = {}) {
     const fixed = String(parts.fixed || '');
 
     const systemPrompt = [preset, addons].filter(Boolean).join('\n\n');
-    const userPrompt = [role, persona, worldBook, context, continuation, rules, fixed, instruction]
+    // 对齐酒馆的 Chat History → Post-History Instructions 顺序：
+    // 用户本轮指令属于当前消息，渲染与创作硬规则作为最后约束。
+    const userPrompt = [role, persona, worldBook, context, continuation, instruction, rules, fixed]
         .filter(Boolean).join('\n\n---\n\n');
     return {
         systemPrompt,

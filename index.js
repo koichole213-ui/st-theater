@@ -24,7 +24,7 @@ import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from 
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from './plain-text-renderer.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.6.1';
+const VERSION = '3.6.2';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -3923,7 +3923,8 @@ function updateLengthHint(target, actual, { completedBelowTarget = false } = {})
 function updateContinueHint() {
     $('#theater-continue-hint').remove();
     if (!continueContext) return;
-    $('#theater-instruction').before(`<div id="theater-continue-hint" style="font-size:.78em;opacity:.6;margin-bottom:6px;padding:6px 10px;border-radius:8px;background:rgba(128,128,128,.08);"><i class="fa-solid fa-forward" style="margin-right:4px;"></i>续写模式：已加载前情内容（${continueContext.length}字）<span id="theater-cancel-continue" style="margin-left:8px;cursor:pointer;opacity:.5;text-decoration:underline;">取消</span></div>`);
+    const contextChars = readableCharCount(continueContext);
+    $('#theater-instruction').before(`<div id="theater-continue-hint" style="font-size:.78em;opacity:.6;margin-bottom:6px;padding:6px 10px;border-radius:8px;background:rgba(128,128,128,.08);"><i class="fa-solid fa-forward" style="margin-right:4px;"></i>续写模式：已加载前情内容（约 ${contextChars} 字）<span id="theater-cancel-continue" style="margin-left:8px;cursor:pointer;opacity:.5;text-decoration:underline;">取消</span></div>`);
 }
 
 function clearContinueMode({ silent = false } = {}) {
@@ -3941,7 +3942,7 @@ function startContinue(html) {
 
     // 只读取当前结果的纯正文；不携带 HTML，也不累计更早的续写结果。
     continueContext = prepareContinuationContext(plainText);
-    if (plainText.length > MAX_CONTINUATION_CONTEXT_CHARS) {
+    if (readableCharCount(plainText) > MAX_CONTINUATION_CONTEXT_CHARS) {
         toastr.info('前情内容较长，已自动截取后半段', '', { timeOut: 3000 });
     }
 
@@ -4914,7 +4915,7 @@ function buildDiagnostics() {
         diagnosticLine(window.indexedDB ? (idb ? 'ok' : 'warn') : 'bad', '本地存档库', window.indexedDB ? (idb ? 'IndexedDB 已打开' : 'IndexedDB 存在，但当前未打开，可能会回退到 settings') : '浏览器不支持 IndexedDB'),
         diagnosticLine('warn', '历史存储提示', '历史存在浏览器本地存储里。夸克等手机浏览器崩溃或清理后可能丢失，建议定期批量导出备份'),
         diagnosticLine(customRenderOk ? 'ok' : 'bad', '渲染模板', customRenderOk ? `当前模板：${selectedRender}` : `当前选择 ${selectedRender} 找不到对应模板`),
-        diagnosticLine(continueContext ? 'warn' : 'ok', '续写状态', continueContext ? `续写模式仍有前情：${continueContext.length} 字` : '未处于续写模式'),
+        diagnosticLine(continueContext ? 'warn' : 'ok', '续写状态', continueContext ? `续写模式仍有前情：约 ${readableCharCount(continueContext)} 字` : '未处于续写模式'),
         diagnosticLine(isGenerating ? 'warn' : 'ok', '生成状态', isGenerating ? '正在生成中' : '空闲'),
         diagnosticLine(bgError ? 'bad' : 'ok', '最近错误', bgError || '无'),
         diagnosticLine('ok', '数据数量', `历史 ${historyCache.length} 条，最近生成 ${recentCache.length} 条，指令模板 ${(settings.instructionTemplates || []).length} 个`),
