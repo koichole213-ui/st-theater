@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { estimateTokenBreakdown } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractApiErrorMessage, extractResponseMeta, extractStreamText, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
@@ -17,6 +18,15 @@ import { WORLD_BOOK_STRATEGIES, shouldReadWorldBookEntry, worldBookEntryStrategy
 import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from '../plain-text-renderer.js';
+
+test('全屏阅读使用原生模态弹窗进入浏览器顶层', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    assert.match(source, /<dialog id="theater-reader-overlay"/);
+    assert.match(source, /readerDialog\.showModal\(\)/);
+    assert.doesNotMatch(source, /<div id="theater-reader-overlay"/);
+    assert.match(styles, /\.theater-reader-overlay::backdrop/);
+});
 
 test('纯文字亮色与暗色共用纯正文协议，但使用不同的本地阅读主题', () => {
     assert.equal(isPlainTextSelection(PLAIN_TEXT_LIGHT_SELECTION), true);

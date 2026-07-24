@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v3.6.0
+/* 千夜浮梦 · 小剧场生成器 v3.6.1
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -1632,18 +1632,29 @@ body.theater-reader-open {
     position: fixed;
     inset: 0;
     z-index: 2147483640;
-    display: grid;
+    display: none;
+    width: 100vw;
+    max-width: none;
+    height: 100vh;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
     opacity: 0;
     pointer-events: none;
     transition: opacity 180ms ease;
+}
+.theater-reader-overlay[open] {
+    display: grid;
 }
 .theater-reader-overlay.is-open {
     opacity: 1;
     pointer-events: auto;
 }
-.theater-reader-backdrop {
-    position: absolute;
-    inset: 0;
+.theater-reader-overlay::backdrop {
     background: rgba(17, 14, 11, .72);
     backdrop-filter: blur(12px);
 }

@@ -24,7 +24,7 @@ import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from 
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from './plain-text-renderer.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.6.0';
+const VERSION = '3.6.1';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -5015,7 +5015,11 @@ function showInIframe(html, mode = 'html', allowTextFallback = true) {
 }
 
 function closeFullscreenReader() {
-    $('#theater-reader-overlay').remove();
+    const dialog = document.getElementById('theater-reader-overlay');
+    if (dialog?.open && typeof dialog.close === 'function') {
+        try { dialog.close(); } catch {}
+    }
+    dialog?.remove();
     $('body').removeClass('theater-reader-open');
     $(document).off('keydown.treader');
 }
@@ -5053,8 +5057,7 @@ function openFullscreenReader() {
     const isNight = textMode && textTheme === 'dark';
     const modeLabel = textMode ? (isNight ? '纯文字 · 暗色夜读' : '纯文字 · 亮色') : 'HTML 小剧场';
     const $overlay = $(`
-        <div id="theater-reader-overlay" class="theater-reader-overlay${isNight ? ' is-night' : ''}" role="dialog" aria-modal="true" aria-labelledby="theater-reader-title">
-            <div class="theater-reader-backdrop" data-theater-reader-close></div>
+        <dialog id="theater-reader-overlay" class="theater-reader-overlay${isNight ? ' is-night' : ''}" aria-modal="true" aria-labelledby="theater-reader-title">
             <section class="theater-reader-shell">
                 <header class="theater-reader-head">
                     <div class="theater-reader-heading">
@@ -5072,11 +5075,30 @@ function openFullscreenReader() {
                 </div>
                 <div class="theater-reader-shortcut">按 Esc 退出阅读</div>
             </section>
-        </div>`);
+        </dialog>`);
     $overlay.find('.theater-reader-mode').text(modeLabel);
     $('body').append($overlay);
+    const readerDialog = $overlay[0];
+    let openedInTopLayer = false;
+    if (typeof readerDialog?.showModal === 'function') {
+        try {
+            readerDialog.showModal();
+            openedInTopLayer = true;
+        } catch (error) {
+            runtimeLog('warn', '全屏阅读顶层弹窗不可用', { message: error?.message || String(error) });
+        }
+    }
+    if (!openedInTopLayer) {
+        const fallbackHost = $('.theater-popup').last().closest('dialog')[0];
+        if (fallbackHost) fallbackHost.appendChild(readerDialog);
+        readerDialog?.setAttribute('open', '');
+    }
     $('body').addClass('theater-reader-open');
     $overlay.on('click', '[data-theater-reader-close]', closeFullscreenReader);
+    $overlay.on('cancel', event => {
+        event.preventDefault();
+        closeFullscreenReader();
+    });
     $(document).off('keydown.treader').on('keydown.treader', event => {
         if (event.key === 'Escape') closeFullscreenReader();
     });
