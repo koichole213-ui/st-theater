@@ -22,9 +22,10 @@ import { shouldReadWorldBookEntry, worldBookEntryStrategy } from './world-book-p
 import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from './plain-text-renderer.js';
+import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from './history-backup.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.6.2';
+const VERSION = '3.6.3';
 let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -1140,6 +1141,7 @@ function buildPopupHTML() {
                     <div id="theater-hist-batch-cancel" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>取消</span></div>
                 </div>
             </div>
+            <p class="theater-hint" style="margin:-2px 1px 10px;">批量导出的 ZIP 可直接从这里恢复；同时兼容旧版 ZIP 和 JSON 备份。</p>
             <div id="theater-history-list">${hist.length === 0 ? '<p class="theater-empty">暂无</p>' : hist.map(h => historyItemHTML(h)).join('')}</div>
         </div>
     </div>
@@ -3634,26 +3636,27 @@ async function exportAllHistory() {
     const hist = historyCache;
     if (!hist.length) return;
     try {
-        if (!window.JSZip) await import('/lib/jszip.min.js');
-        const zip = new JSZip();
-        hist.forEach((h, i) => {
-            const safeTitle = (h.title || `小剧场${i + 1}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 50);
-            const dateStr = (h.date || '').replace(/[\\/:*?"<>|]/g, '-').slice(0, 10);
-            const filename = `${dateStr ? dateStr + '_' : ''}${safeTitle}.html`;
-            zip.file(filename, h.html || '');
+        const JSZipCtor = await loadJSZip();
+        const zip = new JSZipCtor();
+        const archive = createHistoryArchive(hist);
+        zip.file(HISTORY_ARCHIVE_MANIFEST, JSON.stringify(archive.manifest, null, 2));
+        archive.files.forEach(file => zip.file(file.name, file.html));
+        const blob = await zip.generateAsync({
+            type: 'blob',
+            compression: 'DEFLATE',
+            compressionOptions: { level: 6 },
         });
-        const blob = await zip.generateAsync({ type: 'blob' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = `theater-history-${Date.now()}.zip`;
         a.click();
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
         toastr.success(`已导出 ${hist.length} 个小剧场`);
     } catch (e) {
         console.error('[Theater] Export zip error:', e);
         // JSZip 不可用时回退为 JSON
-        const data = hist.map(h => ({ title: h.title, date: h.date, instruction: h.instruction, html: h.html, mode: h.mode }));
+        const data = createHistoryJsonBackup(hist);
         downloadFile(`theater-history-${Date.now()}.json`, JSON.stringify(data, null, 2), 'application/json');
         toastr.info('压缩包生成失败，已导出为 JSON 文件');
     }
@@ -3676,24 +3679,50 @@ async function addHistoryItems(items) {
     return added;
 }
 
-function normalizeHistoryBackup(data) {
-    if (Array.isArray(data)) return data;
-    if (Array.isArray(data?.history)) return data.history;
-    if (Array.isArray(data?.items)) return data.items;
-    if (data?.html) return [data];
-    return [];
+async function loadJSZip() {
+    if (!window.JSZip) await import('/lib/jszip.min.js');
+    const JSZipCtor = window.JSZip || globalThis.JSZip;
+    if (!JSZipCtor) throw new Error('当前酒馆没有加载 ZIP 组件');
+    return JSZipCtor;
+}
+
+async function readHistoryZip(file) {
+    const JSZipCtor = await loadJSZip();
+    const zip = await JSZipCtor.loadAsync(file);
+    const archiveEntries = Object.values(zip.files).filter(entry => !entry.dir);
+    const manifestEntry = archiveEntries.find(entry => normalizedZipEntryName(entry.name) === HISTORY_ARCHIVE_MANIFEST.toLocaleLowerCase());
+    let manifest = null;
+    if (manifestEntry) {
+        try {
+            manifest = JSON.parse(await manifestEntry.async('string'));
+        } catch (error) {
+            throw new Error(`ZIP 内的历史清单无法读取：${error?.message || error}`);
+        }
+    }
+    const htmlFiles = archiveEntries.filter(entry => /\.html?$/i.test(entry.name));
+    const htmlEntries = await Promise.all(htmlFiles.map(async entry => ({
+        name: entry.name,
+        html: await entry.async('string'),
+    })));
+    return historyItemsFromArchive(manifest, htmlEntries);
+}
+
+function normalizedZipEntryName(value) {
+    return String(value || '').replace(/\\/g, '/').split('/').pop().toLocaleLowerCase();
 }
 
 function importHistoryBackup() {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json';
+    input.accept = '.zip,.json,application/zip,application/json';
     input.onchange = async e => {
         const file = e.target.files?.[0];
         if (!file) return;
         try {
-            const text = await file.text();
-            const items = normalizeHistoryBackup(JSON.parse(text));
+            const isZip = /\.zip$/i.test(file.name) || /(?:application|multipart)\/zip/i.test(file.type);
+            const items = isZip
+                ? await readHistoryZip(file)
+                : normalizeHistoryBackup(JSON.parse(await file.text()));
             if (!items.length) { toastr.warning('这个文件里没有找到可导入的小剧场历史'); return; }
             const added = await addHistoryItems(items);
             if (added) toastr.success(`已导入 ${added} 条历史`);
@@ -3935,6 +3964,25 @@ function clearContinueMode({ silent = false } = {}) {
     if (!silent) toastr.info('已取消续写');
 }
 
+function revealContinuationInput() {
+    const reveal = () => {
+        const panels = document.querySelector('.theater-panels-wrapper');
+        if (panels) panels.scrollTop = 0;
+
+        const input = document.getElementById('theater-instruction');
+        if (!input) return;
+        try {
+            input.focus({ preventScroll: true });
+        } catch {
+            input.focus();
+        }
+        const cursor = String(input.value || '').length;
+        input.setSelectionRange?.(cursor, cursor);
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reveal);
+    else reveal();
+}
+
 // 设置续写上下文并跳转到生成面板
 function startContinue(html) {
     const plainText = htmlToPlainText(html);
@@ -3951,6 +3999,7 @@ function startContinue(html) {
     $('#theater-instruction').val('').attr('placeholder', '已加载前情，请输入续写指令…');
     updateContinueHint();
     scheduleTokenEstimate();
+    revealContinuationInput();
 }
 
 function stopGeneration() {
@@ -5109,6 +5158,9 @@ function openFullscreenReader() {
     renderSafeIframe(frame, payload.html, {
         sourceHasText: !!payload.text,
         fixedHeight: true,
+        // 正常阅读区已经验证过同一份 HTML。全屏重载时复杂模板可能来不及在 1 秒内
+        // 回报尺寸；不能因此隐藏丰富 HTML。若 iframe 明确回报正文为空，仍会触发兜底。
+        fallbackOnNoReport: false,
         onBlank: payload.text ? ({ reason } = {}) => {
             const fallbackReason = reason === 'no-report' ? 'iframe 未回报渲染状态' : 'HTML 正文不可见';
             runtimeLog('warn', '全屏阅读兜底', { reason: fallbackReason });

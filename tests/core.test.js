@@ -18,6 +18,7 @@ import { WORLD_BOOK_STRATEGIES, shouldReadWorldBookEntry, worldBookEntryStrategy
 import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from '../plain-text-renderer.js';
+import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from '../history-backup.js';
 
 test('全屏阅读使用原生模态弹窗进入浏览器顶层', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
@@ -26,6 +27,16 @@ test('全屏阅读使用原生模态弹窗进入浏览器顶层', () => {
     assert.match(source, /readerDialog\.showModal\(\)/);
     assert.doesNotMatch(source, /<div id="theater-reader-overlay"/);
     assert.match(styles, /\.theater-reader-overlay::backdrop/);
+});
+
+test('点击续写会切回生成页、滚到顶部并聚焦指令框', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const match = source.match(/function revealContinuationInput\(\) \{[\s\S]*?\n\}/)?.[0] || '';
+    assert.match(source, /\.theater-tab\[data-tab="generate"\][\s\S]*?\.click\(\)/);
+    assert.match(match, /\.theater-panels-wrapper/);
+    assert.match(match, /panels\.scrollTop = 0/);
+    assert.match(match, /input\.focus\(\{ preventScroll: true \}\)/);
+    assert.match(source, /scheduleTokenEstimate\(\);\s*revealContinuationInput\(\);/);
 });
 
 test('纯文字亮色与暗色共用纯正文协议，但使用不同的本地阅读主题', () => {
@@ -110,6 +121,60 @@ test('iframe 没有回报渲染状态时会触发正文兜底', async () => {
     } finally {
         globalThis.window = originalWindow;
     }
+});
+
+test('全屏 iframe 没有及时回报时保留丰富 HTML，不误降级为纯文字', async () => {
+    const originalWindow = globalThis.window;
+    globalThis.window = { innerWidth: 390, innerHeight: 800 };
+    let fallbackReason = '';
+    const frame = {
+        contentWindow: {},
+        style: {},
+        setAttribute() {},
+        set srcdoc(value) { this.rendered = value; },
+    };
+    try {
+        renderSafeIframe(frame, '<html><body><div class="phone">全屏正文</div></body></html>', {
+            sourceHasText: true,
+            fixedHeight: true,
+            fallbackOnNoReport: false,
+            onBlank: ({ reason }) => { fallbackReason = reason; },
+        });
+        await new Promise(resolve => setTimeout(resolve, RENDER_REPORT_TIMEOUT_MS + 50));
+        assert.equal(fallbackReason, '');
+        assert.match(frame.rendered, /class="phone"/);
+        assert.equal(frame.style.height, '100%');
+    } finally {
+        globalThis.window = originalWindow;
+    }
+});
+
+test('历史 ZIP 清单保留元数据并为重名小剧场生成唯一 HTML 文件名', () => {
+    const source = [
+        { title: '同名', date: '2026/07/28 10:00', instruction: '第一条指令', html: '<html>甲</html>', mode: 'html' },
+        { title: '同名', date: '2026/07/28 10:01', instruction: '第二条指令', html: '<html>乙</html>', mode: 'text-dark' },
+    ];
+    const archive = createHistoryArchive(source);
+    assert.equal(HISTORY_ARCHIVE_MANIFEST, 'theater-history.json');
+    assert.equal(archive.files.length, 2);
+    assert.notEqual(archive.files[0].name, archive.files[1].name);
+    assert.equal(archive.manifest.items[1].instruction, '第二条指令');
+    assert.equal(archive.manifest.items[1].mode, 'text-dark');
+    const restored = historyItemsFromArchive(archive.manifest, archive.files);
+    assert.deepEqual(restored, normalizeHistoryBackup(source));
+});
+
+test('历史导入兼容旧 JSON、带清单的新 JSON 和只有 HTML 的旧 ZIP', () => {
+    const oldJson = [{ title: '旧 JSON', html: '<html>旧内容</html>' }];
+    assert.equal(normalizeHistoryBackup(oldJson)[0].title, '旧 JSON');
+    const newJson = createHistoryJsonBackup([{ title: '新 JSON', html: '<html>新内容</html>', mode: 'text' }]);
+    assert.equal(normalizeHistoryBackup(newJson)[0].mode, 'text');
+    const legacyZipItems = historyItemsFromArchive(null, [
+        { name: '2026-07-28_旧版导出.html', html: '<html>ZIP 内容</html>' },
+    ]);
+    assert.equal(legacyZipItems[0].title, '旧版导出');
+    assert.equal(legacyZipItems[0].date, '2026/07/28');
+    assert.equal(legacyZipItems[0].html, '<html>ZIP 内容</html>');
 });
 
 test('iframe 导航更换窗口引用后仍能接收渲染回报', () => {

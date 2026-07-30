@@ -49,7 +49,12 @@ export function configureSafeIframe(frame) {
     frame.style.height = window.innerWidth <= 768 ? '60vh' : '420px';
 }
 
-export function renderSafeIframe(frame, html, { sourceHasText = false, onBlank = null, fixedHeight = false } = {}) {
+export function renderSafeIframe(frame, html, {
+    sourceHasText = false,
+    onBlank = null,
+    fixedHeight = false,
+    fallbackOnNoReport = true,
+} = {}) {
     configureSafeIframe(frame);
     if (fixedHeight) frame.style.height = '100%';
     const previousState = frameStates.get(frame);
@@ -67,7 +72,7 @@ export function renderSafeIframe(frame, html, { sourceHasText = false, onBlank =
         if (frameStates.get(frame) !== state || state.received) return;
         pendingStates.delete(state);
         if (!state.fixedHeight) frame.style.height = window.innerWidth <= 768 ? '60vh' : '420px';
-        if (state.sourceHasText && !state.blankHandled && typeof state.onBlank === 'function') {
+        if (fallbackOnNoReport && state.sourceHasText && !state.blankHandled && typeof state.onBlank === 'function') {
             state.blankHandled = true;
             state.onBlank({ reason: 'no-report' });
         }
