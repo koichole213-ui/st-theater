@@ -2224,6 +2224,32 @@ body.theater-reader-open {
 .theater-dream-next-actions > span { margin-right: auto; color: var(--t-fg-mute); font-size: 10.5px; line-height: 1.55; }
 .theater-dream-primary { min-height: 44px; }
 
+.theater-dream-review {
+    margin-top: 12px;
+    padding: clamp(17px, 3vw, 24px);
+    border: 1px solid color-mix(in srgb, var(--t-success, #4f8067) 42%, var(--t-border));
+    border-radius: var(--t-radius-xl);
+    background: color-mix(in srgb, var(--t-success, #4f8067) 7%, var(--t-surface-1));
+}
+.theater-dream-review-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.theater-dream-review-head > div { display: flex; flex-direction: column; gap: 4px; }
+.theater-dream-review-head span { color: var(--t-success, #4f8067); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.theater-dream-review-head b { color: var(--t-fg); font-family: var(--t-font-serif); font-size: var(--t-text-lg); }
+.theater-dream-review-head p { margin: 1px 0 0; color: var(--t-fg-mute); font-size: var(--t-text-xs); }
+.theater-dream-review-head > i { color: var(--t-success, #4f8067); font-size: 24px; }
+.theater-dream-review-canvas {
+    position: relative;
+    min-height: 320px;
+    margin-top: 15px;
+    overflow: hidden;
+    border: 1px solid var(--t-border);
+    border-radius: var(--t-radius-lg);
+    background: #fff;
+}
+.theater-dream-review-canvas iframe { display: block; width: 100%; min-height: 320px; border: 0; background: #fff; }
+.theater-dream-review-fallback { min-height: 320px; padding: 22px; color: #332d29; font-family: var(--t-font-serif); font-size: 15px; line-height: 1.85; white-space: pre-wrap; }
+.theater-dream-review-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+
 /* 梦中页只保留一条主线：续写；前文与设置退到次级。 */
 .theater-dream-detail .theater-dream-next { order: 0; margin-top: 0; padding: clamp(18px, 3vw, 25px); }
 .theater-dream-detail .theater-dream-next-direction { margin-top: 16px; }
@@ -2339,6 +2365,12 @@ body.theater-reader-open {
     .theater-dream-next-actions > span { margin-right: 0; }
     .theater-dream-next-actions .theater-dream-primary,
     .theater-dream-next-actions .theater-btn { width: 100%; }
+    .theater-dream-review-canvas,
+    .theater-dream-review-canvas iframe,
+    .theater-dream-review-fallback { min-height: 260px; }
+    .theater-dream-review-actions { align-items: stretch; flex-direction: column-reverse; }
+    .theater-dream-review-actions .theater-dream-primary,
+    .theater-dream-review-actions .theater-btn { width: 100%; justify-content: center; }
     .theater-dream-source-meta { flex-direction: column; gap: 5px; }
     .theater-dream-source-meta small { max-width: none; text-align: left; }
     .theater-dream-latest { grid-template-columns: 1fr; }

@@ -76,9 +76,9 @@ export function createLongDreamGenerationController({
         record,
         preset = '',
         addons = '',
-        instruction = '',
+        instruction,
         chapterTitle = '',
-        targetChars = 3000,
+        targetChars,
         maxOptionalContextChars = Infinity,
     } = {}) {
         if (active) throw new Error('已有长梦章节正在生成');
@@ -95,7 +95,12 @@ export function createLongDreamGenerationController({
         const normalizedTitle = cleanText(chapterTitle)
             || currentRecord.draft?.title
             || `第 ${currentRecord.chapters.length + 1} 章`;
-        const normalizedInstruction = String(instruction || currentRecord.draft?.instruction || '');
+        const normalizedInstruction = instruction === undefined
+            ? String(currentRecord.draft?.instruction || '')
+            : String(instruction || '');
+        const normalizedTargetChars = targetChars === undefined
+            ? (currentRecord.draft?.targetChars || 3000)
+            : targetChars;
         let streamedText = '';
         let hasStreamCheckpoint = false;
         let lastCheckpointAt = Number.NEGATIVE_INFINITY;
@@ -106,6 +111,7 @@ export function createLongDreamGenerationController({
                 status,
                 title: normalizedTitle,
                 instruction: normalizedInstruction,
+                targetChars: payload.targetChars,
                 text,
                 html,
                 mode,
@@ -141,7 +147,7 @@ export function createLongDreamGenerationController({
             addons,
             instruction: normalizedInstruction,
             chapterTitle: normalizedTitle,
-            targetChars,
+            targetChars: normalizedTargetChars,
             currentDraft: existingDraftText,
             maxOptionalContextChars,
         });

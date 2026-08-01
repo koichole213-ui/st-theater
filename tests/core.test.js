@@ -150,6 +150,7 @@ test('旧版长梦迁移到当前 schema，并把草稿与正式章节分开', (
     assert.equal(migrated.chapters.length, 1);
     assert.equal(migrated.draft.chapterNumber, 2);
     assert.equal(migrated.draft.status, LONG_DREAM_DRAFT_STATUS.REVIEW);
+    assert.equal(migrated.draft.targetChars, 3000);
 });
 
 test('长梦生成控制器先保存可恢复正文和待确认 HTML，再原子晋升正式章节', async () => {
@@ -187,6 +188,7 @@ test('长梦生成控制器先保存可恢复正文和待确认 HTML，再原子
     assert.equal(generated.stage, LONG_DREAM_GENERATION_STAGE.REVIEW);
     assert.equal(generated.record.chapters.length, 1);
     assert.equal(generated.record.draft.status, LONG_DREAM_DRAFT_STATUS.REVIEW);
+    assert.equal(generated.record.draft.targetChars, 2200);
     assert.equal(generated.record.draft.text, '第二章第一段。\n\n第二章第二段。');
     assert.match(generated.record.draft.html, /<article>/);
     assert.ok(persisted.some(item => item.draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING));
@@ -246,6 +248,7 @@ test('长梦生成可以承接刷新前的 WRITING 草稿，并只拼接本次�
         status: LONG_DREAM_DRAFT_STATUS.WRITING,
         title: '第二章',
         instruction: '继续追查。',
+        targetChars: 4600,
         text: '已经写好的前半章。',
     });
     const controller = createLongDreamGenerationController({
@@ -262,6 +265,7 @@ test('长梦生成可以承接刷新前的 WRITING 草稿，并只拼接本次�
 
     const result = await controller.run({ record: writing });
     assert.equal(result.record.draft.status, LONG_DREAM_DRAFT_STATUS.REVIEW);
+    assert.equal(result.record.draft.targetChars, 4600);
     assert.equal(result.record.draft.text, '已经写好的前半章。\n\n这是本次新增的后半章。');
 });
 
@@ -316,7 +320,11 @@ test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => 
     assert.match(source, /data-panel="long-dream"/);
     assert.match(source, /indexedDB\.open\('st-theater', 2\)/);
     assert.match(source, /createObjectStore\('dreams', \{ keyPath: 'id', autoIncrement: true \}\)/);
-    assert.match(source, /id="theater-dream-generate-next"[^>]*disabled/);
+    assert.match(source, /createLongDreamGenerationController/);
+    assert.match(source, /#theater-dream-generate-next', generateNextLongDreamChapter/);
+    assert.match(source, /id="theater-dream-stop-generation"/);
+    assert.match(source, /id="theater-dream-confirm-chapter"/);
+    assert.match(source, /requestFinalRenderedHtml/);
     assert.match(source, /class="theater-dream-next-options"/);
     assert.match(source, /<details class="theater-dream-settings">/);
     assert.match(source, /旧记录中有一份指令，请核对/);
@@ -841,6 +849,8 @@ test('酒馆主 API 运行层优先使用 ChatCompletionService', async () => {
     assert.equal(requests.length, 1);
     assert.equal(requests[0].model, 'main-model');
     assert.equal(requests[0].max_tokens, 4096);
+    assert.equal('tools' in requests[0], false);
+    assert.equal('tool_choice' in requests[0], false);
     assert.deepEqual(chunks, ['主 API 正文']);
     assert.equal(result.text, '主 API 正文');
 });
@@ -865,6 +875,9 @@ test('酒馆主 API 没有 ChatCompletionService 时复用 TavernHelper 路径',
     assert.deepEqual(paths, ['main:TavernHelper']);
     assert.equal(helperOptions.should_stream, true);
     assert.equal(helperOptions.ordered_prompts[1].content, '用户');
+    assert.deepEqual(helperOptions.injects, []);
+    assert.equal('tools' in helperOptions, false);
+    assert.equal('tool_choice' in helperOptions, false);
     assert.equal(result.text, 'TavernHelper 正文');
 });
 
@@ -952,6 +965,46 @@ test('OpenAI 请求使用 chat completions 与 Bearer', () => {
     assert.equal(req.endpoint, 'https://example.com/v1/chat/completions');
     assert.equal(req.headers.Authorization, 'Bearer secret');
     assert.equal(req.body.messages[0].role, 'system');
+    assert.equal('tools' in req.body, false);
+    assert.equal('tool_choice' in req.body, false);
+});
+
+test('独立 API 只使用显式配置，不读取或改写酒馆主线路', async () => {
+    const originalOaiSettings = globalThis.oai_settings;
+    globalThis.oai_settings = { openai_model: 'main-model', api_key: 'main-secret' };
+    let captured;
+    try {
+        const result = await requestCustomApi({
+            config: {
+                apiUrl: 'https://custom.example/v1',
+                apiProtocol: API_PROTOCOLS.OPENAI,
+                apiKey: 'custom-secret',
+                apiModel: 'custom-model',
+                maxOutputTokens: 2048,
+            },
+            systemPrompt: '系统',
+            userPrompt: '用户',
+            shouldStream: false,
+            fetchImpl: async (url, options) => {
+                captured = { url, options, body: JSON.parse(options.body) };
+                return new Response(JSON.stringify({
+                    choices: [{ message: { content: '独立线路正文' } }],
+                }), {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' },
+                });
+            },
+        });
+
+        assert.equal(captured.url, 'https://custom.example/v1/chat/completions');
+        assert.equal(captured.options.headers.Authorization, 'Bearer custom-secret');
+        assert.equal(captured.body.model, 'custom-model');
+        assert.equal(JSON.stringify(captured).includes('main-secret'), false);
+        assert.equal(result.text, '独立线路正文');
+        assert.deepEqual(globalThis.oai_settings, { openai_model: 'main-model', api_key: 'main-secret' });
+    } finally {
+        globalThis.oai_settings = originalOaiSettings;
+    }
 });
 
 test('单轮输出默认 16384，低上限模型按标准档位回落', () => {
@@ -1067,6 +1120,8 @@ test('Anthropic 请求使用 messages 与 x-api-key', () => {
     assert.equal(req.endpoint, 'https://example.com/v1/messages');
     assert.equal(req.headers['x-api-key'], 'secret');
     assert.equal(req.body.system, 's');
+    assert.equal('tools' in req.body, false);
+    assert.equal('tool_choice' in req.body, false);
 });
 
 test('两种协议都能解析长度停止原因', () => {

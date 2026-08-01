@@ -1,4 +1,4 @@
-export const LONG_DREAM_SCHEMA_VERSION = 2;
+export const LONG_DREAM_SCHEMA_VERSION = 3;
 
 export const LONG_DREAM_STATUS = Object.freeze({
     ACTIVE: 'active',
@@ -87,6 +87,7 @@ function normalizeDraft(draft, chapterNumber, fallbackDate) {
         chapterNumber,
         title: cleanText(draft.title, 80) || `第 ${chapterNumber} 章`,
         instruction,
+        targetChars: Math.max(500, Math.min(8000, Math.round(Number(draft.targetChars) || 3000))),
         text,
         html,
         mode: cleanText(draft.mode, 40) || (html.trim() ? 'html' : 'text'),

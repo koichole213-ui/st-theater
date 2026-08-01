@@ -24,7 +24,8 @@ import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from './plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from './history-backup.js';
-import { LONG_DREAM_WORLD_BOOK_POLICY, createLongDreamRecord, createLongDreamWorldBookSnapshot, latestLongDreamChapter, normalizeLongDreamRecord, updateLongDreamDefinition } from './long-dream.js';
+import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, latestLongDreamChapter, normalizeLongDreamRecord, updateLongDreamDefinition } from './long-dream.js';
+import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from './long-dream-generation.js';
 
 const MODULE_NAME = 'theater_generator';
 const VERSION = '3.6.3';
@@ -32,6 +33,8 @@ let latestRemoteVersion = null;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
 let currentGenerationJob = null;
+let longDreamGenerationController = null;
+let activeLongDreamGenerationId = null;
 installSafeResizeListener();
 
 function recordRequestMetrics(metrics) {
@@ -1741,6 +1744,14 @@ function longDreamCreateHTML() {
     </div>`;
 }
 
+function longDreamGenerationStageText(stage) {
+    if (stage === LONG_DREAM_GENERATION_STAGE.RENDERING) return '正文已经完成，正在生成最终 HTML 排版……';
+    if (stage === LONG_DREAM_GENERATION_STAGE.REVIEW) return '新章节已经完成，等待确认保存';
+    if (stage === LONG_DREAM_GENERATION_STAGE.STOPPED) return '生成已停止，当前正文已保存为草稿';
+    if (stage === LONG_DREAM_GENERATION_STAGE.ERROR) return '生成遇到问题，当前正文已保存为草稿';
+    return '正在续写这场梦……';
+}
+
 function longDreamDetailHTML(dream) {
     const latest = latestLongDreamChapter(dream);
     const chapterText = latest?.text || htmlToPlainText(latest?.html || '');
@@ -1753,6 +1764,24 @@ function longDreamDetailHTML(dream) {
     const inheritanceSummary = selectedPolicy && selectedBooks.length
         ? `沿用 ${selectedBooks.length} 本已确认世界书`
         : '与原世界书隔离';
+    const draft = dream.draft || null;
+    const isGeneratingThisDream = String(activeLongDreamGenerationId) === String(dream.id)
+        && !!longDreamGenerationController?.active;
+    const activeStage = isGeneratingThisDream
+        ? longDreamGenerationController.active.stage
+        : null;
+    const hasWritingDraft = draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING;
+    const hasReviewDraft = draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW;
+    const controlsDisabled = isGeneratingThisDream || hasReviewDraft || dream.status === 'complete';
+    const draftText = draft?.text || '';
+    const nextTitle = draft?.title || `第 ${nextNumber} 章`;
+    const nextInstruction = draft?.instruction || '';
+    const nextTarget = Math.max(500, Math.min(8000, Math.round(Number(draft?.targetChars) || 3000)));
+    const generationHint = hasReviewDraft
+        ? '新章节已排版完成，请先检查下方预览并确认保存。'
+        : (hasWritingDraft
+            ? '检测到可恢复草稿；继续时只会承接草稿结尾，不会重复已经写好的正文。'
+            : '新章节只会进入这部长卷，不会自动写入普通历史或最近生成。');
     return `<div class="theater-dream-detail" data-id="${esc(dream.id)}">
         <button type="button" class="theater-dream-back" data-dream-back><i class="fa-solid fa-arrow-left"></i><span>返回长卷</span></button>
         <header class="theater-dream-detail-head">
@@ -1768,23 +1797,40 @@ function longDreamDetailHTML(dream) {
                 <div><span>现在要做的事</span><b>续写第 ${nextNumber} 章</b><p>前文、定梦和允许沿用的资料会自动准备好</p></div>
                 <div class="theater-dream-next-mark" aria-hidden="true">${String(nextNumber).padStart(2, '0')}</div>
             </div>
-            <label class="theater-dream-next-direction"><span>这一章想发生什么？</span><textarea id="theater-dream-next-instruction" class="theater-textarea" rows="5" placeholder="可以留空，让故事自然继续；也可以写下想发生的事件、情绪走向或不能触碰的内容。"></textarea></label>
+            <label class="theater-dream-next-direction"><span>这一章想发生什么？</span><textarea id="theater-dream-next-instruction" class="theater-textarea" rows="5" placeholder="可以留空，让故事自然继续；也可以写下想发生的事件、情绪走向或不能触碰的内容。" ${controlsDisabled ? 'disabled' : ''}>${esc(nextInstruction)}</textarea></label>
             <details class="theater-dream-next-options">
                 <summary><span><i class="fa-solid fa-sliders"></i> 更多选项</span><small>章名与目标字数</small></summary>
                 <div class="theater-dream-next-grid">
-                    <label><span>章名</span><input id="theater-dream-next-title" class="theater-input" maxlength="80" value="第 ${nextNumber} 章"></label>
-                    <label><span>目标字数</span><input id="theater-dream-next-target" class="theater-input" type="number" min="500" max="8000" step="500" value="3000"></label>
+                    <label><span>章名</span><input id="theater-dream-next-title" class="theater-input" maxlength="80" value="${esc(nextTitle)}" ${controlsDisabled ? 'disabled' : ''}></label>
+                    <label><span>目标字数</span><input id="theater-dream-next-target" class="theater-input" type="number" min="500" max="8000" step="500" value="${nextTarget}" ${controlsDisabled ? 'disabled' : ''}></label>
                 </div>
             </details>
-            <div id="theater-dream-generation-status" class="theater-dream-generation-status" hidden>
-                <div><i class="fa-solid fa-feather-pointed"></i><span>正在续写这场梦……</span></div>
-                <pre id="theater-dream-generation-text"></pre>
+            <div id="theater-dream-generation-status" class="theater-dream-generation-status" ${isGeneratingThisDream || hasWritingDraft ? '' : 'hidden'}>
+                <div><i class="fa-solid fa-feather-pointed"></i><span id="theater-dream-generation-label">${esc(isGeneratingThisDream ? longDreamGenerationStageText(activeStage) : '发现一份未完成草稿')}</span></div>
+                <pre id="theater-dream-generation-text">${esc(draftText || (isGeneratingThisDream ? '正在准备请求……' : '已保存本章方向，尚未生成正文。'))}</pre>
             </div>
             <div class="theater-dream-next-actions">
-                <span>下一阶段接入生成后，这里会直接写出并保存新章节。</span>
-                <button type="button" id="theater-dream-generate-next" class="theater-dream-primary" disabled><i class="fa-solid fa-feather-pointed"></i><span>等待接入</span></button>
+                <span>${esc(generationHint)}</span>
+                ${hasWritingDraft && !isGeneratingThisDream ? '<button type="button" id="theater-dream-discard-draft" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>放弃草稿</span></button>' : ''}
+                ${isGeneratingThisDream
+                    ? '<button type="button" id="theater-dream-stop-generation" class="theater-btn danger"><i class="fa-solid fa-stop"></i><span>停止</span></button>'
+                    : `<button type="button" id="theater-dream-generate-next" class="theater-dream-primary" ${controlsDisabled ? 'disabled' : ''}><i class="fa-solid fa-feather-pointed"></i><span>${hasReviewDraft ? '等待确认' : (hasWritingDraft ? '继续未完成草稿' : '续写下一章')}</span></button>`}
             </div>
         </section>
+        ${hasReviewDraft ? `<section class="theater-dream-review">
+            <div class="theater-dream-review-head">
+                <div><span>待确认新章</span><b>${esc(draft.title || `第 ${nextNumber} 章`)}</b><p>正文约 ${readableCharCount(draft.text || '')} 字；确认前不会进入正式章节。</p></div>
+                <i class="fa-solid fa-circle-check" aria-hidden="true"></i>
+            </div>
+            <div class="theater-dream-review-canvas">
+                <iframe id="theater-dream-review-frame" sandbox="" title="待确认长梦章节"></iframe>
+                <div id="theater-dream-review-fallback" class="theater-dream-review-fallback" hidden></div>
+            </div>
+            <div class="theater-dream-review-actions">
+                <button type="button" id="theater-dream-discard-draft" class="theater-btn"><i class="fa-solid fa-rotate-left"></i><span>放弃并重写</span></button>
+                <button type="button" id="theater-dream-confirm-chapter" class="theater-dream-primary"><i class="fa-solid fa-bookmark"></i><span>确认保存为第 ${nextNumber} 章</span></button>
+            </div>
+        </section>` : ''}
         <section class="theater-dream-latest">
             <div class="theater-dream-latest-copy">
                 <span>上次写到 · ${esc(latest?.title || '第一章')}</span>
@@ -1804,17 +1850,17 @@ function longDreamDetailHTML(dream) {
             </summary>
             <div class="theater-dream-settings-body">
                 <label for="theater-dream-edit-title">长卷名字</label>
-                <input id="theater-dream-edit-title" class="theater-input" maxlength="80" value="${esc(dream.title)}">
+                <input id="theater-dream-edit-title" class="theater-input" maxlength="80" value="${esc(dream.title)}" ${isGeneratingThisDream || hasReviewDraft ? 'disabled' : ''}>
                 <label for="theater-dream-edit-canon">此梦设定</label>
-                <textarea id="theater-dream-edit-canon" class="theater-textarea" rows="5" placeholder="写下这条世界线必须遵守的事实。">${esc(dream.canon)}</textarea>
+                <textarea id="theater-dream-edit-canon" class="theater-textarea" rows="5" placeholder="写下这条世界线必须遵守的事实。" ${isGeneratingThisDream || hasReviewDraft ? 'disabled' : ''}>${esc(dream.canon)}</textarea>
                 <div class="theater-dream-policy-row">
-                    <label><input type="radio" name="theater-dream-edit-policy" value="${LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY}" ${selectedPolicy ? '' : 'checked'}> 只沿用此梦世界线</label>
-                    <label><input type="radio" name="theater-dream-edit-policy" value="${LONG_DREAM_WORLD_BOOK_POLICY.SELECTED}" ${selectedPolicy ? 'checked' : ''} ${selectedBooks.length || availableBooks.length ? '' : 'disabled'}> 沿用选中的世界书</label>
+                    <label><input type="radio" name="theater-dream-edit-policy" value="${LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY}" ${selectedPolicy ? '' : 'checked'} ${isGeneratingThisDream || hasReviewDraft ? 'disabled' : ''}> 只沿用此梦世界线</label>
+                    <label><input type="radio" name="theater-dream-edit-policy" value="${LONG_DREAM_WORLD_BOOK_POLICY.SELECTED}" ${selectedPolicy ? 'checked' : ''} ${selectedBooks.length || availableBooks.length ? (isGeneratingThisDream || hasReviewDraft ? 'disabled' : '') : 'disabled'}> 沿用选中的世界书</label>
                 </div>
                 <p class="theater-hint">${selectedPolicy ? `当前冻结：${esc(bookText)} · ${snapshotEntries} 条内容；原书变化不会自动进入长梦。` : '原世界书不会在后续章节中自动重新注入。'}</p>
                 <div class="theater-dream-settings-actions">
-                    <button type="button" id="theater-dream-save-definition" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存设置</span></button>
-                    <button type="button" id="theater-dream-delete" class="theater-btn danger"><i class="fa-solid fa-trash"></i><span>删除这部长卷</span></button>
+                    <button type="button" id="theater-dream-save-definition" class="theater-btn primary" ${isGeneratingThisDream || hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-floppy-disk"></i><span>保存设置</span></button>
+                    <button type="button" id="theater-dream-delete" class="theater-btn danger" ${isGeneratingThisDream || hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-trash"></i><span>删除这部长卷</span></button>
                 </div>
             </div>
         </details>
@@ -1832,12 +1878,29 @@ function renderLongDreamPanel() {
         const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
         if (dream) {
             $root.html(longDreamDetailHTML(dream));
+            renderLongDreamReviewDraft(dream);
             return;
         }
     }
     longDreamView = 'list';
     activeLongDreamId = null;
     $root.html(longDreamListHTML());
+}
+
+function renderLongDreamReviewDraft(dream) {
+    const draft = dream?.draft;
+    if (draft?.status !== LONG_DREAM_DRAFT_STATUS.REVIEW || !draft.html) return;
+    const frame = document.getElementById('theater-dream-review-frame');
+    if (!frame) return;
+    const $fallback = $('#theater-dream-review-fallback');
+    renderSafeIframe(frame, draft.html, {
+        sourceHasText: !!draft.text,
+        fallbackOnNoReport: false,
+        onBlank: draft.text ? () => {
+            $(frame).hide();
+            $fallback.text(draft.text).prop('hidden', false);
+        } : null,
+    });
 }
 
 
@@ -2348,9 +2411,26 @@ function bindEvents() {
         renderLongDreamPanel();
         $('.theater-panels-wrapper').scrollTop(0);
     });
+    $d.off('click.tdnext').on('click.tdnext', '#theater-dream-generate-next', generateNextLongDreamChapter);
+    $d.off('click.tdstop').on('click.tdstop', '#theater-dream-stop-generation', function () {
+        if (getLongDreamGenerationController().abort()) {
+            $('#theater-dream-generation-label').text('正在停止并保存当前草稿……');
+            $(this).prop('disabled', true);
+        }
+    });
+    $d.off('click.tdconfirm').on('click.tdconfirm', '#theater-dream-confirm-chapter', confirmLongDreamChapter);
+    $d.off('click.tddiscard').on('click.tddiscard', '#theater-dream-discard-draft', discardLongDreamDraft);
     $d.off('click.tdsave').on('click.tdsave', '#theater-dream-save-definition', async function () {
+        if (String(activeLongDreamGenerationId) === String(activeLongDreamId) && longDreamGenerationController?.active) {
+            toastr.warning('请先完成或停止当前章节生成');
+            return;
+        }
         const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
         if (!dream) return;
+        if (dream.draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW) {
+            toastr.warning('请先确认或放弃待确认章节，再修改长梦设置');
+            return;
+        }
         const worldBookPolicy = $('input[name="theater-dream-edit-policy"]:checked').val() || LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY;
         const inheritedBookNames = dream.inheritance?.worldBookNames?.length
             ? dream.inheritance.worldBookNames
@@ -2396,8 +2476,16 @@ function bindEvents() {
         $('.theater-panels-wrapper').scrollTop($('#theater-output-section').position()?.top || 0);
     });
     $d.off('click.tddelete').on('click.tddelete', '#theater-dream-delete', async function () {
+        if (String(activeLongDreamGenerationId) === String(activeLongDreamId) && longDreamGenerationController?.active) {
+            toastr.warning('请先完成或停止当前章节生成');
+            return;
+        }
         const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
         if (!dream) return;
+        if (dream.draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW) {
+            toastr.warning('请先确认或放弃待确认章节，再删除长卷');
+            return;
+        }
         const ok = await SillyTavern.getContext().Popup.show.confirm(`删除《${dream.title}》？`, '整部长卷和其中的章节都会删除，普通历史不会受影响。');
         if (!ok) return;
         if (!(await longDreamDelete(dream.id))) return;
@@ -4546,6 +4634,296 @@ function revealContinuationInput() {
     else reveal();
 }
 
+function validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText) {
+    if (!/<(?:!doctype|html|head|body|style|main|section|article|div)\b/i.test(String(renderText || ''))) {
+        const invalidHtml = new Error('最终渲染未返回完整 HTML 页面');
+        invalidHtml.code = 'THEATER_RENDER_VALIDATION';
+        throw invalidHtml;
+    }
+    const templateHtml = extractHtml(renderText);
+    const finalHtml = hydrateFinalRenderHtml(templateHtml, finalRenderPayload.placeholderPlan);
+    const sourceChars = readableCharCount(sourceText);
+    const renderedChars = readableCharCount(htmlToPlainText(finalHtml));
+    const minimumPreservedChars = Math.floor(sourceChars * 0.95);
+    const maximumLayoutChars = Math.ceil(sourceChars * 1.25 + 600);
+    if (renderedChars < minimumPreservedChars) {
+        const incomplete = new Error(`最终渲染未完整保留正文（${renderedChars}/${sourceChars} 字）`);
+        incomplete.code = 'THEATER_RENDER_VALIDATION';
+        throw incomplete;
+    }
+    if (renderedChars > maximumLayoutChars) {
+        const duplicated = new Error(`最终排版疑似重复正文或加入过多额外文字（${renderedChars}/${sourceChars} 字）`);
+        duplicated.code = 'THEATER_RENDER_VALIDATION';
+        throw duplicated;
+    }
+    return { finalHtml, renderedChars, sourceChars };
+}
+
+async function requestFinalRenderedHtml({
+    sourceText,
+    rules,
+    ctx,
+    signal,
+    onChunk = () => {},
+    onRetry = () => {},
+    renderLabel = '所选模板',
+    metricScope = 'final-render',
+} = {}) {
+    const finalRenderPayload = buildFinalRenderPayload({ sourceText, rules });
+    runtimeLog('info', '最终 HTML 渲染开始', {
+        scope: metricScope,
+        render: renderLabel,
+        source_chars: readableCharCount(sourceText),
+    });
+    let lastValidationError = null;
+    for (let renderAttempt = 1; renderAttempt <= 2; renderAttempt++) {
+        const retryNote = renderAttempt === 1 ? '' : `\n\n---\n\n【排版修复】上一次输出未通过完整性检查：${lastValidationError?.message || '段落编号不完整'}。请重新生成整份 HTML，尤其确认所有 token 各出现一次、顺序正确且都位于可见文本节点中。`;
+        if (renderAttempt > 1) {
+            runtimeLog('warn', '最终 HTML 排版校验失败，自动重试', {
+                scope: metricScope,
+                message: lastValidationError?.message || 'unknown',
+            });
+            onRetry(lastValidationError);
+        }
+        lastRequestMetrics = createRequestMetrics(settings.apiMode === 'main'
+            ? `main:${metricScope}`
+            : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}:${metricScope}`);
+        try {
+            const result = settings.apiMode === 'main'
+                ? await generateWithMainAPI(
+                    ctx,
+                    finalRenderPayload.systemPrompt,
+                    finalRenderPayload.userPrompt + retryNote,
+                    onChunk,
+                    settings.streamEnabled !== false,
+                    signal,
+                )
+                : await callCustomAPIStream(
+                    finalRenderPayload.systemPrompt,
+                    finalRenderPayload.userPrompt + retryNote,
+                    onChunk,
+                    settings.streamEnabled !== false,
+                    signal,
+                );
+            const renderText = typeof result === 'string' ? result : result?.text;
+            if (!renderText) throw new Error('最终渲染未返回内容');
+            markCompleted(lastRequestMetrics);
+            recordRequestMetrics(lastRequestMetrics);
+            const validated = validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText);
+            runtimeLog(result?.stopReason === 'length' ? 'warn' : 'info', '最终 HTML 渲染完成', {
+                scope: metricScope,
+                attempt: renderAttempt,
+                stop_reason: result?.stopReason || 'stop',
+                rendered_chars: validated.renderedChars,
+                paragraphs: finalRenderPayload.placeholderPlan.paragraphs.length,
+            });
+            return { html: validated.finalHtml, mode: 'html', result };
+        } catch (error) {
+            recordRequestMetrics(lastRequestMetrics);
+            if (error?.name === 'AbortError') throw error;
+            const validationFailure = ['THEATER_PLACEHOLDER_INVALID', 'THEATER_RENDER_VALIDATION'].includes(error?.code);
+            if (!validationFailure || renderAttempt >= 2) throw error;
+            lastValidationError = error;
+        }
+    }
+    throw lastValidationError || new Error('最终 HTML 排版未完成');
+}
+
+function normalizeLongDreamResponseText(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    return /<(?:!doctype|\/?html|\/?body|\/?main|\/?article|\/?section|\/?div|\/?p|\/?span|\/?content|\/?snow)\b/i.test(raw)
+        ? (htmlToPlainText(raw) || raw)
+        : raw.replace(/^```(?:text|markdown)?\s*/i, '').replace(/```\s*$/i, '').trim();
+}
+
+async function requestLongDreamChapter({ systemPrompt, userPrompt, signal, onChunk }) {
+    const ctx = SillyTavern.getContext();
+    if (settings.apiMode !== 'main' && (!settings.apiUrl || !settings.apiModel)) {
+        throw new Error('请先在【设置】里填好 API URL 和模型再续写长梦');
+    }
+    lastRequestMetrics = createRequestMetrics(settings.apiMode === 'main'
+        ? 'main:long-dream'
+        : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}:long-dream`);
+    try {
+        const onSafeChunk = cumulativeText => onChunk(normalizeLongDreamResponseText(cumulativeText));
+        const result = settings.apiMode === 'main'
+            ? await generateWithMainAPI(ctx, systemPrompt, userPrompt, onSafeChunk, settings.streamEnabled !== false, signal)
+            : await callCustomAPIStream(systemPrompt, userPrompt, onSafeChunk, settings.streamEnabled !== false, signal);
+        const rawText = typeof result === 'string' ? result : result?.text;
+        const text = normalizeLongDreamResponseText(rawText);
+        if (!String(text || '').trim()) throw new Error('长梦正文请求没有返回内容');
+        markCompleted(lastRequestMetrics);
+        recordRequestMetrics(lastRequestMetrics);
+        runtimeLog('info', '长梦正文生成完成', {
+            stop_reason: result?.stopReason || 'unknown',
+            chars: readableCharCount(text),
+        });
+        return typeof result === 'string' ? { text } : { ...result, text };
+    } catch (error) {
+        recordRequestMetrics(lastRequestMetrics);
+        throw error;
+    }
+}
+
+async function renderLongDreamChapter({ text, signal }) {
+    const selection = resolveRenderSelection(false);
+    if (selection.isPlainTextRender) {
+        return {
+            html: textFallbackHtml(text, selection.textTheme),
+            mode: textOutputModeForTheme(selection.textTheme),
+        };
+    }
+    return requestFinalRenderedHtml({
+        sourceText: text,
+        rules: selection.rules,
+        ctx: SillyTavern.getContext(),
+        signal,
+        renderLabel: selection.label,
+        metricScope: 'long-dream-final-render',
+        onChunk: rendered => {
+            const count = String(rendered || '').length;
+            $('#theater-dream-generation-label').text(count
+                ? `正在生成最终 HTML 排版……已接收 ${count} 字符`
+                : '正在生成最终 HTML 排版……');
+        },
+        onRetry: () => $('#theater-dream-generation-label').text('排版完整性校验未通过，正在修复 HTML……'),
+    });
+}
+
+function updateLongDreamStream({ draftText }) {
+    const el = document.getElementById('theater-dream-generation-text');
+    if (!el) return;
+    const wasNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+    el.textContent = draftText || '';
+    if (wasNearBottom) el.scrollTop = el.scrollHeight;
+}
+
+function handleLongDreamGenerationState({ stage, record }) {
+    if (record?.id !== undefined && String(record.id) === String(activeLongDreamId) && longDreamView === 'detail') {
+        if (stage === LONG_DREAM_GENERATION_STAGE.WRITING || stage === LONG_DREAM_GENERATION_STAGE.REVIEW) {
+            renderLongDreamPanel();
+        } else {
+            $('#theater-dream-generation-status').prop('hidden', false);
+            $('#theater-dream-generation-label').text(longDreamGenerationStageText(stage));
+        }
+    }
+}
+
+function getLongDreamGenerationController() {
+    if (!longDreamGenerationController) {
+        longDreamGenerationController = createLongDreamGenerationController({
+            requestChapter: requestLongDreamChapter,
+            renderChapter: renderLongDreamChapter,
+            persistRecord: longDreamPut,
+            onState: handleLongDreamGenerationState,
+            onStream: updateLongDreamStream,
+        });
+    }
+    return longDreamGenerationController;
+}
+
+async function generateNextLongDreamChapter() {
+    if (isGenerating) {
+        toastr.warning('普通小剧场正在生成，请完成或停止后再续写长梦');
+        return;
+    }
+    const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+    if (!dream) return;
+    if (dream.status === 'complete') {
+        toastr.warning('这部长梦已经完卷');
+        return;
+    }
+    const controller = getLongDreamGenerationController();
+    if (controller.active) {
+        toastr.warning('已经有一章正在生成');
+        return;
+    }
+    if (dream.draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW) {
+        toastr.warning('请先确认或放弃当前待确认章节');
+        return;
+    }
+    if (!cachedPresetEntries.length) await loadPresetEntries();
+    const chapterTitle = ($('#theater-dream-next-title').val() || `第 ${dream.chapters.length + 1} 章`).trim();
+    const instruction = String($('#theater-dream-next-instruction').val() || '');
+    const targetChars = Math.max(500, Math.min(8000, Math.round(Number($('#theater-dream-next-target').val()) || 3000)));
+    const addons = [
+        settings.customStyleAddon?.trim() ? `【文风补充】\n${settings.customStyleAddon.trim()}` : '',
+        settings.customNsfwAddon?.trim() ? `【NSFW补充】\n${settings.customNsfwAddon.trim()}` : '',
+    ].filter(Boolean).join('\n\n');
+    activeLongDreamGenerationId = dream.id;
+    runtimeLog('info', '长梦续章开始', {
+        dream_id: String(dream.id),
+        chapter_number: dream.chapters.length + 1,
+        target_chars: targetChars,
+        api_mode: settings.apiMode || 'custom',
+    });
+    try {
+        const result = await controller.run({
+            record: dream,
+            preset: getSelectedPresetPrompt() || DEFAULT_SYSTEM_PROMPT,
+            addons,
+            instruction,
+            chapterTitle,
+            targetChars,
+        });
+        runtimeLog('info', '长梦续章等待确认', {
+            dream_id: String(dream.id),
+            chapter_number: dream.chapters.length + 1,
+            chars: readableCharCount(result.record.draft?.text || ''),
+        });
+        toastr.success('新章节已经写好，请检查排版后确认保存', '', { timeOut: 7000 });
+        playNotificationSound();
+    } catch (error) {
+        const retainedChars = readableCharCount(error?.longDreamRecord?.draft?.text || '');
+        if (error?.name === 'AbortError') {
+            runtimeLog('warn', '长梦续章停止', {
+                dream_id: String(dream.id),
+                retained_chars: retainedChars,
+            });
+            toastr.info(retainedChars
+                ? '已停止，当前内容已保存为可恢复草稿'
+                : '已停止，没有追加新章节');
+        } else {
+            console.error('[Theater] 长梦续章失败:', error);
+            runtimeLog('error', '长梦续章失败', {
+                dream_id: String(dream.id),
+                message: error?.message || String(error),
+                retained_chars: retainedChars,
+            });
+            theaterError(`长梦续章失败：${error?.message || error}${retainedChars ? '\n\n已生成的正文已保留为草稿。' : ''}`);
+        }
+    } finally {
+        activeLongDreamGenerationId = null;
+        renderLongDreamPanel();
+    }
+}
+
+async function confirmLongDreamChapter() {
+    const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+    if (!dream?.draft || dream.draft.status !== LONG_DREAM_DRAFT_STATUS.REVIEW) return;
+    try {
+        const saved = await getLongDreamGenerationController().confirm(dream);
+        activeLongDreamId = saved.id;
+        renderLongDreamPanel();
+        toastr.success(`第 ${saved.chapters.length} 章已收入长卷`);
+    } catch (error) {
+        theaterError(`保存长梦章节失败：${error?.message || error}`);
+    }
+}
+
+async function discardLongDreamDraft() {
+    const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+    if (!dream?.draft) return;
+    const label = dream.draft.status === LONG_DREAM_DRAFT_STATUS.REVIEW ? '待确认章节' : '未完成草稿';
+    const ok = await SillyTavern.getContext().Popup.show.confirm(`放弃${label}？`, '已经生成但尚未保存为正式章节的内容会被清除，已有章节不会受影响。');
+    if (!ok) return;
+    const saved = await longDreamPut(clearLongDreamDraft(dream));
+    if (!saved) return;
+    renderLongDreamPanel();
+    toastr.info(`${label}已清除`);
+}
+
 // 设置续写上下文并跳转到生成面板
 function startContinue(html) {
     const plainText = htmlToPlainText(html);
@@ -4581,6 +4959,7 @@ function extractMesContent(mes) {
 
 async function generateTheater() {
     if (isGenerating) { toastr.warning('正在生成中，请等待完成或点击停止'); return; }
+    if (longDreamGenerationController?.active) { toastr.warning('长梦章节正在生成，请完成或停止后再生成普通小剧场'); return; }
     const instruction = $('#theater-instruction').val().trim();
     if (!instruction) { toastr.warning('请输入指令'); return; }
     if ($('#theater-manual-target-enabled').length) {
@@ -4795,80 +5174,30 @@ async function runGeneration(instruction, isAuto) {
             lastGeneratedHtml = firstHtml || textFallbackHtml(newText);
         } else {
             const { rules } = resolveRenderSelection(false);
-            const finalRenderPayload = buildFinalRenderPayload({ sourceText: newText, rules });
-            runtimeLog('info', '最终 HTML 渲染开始', {
-                render: renderTemplate,
-                source_chars: currentGenerationJob.actualChars,
-            });
             if (popupAlive()) $('#theater-stream-text').text('正文创作已结束，正在套用所选 HTML 模板……');
             activeRound = 'render';
             firstChunkShown = false;
             bgStreamText = '';
             renderedStreamText = '';
             try {
-                let renderCompleted = false;
-                let lastValidationError = null;
-                for (let renderAttempt = 1; renderAttempt <= 2; renderAttempt++) {
-                    const retryNote = renderAttempt === 1 ? '' : `\n\n---\n\n【排版修复】上一次输出未通过完整性检查：${lastValidationError?.message || '段落编号不完整'}。请重新生成整份 HTML，尤其确认所有 token 各出现一次、顺序正确且都位于可见文本节点中。`;
-                    const attemptUserPrompt = finalRenderPayload.userPrompt + retryNote;
-                    if (renderAttempt > 1) {
-                        runtimeLog('warn', '最终 HTML 排版校验失败，自动重试', { message: lastValidationError?.message || 'unknown' });
+                const rendered = await requestFinalRenderedHtml({
+                    sourceText: newText,
+                    rules,
+                    ctx,
+                    signal: abortController?.signal,
+                    onChunk,
+                    renderLabel: renderTemplate,
+                    metricScope: 'final-render',
+                    onRetry: () => {
                         if (popupAlive()) $('#theater-stream-text').text('排版完整性校验未通过，正在修复 HTML……');
                         firstChunkShown = false;
                         bgStreamText = '';
                         renderedStreamText = '';
-                    }
-                    lastRequestMetrics = createRequestMetrics(settings.apiMode === 'main' ? 'main:final-render' : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}:final-render`);
-                    let renderResult;
-                    try {
-                        renderResult = settings.apiMode === 'main'
-                            ? await generateWithMainAPI(ctx, finalRenderPayload.systemPrompt, attemptUserPrompt, onChunk, settings.streamEnabled !== false)
-                            : await callCustomAPIStream(finalRenderPayload.systemPrompt, attemptUserPrompt, onChunk, settings.streamEnabled !== false);
-                        const renderText = typeof renderResult === 'string' ? renderResult : renderResult?.text;
-                        if (!renderText) throw new Error('最终渲染未返回内容');
-                        markCompleted(lastRequestMetrics);
-                        recordRequestMetrics(lastRequestMetrics);
-                        if (!/<(?:!doctype|html|head|body|style|main|section|article|div)\b/i.test(renderText)) {
-                            const invalidHtml = new Error('最终渲染未返回完整 HTML 页面');
-                            invalidHtml.code = 'THEATER_RENDER_VALIDATION';
-                            throw invalidHtml;
-                        }
-                        const templateHtml = extractHtml(renderText);
-                        const finalHtml = hydrateFinalRenderHtml(templateHtml, finalRenderPayload.placeholderPlan);
-                        const renderedChars = readableCharCount(htmlToPlainText(finalHtml));
-                        const minimumPreservedChars = Math.floor(currentGenerationJob.actualChars * 0.95);
-                        const maximumLayoutChars = Math.ceil(currentGenerationJob.actualChars * 1.25 + 600);
-                        if (renderedChars < minimumPreservedChars) {
-                            const incomplete = new Error(`最终渲染未完整保留正文（${renderedChars}/${currentGenerationJob.actualChars} 字）`);
-                            incomplete.code = 'THEATER_RENDER_VALIDATION';
-                            throw incomplete;
-                        }
-                        if (renderedChars > maximumLayoutChars) {
-                            const duplicated = new Error(`最终排版疑似重复正文或加入过多额外文字（${renderedChars}/${currentGenerationJob.actualChars} 字）`);
-                            duplicated.code = 'THEATER_RENDER_VALIDATION';
-                            throw duplicated;
-                        }
-                        lastGeneratedHtml = finalHtml;
-                        currentOutputMode = 'html';
-                        renderCompleted = true;
-                        runtimeLog(renderResult?.stopReason === 'length' ? 'warn' : 'info', '最终 HTML 渲染完成', {
-                            attempt: renderAttempt,
-                            stop_reason: renderResult?.stopReason || 'stop',
-                            rendered_chars: renderedChars,
-                            paragraphs: finalRenderPayload.placeholderPlan.paragraphs.length,
-                        });
-                        break;
-                    } catch (attemptError) {
-                        recordRequestMetrics(lastRequestMetrics);
-                        if (attemptError?.name === 'AbortError') throw attemptError;
-                        const validationFailure = ['THEATER_PLACEHOLDER_INVALID', 'THEATER_RENDER_VALIDATION'].includes(attemptError?.code);
-                        if (!validationFailure || renderAttempt >= 2) throw attemptError;
-                        lastValidationError = attemptError;
-                    }
-                }
-                if (!renderCompleted) throw lastValidationError || new Error('最终 HTML 排版未完成');
+                    },
+                });
+                lastGeneratedHtml = rendered.html;
+                currentOutputMode = rendered.mode;
             } catch (renderError) {
-                recordRequestMetrics(lastRequestMetrics);
                 if (renderError?.name === 'AbortError') throw renderError;
                 lastGeneratedHtml = textFallbackHtml(newText);
                 currentOutputMode = 'text';
@@ -4994,7 +5323,7 @@ function pickAutoInstruction() {
 // 删楼把楼数删到锚点以下时，锚点自动下移到当前楼数——
 // 既不会"永远凑不够"，也不会"一删楼就连环触发"。swipe 不加楼数，天然不计。
 async function autoTick() {
-    if (!settings.autoMode || isGenerating) return;
+    if (!settings.autoMode || isGenerating || longDreamGenerationController?.active) return;
     const ctx = SillyTavern.getContext();
     const chatId = String(ctx.chatId ?? '');
     if (!chatId || chatId === 'undefined' || chatId === 'null') return;
@@ -5051,14 +5380,14 @@ function setBallDot(on) {
 // ============================================================
 // API runtime adapters
 // ============================================================
-async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStream = true) {
+async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStream = true, signal = abortController?.signal) {
     return requestMainApi({
         ctx,
         systemPrompt,
         userPrompt: prompt,
         onChunk,
         shouldStream,
-        signal: abortController?.signal,
+        signal,
         log: runtimeLog,
         onFallback: path => markFallback(lastRequestMetrics, path),
         onPath: path => { if (lastRequestMetrics) lastRequestMetrics.path = path; },
@@ -5067,7 +5396,7 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
     });
 }
 
-async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStream = true) {
+async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStream = true, signal = abortController?.signal) {
     return requestCustomApi({
         config: {
             apiUrl: settings.apiUrl,
@@ -5080,7 +5409,7 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
         userPrompt,
         onChunk,
         shouldStream,
-        signal: abortController?.signal,
+        signal,
         log: runtimeLog,
     });
 }
