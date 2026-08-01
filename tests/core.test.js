@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { estimateTokenBreakdown } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractApiErrorMessage, extractResponseMeta, extractStreamText, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
+import { readNonStreamingResponse, readSSEStream, requestCustomApi, requestMainApi } from '../api-runtime.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
 import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, normalizeContinuationText, readableCharCount } from '../text-counter.js';
 import { RENDER_REPORT_TIMEOUT_MS, injectResizeReporter, installSafeResizeListener, renderSafeIframe, sandboxPermissions } from '../safe-renderer.js';
@@ -19,6 +20,328 @@ import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from '../plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from '../history-backup.js';
+import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, appendLongDreamChapter, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, saveLongDreamDraft, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition } from '../long-dream.js';
+import { buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBookContext } from '../long-dream-payload.js';
+
+test('长梦以完整首章开卷，并默认隔离原世界书', () => {
+    const now = new Date('2026-07-31T12:30:00.000Z');
+    const record = createLongDreamRecord({
+        title: '没有血缘的夏天',
+        canon: '两人是一起长大的青梅竹马，不是兄妹。',
+        worldBookNames: ['原作人物关系'],
+        source: {
+            kind: 'history',
+            refId: 17,
+            title: '夏日祭小剧场',
+            instruction: '写一场夏日祭。',
+            text: '灯火沿着河岸亮起来。',
+            html: '<!doctype html><html><body><article>灯火沿着河岸亮起来。</article></body></html>',
+            mode: 'html',
+        },
+        sourceConfig: {
+            presetName: '长篇预设',
+            selectedWorldBooks: ['原作人物关系'],
+            readChatContext: true,
+            contextRange: 20,
+        },
+        now,
+    });
+
+    assert.equal(record.inheritance.worldBookPolicy, LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY);
+    assert.deepEqual(record.inheritance.worldBookNames, []);
+    assert.equal(record.sourceConfig.selectedWorldBooks[0], '原作人物关系');
+    assert.equal(record.chapters.length, 1);
+    assert.equal(record.chapters[0].html.includes('<article>'), true);
+    assert.equal(record.chapters[0].text, '灯火沿着河岸亮起来。');
+    assert.equal(record.createdAt, now.toISOString());
+    assert.equal(latestLongDreamChapter(record)?.id, 'chapter-1');
+});
+
+test('长梦可明确沿用选中世界书，名称会去空和去重', () => {
+    const record = createLongDreamRecord({
+        worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED,
+        worldBookNames: ['人物设定', ' 人物设定 ', '', '地点设定'],
+        source: { text: '第一章', html: '<main>第一章</main>' },
+    });
+    assert.equal(record.inheritance.worldBookPolicy, LONG_DREAM_WORLD_BOOK_POLICY.SELECTED);
+    assert.deepEqual(record.inheritance.worldBookNames, ['人物设定', '地点设定']);
+});
+
+test('世界书继承冻结实际内容且不保存无关字段', () => {
+    const mutableEntry = {
+        book: '人物设定', enabled: true, uid: 7, name: '关系', content: '两人曾是同班同学。',
+        raw: { key: ['同学'], constant: true, apiKey: '不应进入快照' },
+    };
+    const snapshot = createLongDreamWorldBookSnapshot({
+        bookNames: ['人物设定'],
+        entries: [mutableEntry, { book: '人物设定', enabled: false, content: '禁用条目' }],
+    }, new Date('2026-07-31T12:45:00.000Z'));
+    mutableEntry.content = '后来被修改的当前世界书';
+
+    assert.equal(snapshot.capturedAt, '2026-07-31T12:45:00.000Z');
+    assert.equal(snapshot.books[0].entries.length, 1);
+    assert.equal(snapshot.books[0].entries[0].content, '两人曾是同班同学。');
+    assert.deepEqual(snapshot.books[0].entries[0].keys, ['同学']);
+    assert.equal('apiKey' in snapshot.books[0].entries[0], false);
+});
+
+test('重新定梦只修改世界线定义，不会改写已保存章节', () => {
+    const record = createLongDreamRecord({
+        title: '旧梦',
+        canon: '原设定',
+        worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED,
+        worldBookNames: ['旧世界书'],
+        source: { text: '不能丢失的第一章', html: '<p>不能丢失的第一章</p>' },
+        now: new Date('2026-07-31T12:00:00.000Z'),
+    });
+    const originalChapter = structuredClone(record.chapters[0]);
+    const updated = updateLongDreamDefinition(record, {
+        title: '新梦',
+        canon: '两人是青梅竹马。',
+        worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY,
+        worldBookNames: ['不应保留'],
+    }, new Date('2026-07-31T13:00:00.000Z'));
+
+    assert.equal(updated.title, '新梦');
+    assert.equal(updated.canon, '两人是青梅竹马。');
+    assert.deepEqual(updated.inheritance.worldBookNames, []);
+    assert.deepEqual(updated.chapters[0], originalChapter);
+    assert.equal(updated.updatedAt, '2026-07-31T13:00:00.000Z');
+    assert.equal(updated.inheritance.snapshot, null);
+});
+
+test('只修改标题时会保留既有继承策略和冻结快照', () => {
+    const snapshot = createLongDreamWorldBookSnapshot({
+        bookNames: ['地点'], entries: [{ book: '地点', content: '旧站台终年下雨。' }],
+    });
+    const record = createLongDreamRecord({
+        title: '旧名', worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED,
+        worldBookNames: ['地点'], worldBookSnapshot: snapshot, source: { text: '第一章', html: '<main>第一章</main>' },
+    });
+    const updated = updateLongDreamDefinition(record, { title: '新名' });
+    assert.equal(updated.inheritance.worldBookPolicy, LONG_DREAM_WORLD_BOOK_POLICY.SELECTED);
+    assert.deepEqual(updated.inheritance.worldBookNames, ['地点']);
+    assert.equal(updated.inheritance.snapshot.books[0].entries[0].content, '旧站台终年下雨。');
+});
+
+test('损坏的空长梦不会进入存档，已有 HTML 长梦可以恢复', () => {
+    assert.equal(normalizeLongDreamRecord({ title: '空卷', chapters: [] }), null);
+    const restored = normalizeLongDreamRecord({
+        id: 8,
+        title: '旧存档',
+        inheritance: { worldBookPolicy: 'unknown', worldBookNames: ['不应继承'] },
+        chapters: [{ html: '<main>旧章</main>' }],
+    });
+    assert.equal(restored.id, 8);
+    assert.equal(restored.chapters[0].html, '<main>旧章</main>');
+    assert.equal(restored.inheritance.worldBookPolicy, LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY);
+    assert.deepEqual(restored.inheritance.worldBookNames, []);
+});
+
+test('旧版长梦迁移到当前 schema，并把草稿与正式章节分开', () => {
+    const migrated = migrateLongDreamRecord({
+        schemaVersion: 1,
+        title: '旧梦',
+        chapters: [{ html: '<main>第一章</main>' }],
+        draft: { status: 'review', text: '第二章草稿', html: '<main>第二章草稿</main>' },
+    });
+    assert.equal(migrated.schemaVersion, LONG_DREAM_SCHEMA_VERSION);
+    assert.equal(migrated.chapters.length, 1);
+    assert.equal(migrated.draft.chapterNumber, 2);
+    assert.equal(migrated.draft.status, LONG_DREAM_DRAFT_STATUS.REVIEW);
+});
+
+test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    assert.match(source, /data-tab="long-dream">长梦<\/div>/);
+    assert.match(source, /data-panel="long-dream"/);
+    assert.match(source, /indexedDB\.open\('st-theater', 2\)/);
+    assert.match(source, /createObjectStore\('dreams', \{ keyPath: 'id', autoIncrement: true \}\)/);
+    assert.match(source, /id="theater-dream-generate-next"[^>]*disabled/);
+});
+
+test('下一章请求读取整部长卷正文和梦脉，但不携带旧 HTML', () => {
+    const record = createLongDreamRecord({
+        title: '无月列车',
+        canon: '列车每次停靠都会忘记一个名字。',
+        source: { title: '第一章', text: '第一章正文。', html: '<article>第一章正文。</article>' },
+    });
+    record.chapters.push({
+        id: 'chapter-2', number: 2, title: '第二章', instruction: '',
+        text: '第二章正文。', html: '<style>旧样式</style><p>第二章正文。</p>', mode: 'html', createdAt: record.createdAt,
+    });
+    record.memory.cards = [{ title: '伏笔', content: '旧车票背面写着终点站。' }];
+    const context = longDreamChapterContext(record);
+    const payload = buildLongDreamChapterPayload({
+        record,
+        preset: '写作预设',
+        instruction: '让守灯人说出真相。',
+        chapterTitle: '第三章',
+        targetChars: 2400,
+    });
+
+    assert.equal(context.chapterCount, 2);
+    assert.match(payload.userPrompt, /第一章正文/);
+    assert.match(payload.userPrompt, /第二章正文/);
+    assert.match(payload.userPrompt, /旧车票背面写着终点站/);
+    assert.match(payload.userPrompt, /列车每次停靠都会忘记一个名字/);
+    assert.doesNotMatch(payload.userPrompt, /<article>|<style>|旧样式/);
+    assert.match(payload.userPrompt, /只输出本章新增的纯正文/);
+});
+
+test('默认分支隔离不会让兄妹原作世界书回流进青梅竹马长梦', () => {
+    const snapshot = createLongDreamWorldBookSnapshot({
+        bookNames: ['原作关系'], entries: [{ book: '原作关系', name: '关系', content: '两人是亲生兄妹。' }],
+    });
+    const record = createLongDreamRecord({
+        canon: '两人没有血缘关系，是一起长大的青梅竹马。',
+        source: { text: '第一章里两人一起参加夏日祭。', html: '<main>第一章里两人一起参加夏日祭。</main>' },
+    });
+    // 即使损坏或旧数据里残留快照，隔离策略也必须从请求层硬性挡住。
+    record.inheritance.snapshot = snapshot;
+    const payload = buildLongDreamChapterPayload({ record, instruction: '一起去看烟花。' });
+    assert.match(payload.userPrompt, /没有血缘关系/);
+    assert.doesNotMatch(payload.userPrompt, /亲生兄妹/);
+    assert.equal(longDreamWorldBookContext(record), '');
+});
+
+test('只有明确沿用时才读取长卷内冻结的世界书内容', () => {
+    const snapshot = createLongDreamWorldBookSnapshot({
+        bookNames: ['地点'], entries: [{ book: '地点', name: '旧站', content: '站台的钟永远停在零点。' }],
+    });
+    const record = createLongDreamRecord({
+        worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED,
+        worldBookNames: ['地点'], worldBookSnapshot: snapshot,
+        source: { text: '第一章正文。', html: '<main>第一章正文。</main>' },
+    });
+    const payload = buildLongDreamChapterPayload({ record, instruction: '寻找坏掉的钟。' });
+    assert.match(payload.userPrompt, /用户主动允许的冻结世界书快照/);
+    assert.match(payload.userPrompt, /站台的钟永远停在零点/);
+});
+
+test('长梦上下文预算先裁剪低优先级信息，定梦和本章方向始终完整', () => {
+    const canon = '不可删减的定梦：两人没有血缘关系。';
+    const snapshot = createLongDreamWorldBookSnapshot({
+        bookNames: ['原作'], entries: [{ book: '原作', content: '低优先级世界书内容。' }],
+    });
+    const record = createLongDreamRecord({
+        canon,
+        worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED,
+        worldBookNames: ['原作'], worldBookSnapshot: snapshot,
+        source: { text: '很长的第一章正文。'.repeat(30), html: `<main>${'很长的第一章正文。'.repeat(30)}</main>` },
+    });
+    const payload = buildLongDreamChapterPayload({
+        record,
+        instruction: '不可删减的本章方向：在雨里坦白。',
+        preset: '低优先级风格规则。',
+        maxOptionalContextChars: 50,
+    });
+    assert.match(payload.userPrompt, new RegExp(canon));
+    assert.match(payload.userPrompt, /不可删减的本章方向：在雨里坦白/);
+    assert.deepEqual(payload.budget.truncated, ['chapters']);
+    assert.equal(payload.budget.omitted.includes('worldBookSnapshot'), true);
+    assert.equal(payload.budget.omitted.includes('style'), true);
+    assert.doesNotMatch(payload.userPrompt, /低优先级世界书内容/);
+    assert.doesNotMatch(payload.systemPrompt, /低优先级风格规则/);
+});
+
+test('长梦请求只注入已确认梦脉', () => {
+    const record = createLongDreamRecord({ source: { text: '第一章正文。', html: '<main>第一章正文。</main>' } });
+    record.memory.cards = [
+        { status: 'confirmed', type: '伏笔', content: '钥匙藏在花盆下。' },
+        { status: 'pending', type: '猜测', content: '管家也许是凶手。' },
+        { status: 'deprecated', type: '废止', content: '错误记忆。' },
+    ];
+    const payload = buildLongDreamChapterPayload({ record });
+    assert.match(payload.userPrompt, /钥匙藏在花盆下/);
+    assert.doesNotMatch(payload.userPrompt, /管家也许是凶手|错误记忆/);
+});
+
+test('下一章请求可以从仅有 HTML 的旧章节恢复可读前情', () => {
+    const record = normalizeLongDreamRecord({
+        title: '旧卷',
+        chapters: [{ title: '旧章', html: '<style>.x{color:red}</style><article>灯火&nbsp;未眠</article>' }],
+    });
+    const payload = buildLongDreamChapterPayload({ record, instruction: '继续' });
+    assert.match(payload.userPrompt, /灯火 未眠/);
+    assert.doesNotMatch(payload.userPrompt, /color:red|<article>/);
+});
+
+test('追加下一章保留旧章并生成稳定的章号', () => {
+    const record = createLongDreamRecord({ source: { text: '第一章正文', html: '<main>第一章正文</main>' } });
+    const updated = appendLongDreamChapter(record, {
+        title: '潮汐站台', instruction: '推进列车谜团', text: '第二章正文', html: '<main>第二章正文</main>', mode: 'html',
+    }, new Date('2026-07-31T14:00:00.000Z'));
+
+    assert.equal(updated.chapters.length, 2);
+    assert.equal(updated.chapters[0].text, '第一章正文');
+    assert.equal(updated.chapters[1].id, 'chapter-2');
+    assert.equal(updated.chapters[1].number, 2);
+    assert.equal(updated.chapters[1].title, '潮汐站台');
+    assert.equal(updated.updatedAt, '2026-07-31T14:00:00.000Z');
+});
+
+test('正式章节必须同时具备纯正文和最终 HTML，失败不改旧卷', () => {
+    assert.throws(() => createLongDreamRecord({ source: { text: '只有正文的第一章' } }), /第一章必须同时包含/);
+    assert.throws(() => createLongDreamRecord({ source: { html: '<main>只有 HTML 的第一章</main>' } }), /第一章必须同时包含/);
+    const record = createLongDreamRecord({ source: { text: '第一章', html: '<main>第一章</main>' } });
+    const original = structuredClone(record);
+    assert.throws(() => appendLongDreamChapter(record, { text: '只有正文' }), /同时包含纯正文与最终 HTML/);
+    assert.throws(() => appendLongDreamChapter(record, { html: '<main>只有 HTML</main>' }), /同时包含纯正文与最终 HTML/);
+    assert.deepEqual(record, original);
+});
+
+test('章节更新和截断只影响明确范围，并清理失效草稿', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章', html: '<main>第一章</main>' } });
+    record = appendLongDreamChapter(record, { text: '第二章', html: '<main>第二章</main>' });
+    record = appendLongDreamChapter(record, { text: '第三章', html: '<main>第三章</main>' });
+    const updated = updateLongDreamChapter(record, 'chapter-2', {
+        title: '改写后的第二章', text: '新第二章', html: '<main>新第二章</main>',
+    });
+    const withDraft = saveLongDreamDraft(updated, { instruction: '第四章方向', text: '未完成草稿' });
+    const truncated = truncateLongDreamAfter(withDraft, 'chapter-2');
+
+    assert.equal(updated.chapters[0].text, '第一章');
+    assert.equal(updated.chapters[1].text, '新第二章');
+    assert.equal(updated.chapters[2].text, '第三章');
+    assert.deepEqual(record.chapters[1].text, '第二章');
+    assert.equal(truncated.chapters.length, 2);
+    assert.equal(truncated.draft, null);
+    assert.equal(truncated.status, LONG_DREAM_STATUS.ACTIVE);
+});
+
+test('草稿刷新恢复后仍不能冒充正式章节，确认后才原子晋升', () => {
+    const record = createLongDreamRecord({ source: { text: '第一章', html: '<main>第一章</main>' } });
+    const writing = saveLongDreamDraft(record, {
+        status: LONG_DREAM_DRAFT_STATUS.WRITING,
+        title: '第二章', instruction: '进入森林', text: '生成到一半', html: '',
+    }, new Date('2026-07-31T14:10:00.000Z'));
+    const restored = normalizeLongDreamRecord(structuredClone(writing));
+    assert.equal(restored.chapters.length, 1);
+    assert.equal(restored.draft.text, '生成到一半');
+    assert.throws(() => promoteLongDreamDraft(restored), /尚未进入确认保存状态/);
+
+    const review = saveLongDreamDraft(restored, {
+        status: LONG_DREAM_DRAFT_STATUS.REVIEW,
+        title: '第二章', instruction: '进入森林',
+        text: '完整第二章', html: '<main>完整第二章</main>', mode: 'html',
+    });
+    const promoted = promoteLongDreamDraft(review, new Date('2026-07-31T14:20:00.000Z'));
+    assert.equal(promoted.chapters.length, 2);
+    assert.equal(promoted.chapters[0].text, '第一章');
+    assert.equal(promoted.chapters[1].text, '完整第二章');
+    assert.equal(promoted.draft, null);
+    assert.equal(review.chapters.length, 1);
+    assert.equal(clearLongDreamDraft(review).draft, null);
+});
+
+test('长梦可以完卷，也可在继续施工时恢复为进行中', () => {
+    const record = createLongDreamRecord({ source: { text: '第一章', html: '<main>第一章</main>' } });
+    const completed = setLongDreamStatus(record, LONG_DREAM_STATUS.COMPLETE);
+    const reopened = setLongDreamStatus(completed, LONG_DREAM_STATUS.ACTIVE);
+    assert.equal(completed.status, LONG_DREAM_STATUS.COMPLETE);
+    assert.equal(reopened.status, LONG_DREAM_STATUS.ACTIVE);
+});
 
 test('全屏阅读使用原生模态弹窗进入浏览器顶层', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
@@ -236,6 +559,137 @@ test('流式解析能取出状态为 200 的错误事件，而不是只报告空
     assert.equal(extractApiErrorMessage({ error: { message: 'upstream overloaded' } }), 'upstream overloaded');
     assert.equal(extractApiErrorMessage({ type: 'error', message: 'model unavailable' }), 'model unavailable');
     assert.equal(extractApiErrorMessage({ choices: [] }), '');
+});
+
+test('API 运行层能累积 SSE 正文并保留结束原因', async () => {
+    const chunks = [];
+    const response = new Response([
+        'data: {"choices":[{"delta":{"content":"第一段"}}]}',
+        '',
+        'data: {"choices":[{"delta":{"content":"第二段"},"finish_reason":"stop"}]}',
+        '',
+        'data: [DONE]',
+        '',
+    ].join('\n'), { headers: { 'content-type': 'text/event-stream' } });
+    const result = await readSSEStream(response, text => chunks.push(text), API_PROTOCOLS.OPENAI);
+    assert.deepEqual(chunks, ['第一段', '第一段第二段']);
+    assert.equal(result.text, '第一段第二段');
+    assert.equal(result.stopReason, 'stop');
+    assert.equal(result.rawStopReason, 'stop');
+});
+
+test('独立 API 遇到 429 会按 Retry-After 单次重试并读取非流式正文', async () => {
+    const logs = [];
+    let calls = 0;
+    const result = await requestCustomApi({
+        config: {
+            apiUrl: 'https://example.com/v1',
+            apiProtocol: API_PROTOCOLS.OPENAI,
+            apiKey: 'test-key',
+            apiModel: 'test-model',
+            maxOutputTokens: 2048,
+        },
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        shouldStream: false,
+        log: (level, message, details) => logs.push({ level, message, details }),
+        fetchImpl: async () => {
+            calls += 1;
+            if (calls === 1) return new Response('busy', { status: 429, headers: { 'retry-after': '0' } });
+            return new Response(JSON.stringify({ choices: [{ message: { content: '重试成功' }, finish_reason: 'stop' }] }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            });
+        },
+    });
+    assert.equal(calls, 2);
+    assert.equal(result.text, '重试成功');
+    assert.equal(logs.some(item => item.details?.auto_retry === true), true);
+});
+
+test('独立 API 空流会在同一轮改用非流式请求', async () => {
+    const requestBodies = [];
+    const chunks = [];
+    const result = await requestCustomApi({
+        config: {
+            apiUrl: 'https://example.com/v1',
+            apiProtocol: API_PROTOCOLS.OPENAI,
+            apiModel: 'test-model',
+            maxOutputTokens: 1024,
+        },
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        onChunk: text => chunks.push(text),
+        fetchImpl: async (_url, options) => {
+            requestBodies.push(JSON.parse(options.body));
+            if (requestBodies.length === 1) {
+                return new Response('', { status: 200, headers: { 'content-type': 'text/event-stream' } });
+            }
+            return new Response(JSON.stringify({ choices: [{ message: { content: '非流式恢复正文' }, finish_reason: 'stop' }] }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            });
+        },
+    });
+    assert.equal(requestBodies.length, 2);
+    assert.equal(requestBodies[0].stream, true);
+    assert.equal(requestBodies[1].stream, false);
+    assert.deepEqual(chunks, ['非流式恢复正文']);
+    assert.equal(result.text, '非流式恢复正文');
+});
+
+test('酒馆主 API 运行层优先使用 ChatCompletionService', async () => {
+    const chunks = [];
+    const requests = [];
+    const ctx = {
+        oai_settings: {
+            chat_completion_source: 'openai',
+            openai_model: 'main-model',
+            openai_max_tokens: 4096,
+        },
+    };
+    const result = await requestMainApi({
+        ctx,
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        shouldStream: false,
+        onChunk: text => chunks.push(text),
+        chatCompletionService: {
+            processRequest: async request => {
+                requests.push(request);
+                return { choices: [{ message: { content: '主 API 正文' }, finish_reason: 'stop' }] };
+            },
+        },
+        getContext: () => ctx,
+    });
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].model, 'main-model');
+    assert.equal(requests[0].max_tokens, 4096);
+    assert.deepEqual(chunks, ['主 API 正文']);
+    assert.equal(result.text, '主 API 正文');
+});
+
+test('酒馆主 API 没有 ChatCompletionService 时复用 TavernHelper 路径', async () => {
+    const paths = [];
+    let helperOptions;
+    const result = await requestMainApi({
+        ctx: { oai_settings: { openai_model: 'main-model' } },
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        shouldStream: true,
+        onPath: path => paths.push(path),
+        tavernHelper: {
+            generateRaw: async options => {
+                helperOptions = options;
+                return 'TavernHelper 正文';
+            },
+        },
+        getContext: () => ({}),
+    });
+    assert.deepEqual(paths, ['main:TavernHelper']);
+    assert.equal(helperOptions.should_stream, true);
+    assert.equal(helperOptions.ordered_prompts[1].content, '用户');
+    assert.equal(result.text, 'TavernHelper 正文');
 });
 
 test('连续续写只携带上一轮正文，并限制为最近 8000 字', () => {
