@@ -181,10 +181,14 @@ export function createLongDreamRecord({
             capturedAt: createdAt,
         },
         sourceConfig: {
+            metadataCaptured: sourceConfig.metadataCaptured === true,
             presetName: cleanText(sourceConfig.presetName, 300),
             selectedWorldBooks: cleanStringList(sourceConfig.selectedWorldBooks),
             readChatContext: sourceConfig.readChatContext !== false,
             contextRange: Math.max(0, Math.floor(Number(sourceConfig.contextRange) || 0)),
+            renderSelection: cleanText(sourceConfig.renderSelection, 100),
+            renderLabel: cleanText(sourceConfig.renderLabel, 200),
+            textTheme: cleanText(sourceConfig.textTheme, 40),
         },
         chapters: [chapter],
         memory: {
@@ -244,10 +248,14 @@ export function normalizeLongDreamRecord(record = {}) {
             capturedAt: normalizeIsoDate(record?.source?.capturedAt, createdAt),
         },
         sourceConfig: {
+            metadataCaptured: record?.sourceConfig?.metadataCaptured === true,
             presetName: cleanText(record?.sourceConfig?.presetName, 300),
             selectedWorldBooks: cleanStringList(record?.sourceConfig?.selectedWorldBooks),
             readChatContext: record?.sourceConfig?.readChatContext !== false,
             contextRange: Math.max(0, Math.floor(Number(record?.sourceConfig?.contextRange) || 0)),
+            renderSelection: cleanText(record?.sourceConfig?.renderSelection, 100),
+            renderLabel: cleanText(record?.sourceConfig?.renderLabel, 200),
+            textTheme: cleanText(record?.sourceConfig?.textTheme, 40),
         },
         chapters,
         memory: {

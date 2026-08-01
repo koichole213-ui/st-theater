@@ -324,7 +324,7 @@ async function storageInit() {
             const completed = idbTransactionDone(transaction);
             const store = transaction.objectStore('history');
             for (const h of settings.history) {
-                store.add({ title: h.title, html: h.html, mode: h.mode, instruction: h.instruction, date: h.date });
+                store.add({ title: h.title, html: h.html, mode: h.mode, instruction: h.instruction, sourceConfig: h.sourceConfig || null, date: h.date });
             }
             await completed;
             settings.history = [];
@@ -1534,7 +1534,9 @@ function longDreamSources() {
             kind: 'current',
             refId: matchingHistory?.id ?? null,
             title: matchingHistory?.title || '当前正在查看的小剧场',
-            instruction: currentMeta?.instruction || $('#theater-instruction').val() || settings.lastInstruction || '',
+            // 查看旧历史时宁可明确显示“未保存”，也不能拿当前输入框冒充当年的指令。
+            instruction: currentMeta ? (currentMeta.instruction || '') : ($('#theater-instruction').val() || settings.lastInstruction || ''),
+            sourceConfig: currentMeta?.sourceConfig || null,
             html: currentHtml,
             // 始终从当前 HTML 重新提取，避免历史浏览后误带上一轮生成的 lastGeneratedText。
             text: htmlToPlainText(currentHtml),
@@ -1548,6 +1550,7 @@ function longDreamSources() {
             refId: index,
             title: `最近生成 ${index + 1}`,
             instruction: item.instruction || '',
+            sourceConfig: item.sourceConfig || null,
             html: item.html || '',
             text: htmlToPlainText(item.html || ''),
             mode: item.mode || 'html',
@@ -1560,6 +1563,7 @@ function longDreamSources() {
             refId: item.id,
             title: item.title || '未命名小剧场',
             instruction: item.instruction || '',
+            sourceConfig: item.sourceConfig || null,
             html: item.html || '',
             text: htmlToPlainText(item.html || ''),
             mode: item.mode || 'html',
@@ -1584,6 +1588,44 @@ function longDreamDate(value) {
 function longDreamExcerpt(value, limit = 180) {
     const text = String(value || '').replace(/\s+/g, ' ').trim();
     return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+function longDreamSourceInstructionState(source) {
+    const instruction = String(source?.instruction || '').trim();
+    if (instruction && source?.sourceConfig?.metadataCaptured === true) {
+        return {
+            instruction,
+            className: 'is-saved',
+            icon: 'fa-circle-check',
+            label: '找到当时保存的创作指令',
+            hint: '已把当时保存的创作指令带入下方。请只留下这场梦必须遵守的世界线事实。',
+        };
+    }
+    if (instruction) {
+        return {
+            instruction,
+            className: 'is-legacy',
+            icon: 'fa-circle-exclamation',
+            label: '旧记录中有一份指令，请核对',
+            hint: '旧版没有把正文与生成配置绑定保存，这份指令可能来自当时的输入框。请根据第一章正文核对后，只留下世界线事实。',
+        };
+    }
+    return {
+        instruction: '',
+        className: 'is-missing',
+        icon: 'fa-triangle-exclamation',
+        label: '这条历史没有保存当时的创作指令',
+        hint: '第一章正文和排版仍然完整，但旧记录无法还原当时的创作指令。请根据正文补充这场梦必须遵守的设定。',
+    };
+}
+
+function longDreamSourcePreviewHTML(source) {
+    const state = longDreamSourceInstructionState(source);
+    return `<div class="theater-dream-source-meta">
+            <span>${esc(source?.title || '')}</span>
+            <small class="${state.className}"><i class="fa-solid ${state.icon}"></i>${state.label}</small>
+        </div>
+        <p>${esc(longDreamExcerpt(source?.text, 220))}</p>`;
 }
 
 function captureCurrentLongDreamWorldBooks(bookNames) {
@@ -1666,17 +1708,14 @@ function longDreamCreateHTML() {
             <section class="theater-dream-form-card">
                 <label for="theater-dream-source">从哪一场开始</label>
                 <select id="theater-dream-source" class="theater-select">${options}</select>
-                <div id="theater-dream-source-preview" class="theater-dream-source-preview">
-                    <span>${esc(first?.title || '')}</span>
-                    <p>${esc(longDreamExcerpt(first?.text, 220))}</p>
-                </div>
+                <div id="theater-dream-source-preview" class="theater-dream-source-preview">${longDreamSourcePreviewHTML(first)}</div>
             </section>
             <section class="theater-dream-form-card">
                 <label for="theater-dream-title">长卷名字</label>
                 <input id="theater-dream-title" class="theater-input" maxlength="80" value="${esc(first?.title || '未命名长梦')}">
                 <label for="theater-dream-canon" class="theater-dream-canon-label">此梦设定</label>
                 <textarea id="theater-dream-canon" class="theater-textarea" rows="7" placeholder="例如：两人没有血缘关系，是从小一起长大的青梅竹马；本世界线不存在学园兄妹关系。">${esc(first?.instruction || '')}</textarea>
-                <p class="theater-hint">已带入原小剧场指令作为草稿。请删掉普通写作要求，只留下这场梦必须遵守的世界线事实；也可以暂时留空，之后再补。</p>
+                <p id="theater-dream-source-hint" class="theater-hint ${longDreamSourceInstructionState(first).className}">${esc(longDreamSourceInstructionState(first).hint)}</p>
             </section>
             <section class="theater-dream-form-card theater-dream-inheritance">
                 <div class="theater-dream-card-label">原世界书如何进入这场梦</div>
@@ -1718,60 +1757,67 @@ function longDreamDetailHTML(dream) {
         <button type="button" class="theater-dream-back" data-dream-back><i class="fa-solid fa-arrow-left"></i><span>返回长卷</span></button>
         <header class="theater-dream-detail-head">
             <div>
-                <span class="theater-dream-step">浮梦长卷 · ${dream.chapters.length} 章</span>
+                <span class="theater-dream-step">${dream.status === 'complete' ? '已完卷' : '仍在梦中'} · ${dream.chapters.length} 章</span>
                 <h2>${esc(dream.title)}</h2>
-                <p>始于 ${esc(longDreamDate(dream.createdAt))} · ${dream.status === 'complete' ? '已完卷' : '仍在梦中'}</p>
+                <p>始于 ${esc(longDreamDate(dream.createdAt))} · 下一步只需要告诉它这一章往哪里走</p>
             </div>
             <div class="theater-dream-seal" aria-hidden="true">梦</div>
         </header>
-        <div class="theater-dream-detail-grid">
-            <section class="theater-dream-chapter-sheet">
-                <div class="theater-dream-sheet-top">
-                    <span>${esc(latest?.title || '第一章')}</span>
-                    <button type="button" id="theater-dream-read-latest" class="theater-dream-text-action"><i class="fa-solid fa-expand"></i> 阅读本章</button>
-                </div>
-                <p>${esc(longDreamExcerpt(chapterText, 620))}</p>
-                <div class="theater-dream-sheet-fade" aria-hidden="true"></div>
-            </section>
-            <aside class="theater-dream-ledger">
-                <div class="theater-dream-ledger-title"><span>梦脉</span><small>尚未启用</small></div>
-                <p>章节原文已经安全保存。下一阶段会在这里记录事件、人物状态、伏笔与关键原话。</p>
-                <div class="theater-dream-ledger-count"><b>${dream.memory?.cards?.length || 0}</b><span>条剧情记忆</span></div>
-            </aside>
-        </div>
-        <section class="theater-dream-definition">
-            <div class="theater-dream-definition-head"><b>此梦设定</b><span>由你确认，优先于原世界书</span></div>
-            <input id="theater-dream-edit-title" class="theater-input" maxlength="80" value="${esc(dream.title)}" aria-label="长卷名字">
-            <textarea id="theater-dream-edit-canon" class="theater-textarea" rows="6" placeholder="写下这条世界线必须遵守的事实。">${esc(dream.canon)}</textarea>
-            <div class="theater-dream-policy-row">
-                <label><input type="radio" name="theater-dream-edit-policy" value="${LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY}" ${selectedPolicy ? '' : 'checked'}> 只沿用此梦世界线</label>
-                <label><input type="radio" name="theater-dream-edit-policy" value="${LONG_DREAM_WORLD_BOOK_POLICY.SELECTED}" ${selectedPolicy ? 'checked' : ''} ${selectedBooks.length || availableBooks.length ? '' : 'disabled'}> 沿用选中的世界书</label>
-            </div>
-            <p class="theater-hint">${selectedPolicy ? `当前冻结：${esc(bookText)} · ${snapshotEntries} 条内容；原书变化不会自动进入长梦。` : '原世界书不会在后续章节中自动重新注入。'}</p>
-            <div class="theater-btn-row">
-                <button type="button" id="theater-dream-save-definition" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存定梦</span></button>
-                <button type="button" id="theater-dream-delete" class="theater-btn danger"><i class="fa-solid fa-trash"></i><span>删除长卷</span></button>
-            </div>
-        </section>
         <section class="theater-dream-next">
             <div class="theater-dream-next-head">
-                <div><span>继续这场梦</span><b>续写第 ${nextNumber} 章</b><p>读取全部 ${dream.chapters.length} 章 · ${dream.memory?.cards?.length || 0} 条梦脉 · ${esc(inheritanceSummary)}</p></div>
+                <div><span>现在要做的事</span><b>续写第 ${nextNumber} 章</b><p>前文、定梦和允许沿用的资料会自动准备好</p></div>
                 <div class="theater-dream-next-mark" aria-hidden="true">${String(nextNumber).padStart(2, '0')}</div>
             </div>
-            <div class="theater-dream-next-grid">
-                <label><span>章名</span><input id="theater-dream-next-title" class="theater-input" maxlength="80" value="第 ${nextNumber} 章"></label>
-                <label><span>目标字数</span><input id="theater-dream-next-target" class="theater-input" type="number" min="500" max="8000" step="500" value="3000"></label>
-            </div>
-            <label class="theater-dream-next-direction"><span>这一章想往哪里走</span><textarea id="theater-dream-next-instruction" class="theater-textarea" rows="4" placeholder="可以留空，让故事自然承接；也可以写下必须发生的事件、情绪走向或不要触碰的内容。"></textarea></label>
+            <label class="theater-dream-next-direction"><span>这一章想发生什么？</span><textarea id="theater-dream-next-instruction" class="theater-textarea" rows="5" placeholder="可以留空，让故事自然继续；也可以写下想发生的事件、情绪走向或不能触碰的内容。"></textarea></label>
+            <details class="theater-dream-next-options">
+                <summary><span><i class="fa-solid fa-sliders"></i> 更多选项</span><small>章名与目标字数</small></summary>
+                <div class="theater-dream-next-grid">
+                    <label><span>章名</span><input id="theater-dream-next-title" class="theater-input" maxlength="80" value="第 ${nextNumber} 章"></label>
+                    <label><span>目标字数</span><input id="theater-dream-next-target" class="theater-input" type="number" min="500" max="8000" step="500" value="3000"></label>
+                </div>
+            </details>
             <div id="theater-dream-generation-status" class="theater-dream-generation-status" hidden>
                 <div><i class="fa-solid fa-feather-pointed"></i><span>正在续写这场梦……</span></div>
                 <pre id="theater-dream-generation-text"></pre>
             </div>
             <div class="theater-dream-next-actions">
-                <span>当前用于确认续章信息层级；冻结继承与草稿恢复完成后再启用请求。</span>
+                <span>下一阶段接入生成后，这里会直接写出并保存新章节。</span>
                 <button type="button" id="theater-dream-generate-next" class="theater-dream-primary" disabled><i class="fa-solid fa-feather-pointed"></i><span>等待接入</span></button>
             </div>
         </section>
+        <section class="theater-dream-latest">
+            <div class="theater-dream-latest-copy">
+                <span>上次写到 · ${esc(latest?.title || '第一章')}</span>
+                <p>${esc(longDreamExcerpt(chapterText, 230))}</p>
+            </div>
+            <button type="button" id="theater-dream-read-latest" class="theater-btn"><i class="fa-solid fa-book-open"></i><span>阅读本章</span></button>
+            <div class="theater-dream-context-strip">
+                <span><i class="fa-regular fa-file-lines"></i> 已保存 ${dream.chapters.length} 章</span>
+                <span><i class="fa-solid fa-route"></i> 梦脉${dream.memory?.cards?.length ? ` ${dream.memory.cards.length} 条` : '暂未启用'}</span>
+                <span><i class="fa-solid fa-book-atlas"></i> ${esc(inheritanceSummary)}</span>
+            </div>
+        </section>
+        <details class="theater-dream-settings">
+            <summary>
+                <span><b>长梦设置</b><small>名字、此梦设定与世界书继承</small></span>
+                <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+            </summary>
+            <div class="theater-dream-settings-body">
+                <label for="theater-dream-edit-title">长卷名字</label>
+                <input id="theater-dream-edit-title" class="theater-input" maxlength="80" value="${esc(dream.title)}">
+                <label for="theater-dream-edit-canon">此梦设定</label>
+                <textarea id="theater-dream-edit-canon" class="theater-textarea" rows="5" placeholder="写下这条世界线必须遵守的事实。">${esc(dream.canon)}</textarea>
+                <div class="theater-dream-policy-row">
+                    <label><input type="radio" name="theater-dream-edit-policy" value="${LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY}" ${selectedPolicy ? '' : 'checked'}> 只沿用此梦世界线</label>
+                    <label><input type="radio" name="theater-dream-edit-policy" value="${LONG_DREAM_WORLD_BOOK_POLICY.SELECTED}" ${selectedPolicy ? 'checked' : ''} ${selectedBooks.length || availableBooks.length ? '' : 'disabled'}> 沿用选中的世界书</label>
+                </div>
+                <p class="theater-hint">${selectedPolicy ? `当前冻结：${esc(bookText)} · ${snapshotEntries} 条内容；原书变化不会自动进入长梦。` : '原世界书不会在后续章节中自动重新注入。'}</p>
+                <div class="theater-dream-settings-actions">
+                    <button type="button" id="theater-dream-save-definition" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存设置</span></button>
+                    <button type="button" id="theater-dream-delete" class="theater-btn danger"><i class="fa-solid fa-trash"></i><span>删除这部长卷</span></button>
+                </div>
+            </div>
+        </details>
     </div>`;
 }
 
@@ -2249,9 +2295,14 @@ function bindEvents() {
     $d.off('change.tdsource').on('change.tdsource', '#theater-dream-source', function () {
         const source = resolveLongDreamSource($(this).val());
         if (!source) return;
+        const instructionState = longDreamSourceInstructionState(source);
         $('#theater-dream-title').val(source.title || '未命名长梦');
-        $('#theater-dream-canon').val(source.instruction || '');
-        $('#theater-dream-source-preview').html(`<span>${esc(source.title)}</span><p>${esc(longDreamExcerpt(source.text, 220))}</p>`);
+        $('#theater-dream-canon').val(instructionState.instruction);
+        $('#theater-dream-source-preview').html(longDreamSourcePreviewHTML(source));
+        $('#theater-dream-source-hint')
+            .removeClass('is-saved is-legacy is-missing')
+            .addClass(instructionState.className)
+            .text(instructionState.hint);
     });
     $d.off('click.tdcreate').on('click.tdcreate', '#theater-dream-create-confirm', async function () {
         const source = resolveLongDreamSource($('#theater-dream-source').val());
@@ -2281,12 +2332,7 @@ function bindEvents() {
             worldBookNames: settings.selectedWorldBooks || [],
             worldBookSnapshot,
             source,
-            sourceConfig: {
-                presetName: settings.selectedPresetName,
-                selectedWorldBooks: settings.selectedWorldBooks || [],
-                readChatContext: settings.readChatContext,
-                contextRange: settings.contextRange,
-            },
+            sourceConfig: source.sourceConfig || {},
         });
         const created = await longDreamAdd(record);
         if (!created) return;
@@ -3993,8 +4039,16 @@ async function saveToHistory() {
     const t = await SillyTavern.getContext().Popup.show.input('保存', '标题：', `小剧场 ${count}`);
     if (!t) return;
     const now = new Date(), pad = n => String(n).padStart(2, '0');
+    const sourceMeta = recentCache.find(item => item.html === html)
+        || historyCache.slice().reverse().find(item => item.html === html)
+        || null;
     const item = {
-        title: t, html: html, mode: currentOutputMode, instruction: $('#theater-instruction').val(),
+        title: t,
+        html,
+        mode: sourceMeta?.mode || currentOutputMode,
+        // 优先跟随这篇结果生成时的元数据，避免把保存当下输入框里的另一条指令错配给它。
+        instruction: sourceMeta ? (sourceMeta.instruction || '') : ($('#theater-instruction').val() || ''),
+        sourceConfig: sourceMeta?.sourceConfig || null,
         date: `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
     };
     if (await histAdd(item)) { refreshHistList(); toastr.success('已保存'); }
@@ -4179,6 +4233,7 @@ async function addHistoryItems(items) {
             html: item.html,
             mode: item.mode || 'html',
             instruction: item.instruction || '',
+            sourceConfig: item.sourceConfig || null,
             date: item.date || new Date().toLocaleString('zh-CN', { hour12: false }),
         });
         if (ok) added++;
@@ -4557,7 +4612,7 @@ async function runGeneration(instruction, isAuto) {
     const targetWordCount = payload.targetWordCount;
     const autoTargetContinue = !!targetWordCount && settings.autoContinue;
     let { ctx, systemPrompt, userPrompt: prompt, isPlainTextRender } = payload;
-    const { label: renderTemplate, isPlainTextRender: selectedPlainTextRender, textTheme: selectedTextTheme } = resolveRenderSelection(false);
+    const { selectedRender: selectedRenderProfile, label: renderTemplate, isPlainTextRender: selectedPlainTextRender, textTheme: selectedTextTheme } = resolveRenderSelection(false);
     const mainOai = ctx?.oai_settings || globalThis.oai_settings;
     const resolvedProtocol = settings.apiMode === 'main' ? 'main' : resolveProtocol(settings.apiProtocol, settings.apiUrl);
     const modelName = settings.apiMode === 'main'
@@ -4566,6 +4621,16 @@ async function runGeneration(instruction, isAuto) {
     const configuredMaxTokens = settings.apiMode === 'main'
         ? (mainOai?.openai_max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS)
         : normalizeMaxTokens(settings.maxOutputTokens);
+    const generationSourceConfig = {
+        metadataCaptured: true,
+        presetName: settings.selectedPresetName || '',
+        selectedWorldBooks: [...(settings.selectedWorldBooks || [])],
+        readChatContext: settings.readChatContext !== false,
+        contextRange: normalizeContextRange(settings.contextRange),
+        renderSelection: selectedRenderProfile,
+        renderLabel: renderTemplate,
+        textTheme: selectedTextTheme,
+    };
     runtimeLog('info', '生成开始', {
         trigger: isAuto ? 'auto' : (contCtx ? 'continue' : 'manual'),
         render: renderTemplate,
@@ -4832,6 +4897,7 @@ async function runGeneration(instruction, isAuto) {
                 mode: currentOutputMode,
                 time: new Date().toLocaleString('zh-CN', { hour12: false }),
                 instruction: instruction || '',
+                sourceConfig: generationSourceConfig,
             });
             if (recentCache.length > 3) recentCache.length = 3;
             recentIndex = 0;

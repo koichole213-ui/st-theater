@@ -22,6 +22,7 @@ import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHt
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from '../history-backup.js';
 import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, appendLongDreamChapter, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, saveLongDreamDraft, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition } from '../long-dream.js';
 import { buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBookContext } from '../long-dream-payload.js';
+import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from '../long-dream-generation.js';
 
 test('长梦以完整首章开卷，并默认隔离原世界书', () => {
     const now = new Date('2026-07-31T12:30:00.000Z');
@@ -151,13 +152,175 @@ test('旧版长梦迁移到当前 schema，并把草稿与正式章节分开', (
     assert.equal(migrated.draft.status, LONG_DREAM_DRAFT_STATUS.REVIEW);
 });
 
+test('长梦生成控制器先保存可恢复正文和待确认 HTML，再原子晋升正式章节', async () => {
+    const record = createLongDreamRecord({
+        title: '雨夜列车',
+        canon: '列车不能驶离环线。',
+        source: { text: '第一章正文。', html: '<main>第一章正文。</main>' },
+    });
+    const persisted = [];
+    const stages = [];
+    const controller = createLongDreamGenerationController({
+        checkpointIntervalMs: 0,
+        requestChapter: async ({ userPrompt, onChunk }) => {
+            assert.match(userPrompt, /第一章正文/);
+            assert.doesNotMatch(userPrompt, /<main>/);
+            onChunk('第二章第一段。');
+            onChunk('第二章第一段。\n\n第二章第二段。');
+            return { text: '第二章第一段。\n\n第二章第二段。', stopReason: 'stop' };
+        },
+        renderChapter: async ({ text }) => ({ html: `<article>${text}</article>`, mode: 'html' }),
+        persistRecord: async next => {
+            persisted.push(structuredClone(next));
+            return next;
+        },
+        onState: ({ stage }) => stages.push(stage),
+    });
+
+    const generated = await controller.run({
+        record,
+        chapterTitle: '第二章',
+        instruction: '让列车在旧站台短暂停靠。',
+        targetChars: 2200,
+    });
+
+    assert.equal(generated.stage, LONG_DREAM_GENERATION_STAGE.REVIEW);
+    assert.equal(generated.record.chapters.length, 1);
+    assert.equal(generated.record.draft.status, LONG_DREAM_DRAFT_STATUS.REVIEW);
+    assert.equal(generated.record.draft.text, '第二章第一段。\n\n第二章第二段。');
+    assert.match(generated.record.draft.html, /<article>/);
+    assert.ok(persisted.some(item => item.draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING));
+    assert.deepEqual(stages, [
+        LONG_DREAM_GENERATION_STAGE.WRITING,
+        LONG_DREAM_GENERATION_STAGE.RENDERING,
+        LONG_DREAM_GENERATION_STAGE.REVIEW,
+    ]);
+
+    const confirmed = await controller.confirm(generated.record);
+    assert.equal(confirmed.chapters.length, 2);
+    assert.equal(confirmed.chapters[1].title, '第二章');
+    assert.match(confirmed.chapters[1].html, /第二章第二段/);
+    assert.equal(confirmed.draft, null);
+});
+
+test('长梦生成停止时保留 WRITING 草稿，不追加半章', async () => {
+    const record = createLongDreamRecord({
+        source: { text: '第一章。', html: '<main>第一章。</main>' },
+    });
+    let requestStarted;
+    const started = new Promise(resolve => { requestStarted = resolve; });
+    const stages = [];
+    const controller = createLongDreamGenerationController({
+        checkpointIntervalMs: 0,
+        requestChapter: ({ signal, onChunk }) => new Promise((resolve, reject) => {
+            onChunk('只写完了一半。');
+            requestStarted();
+            signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        }),
+        renderChapter: async () => {
+            assert.fail('停止后不应进入最终排版');
+        },
+        persistRecord: async next => next,
+        onState: ({ stage }) => stages.push(stage),
+    });
+
+    const running = controller.run({ record, instruction: '继续调查失踪案。' });
+    await started;
+    assert.equal(controller.abort(), true);
+    await assert.rejects(running, error => {
+        assert.equal(error.name, 'AbortError');
+        assert.equal(error.longDreamRecord.chapters.length, 1);
+        assert.equal(error.longDreamRecord.draft.status, LONG_DREAM_DRAFT_STATUS.WRITING);
+        assert.equal(error.longDreamRecord.draft.text, '只写完了一半。');
+        return true;
+    });
+    assert.equal(stages.at(-1), LONG_DREAM_GENERATION_STAGE.STOPPED);
+    assert.equal(controller.active, null);
+});
+
+test('长梦生成可以承接刷新前的 WRITING 草稿，并只拼接本次新增正文', async () => {
+    const base = createLongDreamRecord({
+        source: { text: '第一章。', html: '<main>第一章。</main>' },
+    });
+    const writing = saveLongDreamDraft(base, {
+        status: LONG_DREAM_DRAFT_STATUS.WRITING,
+        title: '第二章',
+        instruction: '继续追查。',
+        text: '已经写好的前半章。',
+    });
+    const controller = createLongDreamGenerationController({
+        requestChapter: async ({ userPrompt }) => {
+            assert.match(userPrompt, /本章可恢复草稿/);
+            assert.match(userPrompt, /已经写好的前半章/);
+            return { text: '这是本次新增的后半章。' };
+        },
+        renderChapter: async ({ text }) => {
+            assert.equal(text, '已经写好的前半章。\n\n这是本次新增的后半章。');
+            return `<main>${text}</main>`;
+        },
+    });
+
+    const result = await controller.run({ record: writing });
+    assert.equal(result.record.draft.status, LONG_DREAM_DRAFT_STATUS.REVIEW);
+    assert.equal(result.record.draft.text, '已经写好的前半章。\n\n这是本次新增的后半章。');
+});
+
+test('长梦最终排版失败时保留完整正文草稿，不追加正式章节', async () => {
+    const record = createLongDreamRecord({
+        source: { text: '第一章。', html: '<main>第一章。</main>' },
+    });
+    const stages = [];
+    const controller = createLongDreamGenerationController({
+        checkpointIntervalMs: 0,
+        requestChapter: async ({ onChunk }) => {
+            onChunk('已经完成但尚未排版的第二章。');
+            return { text: '已经完成但尚未排版的第二章。' };
+        },
+        renderChapter: async () => {
+            throw new Error('模拟排版失败');
+        },
+        onState: ({ stage }) => stages.push(stage),
+    });
+
+    await assert.rejects(controller.run({ record }), error => {
+        assert.match(error.message, /模拟排版失败/);
+        assert.equal(error.longDreamRecord.chapters.length, 1);
+        assert.equal(error.longDreamRecord.draft.status, LONG_DREAM_DRAFT_STATUS.WRITING);
+        assert.equal(error.longDreamRecord.draft.text, '已经完成但尚未排版的第二章。');
+        return true;
+    });
+    assert.equal(stages.at(-1), LONG_DREAM_GENERATION_STAGE.ERROR);
+});
+
+test('待确认长梦草稿不会被新一轮生成静默覆盖', async () => {
+    const base = createLongDreamRecord({
+        source: { text: '第一章。', html: '<main>第一章。</main>' },
+    });
+    const review = saveLongDreamDraft(base, {
+        status: LONG_DREAM_DRAFT_STATUS.REVIEW,
+        title: '第二章',
+        text: '待确认正文。',
+        html: '<main>待确认正文。</main>',
+    });
+    const controller = createLongDreamGenerationController({
+        requestChapter: async () => assert.fail('存在待确认稿时不应发请求'),
+        renderChapter: async () => assert.fail('存在待确认稿时不应排版'),
+    });
+    await assert.rejects(controller.run({ record: review }), /等待确认/);
+});
+
 test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     assert.match(source, /data-tab="long-dream">长梦<\/div>/);
     assert.match(source, /data-panel="long-dream"/);
     assert.match(source, /indexedDB\.open\('st-theater', 2\)/);
     assert.match(source, /createObjectStore\('dreams', \{ keyPath: 'id', autoIncrement: true \}\)/);
     assert.match(source, /id="theater-dream-generate-next"[^>]*disabled/);
+    assert.match(source, /class="theater-dream-next-options"/);
+    assert.match(source, /<details class="theater-dream-settings">/);
+    assert.match(source, /旧记录中有一份指令，请核对/);
+    assert.match(styles, /梦中页只保留一条主线：续写/);
 });
 
 test('下一章请求读取整部长卷正文和梦脉，但不携带旧 HTML', () => {
@@ -474,7 +637,19 @@ test('全屏 iframe 没有及时回报时保留丰富 HTML，不误降级为纯�
 
 test('历史 ZIP 清单保留元数据并为重名小剧场生成唯一 HTML 文件名', () => {
     const source = [
-        { title: '同名', date: '2026/07/28 10:00', instruction: '第一条指令', html: '<html>甲</html>', mode: 'html' },
+        {
+            title: '同名', date: '2026/07/28 10:00', instruction: '第一条指令', html: '<html>甲</html>', mode: 'html',
+            sourceConfig: {
+                metadataCaptured: true,
+                presetName: '长篇预设',
+                selectedWorldBooks: ['人物设定'],
+                readChatContext: true,
+                contextRange: 20,
+                renderSelection: '__default__',
+                renderLabel: '内置默认',
+                textTheme: 'light',
+            },
+        },
         { title: '同名', date: '2026/07/28 10:01', instruction: '第二条指令', html: '<html>乙</html>', mode: 'text-dark' },
     ];
     const archive = createHistoryArchive(source);
@@ -483,6 +658,7 @@ test('历史 ZIP 清单保留元数据并为重名小剧场生成唯一 HTML 文
     assert.notEqual(archive.files[0].name, archive.files[1].name);
     assert.equal(archive.manifest.items[1].instruction, '第二条指令');
     assert.equal(archive.manifest.items[1].mode, 'text-dark');
+    assert.equal(archive.manifest.items[0].sourceConfig.renderLabel, '内置默认');
     const restored = historyItemsFromArchive(archive.manifest, archive.files);
     assert.deepEqual(restored, normalizeHistoryBackup(source));
 });

@@ -1,5 +1,5 @@
 export const HISTORY_BACKUP_FORMAT = 'st-theater-history';
-export const HISTORY_BACKUP_VERSION = 1;
+export const HISTORY_BACKUP_VERSION = 2;
 export const HISTORY_ARCHIVE_MANIFEST = 'theater-history.json';
 
 function cleanText(value) {
@@ -13,6 +13,20 @@ function normalizeHistoryItem(item, fallbackTitle = '导入的小剧场') {
         title: cleanText(item?.title) || fallbackTitle,
         date: cleanText(item?.date),
         instruction: String(item?.instruction || ''),
+        sourceConfig: item?.sourceConfig && typeof item.sourceConfig === 'object'
+            ? {
+                metadataCaptured: item.sourceConfig.metadataCaptured === true,
+                presetName: cleanText(item.sourceConfig.presetName),
+                selectedWorldBooks: Array.isArray(item.sourceConfig.selectedWorldBooks)
+                    ? item.sourceConfig.selectedWorldBooks.map(cleanText).filter(Boolean)
+                    : [],
+                readChatContext: item.sourceConfig.readChatContext !== false,
+                contextRange: Math.max(0, Math.floor(Number(item.sourceConfig.contextRange) || 0)),
+                renderSelection: cleanText(item.sourceConfig.renderSelection),
+                renderLabel: cleanText(item.sourceConfig.renderLabel),
+                textTheme: cleanText(item.sourceConfig.textTheme),
+            }
+            : null,
         html,
         mode: cleanText(item?.mode) || 'html',
     };
@@ -74,6 +88,7 @@ export function createHistoryArchive(items = []) {
             title: item.title,
             date: item.date,
             instruction: item.instruction,
+            sourceConfig: item.sourceConfig,
             mode: item.mode,
             file,
         };
