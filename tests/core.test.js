@@ -625,11 +625,15 @@ test('常见问题汇总是诊断报告后的独立可折叠界面', () => {
     const library = source.indexOf('class="theater-diagnostic-catalog theater-diagnostic-library"', diagnosticsPanel);
     assert.ok(reportOutput >= 0 && library > reportOutput);
     assert.match(source, /按弹窗里的错误信号查原因/);
+    assert.match(source, /theater-diagnostic-catalog-head/);
+    assert.match(source, /theater-diagnostic-catalog-reason/);
+    assert.match(source, /theater-diagnostic-catalog-action/);
     assert.doesNotMatch(source, /【常见问题汇总｜按错误信号查询】/);
     assert.doesNotMatch(source.match(/function runDiagnostics\(\)[\s\S]*?\n\}/)?.[0] || '', /diagnostic-catalog/);
     assert.match(signals, /T-API-CONTENT-FILTER/);
     assert.match(styles, /\.theater-diagnostic-catalog\s*\{/);
     assert.match(styles, /\.theater-diagnostic-catalog\[open\]/);
+    assert.match(styles, /\.theater-diagnostic-catalog-item\s*\{[\s\S]*?flex-direction:\s*column/);
 });
 
 test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
@@ -683,6 +687,7 @@ test('暗色纯文字阅读壳转义正文并声明夜间配色', () => {
 
 test('生成结果使用可关闭的页边书签，并保留安全退出编辑与移除结果', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const actionsAt = source.indexOf('id="theater-result-actions"');
     const outputAt = source.indexOf('id="theater-output-container"');
     assert.ok(actionsAt >= 0 && actionsAt < outputAt);
@@ -693,6 +698,24 @@ test('生成结果使用可关闭的页边书签，并保留安全退出编辑�
     assert.match(source, /id="theater-delete-result-btn"/);
     assert.match(source, /原正文和排版没有改变/);
     assert.match(source, /已经保存到历史的小剧场不会受影响/);
+    assert.match(styles, /\.theater-result-actions\s*\{[\s\S]*?#fffaf0/);
+    assert.match(styles, /data-skin="custom"\] \.theater-result-actions[\s\S]*?Canvas/);
+});
+
+test('手机弹窗为 Close 按钮和安全区预留滚动空间，切换标签回到顶部', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const tabHandler = source.match(/\/\/ Tabs[\s\S]*?\/\/ ---- Generate ----/)?.[0] || '';
+    assert.match(tabHandler, /panels\.scrollTop = 0/);
+    assert.doesNotMatch(source, /target\.scrollIntoView/);
+    assert.match(styles, /height:\s*clamp\(240px, calc\(92dvh - 210px\), 620px\)/);
+    assert.match(styles, /env\(safe-area-inset-bottom\)/);
+    assert.doesNotMatch(styles, /height:\s*calc\(100dvh - 180px\)/);
+});
+
+test('默认皮肤的长梦备份按钮保持深色底上的可读对比度', () => {
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    assert.match(styles, /theater-popup:not\(\[data-skin="theater"\]\):not\(\[data-skin="custom"\]\) \.theater-dream-archive-actions \.theater-btn\s*\{[\s\S]*?color:\s*rgba\(255, 249, 237, \.9\)[\s\S]*?background:\s*rgba\(255, 249, 237, \.075\)/);
 });
 
 test('页边书签位置会限制在可见范围并按拖动落点吸附', () => {

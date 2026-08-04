@@ -2629,6 +2629,8 @@ function bindEvents() {
         const t = $(this).data('tab');
         $('.theater-tab').removeClass('active'); $(this).addClass('active');
         $('.theater-panel').removeClass('active'); $(`.theater-panel[data-panel="${t}"]`).addClass('active');
+        const panels = document.querySelector('.theater-panels-wrapper');
+        if (panels) panels.scrollTop = 0;
         if (t === 'diagnostics') renderRuntimeLog();
         if (t === 'long-dream') renderLongDreamPanel();
     });
@@ -2636,7 +2638,14 @@ function bindEvents() {
         const target = document.querySelector(`.theater-config-group[data-config-group="${this.dataset.configOpen}"]`);
         if (!target) return;
         target.open = true;
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const panels = target.closest('.theater-panels-wrapper');
+        if (!panels) return;
+        const panelRect = panels.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        panels.scrollTo({
+            top: Math.max(0, panels.scrollTop + targetRect.top - panelRect.top - 8),
+            behavior: 'smooth',
+        });
     });
 
     // ---- Generate ----
@@ -5973,8 +5982,13 @@ function buildAutoModeDiagnostic() {
 function diagnosticCatalogHTML() {
     return diagnosticSignalCatalog().map(item => `
         <div class="theater-diagnostic-catalog-item ${item.status}">
-            <code>${esc(item.signal)}</code>
-            <div><b>${esc(item.title)}</b><span>${esc(item.detail)}</span>${item.aliases?.length ? `<em>也适用于：${esc(item.aliases.join('、'))}</em>` : ''}<small>${esc(item.action)}</small></div>
+            <div class="theater-diagnostic-catalog-head">
+                <code>${esc(item.signal)}</code>
+                <b>${esc(item.title)}</b>
+            </div>
+            <p class="theater-diagnostic-catalog-reason"><strong>原因</strong><span>${esc(item.detail)}</span></p>
+            ${item.aliases?.length ? `<p class="theater-diagnostic-catalog-alias"><strong>同类信号</strong><span>${esc(item.aliases.join('、'))}</span></p>` : ''}
+            <p class="theater-diagnostic-catalog-action"><strong>可以怎么处理</strong><span>${esc(item.action)}</span></p>
         </div>
     `).join('');
 }
