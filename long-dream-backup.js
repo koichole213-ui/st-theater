@@ -139,7 +139,13 @@ function safeMemory(memory = {}, fallbackDate) {
     return {
         status: cleanText(memory?.status, 40) || 'not-started',
         cards,
+        currentState: cleanText(memory?.currentState, 5000),
+        processedThroughChapter: Math.max(0, Math.floor(Number(memory?.processedThroughChapter) || 0)),
+        pendingChapterNumbers: (Array.isArray(memory?.pendingChapterNumbers) ? memory.pendingChapterNumbers : [])
+            .map(value => Math.max(1, Math.floor(Number(value) || 0)))
+            .filter(Boolean),
         updatedAt: safeDate(memory?.updatedAt, fallbackDate),
+        lastErrorSignal: cleanText(memory?.lastErrorSignal, 80),
     };
 }
 
@@ -159,6 +165,7 @@ export function sanitizeLongDreamBackupRecord(record = {}) {
         canon: String(normalized.canon || '').trim(),
         inheritance: {
             worldBookPolicy: normalized.inheritance?.worldBookPolicy === 'selected' ? 'selected' : 'branch-only',
+            worldLineRelation: cleanText(normalized.inheritance?.worldLineRelation, 40),
             worldBookNames: cleanList(normalized.inheritance?.worldBookNames),
             snapshot: safeSnapshot(normalized.inheritance?.snapshot, createdAt),
         },

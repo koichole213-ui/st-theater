@@ -1,4 +1,4 @@
-export const LONG_DREAM_SCHEMA_VERSION = 3;
+export const LONG_DREAM_SCHEMA_VERSION = 4;
 
 export const LONG_DREAM_STATUS = Object.freeze({
     ACTIVE: 'active',
@@ -8,6 +8,22 @@ export const LONG_DREAM_STATUS = Object.freeze({
 export const LONG_DREAM_WORLD_BOOK_POLICY = Object.freeze({
     BRANCH_ONLY: 'branch-only',
     SELECTED: 'selected',
+});
+
+export const LONG_DREAM_WORLD_LINE_RELATION = Object.freeze({
+    ISOLATED: 'isolated',
+    PARALLEL: 'parallel',
+    PREQUEL: 'prequel',
+    CANON_CONCURRENT: 'canon-concurrent',
+    SEQUEL: 'sequel',
+});
+
+export const LONG_DREAM_MEMORY_STATUS = Object.freeze({
+    NOT_STARTED: 'not-started',
+    PENDING: 'pending',
+    WEAVING: 'weaving',
+    READY: 'ready',
+    FAILED: 'failed',
 });
 
 export const LONG_DREAM_DRAFT_STATUS = Object.freeze({
@@ -73,6 +89,58 @@ function normalizeWorldBookSnapshot(snapshot, fallbackDate = '') {
     return {
         capturedAt: normalizeIsoDate(snapshot.capturedAt, fallbackDate || new Date().toISOString()),
         books,
+    };
+}
+
+function normalizeWorldLineRelation(value, worldBookPolicy) {
+    const allowed = new Set(Object.values(LONG_DREAM_WORLD_LINE_RELATION));
+    if (allowed.has(value)) return value;
+    return worldBookPolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
+        ? LONG_DREAM_WORLD_LINE_RELATION.PARALLEL
+        : LONG_DREAM_WORLD_LINE_RELATION.ISOLATED;
+}
+
+function normalizeMemoryCard(card, index = 0) {
+    if (!card || typeof card !== 'object') return null;
+    const content = cleanText(card.content || card.text || card.summary, 1200);
+    if (!content) return null;
+    const chapterNumber = Math.max(1, Math.floor(Number(card.chapterNumber) || 1));
+    const status = ['dismissed', '废止'].includes(cleanText(card.status, 30).toLocaleLowerCase())
+        ? 'dismissed'
+        : 'active';
+    return {
+        id: cleanText(card.id, 100) || `memory-${chapterNumber}-${index + 1}`,
+        type: cleanText(card.type, 60) || '事实',
+        content,
+        chapterId: cleanText(card.chapterId, 100) || `chapter-${chapterNumber}`,
+        chapterNumber,
+        quote: cleanText(card.quote, 240),
+        status,
+        tags: cleanStringList(card.tags, 20),
+    };
+}
+
+function normalizeMemory(memory = {}, chapterCount = 0) {
+    const processedThroughChapter = Math.max(0, Math.min(chapterCount, Math.floor(Number(memory?.processedThroughChapter) || 0)));
+    const pendingSet = new Set((Array.isArray(memory?.pendingChapterNumbers) ? memory.pendingChapterNumbers : [])
+        .map(value => Math.floor(Number(value)))
+        .filter(value => value > processedThroughChapter && value <= chapterCount));
+    for (let number = processedThroughChapter + 1; number <= chapterCount; number++) pendingSet.add(number);
+    const pendingChapterNumbers = [...pendingSet].sort((a, b) => a - b);
+    const rawStatus = cleanText(memory?.status, 40);
+    const status = rawStatus === LONG_DREAM_MEMORY_STATUS.WEAVING || rawStatus === LONG_DREAM_MEMORY_STATUS.FAILED
+        ? rawStatus
+        : (pendingChapterNumbers.length
+            ? LONG_DREAM_MEMORY_STATUS.PENDING
+            : (processedThroughChapter ? LONG_DREAM_MEMORY_STATUS.READY : LONG_DREAM_MEMORY_STATUS.NOT_STARTED));
+    return {
+        status,
+        cards: (Array.isArray(memory?.cards) ? memory.cards : []).map(normalizeMemoryCard).filter(Boolean),
+        currentState: cleanText(memory?.currentState, 5000),
+        processedThroughChapter,
+        pendingChapterNumbers,
+        updatedAt: cleanText(memory?.updatedAt, 60),
+        lastErrorSignal: cleanText(memory?.lastErrorSignal, 80),
     };
 }
 
@@ -147,6 +215,7 @@ export function createLongDreamRecord({
     title,
     canon = '',
     worldBookPolicy = LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY,
+    worldLineRelation,
     worldBookNames = [],
     worldBookSnapshot = null,
     source = {},
@@ -158,6 +227,10 @@ export function createLongDreamRecord({
     const normalizedPolicy = worldBookPolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
         ? LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
         : LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY;
+    const normalizedRelation = normalizeWorldLineRelation(worldLineRelation, normalizedPolicy);
+    const effectivePolicy = normalizedRelation === LONG_DREAM_WORLD_LINE_RELATION.ISOLATED
+        ? LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY
+        : LONG_DREAM_WORLD_BOOK_POLICY.SELECTED;
     return {
         schemaVersion: LONG_DREAM_SCHEMA_VERSION,
         title: cleanText(title, 80) || cleanText(source.title, 80) || '未命名长梦',
@@ -166,11 +239,12 @@ export function createLongDreamRecord({
         updatedAt: createdAt,
         canon: String(canon || '').trim(),
         inheritance: {
-            worldBookPolicy: normalizedPolicy,
-            worldBookNames: normalizedPolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
+            worldBookPolicy: effectivePolicy,
+            worldLineRelation: normalizedRelation,
+            worldBookNames: effectivePolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
                 ? cleanStringList(worldBookNames)
                 : [],
-            snapshot: normalizedPolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
+            snapshot: effectivePolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
                 ? normalizeWorldBookSnapshot(worldBookSnapshot, createdAt)
                 : null,
         },
@@ -192,11 +266,7 @@ export function createLongDreamRecord({
             textTheme: cleanText(sourceConfig.textTheme, 40),
         },
         chapters: [chapter],
-        memory: {
-            status: 'not-started',
-            cards: [],
-            updatedAt: '',
-        },
+        memory: normalizeMemory({}, 1),
         draft: null,
     };
 }
@@ -225,6 +295,10 @@ export function normalizeLongDreamRecord(record = {}) {
     const policy = record?.inheritance?.worldBookPolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
         ? LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
         : LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY;
+    const relation = normalizeWorldLineRelation(record?.inheritance?.worldLineRelation, policy);
+    const effectivePolicy = relation === LONG_DREAM_WORLD_LINE_RELATION.ISOLATED
+        ? LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY
+        : LONG_DREAM_WORLD_BOOK_POLICY.SELECTED;
     return {
         ...record,
         id: record.id,
@@ -235,11 +309,14 @@ export function normalizeLongDreamRecord(record = {}) {
         updatedAt: normalizeIsoDate(record.updatedAt, createdAt),
         canon: String(record.canon || '').trim(),
         inheritance: {
-            worldBookPolicy: policy,
-            worldBookNames: policy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
+            worldBookPolicy: effectivePolicy,
+            worldLineRelation: relation,
+            worldBookNames: effectivePolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
                 ? cleanStringList(record?.inheritance?.worldBookNames)
                 : [],
-            snapshot: normalizeWorldBookSnapshot(record?.inheritance?.snapshot, createdAt),
+            snapshot: effectivePolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
+                ? normalizeWorldBookSnapshot(record?.inheritance?.snapshot, createdAt)
+                : null,
         },
         source: {
             kind: cleanText(record?.source?.kind, 30) || 'unknown',
@@ -259,29 +336,39 @@ export function normalizeLongDreamRecord(record = {}) {
             textTheme: cleanText(record?.sourceConfig?.textTheme, 40),
         },
         chapters,
-        memory: {
-            status: cleanText(record?.memory?.status, 40) || 'not-started',
-            cards: Array.isArray(record?.memory?.cards) ? record.memory.cards : [],
-            updatedAt: cleanText(record?.memory?.updatedAt, 60),
-        },
+        memory: normalizeMemory(record?.memory, chapters.length),
         draft: normalizeDraft(record?.draft, chapters.length + 1, normalizeIsoDate(record.updatedAt, createdAt)),
     };
 }
 
-export function updateLongDreamDefinition(record, { title, canon, worldBookPolicy, worldBookNames, worldBookSnapshot } = {}, now = new Date()) {
+export function updateLongDreamDefinition(record, { title, canon, worldBookPolicy, worldLineRelation, worldBookNames, worldBookSnapshot } = {}, now = new Date()) {
     const normalized = normalizeLongDreamRecord(record);
     if (!normalized) throw new Error('长梦记录无效');
-    const policy = worldBookPolicy === undefined
+    const requestedPolicy = worldBookPolicy === undefined
         ? normalized.inheritance.worldBookPolicy
         : (worldBookPolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
             ? LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
             : LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY);
+    const relationInput = worldLineRelation !== undefined
+        ? worldLineRelation
+        : (worldBookPolicy !== undefined
+            ? (requestedPolicy === LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY
+                ? LONG_DREAM_WORLD_LINE_RELATION.ISOLATED
+                : (normalized.inheritance.worldLineRelation === LONG_DREAM_WORLD_LINE_RELATION.ISOLATED
+                    ? LONG_DREAM_WORLD_LINE_RELATION.PARALLEL
+                    : normalized.inheritance.worldLineRelation))
+            : normalized.inheritance.worldLineRelation);
+    const relation = normalizeWorldLineRelation(relationInput, requestedPolicy);
+    const policy = relation === LONG_DREAM_WORLD_LINE_RELATION.ISOLATED
+        ? LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY
+        : LONG_DREAM_WORLD_BOOK_POLICY.SELECTED;
     return {
         ...normalized,
         title: cleanText(title, 80) || normalized.title,
         canon: String(canon ?? normalized.canon).trim(),
         inheritance: {
             worldBookPolicy: policy,
+            worldLineRelation: relation,
             worldBookNames: policy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
                 ? cleanStringList(worldBookNames ?? normalized.inheritance.worldBookNames)
                 : [],
@@ -313,6 +400,7 @@ export function appendLongDreamChapter(record, source = {}, now = new Date()) {
     return {
         ...normalized,
         updatedAt: createdAt,
+        memory: normalizeMemory(normalized.memory, number),
         chapters: [
             ...normalized.chapters,
             {
@@ -372,6 +460,67 @@ export function setLongDreamStatus(record, status, now = new Date()) {
         status: status === LONG_DREAM_STATUS.COMPLETE ? LONG_DREAM_STATUS.COMPLETE : LONG_DREAM_STATUS.ACTIVE,
         updatedAt: normalizeIsoDate(now, new Date().toISOString()),
     };
+}
+
+export function setLongDreamMemoryStatus(record, status, { errorSignal = '' } = {}, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) throw new Error('长梦记录无效');
+    const allowed = new Set(Object.values(LONG_DREAM_MEMORY_STATUS));
+    const nextStatus = allowed.has(status) ? status : normalized.memory.status;
+    return {
+        ...normalized,
+        memory: {
+            ...normalized.memory,
+            status: nextStatus,
+            lastErrorSignal: nextStatus === LONG_DREAM_MEMORY_STATUS.FAILED ? cleanText(errorSignal, 80) : '',
+        },
+        updatedAt: normalizeIsoDate(now, new Date().toISOString()),
+    };
+}
+
+export function recoverInterruptedLongDreamMemory(record, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) return null;
+    if (normalized.memory.status !== LONG_DREAM_MEMORY_STATUS.WEAVING) return normalized;
+    const status = normalized.memory.pendingChapterNumbers.length
+        ? LONG_DREAM_MEMORY_STATUS.PENDING
+        : (normalized.memory.processedThroughChapter
+            ? LONG_DREAM_MEMORY_STATUS.READY
+            : LONG_DREAM_MEMORY_STATUS.NOT_STARTED);
+    return setLongDreamMemoryStatus(normalized, status, {}, now);
+}
+
+export function applyLongDreamMemoryPatch(record, patch = {}, throughChapter, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) throw new Error('长梦记录无效');
+    const processedThroughChapter = Math.max(
+        normalized.memory.processedThroughChapter,
+        Math.min(normalized.chapters.length, Math.floor(Number(throughChapter) || 0)),
+    );
+    const cards = normalized.memory.cards.slice();
+    const known = new Set(cards.map(card => `${card.type}\u0000${card.content}`.toLocaleLowerCase()));
+    for (const rawCard of Array.isArray(patch.cards) ? patch.cards : []) {
+        const card = normalizeMemoryCard(rawCard, cards.length);
+        if (!card) continue;
+        const key = `${card.type}\u0000${card.content}`.toLocaleLowerCase();
+        if (known.has(key)) continue;
+        known.add(key);
+        cards.push(card);
+    }
+    const updatedAt = normalizeIsoDate(now, new Date().toISOString());
+    const memory = normalizeMemory({
+        ...normalized.memory,
+        cards,
+        currentState: cleanText(patch.currentState || normalized.memory.currentState, 5000),
+        processedThroughChapter,
+        pendingChapterNumbers: normalized.chapters
+            .map(chapter => chapter.number)
+            .filter(number => number > processedThroughChapter),
+        status: LONG_DREAM_MEMORY_STATUS.READY,
+        updatedAt,
+        lastErrorSignal: '',
+    }, normalized.chapters.length);
+    return { ...normalized, memory, updatedAt };
 }
 
 export function saveLongDreamDraft(record, draft = {}, now = new Date()) {

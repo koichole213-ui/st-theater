@@ -2,10 +2,28 @@ export const API_PROTOCOLS = Object.freeze({ AUTO: 'auto', OPENAI: 'openai', ANT
 export const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 
 export function resolveMainApiModel(ctx, oai = ctx?.oai_settings) {
-    const fromContext = typeof ctx?.getChatCompletionModel === 'function'
-        ? ctx.getChatCompletionModel()
-        : '';
-    return String(fromContext || oai?.openai_model || oai?.model || '').trim();
+    let fromContext = '';
+    if (typeof ctx?.getChatCompletionModel === 'function') {
+        try {
+            fromContext = ctx.getChatCompletionModel();
+        } catch {
+            // 不同 SillyTavern 版本暴露的上下文对象并不完全一致，继续检查设置字段。
+        }
+    }
+    const candidates = [
+        fromContext,
+        oai?.openai_model,
+        oai?.model,
+        oai?.custom_model,
+        oai?.claude_model,
+        oai?.google_model,
+        oai?.openrouter_model,
+        oai?.mistralai_model,
+        oai?.cohere_model,
+        oai?.perplexity_model,
+        oai?.groq_model,
+    ];
+    return String(candidates.find(value => String(value || '').trim()) || '').trim();
 }
 
 export function normalizeMaxTokens(value, fallback = DEFAULT_MAX_OUTPUT_TOKENS) {

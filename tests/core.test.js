@@ -18,16 +18,17 @@ import { splitInstructionTextFile } from '../instruction-import.js';
 import { LENGTH_TIERS, LONG_FORM_SPLIT_THRESHOLD, STAGED_RENDER_THRESHOLD, classifyLengthTier, firstRoundGuidance, isLongFormTarget, isStagedRenderTarget, longFormFirstRoundGuidance, longFormFirstRoundTarget, parseTargetWordCount, resolveTargetWordCount, stripTargetWordCountRequirement } from '../length-policy.js';
 import { AUTO_CONTINUE_SCHEMA, migrateAutoContinueDefault } from '../settings-migration.js';
 import { createInstructionBackup, parseInstructionBackup } from '../instruction-backup.js';
-import { WORLD_BOOK_STRATEGIES, mergeFollowedWorldBooks, shouldReadWorldBookEntry, worldBookEntryStrategy } from '../world-book-policy.js';
+import { WORLD_BOOK_STRATEGIES, shouldReadWorldBookEntry, syncFollowedWorldBooks, worldBookEntryStrategy } from '../world-book-policy.js';
 import { buildProtagonistAnchor } from '../protagonist-anchor.js';
 import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from '../plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from '../history-backup.js';
-import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, appendLongDreamChapter, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, saveLongDreamDraft, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition } from '../long-dream.js';
+import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, appendLongDreamChapter, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, recoverInterruptedLongDreamMemory, saveLongDreamDraft, setLongDreamMemoryStatus, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition } from '../long-dream.js';
 import { buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBookContext } from '../long-dream-payload.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from '../long-dream-generation.js';
 import { LONG_DREAM_BACKUP_FORMAT, LONG_DREAM_BACKUP_VERSION, createLongDreamBackup, parseLongDreamBackup } from '../long-dream-backup.js';
+import { buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, pendingLongDreamChapters, shouldWeaveLongDreamMemory } from '../long-dream-memory.js';
 
 test('长梦以完整首章开卷，并默认隔离原世界书', () => {
     const now = new Date('2026-07-31T12:30:00.000Z');
@@ -329,6 +330,11 @@ test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => 
     assert.match(source, /#theater-dream-generate-next', generateNextLongDreamChapter/);
     assert.match(source, /id="theater-dream-stop-generation"/);
     assert.match(source, /id="theater-dream-confirm-chapter"/);
+    assert.match(source, /id="theater-dream-review-fullscreen"/);
+    assert.match(source, /id="theater-dream-regenerate-draft"/);
+    assert.match(source, /longDreamComposerDrafts/);
+    assert.match(source, /lastTheaterTab/);
+    assert.match(source, /regenerateLongDreamDraft/);
     assert.match(source, /requestFinalRenderedHtml/);
     assert.match(source, /class="theater-dream-next-options"/);
     assert.match(source, /<details class="theater-dream-settings">/);
@@ -393,6 +399,65 @@ test('只有明确沿用时才读取长卷内冻结的世界书内容', () => {
     const payload = buildLongDreamChapterPayload({ record, instruction: '寻找坏掉的钟。' });
     assert.match(payload.userPrompt, /用户主动允许的冻结世界书快照/);
     assert.match(payload.userPrompt, /站台的钟永远停在零点/);
+});
+
+test('长梦按世界线关系解释冻结资料，而不是让用户逐条永久勾选', () => {
+    const snapshot = createLongDreamWorldBookSnapshot({
+        bookNames: ['人物与地点'],
+        entries: [{ book: '人物与地点', name: '成年设定', content: '成年后两人住在临海市。' }],
+    });
+    const record = createLongDreamRecord({
+        canon: '当前是两人的童年时期。',
+        worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED,
+        worldLineRelation: LONG_DREAM_WORLD_LINE_RELATION.PREQUEL,
+        worldBookNames: ['人物与地点'],
+        worldBookSnapshot: snapshot,
+        source: { text: '第一章写他们七岁时的暑假。', html: '<main>第一章写他们七岁时的暑假。</main>' },
+    });
+    const payload = buildLongDreamChapterPayload({ record, instruction: '去旧学校找老师。' });
+    assert.equal(record.inheritance.worldLineRelation, LONG_DREAM_WORLD_LINE_RELATION.PREQUEL);
+    assert.match(payload.systemPrompt, /前传补完/);
+    assert.match(payload.systemPrompt, /本梦已经写出的变化优先/);
+    assert.match(payload.userPrompt, /成年后两人住在临海市/);
+});
+
+test('梦脉织录按三章批量、只读已确认章节，并以补丁追加而不删除旧记忆', () => {
+    let record = createLongDreamRecord({
+        canon: '故事发生在旧港。',
+        source: { text: '第一章正文。', html: '<main>第一章正文。</main>' },
+    });
+    record = appendLongDreamChapter(record, { text: '第二章正文。', html: '<main>第二章正文。</main>' });
+    assert.equal(shouldWeaveLongDreamMemory(record, { batchSize: 3 }), false);
+    record = appendLongDreamChapter(record, { text: '第三章正文。', html: '<main>第三章正文。</main>' });
+    assert.deepEqual(pendingLongDreamChapters(record).map(chapter => chapter.number), [1, 2, 3]);
+    assert.equal(shouldWeaveLongDreamMemory(record, { batchSize: 3 }), true);
+
+    record.memory.cards = [{ type: '伏笔', content: '旧钥匙尚未使用。', chapterNumber: 1, status: 'active' }];
+    const request = buildLongDreamMemoryPayload({ record });
+    assert.deepEqual(request.pendingChapterNumbers, [1, 2, 3]);
+    assert.match(request.userPrompt, /第一章正文/);
+    assert.match(request.userPrompt, /第三章正文/);
+    assert.match(request.userPrompt, /旧钥匙尚未使用/);
+
+    const patch = parseLongDreamMemoryResponse(JSON.stringify({
+        currentState: '两人目前位于旧港钟楼。',
+        cards: [{ type: '地点/物品', content: '旧钥匙打开了钟楼侧门。', chapterNumber: 3, tags: ['旧钥匙', '钟楼'] }],
+    }), { pendingChapterNumbers: request.pendingChapterNumbers });
+    const updated = applyLongDreamMemoryPatch(record, patch, request.throughChapter);
+    assert.equal(updated.memory.processedThroughChapter, 3);
+    assert.deepEqual(updated.memory.pendingChapterNumbers, []);
+    assert.equal(updated.memory.cards.some(card => card.content === '旧钥匙尚未使用。'), true);
+    assert.equal(updated.memory.cards.some(card => card.content === '旧钥匙打开了钟楼侧门。'), true);
+    assert.equal(updated.memory.currentState, '两人目前位于旧港钟楼。');
+});
+
+test('刷新或关页打断梦脉请求后会恢复为待织录，不会永久卡在后台处理中', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章正文。', html: '<main>第一章正文。</main>' } });
+    record = setLongDreamMemoryStatus(record, LONG_DREAM_MEMORY_STATUS.WEAVING);
+    assert.equal(record.memory.status, LONG_DREAM_MEMORY_STATUS.WEAVING);
+    const recovered = recoverInterruptedLongDreamMemory(record);
+    assert.equal(recovered.memory.status, LONG_DREAM_MEMORY_STATUS.PENDING);
+    assert.deepEqual(recovered.memory.pendingChapterNumbers, [1]);
 });
 
 test('长梦上下文预算先裁剪低优先级信息，定梦和本章方向始终完整', () => {
@@ -706,7 +771,9 @@ test('手机弹窗为 Close 按钮和安全区预留滚动空间，切换标签�
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const tabHandler = source.match(/\/\/ Tabs[\s\S]*?\/\/ ---- Generate ----/)?.[0] || '';
-    assert.match(tabHandler, /panels\.scrollTop = 0/);
+    const tabActivator = source.match(/function activateTheaterTab\([\s\S]*?\n\}/)?.[0] || '';
+    assert.match(tabHandler, /activateTheaterTab/);
+    assert.match(tabActivator, /panels\.scrollTop = 0/);
     assert.doesNotMatch(source, /target\.scrollIntoView/);
     assert.match(styles, /height:\s*clamp\(240px, calc\(92dvh - 210px\), 620px\)/);
     assert.match(styles, /env\(safe-area-inset-bottom\)/);
@@ -1148,6 +1215,36 @@ test('酒馆主 API 没有 ChatCompletionService 时复用 TavernHelper 路径',
     assert.equal(result.text, 'TavernHelper 正文');
 });
 
+test('酒馆主 API 无法识别 ChatCompletionService 字段时安全降级到 TavernHelper', async () => {
+    const fallbacks = [];
+    let serviceCalls = 0;
+    let helperCalls = 0;
+    const result = await requestMainApi({
+        ctx: {},
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        shouldStream: false,
+        chatCompletionService: {
+            processRequest: async () => {
+                serviceCalls++;
+                return '不应调用';
+            },
+        },
+        tavernHelper: {
+            generateRaw: async () => {
+                helperCalls++;
+                return '兼容路径正文';
+            },
+        },
+        getContext: () => ({}),
+        onFallback: path => fallbacks.push(path),
+    });
+    assert.equal(serviceCalls, 0);
+    assert.equal(helperCalls, 1);
+    assert.deepEqual(fallbacks, ['main:ChatCompletionService']);
+    assert.equal(result.text, '兼容路径正文');
+});
+
 test('酒馆主 API 的内容策略错误不会降级重发到 TavernHelper', async () => {
     let helperCalls = 0;
     await assert.rejects(
@@ -1373,10 +1470,24 @@ test('世界书读取并区分酒馆蓝灯、绿灯与链式策略', () => {
     assert.equal(shouldReadWorldBookEntry({ constant: true, disable: true }, 'lights'), false);
 });
 
-test('跟随角色卡只补入绑定世界书，不覆盖用户手选世界书', () => {
+test('切换角色卡会撤下上一张卡自动跟随的世界书，并保留用户手选', () => {
     assert.deepEqual(
-        mergeFollowedWorldBooks(['手选设定', '角色绑定'], ['角色绑定', '聊天绑定', '']),
-        ['手选设定', '角色绑定', '聊天绑定'],
+        syncFollowedWorldBooks(
+            ['手选设定', '旧角色绑定', '旧聊天绑定'],
+            ['旧角色绑定', '旧聊天绑定'],
+            ['新角色绑定', '新角色绑定', ''],
+        ),
+        {
+            selectedBooks: ['手选设定', '新角色绑定'],
+            followedBooks: ['新角色绑定'],
+        },
+    );
+});
+
+test('关闭角色卡跟随后会撤下自动组但保留手选世界书', () => {
+    assert.deepEqual(
+        syncFollowedWorldBooks(['手选设定', '角色绑定'], ['角色绑定'], []),
+        { selectedBooks: ['手选设定'], followedBooks: [] },
     );
 });
 

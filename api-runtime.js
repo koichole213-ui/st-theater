@@ -201,12 +201,14 @@ export async function callViaChatCompletionService({
     getContext = () => globalThis.SillyTavern?.getContext?.(),
 } = {}) {
     const currentContext = getContext?.() || ctx;
-    const oai = currentContext?.oai_settings || globalThis.oai_settings;
+    const oai = currentContext?.oai_settings || ctx?.oai_settings || globalThis.oai_settings;
     const source = oai?.chat_completion_source;
-    const model = resolveMainApiModel(currentContext, oai);
+    const model = resolveMainApiModel(currentContext, oai) || resolveMainApiModel(ctx, oai);
     if (!source || !model) {
         throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONFIG, {
-            code: 'THEATER_CONFIG', phase: 'main', transport: 'ChatCompletionService',
+            // 这里只能说明当前版本的 ChatCompletionService 字段没有被识别；
+            // TavernHelper 仍可能完整继承酒馆当前连接，因此允许安全降级一次。
+            code: 'THEATER_MAIN_CONTEXT_UNRECOGNIZED', phase: 'main', transport: 'ChatCompletionService',
         });
     }
 

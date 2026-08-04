@@ -1,4 +1,4 @@
-import { LONG_DREAM_WORLD_BOOK_POLICY } from './long-dream.js';
+import { LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION } from './long-dream.js';
 
 function cleanText(value) {
     return String(value || '').trim();
@@ -28,7 +28,7 @@ function memoryText(cards = []) {
         .map((card, index) => {
             if (typeof card === 'string') return cleanText(card);
             const status = cleanText(card?.status).toLocaleLowerCase();
-            if (status && !['confirmed', 'accepted', '已确认'].includes(status)) return '';
+            if (status && !['active', 'confirmed', 'accepted', '已确认'].includes(status)) return '';
             const title = cleanText(card?.title || card?.type || `记忆 ${index + 1}`);
             const content = cleanText(card?.content || card?.text || card?.summary);
             return content ? `${title}：${content}` : '';
@@ -65,13 +65,32 @@ export function longDreamChapterContext(record = {}) {
         })
         .filter(Boolean)
         .join('\n\n');
+    const currentState = cleanText(record?.memory?.currentState);
+    const cards = memoryText(record?.memory?.cards);
     return {
         canon: cleanText(record.canon),
         chapters,
-        memory: memoryText(record?.memory?.cards),
+        memory: [currentState ? `当前脉象：${currentState}` : '', cards].filter(Boolean).join('\n'),
         worldBook: longDreamWorldBookContext(record),
+        worldLineRelation: record?.inheritance?.worldLineRelation || LONG_DREAM_WORLD_LINE_RELATION.ISOLATED,
         chapterCount: Array.isArray(record.chapters) ? record.chapters.length : 0,
     };
+}
+
+function worldLineRelationInstruction(relation) {
+    if (relation === LONG_DREAM_WORLD_LINE_RELATION.PARALLEL) {
+        return '本梦是平行支线：冻结世界书只提供世界背景与人物素材；其中的原剧情、关系、年龄和人物现状不是本梦事实。';
+    }
+    if (relation === LONG_DREAM_WORLD_LINE_RELATION.PREQUEL) {
+        return '本梦是前传补完：冻结世界书中的原设定属于可能的未来参考；本梦已经写出的变化优先，不能为了回归原线而抹掉变化。';
+    }
+    if (relation === LONG_DREAM_WORLD_LINE_RELATION.CANON_CONCURRENT) {
+        return '本梦是原线同期补完：冻结世界书中的重大事件和人物关系默认成立，但此梦设定、已保存章节和梦脉中明确产生的偏离优先。';
+    }
+    if (relation === LONG_DREAM_WORLD_LINE_RELATION.SEQUEL) {
+        return '本梦是正史后续：冻结世界书属于已经发生的历史；后续仍以此梦设定、已保存章节和梦脉中的最新状态为准。';
+    }
+    return '本梦与原世界书完全隔离；不得猜测、恢复或注入原世界线。';
 }
 
 function takeBudgeted(value, state, key, { keepTail = false } = {}) {
@@ -127,6 +146,7 @@ export function buildLongDreamChapterPayload({
 
     const systemPrompt = [
         '你正在续写一部长篇支线故事。你只能依据用户已经确认的此梦世界线、这部长卷自身的章节与已确认梦脉继续创作；不得读取、猜测或恢复原聊天前文、普通续写缓存及未提供的世界书设定。此梦设定是不可静默推翻的硬事实；若本章方向与它冲突，应停止创作并明确指出冲突。',
+        worldLineRelationInstruction(context.worldLineRelation),
         style ? `【写作风格｜只控制表达，不得改写事实】\n${style}` : '',
     ].filter(Boolean).join('\n\n');
     const sections = [

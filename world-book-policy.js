@@ -21,11 +21,21 @@ export function shouldReadWorldBookEntry(entry = {}, mode = 'all') {
     return true;
 }
 
-export function mergeFollowedWorldBooks(selectedBooks = [], boundBooks = []) {
-    const merged = [];
-    for (const value of [...selectedBooks, ...boundBooks]) {
+function uniqueWorldBookNames(values = []) {
+    const names = [];
+    for (const value of Array.isArray(values) ? values : []) {
         const name = String(value || '').trim();
-        if (name && !merged.includes(name)) merged.push(name);
+        if (name && !names.includes(name)) names.push(name);
     }
-    return merged;
+    return names;
+}
+
+export function syncFollowedWorldBooks(selectedBooks = [], previousFollowedBooks = [], nextFollowedBooks = []) {
+    const previous = new Set(uniqueWorldBookNames(previousFollowedBooks));
+    const manual = uniqueWorldBookNames(selectedBooks).filter(name => !previous.has(name));
+    const followedBooks = uniqueWorldBookNames(nextFollowedBooks);
+    return {
+        selectedBooks: uniqueWorldBookNames([...manual, ...followedBooks]),
+        followedBooks,
+    };
 }
