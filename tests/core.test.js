@@ -10,6 +10,7 @@ import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, normalizeCon
 import { RENDER_REPORT_TIMEOUT_MS, injectResizeReporter, installSafeResizeListener, renderSafeIframe, sandboxPermissions } from '../safe-renderer.js';
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from '../request-metrics.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, createDiagnosticError, diagnosticSignalInfo } from '../request-diagnostics.js';
+import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkYRatio } from '../result-bookmark.js';
 import { autoSourceLabel, resolveAutoInstruction } from '../auto-mode.js';
 import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
 import { apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from '../api-presets.js';
@@ -615,13 +616,17 @@ test('插件更新成功后只提供需确认的酒馆刷新操作', () => {
     assert.match(styles, /\.theater-reload-after-update\[hidden\][\s\S]*?display: none/);
 });
 
-test('诊断页提供可收起的常见问题汇总，并按错误信号查询', () => {
+test('常见问题汇总是诊断报告后的独立可折叠界面', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const signals = readFileSync(new URL('../request-diagnostics.js', import.meta.url), 'utf8');
-    assert.match(source, /【常见问题汇总｜按错误信号查询】/);
-    assert.match(source, /class="theater-diagnostic-catalog"/);
-    assert.match(source, /按弹窗中的错误信号查询/);
+    const diagnosticsPanel = source.indexOf('data-panel="diagnostics"');
+    const reportOutput = source.indexOf('id="theater-diagnostics-output"', diagnosticsPanel);
+    const library = source.indexOf('class="theater-diagnostic-catalog theater-diagnostic-library"', diagnosticsPanel);
+    assert.ok(reportOutput >= 0 && library > reportOutput);
+    assert.match(source, /按弹窗里的错误信号查原因/);
+    assert.doesNotMatch(source, /【常见问题汇总｜按错误信号查询】/);
+    assert.doesNotMatch(source.match(/function runDiagnostics\(\)[\s\S]*?\n\}/)?.[0] || '', /diagnostic-catalog/);
     assert.match(signals, /T-API-CONTENT-FILTER/);
     assert.match(styles, /\.theater-diagnostic-catalog\s*\{/);
     assert.match(styles, /\.theater-diagnostic-catalog\[open\]/);
@@ -676,15 +681,44 @@ test('暗色纯文字阅读壳转义正文并声明夜间配色', () => {
     assert.match(html, /"KaiTi"/);
 });
 
-test('生成结果操作栏位于正文上方，并提供安全退出编辑与移除结果', () => {
+test('生成结果使用可关闭的页边书签，并保留安全退出编辑与移除结果', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const actionsAt = source.indexOf('class="theater-btn-row theater-result-actions"');
+    const actionsAt = source.indexOf('id="theater-result-actions"');
     const outputAt = source.indexOf('id="theater-output-container"');
     assert.ok(actionsAt >= 0 && actionsAt < outputAt);
+    assert.match(source, /id="theater-result-bookmark-enabled"/);
+    assert.match(source, /bookmarkPlacementFromPoint/);
+    assert.match(source, /is-inline-menu/);
     assert.match(source, /id="theater-cancel-edit-btn"/);
     assert.match(source, /id="theater-delete-result-btn"/);
     assert.match(source, /原正文和排版没有改变/);
     assert.match(source, /已经保存到历史的小剧场不会受影响/);
+});
+
+test('页边书签位置会限制在可见范围并按拖动落点吸附', () => {
+    const rect = { left: 100, right: 700, top: 50, bottom: 650, width: 600, height: 600 };
+    assert.equal(normalizeBookmarkYRatio(-1), 0.12);
+    assert.equal(normalizeBookmarkYRatio(2), 0.88);
+    assert.deepEqual(bookmarkPlacementFromPoint({ rect, x: 160, y: 350 }), { side: 'left', yRatio: 0.5 });
+    assert.deepEqual(bookmarkPlacementFromPoint({ rect, x: 660, y: 590 }), { side: 'right', yRatio: 0.88 });
+    const position = bookmarkPosition({ rect, side: 'right', yRatio: 0.55, width: 48, height: 68 });
+    assert.equal(position.left, 646);
+    assert.equal(position.top, 346);
+});
+
+test('设置页重排为四组控制台且保留所有旧功能入口', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    for (const id of [
+        'theater-api-mode', 'theater-api-preset-select', 'theater-api-protocol', 'theater-api-url',
+        'theater-api-key', 'theater-api-model', 'theater-max-output-tokens', 'theater-auto-continue',
+        'theater-wb-read-mode', 'theater-sound-enabled', 'theater-sound-preset', 'theater-sound-volume',
+        'theater-random-enabled', 'theater-random-scope', 'theater-auto-enabled', 'theater-auto-interval',
+        'theater-auto-source', 'theater-result-bookmark-enabled', 'theater-floating-ball-toggle',
+        'theater-floating-ball-tuck-toggle', 'theater-update-btn', 'theater-reload-after-update-btn',
+    ]) assert.match(source, new RegExp(`id="${id}"`));
+    for (const group of ['api', 'generation', 'experience', 'extension']) {
+        assert.match(source, new RegExp(`data-config-group="\\$\\{group.id\\}"|id: '${group}'`));
+    }
 });
 
 test('final HTML renderer hydrates every paragraph without rewriting source text', () => {

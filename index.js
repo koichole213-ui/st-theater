@@ -30,6 +30,7 @@ import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup
 import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, latestLongDreamChapter, normalizeLongDreamRecord, setLongDreamStatus, updateLongDreamDefinition } from './long-dream.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from './long-dream-generation.js';
 import { MAX_LONG_DREAM_BACKUP_BYTES, createLongDreamBackup, parseLongDreamBackup } from './long-dream-backup.js';
+import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkSide, normalizeBookmarkYRatio } from './result-bookmark.js';
 
 const MODULE_NAME = 'theater_generator';
 const VERSION = '3.6.3';
@@ -283,6 +284,9 @@ const defaultSettings = Object.freeze({
     followUserPersona: false,   // 生成时自动读取当前 user 人设
     floatingBall: false,
     floatingBallTuck: true,
+    resultBookmarkEnabled: true,
+    resultBookmarkSide: 'right',
+    resultBookmarkYRatio: 0.55,
     soundEnabled: true,
     soundPreset: 'chime',
     soundVolume: 70,
@@ -583,6 +587,8 @@ async function init() {
     }
     settings.uiFontSize = normalizeUIFontSize(settings.uiFontSize);
     settings.manualTargetChars = normalizeManualTarget(settings.manualTargetChars);
+    settings.resultBookmarkSide = normalizeBookmarkSide(settings.resultBookmarkSide);
+    settings.resultBookmarkYRatio = normalizeBookmarkYRatio(settings.resultBookmarkYRatio);
     if (!['all', 'enabled', 'lights'].includes(settings.worldBookReadMode)) settings.worldBookReadMode = 'all';
     delete settings.customSystemPrompt;
     delete settings.presetMode;
@@ -1098,21 +1104,31 @@ function buildPopupHTML() {
         <div class="theater-section" id="theater-output-section" style="display:none;">
             <div class="theater-result-head">
                 <label class="theater-label">生成结果</label>
+            </div>
+            <div class="theater-result-meta-row">
                 <div class="theater-recent-nav" id="theater-recent-nav" style="display:none;">
                     <span id="theater-recent-prev" class="theater-recent-arrow" title="上一条"><i class="fa-solid fa-chevron-left"></i></span>
                     <span id="theater-recent-indicator"></span>
                     <span id="theater-recent-next" class="theater-recent-arrow" title="下一条"><i class="fa-solid fa-chevron-right"></i></span>
                 </div>
-            </div>
-            <div class="theater-btn-row theater-result-actions">
-                <div id="theater-save-history-btn" class="theater-btn"><i class="fa-solid fa-bookmark"></i><span>保存</span></div>
-                <div id="theater-copy-html-btn" class="theater-btn"><i class="fa-solid fa-copy"></i><span>复制HTML</span></div>
-                <div id="theater-fullscreen-btn" class="theater-btn"><i class="fa-solid fa-expand"></i><span>全屏阅读</span></div>
-                <div id="theater-continue-btn" class="theater-btn"><i class="fa-solid fa-forward"></i><span>续写</span></div>
-                <div id="theater-edit-result-btn" class="theater-btn"><i class="fa-solid fa-pen-to-square"></i><span>编辑文字</span></div>
-                <div id="theater-delete-result-btn" class="theater-btn danger-soft"><i class="fa-solid fa-trash-can"></i><span>移除结果</span></div>
-                <div id="theater-save-edit-btn" class="theater-btn primary" style="display:none;"><i class="fa-solid fa-check"></i><span>应用修改</span></div>
-                <div id="theater-cancel-edit-btn" class="theater-btn" style="display:none;"><i class="fa-solid fa-xmark"></i><span>退出编辑</span></div>
+                <div class="theater-result-toolbox ${settings.resultBookmarkEnabled !== false ? `is-bookmark is-${normalizeBookmarkSide(settings.resultBookmarkSide)}` : 'is-inline-menu'}">
+                    <div id="theater-result-actions" class="theater-btn-row theater-result-actions" role="menu" aria-label="生成结果操作">
+                        <div id="theater-save-history-btn" class="theater-btn" role="menuitem"><i class="fa-solid fa-bookmark"></i><span>保存</span></div>
+                        <div id="theater-copy-html-btn" class="theater-btn" role="menuitem"><i class="fa-solid fa-copy"></i><span>复制文字</span></div>
+                        <div id="theater-fullscreen-btn" class="theater-btn" role="menuitem"><i class="fa-solid fa-expand"></i><span>全屏阅读</span></div>
+                        <div id="theater-continue-btn" class="theater-btn" role="menuitem"><i class="fa-solid fa-forward"></i><span>续写</span></div>
+                        <div id="theater-edit-result-btn" class="theater-btn" role="menuitem"><i class="fa-solid fa-pen-to-square"></i><span>编辑文字</span></div>
+                        <div id="theater-delete-result-btn" class="theater-btn danger-soft" role="menuitem"><i class="fa-solid fa-trash-can"></i><span>移除结果</span></div>
+                        <div id="theater-save-edit-btn" class="theater-btn primary" role="menuitem" style="display:none;"><i class="fa-solid fa-check"></i><span>应用修改</span></div>
+                        <div id="theater-cancel-edit-btn" class="theater-btn" role="menuitem" style="display:none;"><i class="fa-solid fa-xmark"></i><span>退出编辑</span></div>
+                    </div>
+                    <button id="theater-result-actions-toggle" class="theater-result-actions-toggle" type="button" aria-expanded="false" aria-controls="theater-result-actions" title="结果操作；可上下拖动并吸附左右页边">
+                        <span class="theater-result-bookmark-lamp">${LAMP_SVG_HTML}</span>
+                        <span class="theater-result-bookmark-label">操作</span>
+                        <span class="theater-result-bookmark-grip" aria-hidden="true"><i></i><i></i><i></i></span>
+                        <span class="theater-result-inline-more" aria-hidden="true">•••</span>
+                    </button>
+                </div>
             </div>
             <div id="theater-length-hint" class="theater-hint-inline" style="display:none; margin:-4px 0 8px;"></div>
             <div id="theater-output-container">
@@ -1375,11 +1391,17 @@ function buildPopupHTML() {
             </div>
             <div id="theater-diagnostics-output" class="theater-diagnostic-report" style="display:none;"></div>
         </div>
+        <div class="theater-section theater-diagnostic-library-section">
+            <details class="theater-diagnostic-catalog theater-diagnostic-library">
+                <summary><span><i class="fa-solid fa-book-medical"></i> 常见问题汇总</span><small>按弹窗里的错误信号查原因</small></summary>
+                <div class="theater-diagnostic-catalog-list">${diagnosticCatalogHTML()}</div>
+            </details>
+        </div>
     </div>
 
     <!-- ===== 7. 设置 ===== -->
     <div class="theater-panel" data-panel="config">
-        <div class="theater-section">
+        <div class="theater-section" data-config-section="api">
             <label class="theater-label"><i class="fa-solid fa-plug"></i> API 配置</label>
             <select id="theater-api-mode" class="theater-select" style="margin-bottom:8px;">
                 <option value="custom" ${(settings.apiMode || 'custom') === 'custom' ? 'selected' : ''}>独立 API（推荐）</option>
@@ -1441,7 +1463,7 @@ function buildPopupHTML() {
                 <input id="theater-max-auto-rounds" class="theater-input theater-number-input" type="number" min="1" max="10" step="1" value="${Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3))}">
             </div>
         </div>
-        <div class="theater-section">
+        <div class="theater-section" data-config-section="worldbook">
             <label class="theater-label"><i class="fa-solid fa-book-atlas"></i> 世界书读取</label>
             <select id="theater-wb-read-mode" class="theater-select">
                 <option value="all" ${(settings.worldBookReadMode || 'all') === 'all' ? 'selected' : ''}>全部条目</option>
@@ -1449,7 +1471,7 @@ function buildPopupHTML() {
                 <option value="lights" ${settings.worldBookReadMode === 'lights' ? 'selected' : ''}>按酒馆蓝灯与绿灯触发</option>
             </select>
         </div>
-        <div class="theater-section">
+        <div class="theater-section" data-config-section="sound">
             <label class="theater-label"><i class="fa-solid fa-bell"></i> 生成完毕提示音</label>
             <div class="theater-toggle-row" style="margin-bottom:10px;">
                 <label class="theater-toggle-label"><input type="checkbox" id="theater-sound-enabled" ${settings.soundEnabled ? 'checked' : ''}><span>开启提示音</span></label>
@@ -1466,7 +1488,7 @@ function buildPopupHTML() {
                 <span id="theater-sound-volume-num" class="theater-hint" style="min-width:36px;text-align:right;">${Number(settings.soundVolume) || 0}</span>
             </div>
         </div>
-        <div class="theater-section">
+        <div class="theater-section" data-config-section="random">
             <label class="theater-label"><i class="fa-solid fa-dice"></i> 随机抽取指令</label>
             <div class="theater-toggle-row" style="margin-bottom:10px;">
                 <label class="theater-toggle-label"><input type="checkbox" id="theater-random-enabled" ${settings.randomEnabled ? 'checked' : ''}><span>开启「抽一个」按钮</span></label>
@@ -1490,7 +1512,7 @@ function buildPopupHTML() {
             </div>
             <p class="theater-hint" style="margin-top:6px;">开启后会在「生成」页加一个🎲按钮，点一下从所选范围里随机填一个指令到输入框。</p>
         </div>
-        <div class="theater-section">
+        <div class="theater-section" data-config-section="auto">
             <label class="theater-label"><i class="fa-solid fa-wand-magic-sparkles"></i> 自动生成</label>
             <div class="theater-toggle-row" style="margin-bottom:10px;">
                 <label class="theater-toggle-label"><input type="checkbox" id="theater-auto-enabled" ${settings.autoMode ? 'checked' : ''}><span>开启自动模式</span></label>
@@ -1519,7 +1541,14 @@ function buildPopupHTML() {
             </div>
             <p class="theater-hint" style="margin-top:6px;">攒够设定层数的 AI 回复后，静默在后台生成一次小剧场，完成后响提示音。每个聊天单独计数；删楼、重roll不会算错。</p>
         </div>
-        <div class="theater-section">
+        <div class="theater-section" data-config-section="result-actions">
+            <label class="theater-label"><i class="fa-solid fa-bookmark"></i> 生成结果操作</label>
+            <div class="theater-toggle-row">
+                <label class="theater-toggle-label"><input type="checkbox" id="theater-result-bookmark-enabled" ${settings.resultBookmarkEnabled !== false ? 'checked' : ''}><span>显示页边操作书签</span></label>
+                <span class="theater-hint-inline">关闭后仍可用分页右侧的“···”打开全部操作</span>
+            </div>
+        </div>
+        <div class="theater-section" data-config-section="extension">
             <label class="theater-label"><i class="fa-solid fa-arrows-rotate"></i> 扩展管理</label>
             <div class="theater-toggle-row" style="margin-bottom:10px;">
                 <label class="theater-toggle-label"><input type="checkbox" id="theater-floating-ball-toggle" ${settings.floatingBall ? 'checked' : ''}><span>悬浮球</span></label>
@@ -1538,7 +1567,7 @@ function buildPopupHTML() {
             </div>
             <p id="theater-update-ready-hint" class="theater-update-ready-hint" ${updateReadyToReload ? '' : 'hidden'}><i class="fa-solid fa-circle-check"></i><span>更新文件已下载；你可以稍后刷新，不会自动打断当前操作。</span></p>
         </div>
-        <div class="theater-section">
+        <div class="theater-section" data-config-section="logs">
             <label class="theater-label"><i class="fa-solid fa-clipboard-list"></i> 运行日志</label>
             <p class="theater-hint" style="margin-bottom:8px;">仅保存在内存中，最多 200 条；复制内容已统一脱敏，可直接用于反馈问题。</p>
             <div class="theater-btn-row">
@@ -2395,6 +2424,8 @@ async function openTheaterPopup() {
     wbSearch = '';
     presetSearch = '';
     bindEvents();
+    decorateConfigLayout();
+    applyResultToolboxMode();
     renderRuntimeLog();
     await loadWorldBookList();
     await loadPresetNameList();
@@ -2508,6 +2539,86 @@ function findApiPreset(id = settings.selectedApiPresetId) {
     return normalizeApiPresetList(settings.apiPresets).find(preset => preset.id === id) || null;
 }
 
+function closeResultActions() {
+    $('.theater-result-toolbox').removeClass('is-open')
+        .find('#theater-result-actions-toggle').attr('aria-expanded', 'false');
+}
+
+function resultBookmarkRect() {
+    const popup = document.querySelector('.theater-popup');
+    return popup?.getBoundingClientRect() || {
+        top: 0,
+        right: window.innerWidth,
+        bottom: window.innerHeight,
+        left: 0,
+        width: window.innerWidth,
+        height: window.innerHeight,
+    };
+}
+
+function positionResultToolbox() {
+    const toolbox = document.querySelector('.theater-result-toolbox.is-bookmark');
+    const toggle = toolbox?.querySelector('#theater-result-actions-toggle');
+    if (!toolbox || !toggle) return;
+    const toggleRect = toggle.getBoundingClientRect();
+    const position = bookmarkPosition({
+        rect: resultBookmarkRect(),
+        side: settings.resultBookmarkSide,
+        yRatio: settings.resultBookmarkYRatio,
+        width: toggleRect.width || 48,
+        height: toggleRect.height || 68,
+    });
+    toolbox.classList.toggle('is-left', position.side === 'left');
+    toolbox.classList.toggle('is-right', position.side === 'right');
+    toolbox.classList.toggle('is-lower', normalizeBookmarkYRatio(settings.resultBookmarkYRatio) > 0.68);
+    toolbox.style.left = `${Math.round(position.left)}px`;
+    toolbox.style.right = 'auto';
+    toolbox.style.top = `${Math.round(position.top)}px`;
+}
+
+function applyResultToolboxMode() {
+    const $toolbox = $('.theater-result-toolbox');
+    const enabled = settings.resultBookmarkEnabled !== false;
+    closeResultActions();
+    $toolbox.toggleClass('is-bookmark', enabled)
+        .toggleClass('is-inline-menu', !enabled)
+        .toggleClass('is-left', enabled && settings.resultBookmarkSide === 'left')
+        .toggleClass('is-right', enabled && settings.resultBookmarkSide !== 'left')
+        .toggleClass('is-lower', enabled && normalizeBookmarkYRatio(settings.resultBookmarkYRatio) > 0.68)
+        .removeClass('is-dragging');
+    if (enabled) {
+        requestAnimationFrame(positionResultToolbox);
+    } else {
+        $toolbox.css({ left: '', right: '', top: '' });
+    }
+}
+
+function decorateConfigLayout() {
+    const $panel = $('.theater-panel[data-panel="config"]');
+    if (!$panel.length || $panel.children('.theater-config-layout').length) return;
+    const groups = [
+        { id: 'api', icon: 'fa-plug', title: 'API 与输出', subtitle: '连接、预设、模型与长篇补写', sections: ['api'], open: true },
+        { id: 'generation', icon: 'fa-wand-magic-sparkles', title: '生成规则', subtitle: '世界书、随机指令与自动模式', sections: ['worldbook', 'random', 'auto'] },
+        { id: 'experience', icon: 'fa-bell', title: '提示与操作', subtitle: '提示音和生成结果页边书签', sections: ['sound', 'result-actions'] },
+        { id: 'extension', icon: 'fa-puzzle-piece', title: '扩展管理', subtitle: '悬浮球、更新、刷新与运行日志', sections: ['extension', 'logs'] },
+    ];
+    const $layout = $('<div class="theater-config-layout">');
+    const $index = $('<nav class="theater-config-index" aria-label="设置分类">');
+    const $groups = $('<div class="theater-config-groups">');
+    groups.forEach(group => {
+        $index.append(`<button type="button" data-config-open="${group.id}"><i class="fa-solid ${group.icon}"></i><span>${group.title}</span></button>`);
+        const $details = $(`<details class="theater-config-group" data-config-group="${group.id}"${group.open ? ' open' : ''}>`);
+        $details.append(`<summary><span class="theater-config-group-icon"><i class="fa-solid ${group.icon}"></i></span><span><b>${group.title}</b><small>${group.subtitle}</small></span><i class="fa-solid fa-chevron-down theater-config-group-chevron"></i></summary>`);
+        const $body = $('<div class="theater-config-group-body">');
+        group.sections.forEach(section => $body.append($panel.children(`[data-config-section="${section}"]`)));
+        $details.append($body);
+        $groups.append($details);
+    });
+    $layout.append($index, $groups);
+    $panel.prepend($layout);
+    $groups.append($panel.children('.theater-version'));
+}
+
 function bindEvents() {
     const $d = $(document);
     const tokenAffectingSelectors = '#theater-interactive-toggle,#theater-context-range,#theater-read-chat-context,#theater-render-select,#theater-preset-name-select,#theater-style-addon,#theater-nsfw-addon,.theater-preset-check,.theater-wb-check';
@@ -2521,10 +2632,79 @@ function bindEvents() {
         if (t === 'diagnostics') renderRuntimeLog();
         if (t === 'long-dream') renderLongDreamPanel();
     });
+    $d.off('click.tcopen').on('click.tcopen', '[data-config-open]', function () {
+        const target = document.querySelector(`.theater-config-group[data-config-group="${this.dataset.configOpen}"]`);
+        if (!target) return;
+        target.open = true;
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
 
     // ---- Generate ----
     $d.off('click.tg').on('click.tg', '#theater-generate-btn', generateTheater);
     $d.off('click.tstop').on('click.tstop', '#theater-stop-btn', stopGeneration);
+    let bookmarkDragged = false;
+    let bookmarkDrag = null;
+    $d.off('pointerdown.trad').on('pointerdown.trad', '.theater-result-toolbox.is-bookmark #theater-result-actions-toggle', function (event) {
+        if (event.button !== undefined && event.button !== 0) return;
+        const toolbox = this.closest('.theater-result-toolbox');
+        const rect = toolbox.getBoundingClientRect();
+        bookmarkDragged = false;
+        bookmarkDrag = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            offsetX: event.clientX - rect.left,
+            offsetY: event.clientY - rect.top,
+            toolbox,
+        };
+        this.setPointerCapture?.(event.pointerId);
+    });
+    $d.off('pointermove.trad').on('pointermove.trad', function (event) {
+        if (!bookmarkDrag || bookmarkDrag.pointerId !== event.pointerId) return;
+        const dx = event.clientX - bookmarkDrag.startX;
+        const dy = event.clientY - bookmarkDrag.startY;
+        if (!bookmarkDragged && Math.hypot(dx, dy) < 5) return;
+        bookmarkDragged = true;
+        closeResultActions();
+        bookmarkDrag.toolbox.classList.add('is-dragging');
+        bookmarkDrag.toolbox.style.left = `${event.clientX - bookmarkDrag.offsetX}px`;
+        bookmarkDrag.toolbox.style.top = `${event.clientY - bookmarkDrag.offsetY}px`;
+        event.preventDefault();
+    });
+    $d.off('pointerup.trad pointercancel.trad').on('pointerup.trad pointercancel.trad', function (event) {
+        if (!bookmarkDrag || bookmarkDrag.pointerId !== event.pointerId) return;
+        const toolbox = bookmarkDrag.toolbox;
+        toolbox.classList.remove('is-dragging');
+        if (bookmarkDragged) {
+            const placement = bookmarkPlacementFromPoint({ rect: resultBookmarkRect(), x: event.clientX, y: event.clientY });
+            settings.resultBookmarkSide = placement.side;
+            settings.resultBookmarkYRatio = placement.yRatio;
+            save();
+            positionResultToolbox();
+        }
+        bookmarkDrag = null;
+    });
+    $d.off('click.tra').on('click.tra', '#theater-result-actions-toggle', function (event) {
+        event.stopPropagation();
+        if (bookmarkDragged) {
+            bookmarkDragged = false;
+            return;
+        }
+        const $toolbox = $(this).closest('.theater-result-toolbox');
+        const open = !$toolbox.hasClass('is-open');
+        closeResultActions();
+        $toolbox.toggleClass('is-open', open);
+        $(this).attr('aria-expanded', String(open));
+    });
+    $d.off('click.trac').on('click.trac', '.theater-result-actions .theater-btn', function () {
+        const $toolbox = $(this).closest('.theater-result-toolbox');
+        $toolbox.removeClass('is-open').find('#theater-result-actions-toggle').attr('aria-expanded', 'false');
+    });
+    $d.off('click.trao').on('click.trao', function (event) {
+        if ($(event.target).closest('.theater-result-toolbox').length) return;
+        closeResultActions();
+    });
+    $(window).off('resize.tra').on('resize.tra', positionResultToolbox);
     $d.off('change.ti').on('change.ti', '#theater-interactive-toggle', function () { settings.interactiveMode = $(this).is(':checked'); save(); });
     $d.off('input.tii').on('input.tii', '#theater-instruction', function () { settings.lastInstruction = $(this).val(); save(); scheduleTokenEstimate(); });
 
@@ -3393,7 +3573,12 @@ function bindEvents() {
         }
     });
 
-    // ---- Floating Ball ----
+    // ---- Result bookmark & Floating Ball ----
+    $d.off('change.trbe').on('change.trbe', '#theater-result-bookmark-enabled', function () {
+        settings.resultBookmarkEnabled = $(this).is(':checked');
+        save();
+        applyResultToolboxMode();
+    });
     $d.off('change.tfb').on('change.tfb', '#theater-floating-ball-toggle', function () {
         settings.floatingBall = $(this).is(':checked'); save(); createFloatingBall();
     });
@@ -5785,6 +5970,15 @@ function buildAutoModeDiagnostic() {
     return diagnosticLine('ok', '自动模式', `已开启 · 指令来源“${sourceLabel}”可用（${readiness.candidateCount} 条）· 每 ${Math.max(1, Number(settings.autoInterval) || 10)} 层 AI 楼触发一次；自动结果在“生成”页的最近生成中查看。`);
 }
 
+function diagnosticCatalogHTML() {
+    return diagnosticSignalCatalog().map(item => `
+        <div class="theater-diagnostic-catalog-item ${item.status}">
+            <code>${esc(item.signal)}</code>
+            <div><b>${esc(item.title)}</b><span>${esc(item.detail)}</span>${item.aliases?.length ? `<em>也适用于：${esc(item.aliases.join('、'))}</em>` : ''}<small>${esc(item.action)}</small></div>
+        </div>
+    `).join('');
+}
+
 function buildDiagnostics() {
     const apiMode = settings.apiMode || 'custom';
     const apiUrl = ($('#theater-api-url').val() || settings.apiUrl || '').trim();
@@ -5831,17 +6025,12 @@ function buildDiagnostics() {
         diagnosticLine('ok', '世界书', `已选 ${(settings.selectedWorldBooks || []).length} 本，当前加载 ${wbEntries.length} 条`),
     ];
 
-    const catalog = diagnosticSignalCatalog();
     return {
         rows,
-        catalog,
         text: [
             `千夜浮梦插件诊断报告`,
             `时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`,
             ...rows.map(r => r.text),
-            '',
-            '【常见问题汇总｜按错误信号查询】',
-            ...catalog.map(item => `[${item.signal}${item.aliases?.length ? `；同类：${item.aliases.join('、')}` : ''}] ${item.title}：${item.detail} 建议：${item.action}`),
         ].join('\n'),
     };
 }
@@ -5854,18 +6043,7 @@ function runDiagnostics() {
             <div><b>${esc(r.name)}</b><br><span>${esc(r.detail)}</span></div>
         </div>
     `).join('');
-    const catalogHtml = report.catalog.map(item => `
-        <div class="theater-diagnostic-catalog-item ${item.status}">
-            <code>${esc(item.signal)}</code>
-            <div><b>${esc(item.title)}</b><span>${esc(item.detail)}</span>${item.aliases?.length ? `<em>也适用于：${esc(item.aliases.join('、'))}</em>` : ''}<small>${esc(item.action)}</small></div>
-        </div>
-    `).join('');
-    const html = `${rowsHtml}
-        <details class="theater-diagnostic-catalog">
-            <summary><span><i class="fa-solid fa-book-medical"></i> 常见问题汇总</span><small>按弹窗中的错误信号查询</small></summary>
-            <div class="theater-diagnostic-catalog-list">${catalogHtml}</div>
-        </details>`;
-    $('#theater-diagnostics-output').html(html).data('report', report.text).show();
+    $('#theater-diagnostics-output').html(rowsHtml).data('report', report.text).show();
     $('#theater-copy-diagnostics-btn').show();
     $('#theater-toggle-diagnostics-btn').show().find('i').removeClass('fa-chevron-down').addClass('fa-chevron-up');
     $('#theater-toggle-diagnostics-btn').find('span').text('收起报告');
@@ -6056,13 +6234,16 @@ function openFullscreenReader(overridePayload = null) {
 
 function updateRecentNav() {
     const $nav = $('#theater-recent-nav');
-    if (recentCache.length <= 1) { $nav.hide(); return; }
+    if (!recentCache.length) { $nav.hide(); return; }
     $nav.show();
     const item = recentCache[recentIndex];
     const timeStr = item?.time || '';
-    $('#theater-recent-indicator').text(`${recentIndex + 1} / ${recentCache.length}${timeStr ? '  ·  ' + timeStr : ''}`);
+    $('#theater-recent-indicator').empty()
+        .append($('<span class="theater-recent-count">').text(`${recentIndex + 1} / ${recentCache.length}`))
+        .append(timeStr ? $('<span class="theater-recent-time">').text(` · ${timeStr}`) : null);
     $('#theater-recent-prev').toggleClass('disabled', recentIndex <= 0);
     $('#theater-recent-next').toggleClass('disabled', recentIndex >= recentCache.length - 1);
+    requestAnimationFrame(positionResultToolbox);
 }
 
 function displayedRecentIndex(html = currentDisplayHtml || lastGeneratedHtml) {
