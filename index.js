@@ -10,7 +10,9 @@ import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiReq
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml } from './generation-payload.js';
 import { debounce, estimateTokenBreakdown, formatTokenCount } from './token-estimator.js';
-import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
+import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
+import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, diagnosticSignalCatalog, diagnosticSignalInfo, signalForStopReason } from './request-diagnostics.js';
+import { autoSourceLabel, resolveAutoInstruction } from './auto-mode.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from './generation-job.js';
 import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, readableCharCount, tailText } from './text-counter.js';
 import { classifyLengthTier, firstRoundGuidance, isLongFormTarget, isStagedRenderTarget, longFormFirstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
@@ -19,19 +21,26 @@ import { MAX_API_PRESETS, apiPresetSecretValues, createApiPresetFromConfig, norm
 import { splitInstructionTextFile } from './instruction-import.js';
 import { AUTO_CONTINUE_SCHEMA, migrateAutoContinueDefault } from './settings-migration.js';
 import { createInstructionBackup, parseInstructionBackup } from './instruction-backup.js';
-import { shouldReadWorldBookEntry, worldBookEntryStrategy } from './world-book-policy.js';
+import { mergeFollowedWorldBooks, shouldReadWorldBookEntry, worldBookEntryStrategy } from './world-book-policy.js';
+import { buildProtagonistAnchor } from './protagonist-anchor.js';
 import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from './plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from './history-backup.js';
-import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, latestLongDreamChapter, normalizeLongDreamRecord, updateLongDreamDefinition } from './long-dream.js';
+import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, latestLongDreamChapter, normalizeLongDreamRecord, setLongDreamStatus, updateLongDreamDefinition } from './long-dream.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from './long-dream-generation.js';
+import { MAX_LONG_DREAM_BACKUP_BYTES, createLongDreamBackup, parseLongDreamBackup } from './long-dream-backup.js';
 
 const MODULE_NAME = 'theater_generator';
 const VERSION = '3.6.3';
 let latestRemoteVersion = null;
+let updateReadyToReload = false;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
+let lastRequestIssue = null;
+let lastRequestContext = null;
+let lastAutoIssue = null;
+let lastAutoIssueFingerprint = '';
 let currentGenerationJob = null;
 let longDreamGenerationController = null;
 let activeLongDreamGenerationId = null;
@@ -42,6 +51,39 @@ function recordRequestMetrics(metrics) {
     metrics._recorded = true;
     requestMetricsLog.unshift(metrics);
     if (requestMetricsLog.length > 5) requestMetricsLog.length = 5;
+}
+
+function captureRequestIssue(error, { stage = '正文生成' } = {}) {
+    const issue = classifyRequestFailure(error, { stage });
+    lastRequestIssue = issue;
+    markFailed(lastRequestMetrics, issue.signal);
+    recordRequestMetrics(lastRequestMetrics);
+    return issue;
+}
+
+function clearRequestIssue() {
+    lastRequestIssue = null;
+}
+
+function requestFailureMessage(prefix, issue, { retained = false } = {}) {
+    return `${prefix}：${issue.signal}\n\n请打开【诊断】查看“常见问题汇总”中的 ${issue.signal}。${retained ? '\n\n已保留此前已生成的正文。' : ''}`;
+}
+
+function countSnapshotEntries(snapshot) {
+    return (snapshot?.books || []).reduce((total, book) => total + (Array.isArray(book?.entries) ? book.entries.length : 0), 0);
+}
+
+function formatRequestContextSummary(context) {
+    if (!context) return '暂无插件请求摘要；本次无法判断实际组合输入。';
+    if (context.kind === '模型列表') return '模型列表 · 只请求 API 的模型清单，不携带创作指令、聊天前文、角色卡或世界书。';
+    if (context.kind === '连接测试') return '连接测试 · 只发送固定短测试语句，不携带创作指令、聊天前文、角色卡或世界书。';
+    if (context.kind === '长梦正文') {
+        return `长梦正文 · 创作预设：${context.presetSource} · 已保存章节：${context.chapterCount} · 已确认梦脉：${context.memoryCount} · 冻结世界书：${context.worldBookBooks} 本/${context.worldBookEntries} 条 · 聊天前文：不读取 · 文风补充：${context.styleAddon ? '已参与' : '未参与'} · NSFW 补充：${context.nsfwAddon ? '已参与' : '未参与'}`;
+    }
+    if (context.kind === '最终 HTML 排版') {
+        return `最终 HTML 排版 · 来源正文约 ${context.sourceChars} 字 · 模板：${context.renderLabel || '当前模板'} · 不携带聊天前文、角色卡、世界书或用户指令原文。`;
+    }
+    return `${context.kind || '普通小剧场'} · 创作预设：${context.presetSource} · 聊天前文：${context.readChatContext ? `已参与 ${context.chatMessages} 条（设置 ${context.contextRange} 条）` : '不读取'} · 角色设定：${context.character ? '已参与' : '未参与'} · User 人设：${context.persona ? '已参与' : '未参与'} · 世界书：${context.worldBookBooks} 本/${context.worldBookEntries} 条 · 文风补充：${context.styleAddon ? '已参与' : '未参与'} · NSFW 补充：${context.nsfwAddon ? '已参与' : '未参与'}${context.continuation ? ' · 普通续写前情：已参与' : ''}`;
 }
 const cloneDefaultSettings = () => {
     if (typeof structuredClone === 'function') return structuredClone(defaultSettings);
@@ -1054,26 +1096,30 @@ function buildPopupHTML() {
             <pre id="theater-stream-text" class="theater-stream-pre"></pre>
         </div>
         <div class="theater-section" id="theater-output-section" style="display:none;">
-            <div class="theater-recent-nav" id="theater-recent-nav" style="display:none;">
-                <span id="theater-recent-prev" class="theater-recent-arrow" title="上一条"><i class="fa-solid fa-chevron-left"></i></span>
-                <span id="theater-recent-indicator"></span>
-                <span id="theater-recent-next" class="theater-recent-arrow" title="下一条"><i class="fa-solid fa-chevron-right"></i></span>
+            <div class="theater-result-head">
+                <label class="theater-label">生成结果</label>
+                <div class="theater-recent-nav" id="theater-recent-nav" style="display:none;">
+                    <span id="theater-recent-prev" class="theater-recent-arrow" title="上一条"><i class="fa-solid fa-chevron-left"></i></span>
+                    <span id="theater-recent-indicator"></span>
+                    <span id="theater-recent-next" class="theater-recent-arrow" title="下一条"><i class="fa-solid fa-chevron-right"></i></span>
+                </div>
             </div>
-            <label class="theater-label">生成结果</label>
+            <div class="theater-btn-row theater-result-actions">
+                <div id="theater-save-history-btn" class="theater-btn"><i class="fa-solid fa-bookmark"></i><span>保存</span></div>
+                <div id="theater-copy-html-btn" class="theater-btn"><i class="fa-solid fa-copy"></i><span>复制HTML</span></div>
+                <div id="theater-fullscreen-btn" class="theater-btn"><i class="fa-solid fa-expand"></i><span>全屏阅读</span></div>
+                <div id="theater-continue-btn" class="theater-btn"><i class="fa-solid fa-forward"></i><span>续写</span></div>
+                <div id="theater-edit-result-btn" class="theater-btn"><i class="fa-solid fa-pen-to-square"></i><span>编辑文字</span></div>
+                <div id="theater-delete-result-btn" class="theater-btn danger-soft"><i class="fa-solid fa-trash-can"></i><span>移除结果</span></div>
+                <div id="theater-save-edit-btn" class="theater-btn primary" style="display:none;"><i class="fa-solid fa-check"></i><span>应用修改</span></div>
+                <div id="theater-cancel-edit-btn" class="theater-btn" style="display:none;"><i class="fa-solid fa-xmark"></i><span>退出编辑</span></div>
+            </div>
             <div id="theater-length-hint" class="theater-hint-inline" style="display:none; margin:-4px 0 8px;"></div>
             <div id="theater-output-container">
                 <iframe id="theater-output-frame" sandbox="" class="theater-iframe"></iframe>
                 <div id="theater-output-text-fallback" class="theater-output-text-fallback" role="document" style="display:none;"></div>
             </div>
             <textarea id="theater-result-text-editor" class="theater-textarea" rows="12" style="display:none;margin-top:8px;" placeholder="编辑小剧场正文…"></textarea>
-            <div class="theater-btn-row">
-                <div id="theater-save-history-btn" class="theater-btn"><i class="fa-solid fa-bookmark"></i><span>保存</span></div>
-                <div id="theater-copy-html-btn" class="theater-btn"><i class="fa-solid fa-copy"></i><span>复制HTML</span></div>
-                <div id="theater-fullscreen-btn" class="theater-btn"><i class="fa-solid fa-expand"></i><span>全屏阅读</span></div>
-                <div id="theater-continue-btn" class="theater-btn"><i class="fa-solid fa-forward"></i><span>续写</span></div>
-                <div id="theater-edit-result-btn" class="theater-btn"><i class="fa-solid fa-pen-to-square"></i><span>编辑文字</span></div>
-                <div id="theater-save-edit-btn" class="theater-btn primary" style="display:none;"><i class="fa-solid fa-check"></i><span>完成编辑</span></div>
-            </div>
         </div>
     </div>
 
@@ -1486,9 +1532,11 @@ function buildPopupHTML() {
                 <i class="fa-solid fa-circle-arrow-up"></i>
                 <span>发现新版本 v${esc(latestRemoteVersion)}</span>
             </div>` : ''}
-            <div class="theater-btn-row">
+            <div class="theater-btn-row theater-update-actions">
                 <div id="theater-update-btn" class="theater-btn primary"><i class="fa-solid fa-cloud-arrow-down"></i><span>检查更新</span></div>
+                <button type="button" id="theater-reload-after-update-btn" class="theater-btn theater-reload-after-update" ${updateReadyToReload ? '' : 'hidden'}><i class="fa-solid fa-rotate-right"></i><span>刷新酒馆并启用</span></button>
             </div>
+            <p id="theater-update-ready-hint" class="theater-update-ready-hint" ${updateReadyToReload ? '' : 'hidden'}><i class="fa-solid fa-circle-check"></i><span>更新文件已下载；你可以稍后刷新，不会自动打断当前操作。</span></p>
         </div>
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-clipboard-list"></i> 运行日志</label>
@@ -1642,6 +1690,124 @@ function longDreamSnapshotEntryCount(snapshot) {
     return (snapshot?.books || []).reduce((total, book) => total + (book.entries?.length || 0), 0);
 }
 
+function longDreamBackupFileName(scope = 'archive') {
+    return `theater-long-dream-${scope}-${Date.now()}.json`;
+}
+
+function exportLongDreamBackup(records = longDreamCache, scope = 'archive') {
+    const backup = createLongDreamBackup(records);
+    if (!backup.dreams.length) {
+        toastr.warning('没有可导出的长梦');
+        return;
+    }
+    const serialized = JSON.stringify(backup, null, 2);
+    if (new Blob([serialized]).size > MAX_LONG_DREAM_BACKUP_BYTES) {
+        toastr.warning(scope === 'archive'
+            ? '全部长梦备份超过 25 MB。为保证能直接导回插件，请改为逐卷导出。'
+            : '这卷长梦备份超过 25 MB，暂不能保证可直接导回插件。');
+        return;
+    }
+    downloadFile(longDreamBackupFileName(scope), serialized, 'application/json');
+    toastr.success(`已导出 ${backup.dreams.length} 卷长梦备份`);
+}
+
+function importedLongDreamTitle(record) {
+    const base = String(record?.title || '导入的长梦').trim() || '导入的长梦';
+    const titles = new Set(longDreamCache.map(item => String(item?.title || '').trim().toLocaleLowerCase()));
+    const candidateFor = index => {
+        const suffix = index === 1 ? '（导入）' : `（导入） ${index}`;
+        const prefix = base.slice(0, Math.max(1, 80 - suffix.length)).trim() || '导入的长梦';
+        return `${prefix}${suffix}`;
+    };
+    let index = 1;
+    let candidate = candidateFor(index);
+    while (titles.has(candidate.toLocaleLowerCase())) {
+        index++;
+        candidate = candidateFor(index);
+    }
+    return candidate;
+}
+
+function importLongDreamBackup() {
+    if (longDreamGenerationController?.active) {
+        toastr.warning('请先完成或停止当前长梦生成，再导入备份');
+        return;
+    }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = async event => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        if (file.size > MAX_LONG_DREAM_BACKUP_BYTES) {
+            toastr.warning('长梦备份超过 25 MB，请先拆分后再导入');
+            return;
+        }
+        try {
+            const records = parseLongDreamBackup(JSON.parse(await file.text()));
+            const total = records.length;
+            let added = 0;
+            for (const record of records) {
+                const saved = await longDreamAdd({ ...record, title: importedLongDreamTitle(record) });
+                if (saved) added++;
+            }
+            if (!added) {
+                toastr.warning('没有长梦成功导入，本地存档可能无法写入');
+                return;
+            }
+            longDreamView = 'list';
+            activeLongDreamId = null;
+            renderLongDreamPanel();
+            if (added < total) {
+                toastr.warning(`已导入 ${added}/${total} 卷长梦；已导入部分已新建副本，未覆盖现有长卷。请检查本地存档空间后再导入剩余备份。`, '', { timeOut: 9000 });
+            } else {
+                toastr.success(`已导入 ${added} 卷长梦；导入内容会新建副本，不会覆盖现有长卷。`);
+            }
+        } catch (error) {
+            console.error('[Theater] 长梦备份导入失败: invalid_backup');
+            toastr.error('导入长梦备份失败：文件格式或内容不受支持');
+        }
+    };
+    input.click();
+}
+
+function readLongDreamChapter(chapter) {
+    if (!chapter) return;
+    const text = chapter.text || htmlToPlainText(chapter.html || '');
+    openFullscreenReader({
+        title: chapter.title || `第 ${chapter.number} 章`,
+        text,
+        html: chapter.html || textFallbackHtml(text),
+        mode: chapter.mode || (chapter.html ? 'html' : 'text'),
+    });
+    toastr.info(`已打开${chapter.title || `第 ${chapter.number} 章`}`);
+}
+
+async function setCurrentLongDreamStatus(status) {
+    const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+    if (!dream) return;
+    if (String(activeLongDreamGenerationId) === String(activeLongDreamId) && longDreamGenerationController?.active) {
+        toastr.warning('请先完成或停止当前章节生成');
+        return;
+    }
+    if (dream.draft) {
+        toastr.warning('请先确认或放弃当前草稿，再改变长卷状态');
+        return;
+    }
+    const complete = status === LONG_DREAM_STATUS.COMPLETE;
+    const confirmed = await SillyTavern.getContext().Popup.show.confirm(
+        complete ? `确认让《${dream.title}》完卷？` : `继续《${dream.title}》？`,
+        complete
+            ? '完卷后不会删除任何章节，只会停止“续写下一章”。以后仍可随时继续此梦。'
+            : '这会恢复“续写下一章”，已经保存的章节不会改变。',
+    );
+    if (!confirmed) return;
+    const saved = await longDreamPut(setLongDreamStatus(dream, status));
+    if (!saved) return;
+    renderLongDreamPanel();
+    toastr.success(complete ? '这场梦已经完卷，章节仍可随时阅读和导出' : '这场梦已恢复继续续写');
+}
+
 function longDreamListHTML() {
     const dreams = longDreamCache.slice().sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
     const cards = dreams.map(dream => {
@@ -1676,9 +1842,16 @@ function longDreamListHTML() {
                 <h2>长梦续章</h2>
                 <p>让同一场梦记住来路，沿着自己的世界线续成一卷。</p>
             </div>
-            <button type="button" id="theater-dream-new" class="theater-dream-primary">
-                <i class="fa-solid fa-feather-pointed"></i><span>开启一场长梦</span>
-            </button>
+            <div class="theater-dream-hero-actions">
+                <button type="button" id="theater-dream-new" class="theater-dream-primary">
+                    <i class="fa-solid fa-feather-pointed"></i><span>开启一场长梦</span>
+                </button>
+                <div class="theater-dream-archive-actions">
+                    <button type="button" id="theater-dream-import-backup" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入备份</span></button>
+                    <button type="button" id="theater-dream-export-all" class="theater-btn" ${dreams.length ? '' : 'disabled'}><i class="fa-solid fa-file-export"></i><span>导出全部</span></button>
+                </div>
+                <small class="theater-dream-archive-note">备份会保留章节原始 HTML，请只导入可信来源。</small>
+            </div>
         </section>
         <div class="theater-dream-list-head">
             <div><b>浮梦长卷</b><span>${dreams.length ? `共 ${dreams.length} 卷` : '尚未开卷'}</span></div>
@@ -1773,6 +1946,7 @@ function longDreamDetailHTML(dream) {
     const hasWritingDraft = draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING;
     const hasReviewDraft = draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW;
     const controlsDisabled = isGeneratingThisDream || hasReviewDraft || dream.status === 'complete';
+    const statusControlDisabled = isGeneratingThisDream || !!draft;
     const draftText = draft?.text || '';
     const nextTitle = draft?.title || `第 ${nextNumber} 章`;
     const nextInstruction = draft?.instruction || '';
@@ -1782,6 +1956,15 @@ function longDreamDetailHTML(dream) {
         : (hasWritingDraft
             ? '检测到可恢复草稿；继续时只会承接草稿结尾，不会重复已经写好的正文。'
             : '新章节只会进入这部长卷，不会自动写入普通历史或最近生成。');
+    const chapterDirectory = dream.chapters.map(chapter => {
+        const text = chapter.text || htmlToPlainText(chapter.html || '');
+        return `<button type="button" class="theater-dream-chapter-row" data-dream-read-chapter data-chapter-id="${esc(chapter.id)}">
+            <span>第 ${chapter.number} 章</span>
+            <b>${esc(chapter.title || `第 ${chapter.number} 章`)}</b>
+            <small>${esc(longDreamDate(chapter.createdAt))} · 约 ${readableCharCount(text)} 字</small>
+            <i class="fa-solid fa-book-open" aria-hidden="true"></i>
+        </button>`;
+    }).join('');
     return `<div class="theater-dream-detail" data-id="${esc(dream.id)}">
         <button type="button" class="theater-dream-back" data-dream-back><i class="fa-solid fa-arrow-left"></i><span>返回长卷</span></button>
         <header class="theater-dream-detail-head">
@@ -1790,7 +1973,11 @@ function longDreamDetailHTML(dream) {
                 <h2>${esc(dream.title)}</h2>
                 <p>始于 ${esc(longDreamDate(dream.createdAt))} · 下一步只需要告诉它这一章往哪里走</p>
             </div>
-            <div class="theater-dream-seal" aria-hidden="true">梦</div>
+            <div class="theater-dream-detail-tools">
+                <button type="button" id="theater-dream-export-current" class="theater-btn"><i class="fa-solid fa-file-export"></i><span>导出本卷</span></button>
+                <button type="button" id="${dream.status === 'complete' ? 'theater-dream-reopen' : 'theater-dream-complete'}" class="theater-btn ${dream.status === 'complete' ? 'primary' : ''}" ${statusControlDisabled ? 'disabled' : ''}><i class="fa-solid ${dream.status === 'complete' ? 'fa-feather-pointed' : 'fa-book-bookmark'}"></i><span>${dream.status === 'complete' ? '继续此梦' : '确认完卷'}</span></button>
+                <div class="theater-dream-seal" aria-hidden="true">梦</div>
+            </div>
         </header>
         <section class="theater-dream-next">
             <div class="theater-dream-next-head">
@@ -1836,13 +2023,17 @@ function longDreamDetailHTML(dream) {
                 <span>上次写到 · ${esc(latest?.title || '第一章')}</span>
                 <p>${esc(longDreamExcerpt(chapterText, 230))}</p>
             </div>
-            <button type="button" id="theater-dream-read-latest" class="theater-btn"><i class="fa-solid fa-book-open"></i><span>阅读本章</span></button>
+            <button type="button" id="theater-dream-read-latest" class="theater-btn" data-dream-read-chapter data-chapter-id="${esc(latest?.id || '')}"><i class="fa-solid fa-book-open"></i><span>阅读本章</span></button>
             <div class="theater-dream-context-strip">
                 <span><i class="fa-regular fa-file-lines"></i> 已保存 ${dream.chapters.length} 章</span>
                 <span><i class="fa-solid fa-route"></i> 梦脉${dream.memory?.cards?.length ? ` ${dream.memory.cards.length} 条` : '暂未启用'}</span>
                 <span><i class="fa-solid fa-book-atlas"></i> ${esc(inheritanceSummary)}</span>
             </div>
         </section>
+        <details class="theater-dream-chapter-directory" ${dream.chapters.length <= 2 ? 'open' : ''}>
+            <summary><span><i class="fa-solid fa-list-ol"></i> 章节目录</span><small>${dream.chapters.length} 章 · 点击阅读任意一章</small></summary>
+            <div class="theater-dream-chapter-list">${chapterDirectory}</div>
+        </details>
         <details class="theater-dream-settings">
             <summary>
                 <span><b>长梦设置</b><small>名字、此梦设定与世界书继承</small></span>
@@ -2344,6 +2535,10 @@ function bindEvents() {
         renderLongDreamPanel();
         $('.theater-panels-wrapper').scrollTop(0);
     });
+    $d.off('click.tdimport').on('click.tdimport', '#theater-dream-import-backup', importLongDreamBackup);
+    $d.off('click.tdexportall').on('click.tdexportall', '#theater-dream-export-all', function () {
+        exportLongDreamBackup(longDreamCache, 'all');
+    });
     $d.off('click.tdback').on('click.tdback', '[data-dream-back]', function () {
         longDreamView = 'list';
         activeLongDreamId = null;
@@ -2411,6 +2606,21 @@ function bindEvents() {
         renderLongDreamPanel();
         $('.theater-panels-wrapper').scrollTop(0);
     });
+    $d.off('click.tdexport').on('click.tdexport', '#theater-dream-export-current', function () {
+        const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+        if (dream) exportLongDreamBackup([dream], 'single');
+    });
+    $d.off('click.tdcomplete').on('click.tdcomplete', '#theater-dream-complete', function () {
+        setCurrentLongDreamStatus(LONG_DREAM_STATUS.COMPLETE);
+    });
+    $d.off('click.tdreopen').on('click.tdreopen', '#theater-dream-reopen', function () {
+        setCurrentLongDreamStatus(LONG_DREAM_STATUS.ACTIVE);
+    });
+    $d.off('click.tdreadchapter').on('click.tdreadchapter', '[data-dream-read-chapter]', function () {
+        const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+        const chapter = dream?.chapters?.find(item => String(item.id) === String($(this).data('chapter-id')));
+        readLongDreamChapter(chapter);
+    });
     $d.off('click.tdnext').on('click.tdnext', '#theater-dream-generate-next', generateNextLongDreamChapter);
     $d.off('click.tdstop').on('click.tdstop', '#theater-dream-stop-generation', function () {
         if (getLongDreamGenerationController().abort()) {
@@ -2461,19 +2671,6 @@ function bindEvents() {
         if (!saved) return;
         renderLongDreamPanel();
         toastr.success('此梦设定已保存');
-    });
-    $d.off('click.tdread').on('click.tdread', '#theater-dream-read-latest', function () {
-        const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
-        const chapter = latestLongDreamChapter(dream);
-        if (!chapter) return;
-        lastGeneratedText = chapter.text || htmlToPlainText(chapter.html || '');
-        lastGeneratedHtml = chapter.html || textFallbackHtml(lastGeneratedText);
-        currentOutputMode = chapter.mode || 'html';
-        showInIframe(lastGeneratedHtml, currentOutputMode);
-        $('#theater-output-section').show();
-        $('#theater-recent-nav').hide();
-        $('.theater-tab[data-tab="generate"]').click();
-        $('.theater-panels-wrapper').scrollTop($('#theater-output-section').position()?.top || 0);
     });
     $d.off('click.tddelete').on('click.tddelete', '#theater-dream-delete', async function () {
         if (String(activeLongDreamGenerationId) === String(activeLongDreamId) && longDreamGenerationController?.active) {
@@ -2857,47 +3054,81 @@ function bindEvents() {
     // ---- Recent generations nav ----
     $d.off('click.trp').on('click.trp', '#theater-recent-prev', function () {
         if (recentIndex <= 0) return;
-        recentIndex--;
-        showInIframe(recentCache[recentIndex].html, recentCache[recentIndex].mode || 'html');
-        lastGeneratedHtml = recentCache[recentIndex].html;
-        updateRecentNav();
+        showRecentResult(recentIndex - 1);
     });
     $d.off('click.trn').on('click.trn', '#theater-recent-next', function () {
         if (recentIndex >= recentCache.length - 1) return;
-        recentIndex++;
-        showInIframe(recentCache[recentIndex].html, recentCache[recentIndex].mode || 'html');
-        lastGeneratedHtml = recentCache[recentIndex].html;
-        updateRecentNav();
+        showRecentResult(recentIndex + 1);
     });
     // ---- Edit result text ----
     $d.off('click.ter').on('click.ter', '#theater-edit-result-btn', function () {
         const html = lastGeneratedHtml || currentDisplayHtml;
         const text = htmlToPlainText(html);
         if (!text) { toastr.warning('没有可编辑的正文'); return; }
+        resultEditSnapshot = {
+            html,
+            text,
+            mode: currentOutputMode || 'html',
+            recentIndex: displayedRecentIndex(html),
+        };
         $('#theater-result-text-editor').val(text).show().trigger('focus');
         $('#theater-output-frame').hide();
         $('#theater-output-text-fallback').hide();
-        $('#theater-edit-result-btn').hide();
-        $('#theater-save-edit-btn').show();
-        toastr.info('正在父页面安全编辑正文；保存后使用纯文字卡片显示');
+        setResultEditControls(true);
+        toastr.info(isTextOutputMode(currentOutputMode)
+            ? '正在编辑纯文字正文；可应用修改或直接退出编辑'
+            : '正在编辑文字；直接退出不会改变原排版，应用修改前会再次确认');
     });
-    $d.off('click.tse').on('click.tse', '#theater-save-edit-btn', function () {
+    $d.off('click.tce').on('click.tce', '#theater-cancel-edit-btn', function () {
+        cancelResultEdit();
+    });
+    $d.off('click.tse').on('click.tse', '#theater-save-edit-btn', async function () {
         const text = $('#theater-result-text-editor').val().trim();
         if (!text) { toastr.warning('正文不能为空'); return; }
-        const textTheme = textThemeForOutputMode(currentOutputMode);
+        const snapshot = resultEditSnapshot;
+        if (!snapshot) { cancelResultEdit(); return; }
+        if (!isTextOutputMode(snapshot.mode)) {
+            const { Popup } = SillyTavern.getContext();
+            const ok = await Popup.show.confirm('应用文字修改后，这一条结果会切换成纯文字阅读卡。', '原来的 HTML 排版不会被乱码覆盖；如果想保留原排版，请选择取消并点击“退出编辑”。');
+            if (!ok) return;
+        }
+        const textTheme = textThemeForOutputMode(snapshot.mode);
         const newMode = textOutputModeForTheme(textTheme);
         const newHtml = textFallbackHtml(text, textTheme);
         lastGeneratedHtml = newHtml;
         lastGeneratedText = text;
         currentDisplayHtml = newHtml;
         currentOutputMode = newMode;
-        if (recentCache[recentIndex]) { recentCache[recentIndex].html = newHtml; recentCache[recentIndex].mode = newMode; recentPersist(); }
+        if (snapshot.recentIndex >= 0 && recentCache[snapshot.recentIndex]?.html === snapshot.html) {
+            recentCache[snapshot.recentIndex].html = newHtml;
+            recentCache[snapshot.recentIndex].mode = newMode;
+            recentIndex = snapshot.recentIndex;
+            recentPersist();
+        }
         $('#theater-result-text-editor').hide();
-        $('#theater-output-frame').show();
         showInIframe(newHtml, newMode);
-        $('#theater-save-edit-btn').hide();
-        $('#theater-edit-result-btn').show();
-        toastr.success('编辑已保存');
+        resultEditSnapshot = null;
+        setResultEditControls(false);
+        toastr.success('文字修改已应用');
+    });
+    $d.off('click.tdr').on('click.tdr', '#theater-delete-result-btn', async function () {
+        const html = currentDisplayHtml || lastGeneratedHtml;
+        if (!html) { toastr.warning('没有可移除的结果'); return; }
+        const { Popup } = SillyTavern.getContext();
+        const ok = await Popup.show.confirm('从“最近生成”移除当前结果？', '只清除生成页副本；已经保存到历史的小剧场不会受影响。');
+        if (!ok) return;
+        if (resultEditSnapshot) cancelResultEdit();
+        const targetIndex = displayedRecentIndex(html);
+        if (targetIndex >= 0) {
+            recentCache.splice(targetIndex, 1);
+            recentPersist();
+        }
+        if (targetIndex >= 0 && recentCache.length) {
+            showRecentResult(Math.min(targetIndex, recentCache.length - 1));
+        } else {
+            clearDisplayedResult();
+        }
+        toastr.success(targetIndex >= 0 ? '已从最近生成移除，历史记录未受影响' : '已从生成页移除，历史记录未受影响');
     });
     // 续写：从当前生成结果
     $d.off('click.tcont').on('click.tcont', '#theater-continue-btn', function () {
@@ -3117,6 +3348,7 @@ function bindEvents() {
         toastr.success(`已删除「${current.name}」`);
     });
     $d.off('click.tup').on('click.tup', '#theater-update-btn', updateExtension);
+    $d.off('click.treload').on('click.treload', '#theater-reload-after-update-btn', confirmReloadAfterUpdate);
     $d.off('click.tfm').on('click.tfm', '#theater-fetch-models-btn', fetchModelList);
     $d.off('click.ttest').on('click.ttest', '#theater-test-api-btn', testAPIConnection);
     $d.off('click.tdiag').on('click.tdiag', '#theater-run-diagnostics-btn', runDiagnostics);
@@ -3203,7 +3435,23 @@ function bindEvents() {
     $d.off('change.tae').on('change.tae', '#theater-auto-enabled', function () {
         settings.autoMode = $(this).is(':checked');
         save();
-        if (settings.autoMode) toastr.info(`自动模式已开启：每攒 ${settings.autoInterval || 10} 层 AI 楼生成一次`, '', { timeOut: 4000 });
+        if (settings.autoMode) {
+            const readiness = currentAutoInstruction();
+            if (!readiness.text) {
+                lastAutoIssue = {
+                    signal: readiness.signal || REQUEST_DIAGNOSTIC_SIGNAL.AUTO_NO_INSTRUCTION,
+                    source: readiness.source,
+                    candidateCount: readiness.candidateCount,
+                };
+                toastr.warning(`自动模式已开启，但当前不会发请求：${lastAutoIssue.signal}。请打开【诊断】查看说明。`, '', { timeOut: 6500 });
+            } else {
+                lastAutoIssue = null;
+                toastr.info(`自动模式已开启：每攒 ${settings.autoInterval || 10} 层 AI 楼生成一次`, '', { timeOut: 4000 });
+            }
+        } else {
+            lastAutoIssue = null;
+            lastAutoIssueFingerprint = '';
+        }
     });
     $d.off('input.tai').on('input.tai', '#theater-auto-interval', function () {
         const v = Math.max(1, Math.min(50, parseInt($(this).val()) || 10));
@@ -3213,6 +3461,8 @@ function bindEvents() {
     });
     $d.off('change.tas').on('change.tas', '#theater-auto-source', function () {
         settings.autoSource = $(this).val();
+        lastAutoIssue = null;
+        lastAutoIssueFingerprint = '';
         save();
     });
 
@@ -3729,12 +3979,12 @@ function getCharBoundBooks() {
     return books;
 }
 
-// 把选中列表换成当前角色卡绑定的书；弹窗开着就顺手刷新 UI
+// 跟随角色卡只补入绑定世界书，不覆盖用户另外手选的书。
 async function applyCharBoundBooks({ announce = false } = {}) {
     const books = getCharBoundBooks();
-    settings.selectedWorldBooks = books;
+    settings.selectedWorldBooks = mergeFollowedWorldBooks(settings.selectedWorldBooks, books);
     save();
-    if (announce) toastr.info(books.length ? `已选中角色卡绑定的 ${books.length} 本世界书` : '这张卡没有绑定世界书');
+    if (announce) toastr.info(books.length ? `已加入角色卡绑定的 ${books.length} 本世界书，其他已选世界书会保留` : '这张卡没有绑定世界书，其他已选世界书会保留');
     if ($('#theater-wb-books').length) {
         books.forEach(b => { if (!wbBookNames.includes(b)) wbBookNames.push(b); });
         $('#theater-wb-books').html(renderWBTree());
@@ -4394,7 +4644,7 @@ function downloadFile(filename, content, type) {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // ============================================================
@@ -4408,6 +4658,7 @@ let isGenerating = false;      // 是否正在生成
 let bgStreamText = '';         // 后台生成时保存的流式文本
 let bgError = '';              // 后台生成时的错误信息
 let continueContext = '';      // 续写时的前情内容
+let resultEditSnapshot = null; // 退出编辑时用于无损恢复原结果与排版
 
 // 从HTML中提取纯文本（去掉标签，只留故事内容）
 function htmlToPlainText(html) {
@@ -4454,9 +4705,10 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     const { chat = [], characters = [], characterId, name1, name2 } = ctx;
     const contextCount = normalizeContextRange(settings.contextRange);
     const readChatContext = settings.readChatContext !== false;
-    const chatCtx = readChatContext ? takeRecentMessages(chat, contextCount).map(m =>
+    const recentChatMessages = readChatContext ? takeRecentMessages(chat, contextCount) : [];
+    const chatCtx = recentChatMessages.map(m =>
         `${m.is_user ? (name1 || 'User') : (m.name || name2 || 'Char')}: ${extractMesContent(m.mes)}`
-    ).join('\n\n') : '';
+    ).join('\n\n');
     const context = readChatContext && contextCount > 0
         ? `以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}`
         : readChatContext
@@ -4530,7 +4782,8 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     }
 
     if (loadPreset && !cachedPresetEntries.length) await loadPresetEntries();
-    const preset = getSelectedPresetPrompt() || DEFAULT_SYSTEM_PROMPT;
+    const selectedPresetPrompt = getSelectedPresetPrompt();
+    const preset = selectedPresetPrompt || DEFAULT_SYSTEM_PROMPT;
     const addons = [
         settings.customStyleAddon?.trim() ? `【文风补充】\n${settings.customStyleAddon.trim()}` : '',
         settings.customNsfwAddon?.trim() ? `【NSFW补充】\n${settings.customNsfwAddon.trim()}` : '',
@@ -4543,16 +4796,41 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     });
     const cleanInstruction = stripTargetWordCountRequirement(instruction) || '请根据现有角色设定与剧情创作小剧场。';
     const continuation = contCtx ? `以下是已有正文，请承接结尾、不要重复：\n${contCtx}` : '';
+    const protagonistAnchor = buildProtagonistAnchor({
+        userName: name1,
+        charName: name2 || character?.name || character?.data?.name,
+    });
     let fixed = contCtx
         ? '只输出新增内容，保持人物语气、视角和时态，不要复述前文。'
         : '请根据以上所有信息生成小剧场，严格遵守渲染规则。';
+    fixed += `\n${protagonistAnchor}`;
     fixed += `\n【创作节奏】${longFormPlan ? longFormFirstRoundGuidance(targetWordCount) : firstRoundGuidance(targetWordCount)}`;
     const payload = buildGenerationPayload({
         preset, role, persona, worldBook, context, continuation, rules, addons,
         fixed,
         instruction: `用户指令：${cleanInstruction}`,
     });
-    return { ...payload, isPlainTextRender, textTheme, targetWordCount, ctx };
+    return {
+        ...payload,
+        isPlainTextRender,
+        textTheme,
+        targetWordCount,
+        ctx,
+        diagnosticContext: {
+            kind: '普通小剧场',
+            presetSource: selectedPresetPrompt ? '已选酒馆预设' : '内置默认预设',
+            readChatContext,
+            contextRange: contextCount,
+            chatMessages: recentChatMessages.length,
+            character: !!role.trim(),
+            persona: !!persona.trim(),
+            worldBookBooks: (settings.selectedWorldBooks || []).length,
+            worldBookEntries: wbParts.length,
+            styleAddon: !!settings.customStyleAddon?.trim(),
+            nsfwAddon: !!settings.customNsfwAddon?.trim(),
+            continuation: !!contCtx,
+        },
+    };
 }
 
 async function refreshTokenEstimate() {
@@ -4670,6 +4948,11 @@ async function requestFinalRenderedHtml({
     metricScope = 'final-render',
 } = {}) {
     const finalRenderPayload = buildFinalRenderPayload({ sourceText, rules });
+    lastRequestContext = {
+        kind: '最终 HTML 排版',
+        sourceChars: readableCharCount(sourceText),
+        renderLabel,
+    };
     runtimeLog('info', '最终 HTML 渲染开始', {
         scope: metricScope,
         render: renderLabel,
@@ -4851,6 +5134,18 @@ async function generateNextLongDreamChapter() {
         settings.customStyleAddon?.trim() ? `【文风补充】\n${settings.customStyleAddon.trim()}` : '',
         settings.customNsfwAddon?.trim() ? `【NSFW补充】\n${settings.customNsfwAddon.trim()}` : '',
     ].filter(Boolean).join('\n\n');
+    const selectedPresetPrompt = getSelectedPresetPrompt();
+    lastRequestContext = {
+        kind: '长梦正文',
+        presetSource: selectedPresetPrompt ? '已选酒馆预设' : '内置默认预设',
+        chapterCount: dream.chapters.length,
+        memoryCount: Array.isArray(dream.memory?.cards) ? dream.memory.cards.length : 0,
+        worldBookBooks: Array.isArray(dream.inheritance?.snapshot?.books) ? dream.inheritance.snapshot.books.length : 0,
+        worldBookEntries: countSnapshotEntries(dream.inheritance?.snapshot),
+        styleAddon: !!settings.customStyleAddon?.trim(),
+        nsfwAddon: !!settings.customNsfwAddon?.trim(),
+    };
+    clearRequestIssue();
     activeLongDreamGenerationId = dream.id;
     runtimeLog('info', '长梦续章开始', {
         dream_id: String(dream.id),
@@ -4861,7 +5156,7 @@ async function generateNextLongDreamChapter() {
     try {
         const result = await controller.run({
             record: dream,
-            preset: getSelectedPresetPrompt() || DEFAULT_SYSTEM_PROMPT,
+            preset: selectedPresetPrompt || DEFAULT_SYSTEM_PROMPT,
             addons,
             instruction,
             chapterTitle,
@@ -4885,13 +5180,16 @@ async function generateNextLongDreamChapter() {
                 ? '已停止，当前内容已保存为可恢复草稿'
                 : '已停止，没有追加新章节');
         } else {
-            console.error('[Theater] 长梦续章失败:', error);
+            const issue = captureRequestIssue(error, { stage: '长梦续章' });
+            console.error('[Theater] 长梦续章失败:', issue.signal);
             runtimeLog('error', '长梦续章失败', {
                 dream_id: String(dream.id),
-                message: error?.message || String(error),
+                signal: issue.signal,
+                stage: issue.stage,
+                raw_stop_reason: issue.rawStopReason,
                 retained_chars: retainedChars,
             });
-            theaterError(`长梦续章失败：${error?.message || error}${retainedChars ? '\n\n已生成的正文已保留为草稿。' : ''}`);
+            theaterError(requestFailureMessage('长梦续章失败', issue, { retained: !!retainedChars }));
         }
     } finally {
         activeLongDreamGenerationId = null;
@@ -4937,10 +5235,11 @@ function startContinue(html) {
 
     // 跳转到生成面板
     $('.theater-tab[data-tab="generate"]').click();
-    $('#theater-instruction').val('').attr('placeholder', '已加载前情，请输入续写指令…');
+    $('#theater-instruction').val('').attr('placeholder', '可留空直接自然续写，也可填写本次方向…');
     updateContinueHint();
     scheduleTokenEstimate();
     revealContinuationInput();
+    toastr.info('前情已载入；指令可留空，点击“生成”即可自然续写');
 }
 
 function stopGeneration() {
@@ -4960,15 +5259,18 @@ function extractMesContent(mes) {
 async function generateTheater() {
     if (isGenerating) { toastr.warning('正在生成中，请等待完成或点击停止'); return; }
     if (longDreamGenerationController?.active) { toastr.warning('长梦章节正在生成，请完成或停止后再生成普通小剧场'); return; }
-    const instruction = $('#theater-instruction').val().trim();
+    if (continueContext && !$('#theater-continue-hint').length) clearContinueMode({ silent: true });
+    const typedInstruction = $('#theater-instruction').val().trim();
+    const instruction = typedInstruction || (continueContext
+        ? '请承接已有正文自然续写，保持人物、视角与语气一致，推进新的情节，不要重复前文。'
+        : '');
     if (!instruction) { toastr.warning('请输入指令'); return; }
     if ($('#theater-manual-target-enabled').length) {
         settings.manualTargetEnabled = $('#theater-manual-target-enabled').is(':checked');
         settings.manualTargetChars = normalizeManualTarget($('#theater-manual-target-chars').val());
     }
-    settings.lastInstruction = instruction;
+    if (typedInstruction) settings.lastInstruction = typedInstruction;
     save();
-    if (continueContext && !$('#theater-continue-hint').length) clearContinueMode({ silent: true });
     await runGeneration(instruction, false);
 }
 
@@ -4988,6 +5290,12 @@ async function runGeneration(instruction, isAuto) {
         forcePlainText: stagedRenderMode,
         longFormPlan: longFormMode,
     });
+    lastRequestContext = {
+        ...payload.diagnosticContext,
+        kind: isAuto ? '自动小剧场' : (contCtx ? '普通续写' : '普通小剧场'),
+    };
+    clearRequestIssue();
+    if (isAuto) lastAutoIssue = null;
     const targetWordCount = payload.targetWordCount;
     const autoTargetContinue = !!targetWordCount && settings.autoContinue;
     let { ctx, systemPrompt, userPrompt: prompt, isPlainTextRender } = payload;
@@ -5085,6 +5393,7 @@ async function runGeneration(instruction, isAuto) {
     currentGenerationJob = createGenerationJob({
         targetChars: targetWordCount,
         maxRounds: longFormMode ? 2 : configuredMaxRounds,
+        minimumRounds: longFormMode ? 2 : 1,
         autoContinue: autoTargetContinue,
     });
 
@@ -5199,10 +5508,11 @@ async function runGeneration(instruction, isAuto) {
                 currentOutputMode = rendered.mode;
             } catch (renderError) {
                 if (renderError?.name === 'AbortError') throw renderError;
+                const renderIssue = captureRequestIssue(renderError, { stage: '最终 HTML 排版' });
                 lastGeneratedHtml = textFallbackHtml(newText);
                 currentOutputMode = 'text';
-                runtimeLog('warn', '最终 HTML 渲染失败', { message: renderError?.message || String(renderError), fallback: '纯文字' });
-                toastr.warning('正文已补足，但最终 HTML 排版失败，已保留完整正文');
+                runtimeLog('warn', '最终 HTML 渲染失败', { signal: renderIssue.signal, fallback: '纯文字' });
+                toastr.warning(`最终 HTML 排版失败：${renderIssue.signal}；已保留完整正文。可在【诊断】查看说明。`);
             }
         }
         runtimeLog('info', '渲染路径', { path: currentOutputMode === 'html' ? '正常 HTML' : '纯文字' });
@@ -5279,10 +5589,17 @@ async function runGeneration(instruction, isAuto) {
             toastr.info(partialText ? '已停止，已保留当前生成内容，不会继续请求' : '已停止，不会继续发起下一轮请求');
             return;
         }
-        console.error('[Theater]', err);
-        bgError = err.message || '未知错误';
-        runtimeLog('error', '生成停止', { reason: 'error', message: bgError, retained_chars: readableCharCount(partialText) });
-        theaterError(`生成失败: ${bgError}${partialText ? '\n\n已保留此前生成的正文。' : ''}`);
+        const issue = captureRequestIssue(err, { stage: '正文生成' });
+        console.error('[Theater] 正文生成失败:', issue.signal);
+        bgError = issue.signal;
+        runtimeLog('error', '生成停止', {
+            reason: 'error',
+            signal: issue.signal,
+            stage: issue.stage,
+            raw_stop_reason: issue.rawStopReason,
+            retained_chars: readableCharCount(partialText),
+        });
+        theaterError(requestFailureMessage('生成失败', issue, { retained: !!partialText }));
     } finally {
         isGenerating = false;
         if (chunkThrottle) { clearTimeout(chunkThrottle); chunkThrottle = null; }
@@ -5292,7 +5609,7 @@ async function runGeneration(instruction, isAuto) {
             $('#theater-continue-hint').remove();
             $('#theater-instruction').attr('placeholder', '输入指令…');
         } else if (!isAuto && contCtx && generationSucceeded) {
-            $('#theater-instruction').attr('placeholder', '已加载前情，请输入续写指令…');
+            $('#theater-instruction').attr('placeholder', '可留空直接自然续写，也可填写本次方向…');
             updateContinueHint();
         }
         if (popupAlive()) {
@@ -5307,16 +5624,24 @@ async function runGeneration(instruction, isAuto) {
 // ============================================================
 // Auto mode
 // ============================================================
+function currentAutoInstruction() {
+    return resolveAutoInstruction({
+        source: settings.autoSource,
+        lastInstruction: settings.lastInstruction,
+        templates: settings.instructionTemplates,
+        groups: settings.instructionGroups,
+    });
+}
+
+function autoSourceKind(source) {
+    if (source === '__last__') return 'last';
+    if (source === '__all__') return 'all';
+    if (source === '__none__') return 'ungrouped';
+    return 'group';
+}
+
 function pickAutoInstruction() {
-    const src = settings.autoSource || '__last__';
-    if (src === '__last__') return (settings.lastInstruction || '').trim();
-    const templates = settings.instructionTemplates || [];
-    let pool;
-    if (src === '__all__') pool = templates;
-    else if (src === '__none__') pool = templates.filter(t => !templateGroup(t));
-    else pool = templates.filter(t => templateGroup(t) === src);
-    if (!pool.length) return '';
-    return (pool[Math.floor(Math.random() * pool.length)].content || '').trim();
+    return currentAutoInstruction().text;
 }
 
 // 计数逻辑：只看"当前 AI 楼数"和锚点的差值，不数事件。
@@ -5347,11 +5672,32 @@ async function autoTick() {
     }
     if (floors - anchor < Math.max(1, Number(settings.autoInterval) || 10)) return;
 
-    const instruction = pickAutoInstruction();
+    const autoInstruction = currentAutoInstruction();
+    const instruction = autoInstruction.text;
     if (!instruction) {
-        console.warn('[Theater] 自动模式：指令来源是空的，跳过本次');
+        const fingerprint = `${chatId}:${autoInstruction.signal}:${autoInstruction.source}`;
+        lastAutoIssue = {
+            signal: autoInstruction.signal || REQUEST_DIAGNOSTIC_SIGNAL.AUTO_NO_INSTRUCTION,
+            source: autoInstruction.source,
+            candidateCount: autoInstruction.candidateCount,
+            aiFloors: floors,
+            interval: Math.max(1, Number(settings.autoInterval) || 10),
+        };
+        if (lastAutoIssueFingerprint !== fingerprint) {
+            lastAutoIssueFingerprint = fingerprint;
+            runtimeLog('warn', '自动模式未发起请求', {
+                signal: lastAutoIssue.signal,
+                source: autoSourceKind(autoInstruction.source),
+                candidates: autoInstruction.candidateCount,
+                ai_floors: floors,
+                interval: lastAutoIssue.interval,
+            });
+            toastr.warning(`自动模式未发起请求：${lastAutoIssue.signal}。请打开【诊断】查看说明。`, '', { timeOut: 6500 });
+        }
         return;
     }
+    lastAutoIssue = null;
+    lastAutoIssueFingerprint = '';
     settings.autoAnchors[chatId] = floors;
     save();
     runtimeLog('info', '自动模式触发', { chat: 'current', ai_floors: floors, interval: Math.max(1, Number(settings.autoInterval) || 10) });
@@ -5411,6 +5757,7 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
         shouldStream,
         signal,
         log: runtimeLog,
+        onFallback: path => markFallback(lastRequestMetrics, path),
     });
 }
 // ============================================================
@@ -5419,6 +5766,23 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
 function diagnosticLine(status, name, detail) {
     const icon = status === 'ok' ? 'OK' : (status === 'warn' ? '注意' : '异常');
     return { status, name, detail, text: `[${icon}] ${name}: ${detail}` };
+}
+
+function buildAutoModeDiagnostic() {
+    if (!settings.autoMode) return diagnosticLine('ok', '自动模式', '未开启');
+    const readiness = currentAutoInstruction();
+    const sourceLabel = ['__last__', '__all__', '__none__'].includes(readiness.source)
+        ? autoSourceLabel(readiness.source, settings.instructionGroups)
+        : '随机·自定义分组';
+    const issue = lastAutoIssue || (!readiness.text ? {
+        signal: readiness.signal || REQUEST_DIAGNOSTIC_SIGNAL.AUTO_NO_INSTRUCTION,
+        source: readiness.source,
+        candidateCount: readiness.candidateCount,
+    } : null);
+    if (issue) {
+        return diagnosticLine('warn', '自动模式', `${issue.signal} · 指令来源“${sourceLabel}”当前没有可用正文；达到间隔时不会发出 API 请求。`);
+    }
+    return diagnosticLine('ok', '自动模式', `已开启 · 指令来源“${sourceLabel}”可用（${readiness.candidateCount} 条）· 每 ${Math.max(1, Number(settings.autoInterval) || 10)} 层 AI 楼触发一次；自动结果在“生成”页的最近生成中查看。`);
 }
 
 function buildDiagnostics() {
@@ -5434,6 +5798,8 @@ function buildDiagnostics() {
     const timingDetail = requestMetricsLog.length
         ? requestMetricsLog.slice(0, 3).reverse().map((metrics, index, list) => `请求${requestMetricsLog.length - list.length + index + 1}：${summarizeMetrics(metrics)}`).join('；')
         : summarizeMetrics(lastRequestMetrics);
+    const timingStatus = lastRequestIssue?.status
+        || (lastRequestMetrics?.completedAt || lastRequestMetrics?.firstTokenAt ? 'ok' : 'warn');
     const recentReadableCounts = recentCache.map(item => readableCharCount(htmlToPlainText(item?.html || '')));
     const recentContentOk = recentReadableCounts.every(count => count > 0);
     const recentContentDetail = recentReadableCounts.length
@@ -5446,7 +5812,7 @@ function buildDiagnostics() {
         diagnosticLine('ok', 'API 模式', apiMode === 'main' ? '酒馆主 API（实验）' : '独立 API'),
         diagnosticLine('ok', '独立 API 协议', apiMode === 'main' ? '不适用' : `${settings.apiProtocol || 'auto'}（实际：${resolveProtocol(settings.apiProtocol, apiUrl)}）`),
         diagnosticLine('ok', '最大输出 Token', apiMode === 'main' ? '遵循酒馆当前设置' : String(normalizeMaxTokens(settings.maxOutputTokens))),
-        diagnosticLine(lastRequestMetrics?.firstTokenAt ? 'ok' : 'warn', '最近请求计时', timingDetail),
+        diagnosticLine(timingStatus, '最近请求计时', timingDetail),
         diagnosticLine(apiMode === 'main' || (apiUrl && apiModel) ? 'ok' : 'bad', 'API 配置', apiMode === 'main' ? '使用酒馆当前 API 设置' : (apiUrl && apiModel ? `已填写，模型：${apiModel}${apiKey ? '，已填写 Key' : '，未填写 Key（OpenAI 兼容本地服务可为空）'}` : 'API URL 和模型名至少有一项没填')),
         diagnosticLine(typeof fetch === 'function' && typeof AbortController === 'function' ? 'ok' : 'bad', '请求能力', 'fetch / AbortController ' + (typeof fetch === 'function' && typeof AbortController === 'function' ? '可用' : '不可用')),
         diagnosticLine(window.indexedDB ? (idb ? 'ok' : 'warn') : 'bad', '本地存档库', window.indexedDB ? (idb ? 'IndexedDB 已打开' : 'IndexedDB 存在，但当前未打开，可能会回退到 settings') : '浏览器不支持 IndexedDB'),
@@ -5454,30 +5820,51 @@ function buildDiagnostics() {
         diagnosticLine(customRenderOk ? 'ok' : 'bad', '渲染模板', customRenderOk ? `当前模板：${selectedRender}` : `当前选择 ${selectedRender} 找不到对应模板`),
         diagnosticLine(continueContext ? 'warn' : 'ok', '续写状态', continueContext ? `续写模式仍有前情：约 ${readableCharCount(continueContext)} 字` : '未处于续写模式'),
         diagnosticLine(isGenerating ? 'warn' : 'ok', '生成状态', isGenerating ? '正在生成中' : '空闲'),
-        diagnosticLine(bgError ? 'bad' : 'ok', '最近错误', bgError || '无'),
+        diagnosticLine(lastRequestIssue ? lastRequestIssue.status : (bgError ? 'bad' : 'ok'), '最近错误信号', lastRequestIssue
+            ? `${lastRequestIssue.signal} · ${lastRequestIssue.title}${lastRequestIssue.rawStopReason ? `（上游结束原因：${lastRequestIssue.rawStopReason}）` : ''}`
+            : (bgError ? `${REQUEST_DIAGNOSTIC_SIGNAL.UNKNOWN} · 请打开“常见问题汇总”查询` : '无')),
+        ...(lastRequestIssue ? [diagnosticLine('warn', '错误处理建议', `${lastRequestIssue.signal}：${lastRequestIssue.action}`)] : []),
+        diagnosticLine(lastRequestContext ? 'ok' : 'warn', '最近请求摘要', formatRequestContextSummary(lastRequestContext)),
+        buildAutoModeDiagnostic(),
         diagnosticLine('ok', '数据数量', `历史 ${historyCache.length} 条，最近生成 ${recentCache.length} 条，指令模板 ${(settings.instructionTemplates || []).length} 个`),
         diagnosticLine(recentContentOk ? 'ok' : 'warn', '最近生成正文', recentContentDetail),
         diagnosticLine('ok', '世界书', `已选 ${(settings.selectedWorldBooks || []).length} 本，当前加载 ${wbEntries.length} 条`),
     ];
 
+    const catalog = diagnosticSignalCatalog();
     return {
         rows,
+        catalog,
         text: [
             `千夜浮梦插件诊断报告`,
             `时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`,
             ...rows.map(r => r.text),
+            '',
+            '【常见问题汇总｜按错误信号查询】',
+            ...catalog.map(item => `[${item.signal}${item.aliases?.length ? `；同类：${item.aliases.join('、')}` : ''}] ${item.title}：${item.detail} 建议：${item.action}`),
         ].join('\n'),
     };
 }
 
 function runDiagnostics() {
     const report = buildDiagnostics();
-    const html = report.rows.map(r => `
+    const rowsHtml = report.rows.map(r => `
         <div class="theater-diagnostic-row ${r.status}">
             <span class="theater-diagnostic-status">${r.status === 'ok' ? 'OK' : (r.status === 'warn' ? '注意' : '异常')}</span>
             <div><b>${esc(r.name)}</b><br><span>${esc(r.detail)}</span></div>
         </div>
     `).join('');
+    const catalogHtml = report.catalog.map(item => `
+        <div class="theater-diagnostic-catalog-item ${item.status}">
+            <code>${esc(item.signal)}</code>
+            <div><b>${esc(item.title)}</b><span>${esc(item.detail)}</span>${item.aliases?.length ? `<em>也适用于：${esc(item.aliases.join('、'))}</em>` : ''}<small>${esc(item.action)}</small></div>
+        </div>
+    `).join('');
+    const html = `${rowsHtml}
+        <details class="theater-diagnostic-catalog">
+            <summary><span><i class="fa-solid fa-book-medical"></i> 常见问题汇总</span><small>按弹窗中的错误信号查询</small></summary>
+            <div class="theater-diagnostic-catalog-list">${catalogHtml}</div>
+        </details>`;
     $('#theater-diagnostics-output').html(html).data('report', report.text).show();
     $('#theater-copy-diagnostics-btn').show();
     $('#theater-toggle-diagnostics-btn').show().find('i').removeClass('fa-chevron-down').addClass('fa-chevron-up');
@@ -5583,8 +5970,14 @@ function currentReaderPayload() {
     };
 }
 
-function openFullscreenReader() {
-    const payload = currentReaderPayload();
+function openFullscreenReader(overridePayload = null) {
+    const supplied = overridePayload?.html ? {
+        title: String(overridePayload.title || '').trim(),
+        html: String(overridePayload.html || ''),
+        mode: overridePayload.mode || 'html',
+        text: String(overridePayload.text || htmlToPlainText(overridePayload.html || '')),
+    } : null;
+    const payload = supplied || currentReaderPayload();
     if (!payload?.html) {
         toastr.warning('还没有可全屏阅读的内容');
         return;
@@ -5614,6 +6007,7 @@ function openFullscreenReader() {
                 <div class="theater-reader-shortcut">按 Esc 退出阅读</div>
             </section>
         </dialog>`);
+    $overlay.find('#theater-reader-title').text(payload.title || '千夜浮梦');
     $overlay.find('.theater-reader-mode').text(modeLabel);
     $('body').append($overlay);
     const readerDialog = $overlay[0];
@@ -5671,6 +6065,59 @@ function updateRecentNav() {
     $('#theater-recent-next').toggleClass('disabled', recentIndex >= recentCache.length - 1);
 }
 
+function displayedRecentIndex(html = currentDisplayHtml || lastGeneratedHtml) {
+    if (!html) return -1;
+    if (recentCache[recentIndex]?.html === html) return recentIndex;
+    return recentCache.findIndex(item => item?.html === html);
+}
+
+function showRecentResult(index) {
+    if (!recentCache.length) return false;
+    recentIndex = Math.min(recentCache.length - 1, Math.max(0, Number(index) || 0));
+    const item = recentCache[recentIndex];
+    lastGeneratedHtml = item.html;
+    lastGeneratedText = htmlToPlainText(item.html);
+    currentOutputMode = item.mode || 'html';
+    showInIframe(item.html, currentOutputMode);
+    $('#theater-output-section').show();
+    updateRecentNav();
+    return true;
+}
+
+function setResultEditControls(editing) {
+    $('#theater-edit-result-btn, #theater-delete-result-btn, #theater-continue-btn').toggle(!editing);
+    $('#theater-save-edit-btn, #theater-cancel-edit-btn').toggle(editing);
+}
+
+function cancelResultEdit() {
+    const snapshot = resultEditSnapshot;
+    $('#theater-result-text-editor').hide().val('');
+    resultEditSnapshot = null;
+    setResultEditControls(false);
+    if (!snapshot) return;
+    lastGeneratedHtml = snapshot.html;
+    lastGeneratedText = snapshot.text;
+    currentOutputMode = snapshot.mode;
+    showInIframe(snapshot.html, snapshot.mode);
+    toastr.info('已退出编辑，原正文和排版没有改变');
+}
+
+function clearDisplayedResult() {
+    lastGeneratedHtml = '';
+    lastGeneratedText = '';
+    currentDisplayHtml = '';
+    currentOutputMode = 'html';
+    recentIndex = 0;
+    const frame = document.getElementById('theater-output-frame');
+    if (frame) frame.srcdoc = '';
+    $('#theater-output-text-fallback').hide().empty();
+    $('#theater-result-text-editor').hide().val('');
+    $('#theater-output-section').hide();
+    resultEditSnapshot = null;
+    setResultEditControls(false);
+    updateRecentNav();
+}
+
 // ============================================================
 // Fetch model list from API
 // ============================================================
@@ -5682,6 +6129,7 @@ async function fetchModelList() {
     const $btn = $('#theater-fetch-models-btn');
     $btn.addClass('disabled');
     $btn.find('span').text('获取中…');
+    clearRequestIssue();
 
     try {
         const protocol = resolveProtocol($('#theater-api-protocol').val() || settings.apiProtocol, url);
@@ -5691,10 +6139,14 @@ async function fetchModelList() {
         const headers = protocol === API_PROTOCOLS.ANTHROPIC
             ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
             : (key ? { 'Authorization': `Bearer ${key}` } : {});
+        lastRequestContext = { kind: '模型列表' };
         const res = await fetch(modelsEndpoint, { method: 'GET', headers });
-        const data = res.ok ? await res.json() : null;
+        if (!res.ok) {
+            throw { code: 'THEATER_HTTP_STATUS', theaterFailure: { status: res.status } };
+        }
+        const data = await res.json();
 
-        if (!data) throw new Error('连接失败或无法获取模型列表');
+        if (!data) throw new Error('无法获取模型列表');
 
         // 解析模型列表：兼容 { data: [...] } 和直接数组两种格式
         const rawList = data.data || data;
@@ -5723,8 +6175,10 @@ async function fetchModelList() {
 
         toastr.success(`找到 ${models.length} 个模型`);
     } catch (e) {
-        console.error('[Theater] Fetch models error:', e);
-        theaterError('获取模型失败: ' + (e.message || ''));
+        const issue = classifyRequestFailure(e, { stage: '模型列表' });
+        lastRequestIssue = issue;
+        console.error('[Theater] 获取模型列表失败:', issue.signal);
+        theaterError(requestFailureMessage('获取模型失败', issue));
     } finally {
         $btn.removeClass('disabled');
         $btn.find('span').text('获取模型列表');
@@ -5744,15 +6198,26 @@ async function testAPIConnection() {
     const $btn = $('#theater-test-api-btn');
     $btn.addClass('disabled');
     $btn.find('span').text('测试中…');
+    clearRequestIssue();
 
     try {
         const request = buildApiRequest({ url, protocol: $('#theater-api-protocol').val() || settings.apiProtocol, key, model, systemPrompt: '', userPrompt: 'Hi', maxTokens: 16, stream: false });
         if (request.protocol === API_PROTOCOLS.ANTHROPIC && !key) { toastr.warning('Anthropic 接口需要 API Key'); return; }
+        lastRequestContext = { kind: '连接测试' };
         const res = await fetch(request.endpoint, { method: 'POST', headers: request.headers, body: JSON.stringify(request.body) });
         if (res.ok) toastr.success('连接成功！');
-        else theaterError(`连接失败 (${res.status}): ${(await res.text().catch(() => '')).slice(0, 160)}`);
+        else {
+            const issue = classifyRequestFailure({
+                code: 'THEATER_HTTP_STATUS',
+                theaterFailure: { status: res.status },
+            }, { stage: '连接测试' });
+            lastRequestIssue = issue;
+            theaterError(requestFailureMessage('连接失败', issue));
+        }
     } catch (e) {
-        theaterError('请求发送失败');
+        const issue = classifyRequestFailure(e, { stage: '连接测试' });
+        lastRequestIssue = issue;
+        theaterError(requestFailureMessage('连接失败', issue));
     } finally {
         $btn.removeClass('disabled');
         $btn.find('span').text('测试连接');
@@ -5762,6 +6227,23 @@ async function testAPIConnection() {
 // ============================================================
 // Update
 // ============================================================
+function showReloadAfterUpdateAction() {
+    updateReadyToReload = true;
+    $('#theater-reload-after-update-btn, #theater-update-ready-hint').prop('hidden', false);
+}
+
+async function confirmReloadAfterUpdate() {
+    if (!updateReadyToReload) return;
+    const hasActiveGeneration = isGenerating || !!longDreamGenerationController?.active;
+    const detail = hasActiveGeneration
+        ? '刷新会立即中断当前仍在进行的生成。已经保存的设置和长梦草稿不会丢失；尚未保存的普通生成内容请先处理。'
+        : '页面会立即重新载入以启用刚下载的插件版本。已经保存的设置、历史和长梦不会丢失。';
+    const confirmed = await SillyTavern.getContext().Popup.show.confirm('现在刷新酒馆并启用新版本？', detail);
+    if (!confirmed) return;
+    runtimeLog('info', '用户确认更新后刷新酒馆', { active_generation: hasActiveGeneration });
+    window.location.reload();
+}
+
 async function updateExtension() {
     const btn = $('#theater-update-btn');
     btn.addClass('disabled');
@@ -5786,7 +6268,8 @@ async function updateExtension() {
         }
 
         if (resp.ok) {
-            toastr.success('更新成功！重新打开酒馆后生效。');
+            showReloadAfterUpdateAction();
+            toastr.success('更新成功！可点击“刷新酒馆并启用”，确认后再刷新。', '', { timeOut: 7000 });
             return;
         }
 

@@ -4,13 +4,15 @@ export function targetCompletionChars(targetChars) {
     return targetChars ? Math.ceil(targetChars * TARGET_COMPLETION_RATIO) : 0;
 }
 
-export function createGenerationJob({ targetChars = null, maxRounds = 3, autoContinue = false } = {}) {
+export function createGenerationJob({ targetChars = null, maxRounds = 3, minimumRounds = 1, autoContinue = false } = {}) {
+    const normalizedMaxRounds = Math.max(1, Math.floor(Number(maxRounds) || 1));
     return {
         targetChars,
         targetCompletionChars: targetCompletionChars(targetChars),
         actualChars: 0,
         round: 1,
-        maxRounds,
+        maxRounds: normalizedMaxRounds,
+        minimumRounds: Math.min(normalizedMaxRounds, Math.max(1, Math.floor(Number(minimumRounds) || 1))),
         autoContinue,
         stopReason: null,
         rawStopReason: null,
@@ -31,6 +33,7 @@ export function addGenerationSegment(job, text, stopReason = 'unknown', rawStopR
 export function shouldContinueJob(job, countChars) {
     if (!job.autoContinue || !job.targetChars || job.aborted || job.stopReason === 'error') return false;
     job.actualChars = countChars(job.segments.join('\n\n'));
+    if (job.round < job.minimumRounds) return job.round < job.maxRounds;
     if (job.actualChars >= job.targetCompletionChars) return false;
     if (job.finishAuthorized && job.stopReason !== 'length') {
         job.completedBelowTarget = true;

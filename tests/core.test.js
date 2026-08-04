@@ -3,19 +3,22 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { estimateTokenBreakdown } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
-import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, extractApiErrorMessage, extractResponseMeta, extractStreamText, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
+import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { readNonStreamingResponse, readSSEStream, requestCustomApi, requestMainApi } from '../api-runtime.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
 import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, normalizeContinuationText, readableCharCount } from '../text-counter.js';
 import { RENDER_REPORT_TIMEOUT_MS, injectResizeReporter, installSafeResizeListener, renderSafeIframe, sandboxPermissions } from '../safe-renderer.js';
-import { createRequestMetrics, markCompleted, markFallback, markFirstToken, summarizeMetrics } from '../request-metrics.js';
+import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from '../request-metrics.js';
+import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, createDiagnosticError, diagnosticSignalInfo } from '../request-diagnostics.js';
+import { autoSourceLabel, resolveAutoInstruction } from '../auto-mode.js';
 import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
 import { apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from '../api-presets.js';
 import { splitInstructionTextFile } from '../instruction-import.js';
 import { LENGTH_TIERS, LONG_FORM_SPLIT_THRESHOLD, STAGED_RENDER_THRESHOLD, classifyLengthTier, firstRoundGuidance, isLongFormTarget, isStagedRenderTarget, longFormFirstRoundGuidance, longFormFirstRoundTarget, parseTargetWordCount, resolveTargetWordCount, stripTargetWordCountRequirement } from '../length-policy.js';
 import { AUTO_CONTINUE_SCHEMA, migrateAutoContinueDefault } from '../settings-migration.js';
 import { createInstructionBackup, parseInstructionBackup } from '../instruction-backup.js';
-import { WORLD_BOOK_STRATEGIES, shouldReadWorldBookEntry, worldBookEntryStrategy } from '../world-book-policy.js';
+import { WORLD_BOOK_STRATEGIES, mergeFollowedWorldBooks, shouldReadWorldBookEntry, worldBookEntryStrategy } from '../world-book-policy.js';
+import { buildProtagonistAnchor } from '../protagonist-anchor.js';
 import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from '../plain-text-renderer.js';
@@ -23,6 +26,7 @@ import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup
 import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, appendLongDreamChapter, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, saveLongDreamDraft, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition } from '../long-dream.js';
 import { buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBookContext } from '../long-dream-payload.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from '../long-dream-generation.js';
+import { LONG_DREAM_BACKUP_FORMAT, LONG_DREAM_BACKUP_VERSION, createLongDreamBackup, parseLongDreamBackup } from '../long-dream-backup.js';
 
 test('长梦以完整首章开卷，并默认隔离原世界书', () => {
     const now = new Date('2026-07-31T12:30:00.000Z');
@@ -514,6 +518,70 @@ test('长梦可以完卷，也可在继续施工时恢复为进行中', () => {
     assert.equal(reopened.status, LONG_DREAM_STATUS.ACTIVE);
 });
 
+test('长梦备份以白名单导出，导入会保留章节但不携带本地 ID 或未知字段', () => {
+    const snapshot = createLongDreamWorldBookSnapshot({
+        bookNames: ['地点'],
+        entries: [{ book: '地点', uid: 7, content: '旧站台终年下雨。', raw: { key: ['站台'] } }],
+    });
+    let record = createLongDreamRecord({
+        title: '雨夜列车',
+        canon: '列车不能驶离环线。',
+        worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED,
+        worldBookNames: ['地点'],
+        worldBookSnapshot: snapshot,
+        source: { kind: 'history', refId: 12, title: '初章', instruction: '从雨夜站台开始。', text: '第一章正文', html: '<main>第一章正文</main>' },
+    });
+    record = appendLongDreamChapter(record, { title: '旧月台', instruction: '让列车短暂停靠。', text: '第二章正文', html: '<main>第二章正文</main>' });
+    record.id = 88;
+    record.untrusted = { apiKey: 'never-export-this' };
+    record.source.refId = { apiKey: 'not-a-reference' };
+    record.sourceConfig.apiKey = 'also-never-export-this';
+    record.inheritance.snapshot.books[0].entries[0].uid = { token: 'not-an-id' };
+    record.chapters[0].unknown = 'not-exported';
+
+    const backup = createLongDreamBackup([record], { now: new Date('2026-08-04T12:00:00.000Z') });
+    const serialized = JSON.stringify(backup);
+    const imported = parseLongDreamBackup(JSON.parse(serialized));
+
+    assert.equal(backup.format, LONG_DREAM_BACKUP_FORMAT);
+    assert.equal(backup.version, LONG_DREAM_BACKUP_VERSION);
+    assert.equal(imported.length, 1);
+    assert.equal(imported[0].id, undefined);
+    assert.equal(imported[0].chapters.length, 2);
+    assert.equal(imported[0].chapters[1].title, '旧月台');
+    assert.equal(imported[0].chapters[1].html, '<main>第二章正文</main>');
+    assert.equal(imported[0].source.refId, null);
+    assert.equal(imported[0].inheritance.snapshot.books[0].entries[0].uid, null);
+    assert.equal('untrusted' in imported[0], false);
+    assert.equal('unknown' in imported[0].chapters[0], false);
+    assert.doesNotMatch(serialized, /never-export-this|not-a-reference|also-never-export-this|not-an-id/);
+});
+
+test('长梦备份拒绝错格式，并能保留仅 HTML 的旧章节以便安全阅读', () => {
+    assert.throws(() => parseLongDreamBackup({ format: 'st-theater-history', version: 1, dreams: [] }), /不是千夜浮梦长梦备份/);
+    const imported = parseLongDreamBackup({
+        format: LONG_DREAM_BACKUP_FORMAT,
+        version: LONG_DREAM_BACKUP_VERSION,
+        dreams: [{ title: '旧卷', chapters: [{ title: '旧章', html: '<main>仍可阅读</main>' }] }],
+    });
+    assert.equal(imported[0].chapters[0].html, '<main>仍可阅读</main>');
+    assert.equal(imported[0].chapters[0].mode, 'html');
+});
+
+test('不完整的待确认长梦草稿会安全回退为可继续的 writing 草稿', () => {
+    const imported = parseLongDreamBackup({
+        format: LONG_DREAM_BACKUP_FORMAT,
+        version: LONG_DREAM_BACKUP_VERSION,
+        dreams: [{
+            title: '半章旧卷',
+            chapters: [{ text: '第一章', html: '<main>第一章</main>' }],
+            draft: { status: 'review', title: '第二章', text: '尚未排版的正文', html: '' },
+        }],
+    });
+    assert.equal(imported[0].draft.status, LONG_DREAM_DRAFT_STATUS.WRITING);
+    assert.equal(imported[0].draft.text, '尚未排版的正文');
+});
+
 test('全屏阅读使用原生模态弹窗进入浏览器顶层', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
@@ -531,6 +599,59 @@ test('点击续写会切回生成页、滚到顶部并聚焦指令框', () => {
     assert.match(match, /panels\.scrollTop = 0/);
     assert.match(match, /input\.focus\(\{ preventScroll: true \}\)/);
     assert.match(source, /scheduleTokenEstimate\(\);\s*revealContinuationInput\(\);/);
+});
+
+test('插件更新成功后只提供需确认的酒馆刷新操作', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const confirmFlow = source.match(/async function confirmReloadAfterUpdate\(\) \{[\s\S]*?\n\}/)?.[0] || '';
+    const updateFlow = source.match(/async function updateExtension\(\) \{[\s\S]*?\n\}/)?.[0] || '';
+
+    assert.match(source, /id="theater-reload-after-update-btn"[\s\S]*?刷新酒馆并启用/);
+    assert.match(source, /#theater-reload-after-update-btn', confirmReloadAfterUpdate/);
+    assert.match(updateFlow, /if \(resp\.ok\) \{\s*showReloadAfterUpdateAction\(\)/);
+    assert.match(confirmFlow, /Popup\.show\.confirm\('现在刷新酒馆并启用新版本？'/);
+    assert.match(confirmFlow, /if \(!confirmed\) return;[\s\S]*?window\.location\.reload\(\)/);
+    assert.match(styles, /\.theater-reload-after-update\[hidden\][\s\S]*?display: none/);
+});
+
+test('诊断页提供可收起的常见问题汇总，并按错误信号查询', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const signals = readFileSync(new URL('../request-diagnostics.js', import.meta.url), 'utf8');
+    assert.match(source, /【常见问题汇总｜按错误信号查询】/);
+    assert.match(source, /class="theater-diagnostic-catalog"/);
+    assert.match(source, /按弹窗中的错误信号查询/);
+    assert.match(signals, /T-API-CONTENT-FILTER/);
+    assert.match(styles, /\.theater-diagnostic-catalog\s*\{/);
+    assert.match(styles, /\.theater-diagnostic-catalog\[open\]/);
+});
+
+test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    assert.match(source, /id="theater-dream-import-backup"/);
+    assert.match(source, /id="theater-dream-export-all"/);
+    assert.match(source, /id="theater-dream-export-current"/);
+    assert.match(source, /'theater-dream-complete'/);
+    assert.match(source, /'theater-dream-reopen'/);
+    assert.match(source, /class="theater-dream-chapter-directory"/);
+    assert.match(source, /data-dream-read-chapter/);
+    assert.match(source, /createLongDreamBackup/);
+    assert.match(source, /parseLongDreamBackup/);
+    assert.match(source, /请只导入可信来源/);
+    assert.match(source, /已导入 \$\{added\}\/\$\{total\} 卷长梦/);
+    assert.match(source, /setTimeout\(\(\) => URL\.revokeObjectURL\(url\), 1000\)/);
+    assert.match(styles, /\.theater-dream-chapter-directory\s*\{/);
+    assert.match(styles, /\.theater-dream-chapter-row\s*\{/);
+});
+
+test('长梦章节阅读走独立沉浸阅读器，不覆写普通生成结果', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const reader = source.match(/function readLongDreamChapter\(chapter\) \{[\s\S]*?\n\}/)?.[0] || '';
+    assert.match(reader, /openFullscreenReader\(\{/);
+    assert.doesNotMatch(reader, /lastGenerated(Text|Html)|currentOutputMode|showInIframe/);
+    assert.match(source, /function openFullscreenReader\(overridePayload = null\)/);
 });
 
 test('纯文字亮色与暗色共用纯正文协议，但使用不同的本地阅读主题', () => {
@@ -552,6 +673,18 @@ test('暗色纯文字阅读壳转义正文并声明夜间配色', () => {
     assert.match(html, /夜里有一盏 &lt;灯&gt;。/);
     assert.doesNotMatch(html, /<灯>/);
     assert.match(html, /white-space:pre-wrap/);
+    assert.match(html, /"KaiTi"/);
+});
+
+test('生成结果操作栏位于正文上方，并提供安全退出编辑与移除结果', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const actionsAt = source.indexOf('class="theater-btn-row theater-result-actions"');
+    const outputAt = source.indexOf('id="theater-output-container"');
+    assert.ok(actionsAt >= 0 && actionsAt < outputAt);
+    assert.match(source, /id="theater-cancel-edit-btn"/);
+    assert.match(source, /id="theater-delete-result-btn"/);
+    assert.match(source, /原正文和排版没有改变/);
+    assert.match(source, /已经保存到历史的小剧场不会受影响/);
 });
 
 test('final HTML renderer hydrates every paragraph without rewriting source text', () => {
@@ -745,6 +878,26 @@ test('流式解析能取出状态为 200 的错误事件，而不是只报告空
     assert.equal(extractApiErrorMessage({ choices: [] }), '');
 });
 
+test('内容策略错误文字也会安全归类，不把上游回显带进错误对象', async () => {
+    const upstreamMessage = 'Request blocked by content filter: 不应回显的服务端正文';
+    assert.equal(isContentBlockedErrorMessage(upstreamMessage), true);
+    await assert.rejects(
+        readNonStreamingResponse(new Response(JSON.stringify({ error: { message: upstreamMessage } }), {
+            headers: { 'content-type': 'application/json' },
+        })),
+        error => error.code === 'THEATER_CONTENT_FILTER'
+            && error.diagnosticSignal === REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER
+            && !error.message.includes('不应回显的服务端正文'),
+    );
+    await assert.rejects(
+        readSSEStream(new Response(`data: ${JSON.stringify({ error: { message: upstreamMessage } })}\n\n`, {
+            headers: { 'content-type': 'text/event-stream' },
+        })),
+        error => error.code === 'THEATER_CONTENT_FILTER'
+            && !error.message.includes('不应回显的服务端正文'),
+    );
+});
+
 test('API 运行层能累积 SSE 正文并保留结束原因', async () => {
     const chunks = [];
     const response = new Response([
@@ -760,6 +913,60 @@ test('API 运行层能累积 SSE 正文并保留结束原因', async () => {
     assert.equal(result.text, '第一段第二段');
     assert.equal(result.stopReason, 'stop');
     assert.equal(result.rawStopReason, 'stop');
+});
+
+test('内容策略结束原因会被统一识别，不把用户指令直接定性为 NSFW', () => {
+    assert.equal(contentBlockReason('content_filter'), 'content_filter');
+    assert.equal(contentBlockReason('SAFETY'), 'safety');
+    assert.equal(isContentBlockedStopReason('PROHIBITED_CONTENT'), true);
+    assert.equal(isContentBlockedStopReason('length'), false);
+
+    const openAi = extractResponseMeta({ choices: [{ finish_reason: 'content_filter' }] }, API_PROTOCOLS.OPENAI);
+    const gemini = extractResponseMeta({ candidates: [{ finishReason: 'SAFETY' }] }, API_PROTOCOLS.OPENAI);
+    const promptBlocked = extractResponseMeta({ promptFeedback: { blockReason: 'BLOCKLIST' } }, API_PROTOCOLS.OPENAI);
+    assert.equal(openAi.stopReason, 'blocked');
+    assert.equal(openAi.blockReason, 'content_filter');
+    assert.equal(gemini.blockReason, 'safety');
+    assert.equal(promptBlocked.blockReason, 'blocklist');
+});
+
+test('非流式内容过滤只给出固定错误信号，不回显服务端正文', async () => {
+    const response = new Response(JSON.stringify({
+        choices: [{ message: { content: '' }, finish_reason: 'content_filter' }],
+        secret_echo: '不应出现在错误里',
+    }), { headers: { 'content-type': 'application/json' } });
+    await assert.rejects(
+        readNonStreamingResponse(response, () => {}, API_PROTOCOLS.OPENAI),
+        error => error.code === 'THEATER_CONTENT_FILTER'
+            && error.diagnosticSignal === REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER
+            && error.message === REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER
+            && error.theaterFailure?.rawStopReason === 'content_filter'
+            && !error.message.includes('不应出现在错误里'),
+    );
+});
+
+test('流式内容过滤不会被误当作空流而重发同一请求', async () => {
+    let calls = 0;
+    await assert.rejects(
+        requestCustomApi({
+            config: {
+                apiUrl: 'https://example.com/v1',
+                apiProtocol: API_PROTOCOLS.OPENAI,
+                apiModel: 'test-model',
+                maxOutputTokens: 1024,
+            },
+            systemPrompt: '系统',
+            userPrompt: '用户',
+            fetchImpl: async () => {
+                calls += 1;
+                return new Response('data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}\n\ndata: [DONE]\n', {
+                    headers: { 'content-type': 'text/event-stream' },
+                });
+            },
+        }),
+        error => error.code === 'THEATER_CONTENT_FILTER' && error.diagnosticSignal === REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER,
+    );
+    assert.equal(calls, 1);
 });
 
 test('独立 API 遇到 429 会按 Retry-After 单次重试并读取非流式正文', async () => {
@@ -794,6 +1001,7 @@ test('独立 API 遇到 429 会按 Retry-After 单次重试并读取非流式正
 test('独立 API 空流会在同一轮改用非流式请求', async () => {
     const requestBodies = [];
     const chunks = [];
+    const fallbacks = [];
     const result = await requestCustomApi({
         config: {
             apiUrl: 'https://example.com/v1',
@@ -804,6 +1012,7 @@ test('独立 API 空流会在同一轮改用非流式请求', async () => {
         systemPrompt: '系统',
         userPrompt: '用户',
         onChunk: text => chunks.push(text),
+        onFallback: path => fallbacks.push(path),
         fetchImpl: async (_url, options) => {
             requestBodies.push(JSON.parse(options.body));
             if (requestBodies.length === 1) {
@@ -820,6 +1029,7 @@ test('独立 API 空流会在同一轮改用非流式请求', async () => {
     assert.equal(requestBodies[1].stream, false);
     assert.deepEqual(chunks, ['非流式恢复正文']);
     assert.equal(result.text, '非流式恢复正文');
+    assert.deepEqual(fallbacks, ['custom:stream→non-stream']);
 });
 
 test('酒馆主 API 运行层优先使用 ChatCompletionService', async () => {
@@ -879,6 +1089,29 @@ test('酒馆主 API 没有 ChatCompletionService 时复用 TavernHelper 路径',
     assert.equal('tools' in helperOptions, false);
     assert.equal('tool_choice' in helperOptions, false);
     assert.equal(result.text, 'TavernHelper 正文');
+});
+
+test('酒馆主 API 的内容策略错误不会降级重发到 TavernHelper', async () => {
+    let helperCalls = 0;
+    await assert.rejects(
+        requestMainApi({
+            ctx: { oai_settings: { chat_completion_source: 'openai', openai_model: 'test-model' } },
+            chatCompletionService: {
+                processRequest: async () => { throw new Error('Request blocked by content filter: 不应重发的正文'); },
+            },
+            tavernHelper: {
+                generateRaw: async () => {
+                    helperCalls++;
+                    return '不应该收到这里的正文';
+                },
+            },
+            getContext: () => ({ oai_settings: { chat_completion_source: 'openai', openai_model: 'test-model' } }),
+        }),
+        error => error.code === 'THEATER_CONTENT_FILTER'
+            && error.diagnosticSignal === REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER
+            && !error.message.includes('不应重发的正文'),
+    );
+    assert.equal(helperCalls, 0);
 });
 
 test('连续续写只携带上一轮正文，并限制为最近 8000 字', () => {
@@ -1012,6 +1245,7 @@ test('单轮输出默认 16384，低上限模型按标准档位回落', () => {
     assert.equal(normalizeMaxTokens(undefined), 16384);
     assert.deepEqual(maxTokenFallbackSequence(16384), [16384, 8192, 4096, 2048, 1024, 512, 256]);
     assert.equal(isMaxTokenLimitError(400, 'max_tokens must be less than or equal to 8192'), true);
+    assert.equal(isMaxTokenLimitError(400, 'status_code=400,上下文窗口已满。减少对话历史记录、系统提示或工具'), true);
     assert.equal(isMaxTokenLimitError(401, 'invalid api key'), false);
 });
 
@@ -1080,6 +1314,20 @@ test('世界书读取并区分酒馆蓝灯、绿灯与链式策略', () => {
     assert.equal(shouldReadWorldBookEntry({ constant: false }, 'lights'), true);
     assert.equal(shouldReadWorldBookEntry({ vectorized: true }, 'lights'), false);
     assert.equal(shouldReadWorldBookEntry({ constant: true, disable: true }, 'lights'), false);
+});
+
+test('跟随角色卡只补入绑定世界书，不覆盖用户手选世界书', () => {
+    assert.deepEqual(
+        mergeFollowedWorldBooks(['手选设定', '角色绑定'], ['角色绑定', '聊天绑定', '']),
+        ['手选设定', '角色绑定', '聊天绑定'],
+    );
+});
+
+test('普通小剧场主角锚定当前 User 与 Char，避免示例姓名抢占主角', () => {
+    const anchor = buildProtagonistAnchor({ userName: '禾禾', charName: '麓' });
+    assert.match(anchor, /当前 User（禾禾）与当前 Char（麓）/);
+    assert.match(anchor, /不得把预设、示例对话或世界书中的其他姓名替换为本篇主角/);
+    assert.match(anchor, /除非本轮用户指令明确要求更换主角/);
 });
 
 test('小剧场把勾选条目交给酒馆扫描，并只接回本轮触发结果', async () => {
@@ -1264,6 +1512,21 @@ test('动态收束轮若被 Token 截断，仍可在轮数范围内继续', () =
     assert.equal(job.completedBelowTarget, false);
 });
 
+test('长篇上下篇至少执行两轮，即使上篇字数已碰到整篇阈值', () => {
+    const job = createGenerationJob({ targetChars: 8000, maxRounds: 2, minimumRounds: 2, autoContinue: true });
+    addGenerationSegment(job, '字'.repeat(8000), 'stop');
+    assert.equal(shouldContinueJob(job, readableCharCount), true);
+    job.round = 2;
+    addGenerationSegment(job, '下篇收束', 'stop');
+    assert.equal(shouldContinueJob(job, readableCharCount), false);
+});
+
+test('普通目标字数仍可在首轮达标后停止', () => {
+    const job = createGenerationJob({ targetChars: 4000, maxRounds: 3, autoContinue: true });
+    addGenerationSegment(job, '字'.repeat(4000), 'stop');
+    assert.equal(shouldContinueJob(job, readableCharCount), false);
+});
+
 test('多轮正文的最终 HTML 排版要求完整保留正文', () => {
     const payload = buildFinalRenderPayload({ sourceText: '第一段。\n\n第二段。', rules: '输出完整 HTML。' });
     assert.match(payload.systemPrompt, /不续写、不删减、不改写/);
@@ -1338,6 +1601,64 @@ test('请求诊断记录开始、首字、完成和 fallback 时间', () => {
     assert.match(summary, /首字 \+120ms/);
     assert.match(summary, /主体完成 \+800ms/);
     assert.match(summary, /fallback \+400ms/);
+});
+
+test('请求诊断能把 HTTP 与内容过滤错误映射成稳定信号', () => {
+    const contentFilter = classifyRequestFailure(createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
+        code: 'THEATER_CONTENT_FILTER', rawStopReason: 'content_filter',
+    }), { stage: '正文生成' });
+    assert.equal(contentFilter.signal, 'T-API-CONTENT-FILTER');
+    assert.equal(contentFilter.rawStopReason, 'content_filter');
+    assert.match(contentFilter.detail, /不等于本轮指令一定含 NSFW/);
+
+    const server = classifyRequestFailure({
+        code: 'THEATER_HTTP_STATUS',
+        theaterFailure: { status: 500 },
+    }, { stage: '正文生成' });
+    assert.equal(server.signal, 'T-HTTP-500');
+    assert.equal(diagnosticSignalInfo(server.signal).title, '上游或中转服务器异常');
+
+    const rateLimit = classifyRequestFailure({
+        code: 'THEATER_HTTP_STATUS',
+        theaterFailure: { status: 429 },
+    });
+    assert.equal(rateLimit.signal, 'T-HTTP-429');
+});
+
+test('请求计时会记录最终错误信号', () => {
+    const metrics = createRequestMetrics('custom:openai');
+    metrics.requestStartedAt = 1000;
+    const originalNow = Date.now;
+    try {
+        Date.now = () => 1250;
+        markFailed(metrics, 'T-API-EMPTY');
+    } finally {
+        Date.now = originalNow;
+    }
+    assert.match(summarizeMetrics(metrics), /失败 \+250ms（T-API-EMPTY）/);
+});
+
+test('自动模式只从有正文的模板中抽取，并给空来源稳定信号', () => {
+    const missing = resolveAutoInstruction({ source: '__last__', lastInstruction: '' });
+    assert.equal(missing.text, '');
+    assert.equal(missing.signal, 'T-AUTO-NO-INSTRUCTION');
+
+    const resolved = resolveAutoInstruction({
+        source: '__all__',
+        templates: [{ content: '' }, { content: '  有效指令  ' }],
+        random: () => 0,
+    });
+    assert.equal(resolved.text, '有效指令');
+    assert.equal(resolved.candidateCount, 1);
+    assert.equal(resolved.signal, null);
+
+    const missingGroup = resolveAutoInstruction({
+        source: '已删除分组',
+        groups: [],
+        templates: [{ group: '已删除分组', content: '不应被抽到' }],
+    });
+    assert.equal(missingGroup.signal, 'T-AUTO-NO-INSTRUCTION');
+    assert.equal(autoSourceLabel('__none__'), '随机·未分组模板');
 });
 
 test('运行日志统一脱敏密钥、Authorization 与 URL 路径', () => {

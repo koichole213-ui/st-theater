@@ -20,3 +20,12 @@ export function shouldReadWorldBookEntry(entry = {}, mode = 'all') {
     if (mode === 'lights') return worldBookEntryStrategy(entry) !== WORLD_BOOK_STRATEGIES.CHAIN;
     return true;
 }
+
+export function mergeFollowedWorldBooks(selectedBooks = [], boundBooks = []) {
+    const merged = [];
+    for (const value of [...selectedBooks, ...boundBooks]) {
+        const name = String(value || '').trim();
+        if (name && !merged.includes(name)) merged.push(name);
+    }
+    return merged;
+}

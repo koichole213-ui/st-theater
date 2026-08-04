@@ -5,6 +5,8 @@ import {
     extractApiErrorMessage,
     extractResponseMeta,
     extractStreamText,
+    isContentBlockedErrorMessage,
+    isContentBlockedStopReason,
     isHtmlErrorResponse,
     isMaxTokenLimitError,
     isRateLimitErrorMessage,
@@ -12,11 +14,80 @@ import {
     resolveMainApiModel,
     retryAfterMilliseconds,
 } from './api-client.js';
+import { REQUEST_DIAGNOSTIC_SIGNAL, createDiagnosticError } from './request-diagnostics.js';
 
 export const RATE_LIMIT_DEFAULT_WAIT_MS = 3000;
 export const RATE_LIMIT_MAX_AUTO_WAIT_MS = 15000;
 
 const noop = () => {};
+
+function noTextResponseError(meta = {}, { phase = 'body', transport = '' } = {}) {
+    const rawStopReason = meta?.rawStopReason || meta?.blockReason || null;
+    if (meta?.blockReason || isContentBlockedStopReason(rawStopReason)) {
+        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
+            code: 'THEATER_CONTENT_FILTER', rawStopReason, phase, transport,
+        });
+    }
+    if (meta?.stopReason === 'length') {
+        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TOKEN_LIMIT, {
+            code: 'THEATER_OUTPUT_LIMIT', rawStopReason, phase, transport,
+        });
+    }
+    return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.EMPTY, {
+        code: 'THEATER_RESPONSE_EMPTY', rawStopReason, phase, transport,
+    });
+}
+
+function streamEmptyError({ phase = 'body', transport = 'stream' } = {}) {
+    return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.EMPTY, {
+        code: 'THEATER_STREAM_EMPTY', phase, transport,
+    });
+}
+
+function statusError(status, body = '', { phase = 'body', transport = '' } = {}) {
+    const numericStatus = Number(status) || null;
+    if (numericStatus === 429) {
+        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.RATE_LIMIT, {
+            code: 'THEATER_RATE_LIMIT', status: numericStatus, phase, transport,
+        });
+    }
+    if (isMaxTokenLimitError(numericStatus, body)) {
+        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TOKEN_LIMIT, {
+            code: 'THEATER_OUTPUT_LIMIT', status: numericStatus, phase, transport,
+        });
+    }
+    const signal = numericStatus >= 400 && numericStatus <= 599
+        ? `T-HTTP-${numericStatus}`
+        : REQUEST_DIAGNOSTIC_SIGNAL.INVALID_RESPONSE;
+    return createDiagnosticError(signal, {
+        code: 'THEATER_HTTP_STATUS', status: numericStatus, phase, transport,
+    });
+}
+
+function shouldNotFallbackMainApi(error) {
+    return ['THEATER_CONTENT_FILTER', 'THEATER_RATE_LIMIT', 'THEATER_OUTPUT_LIMIT', 'THEATER_CONFIG'].includes(error?.code);
+}
+
+function normalizeMainApiFallbackError(error) {
+    if (error?.name === 'AbortError' || error?.diagnosticSignal) return error;
+    const message = String(error?.message || error || '');
+    if (isContentBlockedErrorMessage(message)) {
+        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
+            code: 'THEATER_CONTENT_FILTER', phase: 'main', transport: 'ChatCompletionService',
+        });
+    }
+    if (isRateLimitErrorMessage(message)) {
+        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.RATE_LIMIT, {
+            code: 'THEATER_RATE_LIMIT', phase: 'main', transport: 'ChatCompletionService',
+        });
+    }
+    if (/max[_\s-]?tokens|max(?:imum)?\s+(?:output|context)|输出上限|上下文上限|上下文(?:窗口|长度)?(?:已满|超出)|减少对话历史/i.test(message)) {
+        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TOKEN_LIMIT, {
+            code: 'THEATER_OUTPUT_LIMIT', phase: 'main', transport: 'ChatCompletionService',
+        });
+    }
+    return error;
+}
 
 export async function requestMainApi({
     ctx,
@@ -62,7 +133,9 @@ export async function requestMainApi({
         let rejectTimeout;
         const armTimeout = (milliseconds, code) => {
             clearTimeout(timeoutId);
-            timeoutId = setTimeout(() => rejectTimeout?.(new Error(code)), milliseconds);
+            timeoutId = setTimeout(() => rejectTimeout?.(createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TIMEOUT, {
+                code, phase: 'main', transport: 'ChatCompletionService',
+            })), milliseconds);
         };
         const firstAwareChunk = text => {
             if (String(text || '').trim() && shouldStream) {
@@ -91,15 +164,17 @@ export async function requestMainApi({
         } catch (error) {
             clearTimeout(timeoutId);
             if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+            const safeError = normalizeMainApiFallbackError(error);
+            if (shouldNotFallbackMainApi(safeError)) throw safeError;
             firstPathController.abort();
             onFallback('main:ChatCompletionService');
             log('warn', '主 API 请求路径降级', { from: 'ChatCompletionService', to: 'TavernHelper' });
-            console.warn('[Theater] ChatCompletionService failed, fallback to TavernHelper:', error);
+            console.warn('[Theater] ChatCompletionService failed, fallback to TavernHelper:', safeError?.code || safeError?.name || 'unknown');
             if (tavernHelper && typeof tavernHelper.generateRaw === 'function') {
                 onPath('main:TavernHelper');
                 return await callViaGenerateRaw({ tavernHelper, messages, signal, onChunk, shouldStream });
             }
-            throwFriendlyMainApi(error, onChunk);
+            throwFriendlyMainApi(safeError, onChunk);
         } finally {
             clearTimeout(timeoutId);
             if (forwardAbort) signal?.removeEventListener('abort', forwardAbort);
@@ -107,9 +182,9 @@ export async function requestMainApi({
     }
 
     if (!tavernHelper || typeof tavernHelper.generateRaw !== 'function') {
-        const tip = '当前酒馆没有可用的主 API 扩展接口。\n\n请改用【独立 API】模式，填写 API URL 和模型。';
-        onChunk(tip);
-        throw new Error(tip);
+        throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONFIG, {
+            code: 'THEATER_CONFIG', phase: 'main', transport: 'TavernHelper',
+        });
     }
     onPath('main:TavernHelper');
     return await callViaGenerateRaw({ tavernHelper, messages, signal, onChunk, shouldStream });
@@ -130,9 +205,9 @@ export async function callViaChatCompletionService({
     const source = oai?.chat_completion_source;
     const model = resolveMainApiModel(currentContext, oai);
     if (!source || !model) {
-        const tip = '酒馆主 API 还没选好 source 或模型。\n\n请先在酒馆 API 设置里选好模型并确认正文能正常生成。';
-        onChunk(tip);
-        throw new Error(tip);
+        throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONFIG, {
+            code: 'THEATER_CONFIG', phase: 'main', transport: 'ChatCompletionService',
+        });
     }
 
     const result = await CCS.processRequest(
@@ -146,12 +221,13 @@ export async function callViaChatCompletionService({
         return await consumeStreamThunk(result, onChunk);
     }
 
+    const meta = extractResponseMeta(typeof result === 'object' ? result : {}, API_PROTOCOLS.OPENAI);
     const text = typeof result === 'string'
         ? result
         : (result?.text || result?.content || result?.choices?.[0]?.message?.content || '');
-    if (!text) throw new Error('酒馆主 API 返回空内容');
+    if (!text) throw noTextResponseError(meta, { phase: 'main', transport: 'ChatCompletionService' });
     onChunk(text);
-    return { text, ...extractResponseMeta(typeof result === 'object' ? result : {}, API_PROTOCOLS.OPENAI) };
+    return { text, ...meta };
 }
 
 export async function consumeStreamThunk(streamThunk, onChunk = noop) {
@@ -171,24 +247,42 @@ export async function consumeStreamThunk(streamThunk, onChunk = noop) {
             onChunk(full);
         }
     }
-    if (!full) throw new Error('酒馆主 API 流式返回空');
+    if (!full) throw noTextResponseError(meta, { phase: 'main', transport: 'stream' });
     return { text: full, ...meta };
 }
 
 export function throwFriendlyMainApi(error, onChunk = noop) {
     if (error?.name === 'AbortError') throw error;
+    if (error?.diagnosticSignal) throw error;
     const message = String(error?.message || error || '');
+    if (isContentBlockedErrorMessage(message)) {
+        throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
+            code: 'THEATER_CONTENT_FILTER', phase: 'main', transport: 'TavernHelper',
+        });
+    }
+    if (isRateLimitErrorMessage(message)) {
+        throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.RATE_LIMIT, {
+            code: 'THEATER_RATE_LIMIT', phase: 'main', transport: 'TavernHelper',
+        });
+    }
+    if (/max[_\s-]?tokens|max(?:imum)?\s+(?:output|context)|输出上限|上下文上限/i.test(message)) {
+        throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TOKEN_LIMIT, {
+            code: 'THEATER_OUTPUT_LIMIT', phase: 'main', transport: 'TavernHelper',
+        });
+    }
     if (/api[_\s]?key[_\s]?missing|401|unauthorized/i.test(message)) {
-        const tip = '酒馆主 API 的 Key 没有保存好。\n\n请回酒馆 API 设置里填写并保存 Key，再回来生成。';
-        onChunk(tip);
-        throw new Error(tip);
+        throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONFIG, {
+            code: 'THEATER_CONFIG', phase: 'main', transport: 'TavernHelper',
+        });
     }
     if (/502|524|529|gateway|timeout|ECONNRESET|socket hang up/i.test(message)) {
-        const tip = `酒馆主 API 网关错误：${message.substring(0, 200)}\n\n建议改用【独立 API】模式直接填写 endpoint。`;
-        onChunk(tip);
-        throw new Error(tip);
+        throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TIMEOUT, {
+            code: 'THEATER_MAIN_GATEWAY', phase: 'main', transport: 'TavernHelper',
+        });
     }
-    throw error;
+    throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.UNKNOWN, {
+        code: 'THEATER_MAIN_UNKNOWN', phase: 'main', transport: 'TavernHelper',
+    });
 }
 
 export async function callViaGenerateRaw({
@@ -211,7 +305,9 @@ export async function callViaGenerateRaw({
         })
         : new Promise(() => {});
     const timeoutPromise = new Promise((_, reject) =>
-        { timeoutId = setTimeout(() => reject(new Error('主 API 5 分钟未返回，已放弃等待。')), timeoutMs); }
+        { timeoutId = setTimeout(() => reject(createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TIMEOUT, {
+            code: 'THEATER_MAIN_TIMEOUT', phase: 'main', transport: 'TavernHelper',
+        })), timeoutMs); }
     );
 
     try {
@@ -234,11 +330,12 @@ export async function callViaGenerateRaw({
             abortPromise,
             timeoutPromise,
         ]);
-        if (!result) throw new Error('主 API 返回空内容');
+        if (!result) throw noTextResponseError({}, { phase: 'main', transport: 'TavernHelper' });
         const text = typeof result === 'string' ? result : (result?.text || result?.content || '');
-        if (!text) throw new Error('主 API 返回空内容');
+        const meta = extractResponseMeta(typeof result === 'object' ? result : {}, API_PROTOCOLS.OPENAI);
+        if (!text) throw noTextResponseError(meta, { phase: 'main', transport: 'TavernHelper' });
         onChunk(text);
-        return { text, ...extractResponseMeta(typeof result === 'object' ? result : {}, API_PROTOCOLS.OPENAI) };
+        return { text, ...meta };
     } catch (error) {
         if (error?.name === 'AbortError') throw error;
         throwFriendlyMainApi(error, onChunk);
@@ -284,10 +381,7 @@ export async function retryRateLimitedResponse(response, retryRequest, details =
 
 export async function customApiStatusError(response, label = 'API') {
     const body = await response.text().catch(() => '');
-    if (response.status === 429) {
-        return new Error(`${label} 429：接口请求过于频繁，请稍后再试${body ? `（${body.substring(0, 160)}）` : ''}`);
-    }
-    return new Error(`${label} ${response.status}: ${body.substring(0, 200)}`);
+    return statusError(response.status, body, { phase: label, transport: 'non_stream' });
 }
 
 export async function requestCustomApi({
@@ -298,6 +392,7 @@ export async function requestCustomApi({
     shouldStream = true,
     signal,
     log = noop,
+    onFallback = noop,
     fetchImpl = (...args) => globalThis.fetch(...args),
 } = {}) {
     const url = String(config.apiUrl || '').replace(/\/+$/, '');
@@ -314,7 +409,11 @@ export async function requestCustomApi({
             maxTokens,
             stream: shouldStream,
         });
-        if (request.protocol === API_PROTOCOLS.ANTHROPIC && !config.apiKey) throw new Error('Anthropic 接口需要 API Key');
+        if (request.protocol === API_PROTOCOLS.ANTHROPIC && !config.apiKey) {
+            throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONFIG, {
+                code: 'THEATER_CONFIG', phase: 'body', transport: request.protocol,
+            });
+        }
         log('info', '请求发出', { mode: 'custom', url: request.endpoint, protocol: request.protocol, max_tokens: maxTokens });
         const performRequest = body => fetchImpl(request.endpoint, {
             method: 'POST',
@@ -335,12 +434,10 @@ export async function requestCustomApi({
             const nextLimit = candidates[index + 1];
             if (nextLimit && isMaxTokenLimitError(response.status, errorBody)) {
                 log('warn', '模型拒绝单轮输出上限，自动降低后重试', { status: response.status, from: maxTokens, to: nextLimit });
+                onFallback(`custom:max-token ${maxTokens}→${nextLimit}`);
                 continue;
             }
-            if (response.status === 429) {
-                throw new Error(`API 429：接口请求过于频繁，请稍后再试${errorBody ? `（${errorBody.substring(0, 160)}）` : ''}`);
-            }
-            throw new Error(`API ${response.status}: ${errorBody.substring(0, 200)}`);
+            throw statusError(response.status, errorBody, { phase: 'body', transport: request.protocol });
         }
         if (shouldStream) {
             while (true) {
@@ -360,6 +457,7 @@ export async function requestCustomApi({
                         continue;
                     }
                     if (streamError?.code !== 'THEATER_STREAM_EMPTY') throw streamError;
+                    onFallback('custom:stream→non-stream');
                     log('warn', '流式返回为空，当前轮自动改用非流式重试', {
                         protocol: request.protocol,
                         max_tokens: maxTokens,
@@ -392,38 +490,48 @@ export async function requestCustomApi({
         }
         return await readNonStreamingResponse(response, onChunk, request.protocol);
     }
-    throw new Error('模型不支持可用的单轮输出上限');
+    throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TOKEN_LIMIT, {
+        code: 'THEATER_OUTPUT_LIMIT', phase: 'body', transport: 'custom',
+    });
 }
 
 function htmlResponseError(raw) {
-    const excerpt = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-    return new Error(`API 返回了 HTML 错误页${excerpt ? `：${excerpt}` : ''}`);
+    return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.INVALID_RESPONSE, {
+        code: 'THEATER_RESPONSE_HTML', phase: 'body', transport: 'response',
+    });
 }
 
 function streamPayloadError(message) {
-    const error = new Error(`API 返回错误：${message}`);
-    if (isRateLimitErrorMessage(message)) error.code = 'THEATER_RATE_LIMIT';
-    return error;
+    if (isContentBlockedErrorMessage(message)) {
+        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
+            code: 'THEATER_CONTENT_FILTER', rawStopReason: message, phase: 'body', transport: 'stream',
+        });
+    }
+    if (isRateLimitErrorMessage(message)) {
+        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.RATE_LIMIT, {
+            code: 'THEATER_RATE_LIMIT', phase: 'body', transport: 'stream',
+        });
+    }
+    return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.INVALID_RESPONSE, {
+        code: 'THEATER_RESPONSE_PARSE', phase: 'body', transport: 'stream',
+    });
 }
 
 export async function readNonStreamingResponse(response, onChunk = noop, protocol = API_PROTOCOLS.OPENAI) {
     const raw = await response.text();
     if (isHtmlErrorResponse(response.headers.get('content-type'), raw)) throw htmlResponseError(raw);
     const trimmed = raw.trim();
-    if (!trimmed) throw new Error('API 非流式返回空内容');
+    if (!trimmed) throw noTextResponseError({}, { phase: 'body', transport: 'non_stream' });
 
     let text = trimmed;
     let meta = { stopReason: 'unknown', rawStopReason: null, usage: null };
     try {
         const json = JSON.parse(trimmed);
         const apiError = extractApiErrorMessage(json);
-        if (apiError) throw new Error(`API 返回错误：${apiError}`);
+        if (apiError) throw streamPayloadError(apiError);
         text = extractStreamText(json, protocol);
         meta = extractResponseMeta(json, protocol);
-        if (!text) {
-            const stopDetail = meta.rawStopReason ? `（结束原因：${meta.rawStopReason}）` : '';
-            throw new Error(`API 返回了 JSON，但其中没有可识别的正文${stopDetail}`);
-        }
+        if (!text) throw noTextResponseError(meta, { phase: 'body', transport: 'non_stream' });
     } catch (error) {
         if (error instanceof SyntaxError) text = trimmed;
         else throw error;
@@ -436,9 +544,7 @@ export async function readSSEStream(response, onChunk = noop, protocol = API_PRO
     const contentType = response.headers.get('content-type') || '';
     if (isHtmlErrorResponse(contentType)) throw htmlResponseError(await response.text());
     if (!response.body?.getReader) {
-        const error = new Error('API 流式响应没有可读取的数据');
-        error.code = 'THEATER_STREAM_EMPTY';
-        throw error;
+        throw streamEmptyError();
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -497,6 +603,8 @@ export async function readSSEStream(response, onChunk = noop, protocol = API_PRO
                 onChunk(full);
                 return { text: full, ...extractResponseMeta(json, protocol) };
             }
+            const rawMeta = extractResponseMeta(json, protocol);
+            if (rawMeta.rawStopReason || rawMeta.blockReason) meta = rawMeta;
         } catch (error) {
             if (!(error instanceof SyntaxError)) throw error;
         }
@@ -509,10 +617,9 @@ export async function readSSEStream(response, onChunk = noop, protocol = API_PRO
     }
 
     if (!full && providerError) throw streamPayloadError(providerError);
-    if (!full) {
-        const error = new Error('API 流式返回为空');
-        error.code = 'THEATER_STREAM_EMPTY';
-        throw error;
+    if (!full && (meta.blockReason || isContentBlockedStopReason(meta.rawStopReason))) {
+        throw noTextResponseError(meta, { phase: 'body', transport: 'stream' });
     }
+    if (!full) throw streamEmptyError();
     return { text: full, ...meta };
 }

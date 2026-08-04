@@ -44,6 +44,7 @@ export function buildPlainTextHtml(text, theme = 'light') {
             text: '#d9d4ca',
             selection: 'rgba(210, 164, 92, .34)',
             shadow: '0 24px 70px rgba(0, 0, 0, .38)',
+            fontFamily: 'ui-rounded,"Kaiti SC","STKaiti","KaiTi","FangSong",serif',
         }
         : {
             scheme: 'light',
@@ -54,6 +55,7 @@ export function buildPlainTextHtml(text, theme = 'light') {
             text: '#302a25',
             selection: 'rgba(190, 139, 85, .24)',
             shadow: '0 18px 55px rgba(83, 62, 43, .13)',
+            fontFamily: 'ui-serif,"Songti SC","STSong","Noto Serif CJK SC",serif',
         };
     const body = escapeHtml(text);
     return `<!DOCTYPE html>
@@ -72,7 +74,7 @@ body{
     background:
         radial-gradient(circle at 50% -10%,${palette.pageGlow},transparent 42%),
         ${palette.page};
-    font-family:ui-serif,"Songti SC","STSong","Noto Serif CJK SC",serif;
+    font-family:${palette.fontFamily};
 }
 .reader-card{
     width:min(760px,100%);

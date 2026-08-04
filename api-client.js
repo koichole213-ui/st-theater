@@ -55,8 +55,8 @@ export function maxTokenFallbackSequence(value) {
 export function isMaxTokenLimitError(status, body = '') {
     if (![400, 413, 422].includes(Number(status))) return false;
     const text = String(body || '');
-    return /max[_\s-]?tokens|max(?:imum)?\s+output\s+tokens|maximum\s+context\s+length|context[_\s-]?length|requested\s+tokens/i.test(text)
-        && /too\s+(?:large|high|many)|exceed|limit|maximum|at\s+most|less\s+than|must\s+be|<=|not\s+support/i.test(text);
+    return /max[_\s-]?tokens|max(?:imum)?\s+output\s+tokens|maximum\s+context\s+length|context[_\s-]?length|requested\s+tokens|上下文(?:窗口|长度)?|对话历史|系统提示/i.test(text)
+        && /too\s+(?:large|high|many)|exceed|limit|maximum|at\s+most|less\s+than|must\s+be|<=|not\s+support|已满|超出|过长|减少|限制|上限/i.test(text);
 }
 
 export function retryAfterMilliseconds(value, now = Date.now()) {
@@ -74,10 +74,44 @@ export function isRateLimitErrorMessage(value) {
         .test(String(value || ''));
 }
 
+const CONTENT_BLOCK_REASONS = Object.freeze({
+    content_filter: 'content_filter',
+    content_policy: 'content_policy',
+    safety: 'safety',
+    prohibited_content: 'prohibited_content',
+    blocklist: 'blocklist',
+    spii: 'spii',
+    recitation: 'recitation',
+    model_armor: 'model_armor',
+    image_safety: 'image_safety',
+    image_prohibited_content: 'image_prohibited_content',
+    jailbreak: 'jailbreak',
+    refusal: 'refusal',
+});
+
+export function contentBlockReason(value) {
+    const normalized = String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, '_');
+    return CONTENT_BLOCK_REASONS[normalized] || null;
+}
+
+export function isContentBlockedStopReason(value) {
+    return !!contentBlockReason(value);
+}
+
+export function isContentBlockedErrorMessage(value) {
+    const text = String(value || '');
+    return isContentBlockedStopReason(text)
+        || /content[\s_-]*(?:filter|policy)|\bsafety(?:\s+filter)?\b|prohibited[\s_-]*content|blocklist|\bspii\b|recitation|model[\s_-]*armor|jailbreak/i.test(text);
+}
+
 export function normalizeStopReason(raw) {
     const value = String(raw || '').toLowerCase();
     if (value === 'length' || value === 'max_tokens' || value === 'max_tokens_reached') return 'length';
     if (value === 'stop' || value === 'end_turn' || value === 'stop_sequence') return 'stop';
+    if (isContentBlockedStopReason(value)) return 'blocked';
     return raw ? 'unknown' : 'unknown';
 }
 
@@ -88,10 +122,17 @@ export function isHtmlErrorResponse(contentType = '', text = '') {
 }
 
 export function extractResponseMeta(json, protocol = API_PROTOCOLS.OPENAI) {
-    const rawStopReason = protocol === API_PROTOCOLS.ANTHROPIC
+    const candidateReason = protocol === API_PROTOCOLS.ANTHROPIC
         ? (json?.stop_reason || json?.delta?.stop_reason)
         : (json?.choices?.[0]?.finish_reason || json?.candidates?.[0]?.finishReason || json?.candidates?.[0]?.finish_reason);
-    return { stopReason: normalizeStopReason(rawStopReason), rawStopReason: rawStopReason || null, usage: json?.usage || null };
+    const promptBlockReason = json?.promptFeedback?.blockReason || json?.prompt_feedback?.block_reason || null;
+    const rawStopReason = candidateReason || promptBlockReason || null;
+    return {
+        stopReason: normalizeStopReason(rawStopReason),
+        rawStopReason,
+        blockReason: contentBlockReason(candidateReason) || contentBlockReason(promptBlockReason),
+        usage: json?.usage || null,
+    };
 }
 
 export function textFromContentPart(part) {
