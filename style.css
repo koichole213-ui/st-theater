@@ -1216,6 +1216,418 @@
 .theater-config-action-row > span { min-width: 0; }
 .theater-config-groups > .theater-version { margin: 2px 0 4px; }
 
+/* Gemini card layout, adapted to the plugin's real controls and skin tokens */
+.theater-config-layout {
+    width: min(760px, 100%);
+    margin: 0 auto;
+}
+.theater-config-groups {
+    display: grid;
+    gap: 16px;
+    min-width: 0;
+}
+.theater-config-card {
+    min-width: 0;
+    padding: 14px;
+    border: 1px solid var(--t-border);
+    border-radius: 16px;
+    background: var(--t-surface-1);
+    box-shadow: 0 4px 16px color-mix(in srgb, var(--t-shadow-color, #2c2038) 4%, transparent);
+}
+.theater-config-card-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 22px;
+    margin-bottom: 12px;
+    color: var(--t-fg);
+    font-size: var(--t-text-sm);
+    font-weight: 700;
+}
+.theater-config-card-title i {
+    margin-right: 7px;
+    color: var(--t-accent-deep);
+}
+.theater-config-card-body > .theater-section {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.theater-config-card-body > .theater-section + .theater-section {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--t-border);
+}
+.theater-config-card .theater-config-section-label { display: none; }
+
+.theater-config-card .theater-api-mode-switch {
+    gap: 4px;
+    margin: 0 0 12px;
+    padding: 3px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--t-surface-2);
+}
+.theater-config-card .theater-api-mode-switch::before { display: none; }
+.theater-config-card .theater-api-mode-switch button {
+    min-height: 40px;
+    padding: 8px 6px;
+    border: 0;
+    border-radius: 9px;
+    color: var(--t-fg-mute);
+    font-size: var(--t-text-xs);
+    font-weight: 600;
+    transition: background .18s ease, color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+.theater-config-card .theater-api-mode-switch button.active {
+    color: var(--t-fg);
+    background: var(--t-surface-1);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--t-shadow-color, #2c2038) 11%, transparent);
+}
+.theater-config-card .theater-api-mode-switch button:focus-visible,
+.theater-config-icon-btn:focus-visible,
+.theater-config-field-action:focus-visible,
+.theater-config-inline-details > summary:focus-visible,
+.theater-memory-api-card > summary:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--t-accent) 70%, transparent);
+    outline-offset: 2px;
+}
+
+.theater-config-card .theater-api-current-card {
+    display: block;
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    border-color: color-mix(in srgb, var(--t-accent) 30%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--t-accent) 12%, var(--t-surface-1));
+}
+.theater-config-card .theater-api-current-card > span {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 3px;
+    color: var(--t-accent-deep);
+    font-size: var(--t-text-xs);
+    font-weight: 600;
+}
+.theater-config-card .theater-api-current-card b {
+    display: block;
+    color: var(--t-fg);
+    font-size: var(--t-text-sm);
+}
+.theater-config-card .theater-api-current-card small {
+    display: block;
+    margin-top: 2px;
+    color: var(--t-fg-mute);
+    font-size: var(--t-text-xs);
+}
+
+.theater-config-card .theater-api-preset-card {
+    margin: 0 0 12px;
+    padding: 0;
+    border: 0;
+}
+.theater-config-card .theater-api-preset-heading {
+    margin: 0 0 5px;
+    color: var(--t-fg-soft);
+    font-size: var(--t-text-xs);
+    font-weight: 600;
+}
+.theater-config-card .theater-api-preset-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+}
+.theater-config-card .theater-api-preset-actions {
+    position: static;
+    display: flex;
+    width: auto;
+    gap: 4px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.theater-config-icon-btn {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 1px solid var(--t-border);
+    border-radius: 12px;
+    background: var(--t-surface-2);
+    color: var(--t-fg-mute);
+    font: inherit;
+    cursor: pointer;
+}
+.theater-config-icon-btn:hover {
+    color: var(--t-accent-deep);
+    border-color: color-mix(in srgb, var(--t-accent) 36%, var(--t-border));
+}
+.theater-config-icon-btn.danger { color: var(--t-danger); }
+.theater-config-icon-btn.disabled {
+    opacity: .42;
+    pointer-events: none;
+}
+.theater-config-card .theater-api-preset-note {
+    margin: 7px 0 0;
+    color: var(--t-fg-mute);
+    font-size: var(--t-text-xs);
+}
+
+.theater-config-card .theater-config-api-fields { padding: 0; }
+.theater-config-card .theater-config-field {
+    display: flex;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 5px;
+    min-height: 0;
+    margin-bottom: 12px;
+    padding: 0;
+    border: 0;
+}
+.theater-config-card .theater-config-field > label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.theater-config-card .theater-config-field > label b {
+    color: var(--t-fg-soft);
+    font-size: var(--t-text-xs);
+    font-weight: 600;
+}
+.theater-config-card .theater-config-field > label small {
+    margin: 0;
+    color: var(--t-fg-mute);
+    font-size: var(--t-text-xs);
+}
+.theater-config-card .theater-config-field .theater-input,
+.theater-config-card .theater-config-field .theater-select,
+.theater-config-card .theater-api-preset-control .theater-select {
+    min-height: 40px;
+    margin: 0;
+    border-radius: 12px;
+    background-color: var(--t-surface-2);
+}
+.theater-config-card .theater-config-model-control {
+    position: static;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+}
+.theater-config-card .theater-config-model-control .theater-input,
+.theater-config-card .theater-config-model-control .theater-select {
+    grid-column: 1;
+    padding-right: var(--t-space-3);
+}
+.theater-config-card .theater-config-model-control .theater-select:not([style*="display:none"]):not([style*="display: none"]) { margin-bottom: 0; }
+.theater-config-card .theater-config-field-action {
+    position: static;
+    grid-column: 2;
+    grid-row: 1;
+    align-self: stretch;
+    min-width: 68px;
+    min-height: 40px;
+    padding: 0 12px;
+    border: 1px solid var(--t-border);
+    border-radius: 12px;
+    background: var(--t-surface-2);
+    color: var(--t-fg);
+    font: inherit;
+    font-size: var(--t-text-xs);
+}
+.theater-config-card .theater-config-advanced-details {
+    margin: 0;
+    padding: 10px 0;
+    border-top: 1px dashed var(--t-border);
+    border-bottom: 0;
+}
+.theater-config-card .theater-config-advanced-details > summary { min-height: 34px; }
+.theater-config-card .theater-config-api-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    min-height: 0;
+    margin-top: 8px;
+    padding: 0;
+    border: 0;
+}
+.theater-config-card .theater-config-api-actions .theater-btn {
+    justify-content: center;
+    min-height: 40px;
+    padding: 7px 10px;
+}
+
+.theater-config-card .theater-memory-api-card {
+    margin-top: 10px;
+    border-width: 1px 0 0;
+    border-style: dashed;
+    border-color: var(--t-border);
+}
+.theater-config-card .theater-memory-api-card > summary {
+    min-height: 44px;
+    padding: 10px 1px 0;
+}
+.theater-config-card .theater-memory-api-body {
+    margin: 10px 0 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+.theater-config-card .theater-memory-api-body > p { margin: 0; }
+.theater-config-card .theater-memory-api-body > label {
+    grid-template-columns: 110px minmax(0, 1fr);
+    min-height: 44px;
+}
+.theater-config-card .theater-config-text-button.theater-btn {
+    min-height: 40px;
+    font-size: var(--t-text-xs);
+}
+
+.theater-config-card .theater-config-setting-row,
+.theater-config-card .theater-config-choice-row,
+.theater-config-card .theater-config-action-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 54px;
+    margin: 0;
+    padding: 10px 0;
+    border: 0;
+    border-bottom: 1px solid var(--t-border);
+}
+.theater-config-card .theater-section > :last-child { border-bottom: 0; }
+.theater-config-setting-copy,
+.theater-config-choice-row > span,
+.theater-config-action-row > span {
+    min-width: 0;
+    flex: 1 1 auto;
+    padding-right: 8px;
+}
+.theater-config-setting-copy b,
+.theater-config-setting-copy small,
+.theater-config-choice-row > span b,
+.theater-config-choice-row > span small,
+.theater-config-action-row > span b,
+.theater-config-action-row > span small { display: block; }
+.theater-config-setting-copy b,
+.theater-config-choice-row > span b,
+.theater-config-action-row > span b {
+    color: var(--t-fg);
+    font-size: var(--t-text-sm);
+    font-weight: 600;
+}
+.theater-config-setting-copy small,
+.theater-config-choice-row > span small,
+.theater-config-action-row > span small {
+    margin-top: 2px;
+    color: var(--t-fg-mute);
+    font-size: var(--t-text-xs);
+    line-height: 1.35;
+}
+.theater-config-card .theater-config-choice-row .theater-select {
+    flex: 0 1 220px;
+    width: min(220px, 46%);
+    min-height: 36px;
+    margin: 0;
+    background-color: var(--t-surface-2);
+}
+.theater-config-compact-input {
+    flex: 0 0 76px;
+    width: 76px;
+    min-width: 76px;
+    min-height: 36px;
+    margin: 0;
+    text-align: center;
+    background: var(--t-surface-2);
+}
+.theater-config-switch {
+    position: relative;
+    display: inline-block;
+    flex: 0 0 42px;
+    width: 42px;
+    height: 24px;
+    cursor: pointer;
+}
+.theater-config-switch input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+.theater-config-switch > span {
+    position: absolute;
+    inset: 0;
+    border: 1px solid var(--t-border-strong);
+    border-radius: 999px;
+    background: var(--t-surface-2);
+    transition: background .18s ease, border-color .18s ease;
+}
+.theater-config-switch > span::before {
+    content: '';
+    position: absolute;
+    bottom: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--t-fg-mute);
+    transition: transform .18s ease, background .18s ease;
+}
+.theater-config-switch input:checked + span {
+    border-color: var(--t-accent);
+    background: var(--t-accent);
+}
+.theater-config-switch input:checked + span::before {
+    transform: translateX(18px);
+    background: var(--t-on-accent);
+}
+.theater-config-switch input:focus-visible + span {
+    outline: 2px solid color-mix(in srgb, var(--t-accent) 70%, transparent);
+    outline-offset: 2px;
+}
+
+.theater-config-card .theater-config-inline-details {
+    margin: 0;
+    border: 0;
+    border-bottom: 1px solid var(--t-border);
+}
+.theater-config-card .theater-config-inline-details > summary {
+    min-height: 44px;
+    padding: 10px 0;
+    color: var(--t-accent-deep);
+}
+.theater-config-card .theater-config-detail-body {
+    margin-bottom: 10px;
+    padding: 10px;
+    border-radius: 12px;
+    background: var(--t-surface-2);
+}
+.theater-config-card .theater-config-detail-line .theater-btn { min-height: 40px; }
+.theater-config-card .theater-config-action-row {
+    flex-wrap: wrap;
+    border-bottom: 0;
+}
+.theater-config-card .theater-config-action-row .theater-btn {
+    min-height: 40px;
+    margin: 0;
+}
+.theater-config-groups > .theater-version {
+    margin: 0;
+    color: var(--t-fg-mute);
+    font-size: var(--t-text-xs);
+    text-align: center;
+}
+
 /* ============================================================
  * Buttons
  * ============================================================ */
@@ -3107,26 +3519,35 @@ body.theater-reader-open {
 .theater-popup[data-skin="custom"] .theater-dream-archive-note { color: var(--t-fg-mute); }
 
 @media (max-width: 768px) {
-    .theater-config-intro { align-items: flex-start; margin-bottom: 9px; }
-    .theater-config-intro b { font-size: var(--t-text-md); }
-    .theater-config-intro span { max-width: 220px; }
-    .theater-config-group > summary { min-height: 54px; padding: 9px 11px; }
-    .theater-config-group-body { padding: 0 10px 8px; }
-    .theater-config-group-body > .theater-section { padding: 0; }
-    .theater-config-field { grid-template-columns: 1fr; gap: 5px; padding: 9px 0; }
-    .theater-config-field > label small { display: none; }
-    .theater-config-choice-row { grid-template-columns: minmax(0, 1fr) minmax(118px, .72fr); gap: 8px; }
-    .theater-config-setting-row { align-items: flex-start; gap: 8px; }
-    .theater-config-setting-row .theater-hint-inline { max-width: 48%; }
-    .theater-config-api-actions { align-items: flex-end; }
-    .theater-config-api-actions > span { max-width: 94px; }
-    .theater-config-action-row { align-items: flex-start; }
-    .theater-config-action-row > span small { max-width: 190px; }
-    .theater-config-detail-line { align-items: stretch; }
-    .theater-api-preset-actions { right: -1px; }
-    .theater-api-current-card { grid-template-columns: 1fr; gap: 4px; }
-    .theater-api-current-card > span { grid-row: auto; }
-    .theater-memory-api-body > label { grid-template-columns: 1fr; gap: 5px; }
+    .theater-config-groups { gap: 12px; }
+    .theater-config-card { padding: 13px; border-radius: 15px; }
+    .theater-config-card-title { margin-bottom: 10px; }
+    .theater-config-card .theater-api-mode-switch button { min-height: 44px; }
+    .theater-config-card .theater-api-preset-control { grid-template-columns: 1fr; }
+    .theater-config-card .theater-api-preset-actions { justify-content: flex-end; }
+    .theater-config-card .theater-config-icon-btn { width: 44px; height: 44px; }
+    .theater-config-card .theater-config-field > label { align-items: flex-start; flex-direction: column; gap: 2px; }
+    .theater-config-card .theater-config-field .theater-input,
+    .theater-config-card .theater-config-field .theater-select,
+    .theater-config-card .theater-api-preset-control .theater-select,
+    .theater-config-card .theater-config-field-action { min-height: 44px; }
+    .theater-config-card .theater-config-api-actions .theater-btn { min-height: 44px; }
+    .theater-config-card .theater-config-setting-row,
+    .theater-config-card .theater-config-choice-row,
+    .theater-config-card .theater-config-action-row { gap: 9px; min-height: 58px; }
+    .theater-config-card .theater-config-setting-copy,
+    .theater-config-card .theater-config-choice-row > span,
+    .theater-config-card .theater-config-action-row > span { padding-right: 2px; }
+    .theater-config-card .theater-config-choice-row .theater-select {
+        flex-basis: 126px;
+        width: min(126px, 45%);
+        min-height: 40px;
+    }
+    .theater-config-card .theater-config-action-row { align-items: flex-start; }
+    .theater-config-card .theater-config-action-row > span { flex-basis: 100%; }
+    .theater-config-card .theater-config-action-row > .theater-btn { flex: 1 1 140px; justify-content: center; min-height: 44px; }
+    .theater-config-card .theater-config-detail-line { align-items: stretch; }
+    .theater-config-card .theater-memory-api-body > label { grid-template-columns: 1fr; gap: 5px; }
     .theater-result-meta-row { min-height: 38px; }
     .theater-recent-time { display: none; }
     .theater-result-toolbox.is-bookmark .theater-result-actions-toggle {

@@ -801,22 +801,31 @@ test('设置页重排为四组控制台且保留所有旧功能入口', () => {
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     for (const id of [
         'theater-api-mode', 'theater-api-preset-select', 'theater-api-protocol', 'theater-api-url',
-        'theater-api-key', 'theater-api-model', 'theater-max-output-tokens', 'theater-auto-continue',
-        'theater-wb-read-mode', 'theater-sound-enabled', 'theater-sound-preset', 'theater-sound-volume',
-        'theater-random-enabled', 'theater-random-scope', 'theater-auto-enabled', 'theater-auto-interval',
-        'theater-auto-source', 'theater-result-bookmark-enabled', 'theater-floating-ball-toggle',
-        'theater-floating-ball-tuck-toggle', 'theater-update-btn', 'theater-reload-after-update-btn',
+        'theater-api-key', 'theater-api-model', 'theater-max-output-tokens', 'theater-stream-enabled',
+        'theater-auto-continue', 'theater-max-auto-rounds', 'theater-save-api-preset-btn',
+        'theater-update-api-preset-btn', 'theater-rename-api-preset-btn', 'theater-delete-api-preset-btn',
+        'theater-dream-memory-api-preset', 'theater-dream-memory-batch-size',
+        'theater-dream-memory-prompt', 'theater-reset-dream-memory-prompt',
+        'theater-wb-read-mode', 'theater-sound-enabled', 'theater-sound-preset',
+        'theater-sound-preview-btn', 'theater-sound-volume', 'theater-random-enabled',
+        'theater-random-scope', 'theater-auto-enabled', 'theater-auto-interval', 'theater-auto-source',
+        'theater-result-bookmark-enabled', 'theater-floating-ball-toggle', 'theater-floating-ball-tuck-toggle',
+        'theater-update-btn', 'theater-reload-after-update-btn', 'theater-update-ready-hint',
     ]) assert.match(source, new RegExp(`id="${id}"`));
     for (const group of ['api', 'generation', 'experience', 'extension']) {
         assert.match(source, new RegExp(`data-config-group="\\$\\{group.id\\}"|id: '${group}'`));
     }
     const decorator = source.match(/function decorateConfigLayout\(\)[\s\S]*?\n\}/)?.[0] || '';
     assert.doesNotMatch(decorator, /theater-config-index/);
-    assert.match(source, /theater-api-preset-menu/);
+    assert.doesNotMatch(source, /data-config-section="logs"/);
+    assert.doesNotMatch(source, /theater-api-preset-menu/);
+    assert.match(source, /theater-config-icon-btn/);
     assert.match(source, /theater-config-api-actions/);
     assert.match(source, /theater-config-inline-details/);
-    assert.match(styles, /\.theater-config-field/);
-    assert.match(styles, /\.theater-api-preset-actions\s*\{[\s\S]*?position:\s*absolute/);
+    assert.match(styles, /\.theater-config-card/);
+    assert.match(styles, /\.theater-config-switch/);
+    assert.match(styles, /\.theater-config-card \.theater-api-preset-actions\s*\{[\s\S]*?position:\s*static/);
+    assert.match(styles, /@media \(max-width: 768px\)[\s\S]*?\.theater-config-card \.theater-api-preset-control\s*\{\s*grid-template-columns:\s*1fr/);
 });
 
 test('final HTML renderer hydrates every paragraph without rewriting source text', () => {
