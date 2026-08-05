@@ -796,7 +796,7 @@ test('页边书签位置会限制在可见范围并按拖动落点吸附', () =>
     assert.equal(position.top, 346);
 });
 
-test('设置页重排为四组控制台且保留所有旧功能入口', () => {
+test('设置页按六个清晰模块展示全部功能且字号跟随全局设置', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     for (const id of [
@@ -812,28 +812,36 @@ test('设置页重排为四组控制台且保留所有旧功能入口', () => {
         'theater-result-bookmark-enabled', 'theater-floating-ball-toggle', 'theater-floating-ball-tuck-toggle',
         'theater-update-btn', 'theater-reload-after-update-btn', 'theater-update-ready-hint',
     ]) assert.match(source, new RegExp(`id="${id}"`));
-    for (const group of ['api', 'generation', 'experience', 'extension']) {
+    for (const group of ['api', 'generation', 'automation', 'materials', 'access', 'extension']) {
         assert.match(source, new RegExp(`data-config-group="\\$\\{group.id\\}"|id: '${group}'`));
     }
     const decorator = source.match(/function decorateConfigLayout\(\)[\s\S]*?\n\}/)?.[0] || '';
     assert.doesNotMatch(decorator, /theater-config-index/);
     assert.doesNotMatch(source, /data-config-section="logs"/);
     assert.doesNotMatch(source, /theater-api-preset-menu/);
+    assert.doesNotMatch(source, /theater-api-current-card/);
+    assert.doesNotMatch(source, /生成体验与策略|素材与辅助联动/);
+    assert.doesNotMatch(source, /下载完成后仍由你决定何时刷新/);
     assert.match(source, /theater-config-icon-btn/);
     assert.match(source, /data-theater-number-step="-1"/);
     assert.match(source, /data-theater-number-step="1"/);
     assert.match(source, /data-config-extra-body="generation"/);
-    assert.match(source, /data-config-extra-body="experience"/);
-    assert.match(decorator, /\['random', 'auto'\]/);
-    assert.match(decorator, /\['result-actions', 'floating-extra'\]/);
+    assert.doesNotMatch(source, /data-config-extra-body="experience"/);
+    assert.match(decorator, /title: '生成控制'/);
+    assert.match(decorator, /title: '指令与自动生成'/);
+    assert.match(decorator, /title: '素材与提示'/);
+    assert.match(decorator, /title: '界面与快捷入口'/);
     assert.match(source, /theater-config-api-actions/);
-    assert.match(source, /theater-config-inline-details/);
+    assert.match(source, /theater-config-inline-control/);
+    assert.match(source, /theater-config-range-control/);
     assert.match(styles, /\.theater-config-card/);
     assert.match(styles, /\.theater-config-switch/);
     assert.match(styles, /\.theater-panel\[data-panel="config"\][\s\S]*?text-align:\s*left/);
     assert.match(styles, /\.theater-config-stepper/);
-    assert.match(styles, /\.theater-config-card \.theater-config-setting-copy b[\s\S]*?font-size:\s*13px/);
-    assert.match(styles, /\.theater-config-card \.theater-config-setting-copy small[\s\S]*?font-size:\s*10px/);
+    assert.match(styles, /--t-config-title-size:\s*calc\(var\(--t-text-base\)/);
+    assert.match(styles, /--t-config-desc-size:\s*calc\(var\(--t-text-xs\)/);
+    assert.match(styles, /\.theater-config-card \.theater-config-setting-copy b[\s\S]*?font-size:\s*var\(--t-config-title-size\)/);
+    assert.match(styles, /\.theater-config-card \.theater-config-setting-copy small[\s\S]*?font-size:\s*var\(--t-config-desc-size\)/);
     assert.match(styles, /\.theater-config-card \.theater-api-preset-actions\s*\{[\s\S]*?position:\s*static/);
     assert.match(styles, /@media \(max-width: 768px\)[\s\S]*?\.theater-config-card \.theater-api-preset-control\s*\{\s*grid-template-columns:\s*1fr/);
 });

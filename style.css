@@ -985,20 +985,6 @@
     box-shadow: none;
 }
 .theater-api-mode-switch button:active { transform: scale(.985); }
-.theater-api-current-card {
-    display: grid;
-    grid-template-columns: minmax(130px, .65fr) minmax(0, 1.35fr);
-    gap: 3px 14px;
-    margin-bottom: 0;
-    padding: 11px 13px;
-    border: 1px solid color-mix(in srgb, var(--t-accent) 24%, var(--t-border));
-    border-radius: var(--t-radius-md);
-    background: linear-gradient(120deg, color-mix(in srgb, var(--t-accent) 7%, var(--t-surface-1)), var(--t-surface-1));
-}
-.theater-api-current-card > span { grid-row: 1 / span 2; align-self: center; color: var(--t-fg-mute); font-size: var(--t-text-xs); }
-.theater-api-current-card > span i { margin-right: 6px; color: var(--t-accent-deep); }
-.theater-api-current-card b { min-width: 0; overflow: hidden; color: var(--t-fg); font-size: var(--t-text-sm); text-overflow: ellipsis; white-space: nowrap; }
-.theater-api-current-card small { color: var(--t-fg-mute); font-size: 10px; }
 .theater-memory-api-card {
     margin-top: 0;
     overflow: hidden;
@@ -1020,16 +1006,16 @@
 .theater-memory-api-card > summary::-webkit-details-marker { display: none; }
 .theater-memory-api-card > summary span { display: inline-flex; align-items: center; gap: 8px; color: var(--t-fg); }
 .theater-memory-api-card > summary span i { color: var(--t-accent-deep); }
-.theater-memory-api-card > summary small { color: var(--t-fg-mute); font-size: 10px; }
-.theater-memory-api-card > summary > i { color: var(--t-fg-mute); font-size: 10px; transition: transform .16s ease; }
+.theater-memory-api-card > summary small { color: var(--t-fg-mute); font-size: var(--t-config-desc-size, var(--t-text-xs)); }
+.theater-memory-api-card > summary > i { color: var(--t-fg-mute); font-size: var(--t-config-desc-size, var(--t-text-xs)); transition: transform .16s ease; }
 .theater-memory-api-card[open] > summary > i { transform: rotate(180deg); }
 .theater-memory-api-body { display: grid; gap: 10px; margin-bottom: 8px; padding: 0 12px 12px; border: 1px solid var(--t-border); border-radius: 12px; background: color-mix(in srgb, var(--t-bg-soft) 62%, transparent); }
 .theater-memory-api-body > p { margin: 12px 0 0; color: var(--t-fg-mute); font-size: var(--t-text-xs); line-height: 1.65; }
 .theater-memory-api-body > label { display: grid; grid-template-columns: 105px minmax(0, 1fr); gap: 10px; align-items: center; color: var(--t-fg-soft); font-size: var(--t-text-xs); }
 .theater-memory-prompt-details { padding-top: 2px; color: var(--t-fg-soft); font-size: var(--t-text-xs); }
 .theater-memory-prompt-details > summary { min-height: 38px; cursor: pointer; }
-.theater-memory-prompt-details .theater-textarea { margin-bottom: 8px; font-size: 11px; line-height: 1.65; }
-.theater-config-text-button.theater-btn { min-height: 30px; padding: 4px 8px; border-color: transparent; color: var(--t-accent-deep); background: transparent; box-shadow: none; font-size: 9px; }
+.theater-memory-prompt-details .theater-textarea { margin-bottom: 8px; font-size: var(--t-config-small-size, var(--t-text-xs)); line-height: 1.65; }
+.theater-config-text-button.theater-btn { min-height: 30px; padding: 4px 8px; border-color: transparent; color: var(--t-accent-deep); background: transparent; box-shadow: none; font-size: var(--t-config-desc-size, var(--t-text-xs)); }
 .theater-config-text-button.theater-btn:hover { background: color-mix(in srgb, var(--t-accent) 10%, transparent); }
 
 /* Settings control desk */
@@ -1294,35 +1280,6 @@
 .theater-memory-api-card > summary:focus-visible {
     outline: 2px solid color-mix(in srgb, var(--t-accent) 70%, transparent);
     outline-offset: 2px;
-}
-
-.theater-config-card .theater-api-current-card {
-    display: block;
-    margin: 0 0 14px;
-    padding: 10px 12px;
-    border-color: color-mix(in srgb, var(--t-accent) 30%, transparent);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--t-accent) 12%, var(--t-surface-1));
-}
-.theater-config-card .theater-api-current-card > span {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 3px;
-    color: var(--t-accent-deep);
-    font-size: var(--t-text-xs);
-    font-weight: 600;
-}
-.theater-config-card .theater-api-current-card b {
-    display: block;
-    color: var(--t-fg);
-    font-size: var(--t-text-sm);
-}
-.theater-config-card .theater-api-current-card small {
-    display: block;
-    margin-top: 2px;
-    color: var(--t-fg-mute);
-    font-size: var(--t-text-xs);
 }
 
 .theater-config-card .theater-api-preset-card {
@@ -1629,6 +1586,12 @@
 }
 
 /* Gemini reference fidelity: compact, left-aligned setting rows with controls on the right. */
+.theater-panel[data-panel="config"] {
+    --t-config-title-size: calc(var(--t-text-base) - .5px);
+    --t-config-desc-size: calc(var(--t-text-xs) - 1.5px);
+    --t-config-small-size: calc(var(--t-text-xs) - .5px);
+    --t-config-control-size: calc(var(--t-text-sm) - .5px);
+}
 .theater-panel[data-panel="config"],
 .theater-config-layout,
 .theater-config-card,
@@ -1644,7 +1607,7 @@
 }
 .theater-config-card-title {
     margin-bottom: 12px;
-    font-size: 13px;
+    font-size: var(--t-config-title-size);
 }
 .theater-config-card-title i { margin-right: 6px; }
 .theater-config-card-body > .theater-section + .theater-section {
@@ -1679,14 +1642,14 @@
 .theater-config-card .theater-config-choice-row > span b,
 .theater-config-card .theater-config-action-row > span b {
     margin: 0;
-    font-size: 13px;
+    font-size: var(--t-config-title-size);
     line-height: 1.25;
 }
 .theater-config-card .theater-config-setting-copy small,
 .theater-config-card .theater-config-choice-row > span small,
 .theater-config-card .theater-config-action-row > span small {
     margin: 0;
-    font-size: 10px;
+    font-size: var(--t-config-desc-size);
     line-height: 1.3;
 }
 .theater-config-card .theater-config-choice-row .theater-select {
@@ -1696,8 +1659,43 @@
     height: 32px;
     padding: 0 9px;
     border-radius: 12px;
-    font-size: 11px;
+    font-size: var(--t-config-small-size);
 }
+.theater-config-inline-control,
+.theater-config-range-control {
+    display: flex;
+    align-items: center;
+    flex: 0 1 166px;
+    width: min(166px, 52%);
+    min-width: 0;
+    gap: 6px;
+}
+.theater-config-card .theater-config-inline-control .theater-select {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+}
+.theater-config-inline-control .theater-btn {
+    flex: 0 0 auto;
+    min-height: 32px;
+    height: 32px;
+    margin: 0;
+    padding: 0 9px;
+    border-radius: 12px;
+    font-size: var(--t-config-small-size);
+}
+.theater-config-range-control input[type="range"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+}
+.theater-config-range-control > span {
+    flex: 0 0 26px;
+    color: var(--t-fg-mute);
+    font-size: var(--t-config-small-size);
+    text-align: right;
+}
+#theater-sound-volume-num::after { content: '%'; }
 .theater-config-card .theater-config-switch {
     flex: 0 0 42px;
 }
@@ -1720,7 +1718,7 @@
     background: transparent;
     color: var(--t-fg);
     font: inherit;
-    font-size: 13px;
+    font-size: var(--t-config-title-size);
     font-weight: 700;
     cursor: pointer;
 }
@@ -1735,7 +1733,7 @@
     border-radius: 0;
     background: transparent;
     color: var(--t-fg);
-    font-size: 12px;
+    font-size: var(--t-config-control-size);
     font-weight: 700;
     text-align: center;
     appearance: textfield;
@@ -1760,7 +1758,7 @@
     min-height: 18px;
     padding: 0;
     color: var(--t-accent-deep);
-    font-size: 11px;
+    font-size: var(--t-config-small-size);
     font-weight: 600;
     cursor: pointer;
     list-style: none;
@@ -1794,7 +1792,7 @@
     flex: 0 0 auto;
     min-height: 32px;
     padding: 5px 10px;
-    font-size: 11px;
+    font-size: var(--t-config-small-size);
 }
 
 /* ============================================================

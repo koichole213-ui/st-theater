@@ -1511,11 +1511,6 @@ function buildPopupHTML() {
                 <option value="custom" ${(settings.apiMode || 'custom') === 'custom' ? 'selected' : ''}>独立 API（推荐）</option>
                 <option value="main" ${settings.apiMode === 'main' ? 'selected' : ''}>酒馆主 API（实验）</option>
             </select>
-            <div class="theater-api-current-card">
-                <span><i class="fa-solid fa-circle-nodes"></i> 当前正文线路</span>
-                <b id="theater-api-current-label">${settings.apiMode === 'main' ? '跟随酒馆当前连接' : (settings.apiModel ? esc(settings.apiModel) : '独立 API · 尚未填写模型')}</b>
-                <small>${settings.apiMode === 'main' ? '不读取独立 API 的地址或密钥' : '地址、模型与密钥只用于插件独立请求'}</small>
-            </div>
             <div id="theater-custom-api-area" class="theater-config-api-fields" style="${settings.apiMode === 'main' ? 'display:none;' : ''}">
                 <div class="theater-api-preset-card">
                     <div class="theater-api-preset-heading">
@@ -1629,22 +1624,22 @@ function buildPopupHTML() {
                 <span class="theater-config-setting-copy"><b>生成完毕提示音</b><small>后台完成时播报音频</small></span>
                 <label class="theater-config-switch" aria-label="开启提示音"><input type="checkbox" id="theater-sound-enabled" ${settings.soundEnabled ? 'checked' : ''}><span></span></label>
             </div>
-            <details class="theater-config-inline-details">
-                <summary><span id="theater-sound-summary">试听与调整 · ${esc(SOUND_PRESETS.find(p => p.id === settings.soundPreset)?.label || '铃·清脆')} · ${Number(settings.soundVolume) || 0}%</span><i class="fa-solid fa-chevron-down"></i></summary>
-                <div class="theater-config-detail-body">
-                    <div class="theater-config-detail-line">
-                        <select id="theater-sound-preset" class="theater-select">
-                            ${SOUND_PRESETS.map(p => `<option value="${esc(p.id)}" ${settings.soundPreset === p.id ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}
-                        </select>
-                        <button type="button" id="theater-sound-preview-btn" class="theater-btn"><i class="fa-solid fa-play"></i><span>试听</span></button>
-                    </div>
-                    <div class="theater-config-range-line">
-                        <span class="theater-hint">音量</span>
-                        <input id="theater-sound-volume" type="range" min="0" max="100" step="5" value="${Number(settings.soundVolume) || 0}">
-                        <span id="theater-sound-volume-num" class="theater-hint">${Number(settings.soundVolume) || 0}</span>
-                    </div>
+            <div class="theater-config-choice-row">
+                <span><b>提示音样式</b><small id="theater-sound-summary">${esc(SOUND_PRESETS.find(p => p.id === settings.soundPreset)?.label || '铃·清脆')}</small></span>
+                <div class="theater-config-inline-control">
+                    <select id="theater-sound-preset" class="theater-select">
+                        ${SOUND_PRESETS.map(p => `<option value="${esc(p.id)}" ${settings.soundPreset === p.id ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}
+                    </select>
+                    <button type="button" id="theater-sound-preview-btn" class="theater-btn"><i class="fa-solid fa-play"></i><span>试听</span></button>
                 </div>
-            </details>
+            </div>
+            <div class="theater-config-choice-row">
+                <span><b>提示音量</b><small>调整完成提示的播放音量</small></span>
+                <div class="theater-config-range-control">
+                    <input id="theater-sound-volume" type="range" min="0" max="100" step="5" value="${Number(settings.soundVolume) || 0}">
+                    <span id="theater-sound-volume-num">${Number(settings.soundVolume) || 0}</span>
+                </div>
+            </div>
         </div>
         <div class="theater-section" data-config-section="random">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-dice"></i> 随机抽取指令</label>
@@ -1676,33 +1671,30 @@ function buildPopupHTML() {
                 <span class="theater-config-setting-copy"><b>开启自动模式</b><small>按聊天分别累计 AI 回复层数</small></span>
                 <label class="theater-config-switch" aria-label="开启自动模式"><input type="checkbox" id="theater-auto-enabled" ${settings.autoMode ? 'checked' : ''}><span></span></label>
             </div>
-            <details class="theater-config-inline-details">
-                <summary><span id="theater-auto-summary">自动模式详情 · 每 ${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))} 层</span><i class="fa-solid fa-chevron-down"></i></summary>
-                <div class="theater-config-detail-body">
-                    <div class="theater-config-range-line">
-                        <span class="theater-hint">间隔</span>
-                        <input id="theater-auto-interval" type="range" min="1" max="50" value="${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))}" class="theater-slider">
-                        <span class="theater-hint">每 <b id="theater-auto-interval-num">${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))}</b> 层</span>
-                    </div>
-                    <div class="theater-config-detail-line">
-                        <span class="theater-hint">指令来源</span>
-                        <select id="theater-auto-source" class="theater-select">
-                            ${(() => {
-                                const cur = settings.autoSource || '__last__';
-                                const opts = [
-                                    `<option value="__last__" ${cur === '__last__' ? 'selected' : ''}>上次使用的指令</option>`,
-                                    `<option value="__all__" ${cur === '__all__' ? 'selected' : ''}>随机 · 全部模板</option>`,
-                                    `<option value="__none__" ${cur === '__none__' ? 'selected' : ''}>随机 · 仅未分组</option>`,
-                                ];
-                                (settings.instructionGroups || []).forEach(g => {
-                                    opts.push(`<option value="${esc(g)}" ${cur === g ? 'selected' : ''}>随机 · 分组：${esc(g)}</option>`);
-                                });
-                                return opts.join('');
-                            })()}
-                        </select>
-                    </div>
+            <div class="theater-config-choice-row">
+                <span><b>触发间隔</b><small id="theater-auto-summary">每 ${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))} 层 AI 回复</small></span>
+                <div class="theater-config-range-control">
+                    <input id="theater-auto-interval" type="range" min="1" max="50" value="${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))}" class="theater-slider">
+                    <span id="theater-auto-interval-num">${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))}</span>
                 </div>
-            </details>
+            </div>
+            <div class="theater-config-choice-row">
+                <span><b>指令来源</b><small>选择自动生成时使用的指令</small></span>
+                <select id="theater-auto-source" class="theater-select">
+                    ${(() => {
+                        const cur = settings.autoSource || '__last__';
+                        const opts = [
+                            `<option value="__last__" ${cur === '__last__' ? 'selected' : ''}>上次使用的指令</option>`,
+                            `<option value="__all__" ${cur === '__all__' ? 'selected' : ''}>随机 · 全部模板</option>`,
+                            `<option value="__none__" ${cur === '__none__' ? 'selected' : ''}>随机 · 仅未分组</option>`,
+                        ];
+                        (settings.instructionGroups || []).forEach(g => {
+                            opts.push(`<option value="${esc(g)}" ${cur === g ? 'selected' : ''}>随机 · 分组：${esc(g)}</option>`);
+                        });
+                        return opts.join('');
+                    })()}
+                </select>
+            </div>
         </div>
         <div class="theater-section" data-config-section="result-actions">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-bookmark"></i> 生成结果操作</label>
@@ -1717,10 +1709,6 @@ function buildPopupHTML() {
                 <span class="theater-config-setting-copy"><b>显示快捷悬浮球</b><small>可在酒馆主界面随时呼出</small></span>
                 <label class="theater-config-switch" aria-label="显示快捷悬浮球"><input type="checkbox" id="theater-floating-ball-toggle" ${settings.floatingBall ? 'checked' : ''}><span></span></label>
             </div>
-            <details class="theater-config-extra-details">
-                <summary><span><i class="fa-solid fa-gear"></i> 更多联动设置</span><i class="fa-solid fa-chevron-down"></i></summary>
-                <div class="theater-config-extra-body" data-config-extra-body="experience"></div>
-            </details>
         </div>
         <div class="theater-section" data-config-section="floating-extra">
             <div class="theater-config-setting-row">
@@ -1736,7 +1724,7 @@ function buildPopupHTML() {
                 <span>发现新版本 v${esc(latestRemoteVersion)}</span>
             </div>` : ''}
             <div class="theater-config-action-row theater-update-actions">
-                <span><b>插件更新</b><small>下载完成后仍由你决定何时刷新</small></span>
+                <span><b>插件更新</b></span>
                 <button type="button" id="theater-update-btn" class="theater-btn primary"><i class="fa-solid fa-cloud-arrow-down"></i><span>检查更新</span></button>
                 <button type="button" id="theater-reload-after-update-btn" class="theater-btn theater-reload-after-update" ${updateReadyToReload ? '' : 'hidden'}><i class="fa-solid fa-rotate-right"></i><span>刷新酒馆并启用</span></button>
             </div>
@@ -2805,8 +2793,8 @@ function refreshApiPresetControls(selectedId = settings.selectedApiPresetId || '
 
 function refreshConfigSummaries() {
     const soundLabel = SOUND_PRESETS.find(preset => preset.id === settings.soundPreset)?.label || '铃·清脆';
-    $('#theater-sound-summary').text(`试听与调整 · ${soundLabel} · ${Math.max(0, Number(settings.soundVolume) || 0)}%`);
-    $('#theater-auto-summary').text(`自动模式详情 · 每 ${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))} 层`);
+    $('#theater-sound-summary').text(soundLabel);
+    $('#theater-auto-summary').text(`每 ${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))} 层 AI 回复`);
 }
 
 function findApiPreset(id = settings.selectedApiPresetId) {
@@ -2872,8 +2860,10 @@ function decorateConfigLayout() {
     if (!$panel.length || $panel.children('.theater-config-layout').length) return;
     const groups = [
         { id: 'api', icon: 'fa-server', title: '正文生成线路', sections: ['api'] },
-        { id: 'generation', icon: 'fa-sliders', title: '生成体验与策略', sections: ['generation'] },
-        { id: 'experience', icon: 'fa-book-atlas', title: '素材与辅助联动', sections: ['worldbook', 'sound', 'floating'] },
+        { id: 'generation', icon: 'fa-sliders', title: '生成控制', sections: ['generation'] },
+        { id: 'automation', icon: 'fa-wand-magic-sparkles', title: '指令与自动生成', sections: ['random', 'auto'] },
+        { id: 'materials', icon: 'fa-book-atlas', title: '素材与提示', sections: ['worldbook', 'sound'] },
+        { id: 'access', icon: 'fa-circle-dot', title: '界面与快捷入口', sections: ['result-actions', 'floating', 'floating-extra'] },
         { id: 'extension', icon: 'fa-toolbox', title: '扩展管理', sections: ['extension'] },
     ];
     const $layout = $('<div class="theater-config-layout">');
@@ -2883,15 +2873,6 @@ function decorateConfigLayout() {
         $card.append(`<div class="theater-config-card-title"><span><i class="fa-solid ${group.icon}"></i>${group.title}</span></div>`);
         const $body = $('<div class="theater-config-card-body">');
         group.sections.forEach(section => $body.append($panel.children(`[data-config-section="${section}"]`)));
-        if (group.id === 'generation') {
-            const $extraBody = $body.find('[data-config-extra-body="generation"]');
-            ['random', 'auto'].forEach(section => $extraBody.append($panel.children(`[data-config-section="${section}"]`)));
-        }
-        if (group.id === 'experience') {
-            const $extraBody = $body.find('[data-config-extra-body="experience"]');
-            $extraBody.append($body.find('[data-config-section="sound"] > .theater-config-inline-details').detach());
-            ['result-actions', 'floating-extra'].forEach(section => $extraBody.append($panel.children(`[data-config-section="${section}"]`)));
-        }
         $card.append($body);
         $groups.append($card);
     });
@@ -3739,12 +3720,6 @@ function bindEvents() {
         $('#theater-custom-api-area').toggle(settings.apiMode !== 'main');
         $('[data-theater-api-mode]').removeClass('active').attr('aria-pressed', 'false')
             .filter(`[data-theater-api-mode="${settings.apiMode}"]`).addClass('active').attr('aria-pressed', 'true');
-        $('#theater-api-current-label').text(settings.apiMode === 'main'
-            ? '跟随酒馆当前连接'
-            : (String($('#theater-api-model').val() || '').trim() || '独立 API · 尚未填写模型'));
-        $('.theater-api-current-card small').text(settings.apiMode === 'main'
-            ? '不读取独立 API 的地址或密钥'
-            : '地址、模型与密钥只用于插件独立请求');
         save();
     });
     $d.off('change.tdmemoryapi').on('change.tdmemoryapi', '#theater-dream-memory-api-preset', function () {
