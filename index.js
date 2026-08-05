@@ -1560,14 +1560,6 @@ function buildPopupHTML() {
                         <button type="button" id="theater-fetch-models-btn" class="theater-config-field-action" title="获取模型列表"><i class="fa-solid fa-arrows-rotate"></i><span>获取</span></button>
                     </div>
                 </div>
-                <details class="theater-addon-details theater-config-advanced-details">
-                    <summary class="theater-addon-summary"><i class="fa-solid fa-sliders"></i> 高级设置</summary>
-                    <div class="theater-inline-setting" style="margin-top:8px;">
-                        <span>单轮输出上限（一般不用改）</span>
-                        <input id="theater-max-output-tokens" class="theater-input theater-number-input" type="number" min="256" max="131072" step="256" value="${normalizeMaxTokens(settings.maxOutputTokens)}">
-                    </div>
-                    <p class="theater-hint" style="margin-top:6px;">默认 ${DEFAULT_MAX_OUTPUT_TOKENS} Token；模型不支持时会自动降低后重试。</p>
-                </details>
                 <div class="theater-config-api-actions">
                     <button type="button" id="theater-test-api-btn" class="theater-btn"><i class="fa-solid fa-plug"></i><span>测试连接</span></button>
                     <button type="button" id="theater-save-api-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存设置</span></button>
@@ -1595,22 +1587,35 @@ function buildPopupHTML() {
         <div class="theater-section" data-config-section="generation">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-sliders"></i> 生成策略</label>
             <div class="theater-config-setting-row">
-                <span class="theater-config-setting-copy"><b>流式实时显示</b><small>逐步显示正文；关闭后等待完整内容返回</small></span>
+                <span class="theater-config-setting-copy"><b>流式实时显示</b><small>逐字生成正文，可实时查看效果</small></span>
                 <label class="theater-config-switch" aria-label="流式实时显示"><input type="checkbox" id="theater-stream-enabled" ${settings.streamEnabled !== false ? 'checked' : ''}><span></span></label>
             </div>
             <div class="theater-config-setting-row">
-                <span class="theater-config-setting-copy"><b>字数不足时自动补写</b><small>会增加 API 请求次数和消耗</small></span>
+                <span class="theater-config-setting-copy"><b>字数不足时自动补写</b><small>达到 Token 限制时继续生成后续</small></span>
                 <label class="theater-config-switch" aria-label="字数不足时自动补写"><input type="checkbox" id="theater-auto-continue" ${settings.autoContinue ? 'checked' : ''}><span></span></label>
             </div>
             <div class="theater-config-setting-row">
-                <span class="theater-config-setting-copy"><b>最多补写轮数</b><small>限制自动补写的最大请求轮次</small></span>
-                <input id="theater-max-auto-rounds" class="theater-input theater-number-input theater-config-compact-input" type="number" min="1" max="10" step="1" value="${Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3))}">
+                <span class="theater-config-setting-copy"><b>最多补写轮数</b><small>防止无限循环请求</small></span>
+                <div class="theater-config-stepper" role="group" aria-label="最多补写轮数">
+                    <button type="button" data-theater-number-step="-1" data-theater-number-target="theater-max-auto-rounds" aria-label="减少一轮">−</button>
+                    <input id="theater-max-auto-rounds" class="theater-input theater-number-input" type="number" inputmode="numeric" min="1" max="10" step="1" value="${Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3))}" aria-label="最多补写轮数">
+                    <button type="button" data-theater-number-step="1" data-theater-number-target="theater-max-auto-rounds" aria-label="增加一轮">＋</button>
+                </div>
             </div>
+            <details class="theater-config-extra-details">
+                <summary><span><i class="fa-solid fa-gear"></i> 高级参数设置</span><i class="fa-solid fa-chevron-down"></i></summary>
+                <div class="theater-config-extra-body" data-config-extra-body="generation">
+                    <div class="theater-config-field theater-config-token-field">
+                        <label for="theater-max-output-tokens"><b>单轮 Max Output Tokens</b><small>模型不支持时会自动降低重试</small></label>
+                        <input id="theater-max-output-tokens" class="theater-input theater-number-input" type="number" min="256" max="131072" step="256" value="${normalizeMaxTokens(settings.maxOutputTokens)}">
+                    </div>
+                </div>
+            </details>
         </div>
         <div class="theater-section" data-config-section="worldbook">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-book-atlas"></i> 世界书读取</label>
             <div class="theater-config-choice-row">
-                <span><b>条目范围</b><small>蓝绿灯继续使用酒馆原生扫描</small></span>
+                <span><b>世界书读取范围</b><small>控制素材注入的精细度</small></span>
                 <select id="theater-wb-read-mode" class="theater-select">
                     <option value="all" ${(settings.worldBookReadMode || 'all') === 'all' ? 'selected' : ''}>全部条目</option>
                     <option value="enabled" ${settings.worldBookReadMode === 'enabled' ? 'selected' : ''}>酒馆开启条目（含链式）</option>
@@ -1621,7 +1626,7 @@ function buildPopupHTML() {
         <div class="theater-section" data-config-section="sound">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-bell"></i> 生成完毕提示音</label>
             <div class="theater-config-setting-row">
-                <span class="theater-config-setting-copy"><b>开启提示音</b><small>后台生成完成时播放提示</small></span>
+                <span class="theater-config-setting-copy"><b>生成完毕提示音</b><small>后台完成时播报音频</small></span>
                 <label class="theater-config-switch" aria-label="开启提示音"><input type="checkbox" id="theater-sound-enabled" ${settings.soundEnabled ? 'checked' : ''}><span></span></label>
             </div>
             <details class="theater-config-inline-details">
@@ -1706,16 +1711,25 @@ function buildPopupHTML() {
                 <label class="theater-config-switch" aria-label="显示页边操作书签"><input type="checkbox" id="theater-result-bookmark-enabled" ${settings.resultBookmarkEnabled !== false ? 'checked' : ''}><span></span></label>
             </div>
         </div>
-        <div class="theater-section" data-config-section="extension">
-            <label class="theater-label theater-config-section-label"><i class="fa-solid fa-arrows-rotate"></i> 扩展入口</label>
+        <div class="theater-section" data-config-section="floating">
+            <label class="theater-label theater-config-section-label"><i class="fa-solid fa-circle-dot"></i> 快捷入口</label>
             <div class="theater-config-setting-row">
-                <span class="theater-config-setting-copy"><b>显示快捷悬浮球</b><small>在酒馆主界面随时呼出插件</small></span>
+                <span class="theater-config-setting-copy"><b>显示快捷悬浮球</b><small>可在酒馆主界面随时呼出</small></span>
                 <label class="theater-config-switch" aria-label="显示快捷悬浮球"><input type="checkbox" id="theater-floating-ball-toggle" ${settings.floatingBall ? 'checked' : ''}><span></span></label>
             </div>
+            <details class="theater-config-extra-details">
+                <summary><span><i class="fa-solid fa-gear"></i> 更多联动设置</span><i class="fa-solid fa-chevron-down"></i></summary>
+                <div class="theater-config-extra-body" data-config-extra-body="experience"></div>
+            </details>
+        </div>
+        <div class="theater-section" data-config-section="floating-extra">
             <div class="theater-config-setting-row">
                 <span class="theater-config-setting-copy"><b>悬浮球贴边收纳</b><small>闲置时自动缩到屏幕边缘</small></span>
                 <label class="theater-config-switch" aria-label="悬浮球贴边收纳"><input type="checkbox" id="theater-floating-ball-tuck-toggle" ${settings.floatingBallTuck !== false ? 'checked' : ''}><span></span></label>
             </div>
+        </div>
+        <div class="theater-section" data-config-section="extension">
+            <label class="theater-label theater-config-section-label"><i class="fa-solid fa-arrows-rotate"></i> 扩展入口</label>
             ${hasRemoteUpdate() ? `
             <div class="theater-update-notice">
                 <i class="fa-solid fa-circle-arrow-up"></i>
@@ -2858,8 +2872,8 @@ function decorateConfigLayout() {
     if (!$panel.length || $panel.children('.theater-config-layout').length) return;
     const groups = [
         { id: 'api', icon: 'fa-server', title: '正文生成线路', sections: ['api'] },
-        { id: 'generation', icon: 'fa-sliders', title: '生成体验与策略', sections: ['generation', 'random', 'auto'] },
-        { id: 'experience', icon: 'fa-book-atlas', title: '素材与辅助联动', sections: ['worldbook', 'sound', 'result-actions'] },
+        { id: 'generation', icon: 'fa-sliders', title: '生成体验与策略', sections: ['generation'] },
+        { id: 'experience', icon: 'fa-book-atlas', title: '素材与辅助联动', sections: ['worldbook', 'sound', 'floating'] },
         { id: 'extension', icon: 'fa-toolbox', title: '扩展管理', sections: ['extension'] },
     ];
     const $layout = $('<div class="theater-config-layout">');
@@ -2869,6 +2883,15 @@ function decorateConfigLayout() {
         $card.append(`<div class="theater-config-card-title"><span><i class="fa-solid ${group.icon}"></i>${group.title}</span></div>`);
         const $body = $('<div class="theater-config-card-body">');
         group.sections.forEach(section => $body.append($panel.children(`[data-config-section="${section}"]`)));
+        if (group.id === 'generation') {
+            const $extraBody = $body.find('[data-config-extra-body="generation"]');
+            ['random', 'auto'].forEach(section => $extraBody.append($panel.children(`[data-config-section="${section}"]`)));
+        }
+        if (group.id === 'experience') {
+            const $extraBody = $body.find('[data-config-extra-body="experience"]');
+            $extraBody.append($body.find('[data-config-section="sound"] > .theater-config-inline-details').detach());
+            ['result-actions', 'floating-extra'].forEach(section => $extraBody.append($panel.children(`[data-config-section="${section}"]`)));
+        }
         $card.append($body);
         $groups.append($card);
     });
@@ -3762,6 +3785,17 @@ function bindEvents() {
         settings.maxAutoRounds = Math.min(10, Math.max(1, parseInt(this.value) || 3));
         this.value = settings.maxAutoRounds;
         save();
+    });
+    $d.off('click.tnumberstep').on('click.tnumberstep', '[data-theater-number-step]', function () {
+        const input = document.getElementById(String($(this).data('theater-number-target') || ''));
+        if (!input) return;
+        const min = Number.isFinite(Number(input.min)) ? Number(input.min) : Number.NEGATIVE_INFINITY;
+        const max = Number.isFinite(Number(input.max)) ? Number(input.max) : Number.POSITIVE_INFINITY;
+        const step = Number(input.step) || 1;
+        const direction = Number($(this).data('theater-number-step')) < 0 ? -1 : 1;
+        const current = Number.isFinite(Number(input.value)) ? Number(input.value) : (Number.isFinite(min) ? min : 0);
+        input.value = String(Math.min(max, Math.max(min, current + (step * direction))));
+        $(input).trigger('change');
     });
     $d.off('change.twbread').on('change.twbread', '#theater-wb-read-mode', async function () {
         settings.worldBookReadMode = ['enabled', 'lights'].includes($(this).val()) ? $(this).val() : 'all';

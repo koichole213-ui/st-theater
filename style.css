@@ -1628,6 +1628,175 @@
     text-align: center;
 }
 
+/* Gemini reference fidelity: compact, left-aligned setting rows with controls on the right. */
+.theater-panel[data-panel="config"],
+.theater-config-layout,
+.theater-config-card,
+.theater-config-card-body,
+.theater-config-setting-copy,
+.theater-config-choice-row > span,
+.theater-config-action-row > span {
+    text-align: left;
+}
+.theater-config-card {
+    padding: 14px;
+    border-radius: 16px;
+}
+.theater-config-card-title {
+    margin-bottom: 12px;
+    font-size: 13px;
+}
+.theater-config-card-title i { margin-right: 6px; }
+.theater-config-card-body > .theater-section + .theater-section {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+}
+.theater-config-card-body > .theater-section:not(:last-child) > .theater-config-setting-row:last-child,
+.theater-config-card-body > .theater-section:not(:last-child) > .theater-config-choice-row:last-child,
+.theater-config-extra-body > .theater-section:not(:last-child) > .theater-config-setting-row:last-child,
+.theater-config-extra-body > .theater-section:not(:last-child) > .theater-config-choice-row:last-child {
+    border-bottom: 1px solid var(--t-border);
+}
+.theater-config-card .theater-config-setting-row,
+.theater-config-card .theater-config-choice-row,
+.theater-config-card .theater-config-action-row {
+    min-height: 0;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--t-border);
+}
+.theater-config-card .theater-config-setting-copy,
+.theater-config-card .theater-config-choice-row > span,
+.theater-config-card .theater-config-action-row > span {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+    padding-right: 12px;
+}
+.theater-config-card .theater-config-setting-copy b,
+.theater-config-card .theater-config-choice-row > span b,
+.theater-config-card .theater-config-action-row > span b {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.25;
+}
+.theater-config-card .theater-config-setting-copy small,
+.theater-config-card .theater-config-choice-row > span small,
+.theater-config-card .theater-config-action-row > span small {
+    margin: 0;
+    font-size: 10px;
+    line-height: 1.3;
+}
+.theater-config-card .theater-config-choice-row .theater-select {
+    flex: 0 0 110px;
+    width: 110px;
+    min-height: 32px;
+    height: 32px;
+    padding: 0 9px;
+    border-radius: 12px;
+    font-size: 11px;
+}
+.theater-config-card .theater-config-switch {
+    flex: 0 0 42px;
+}
+.theater-config-stepper {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    overflow: hidden;
+    border: 1px solid var(--t-border);
+    border-radius: 12px;
+    background: var(--t-surface-2);
+}
+.theater-config-stepper button {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--t-fg);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.theater-config-stepper input.theater-input {
+    width: 36px;
+    min-width: 36px;
+    height: 32px;
+    min-height: 32px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--t-fg);
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+.theater-config-stepper input::-webkit-inner-spin-button,
+.theater-config-stepper input::-webkit-outer-spin-button { margin: 0; appearance: none; }
+.theater-config-stepper button:hover { background: color-mix(in srgb, var(--t-accent) 8%, transparent); }
+.theater-config-stepper button:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--t-accent) 70%, transparent);
+    outline-offset: -2px;
+}
+.theater-config-extra-details {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--t-border);
+}
+.theater-config-extra-details > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 18px;
+    padding: 0;
+    color: var(--t-accent-deep);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+}
+.theater-config-extra-details > summary::-webkit-details-marker { display: none; }
+.theater-config-extra-details > summary > span i { margin-right: 4px; }
+.theater-config-extra-details > summary > i { transition: transform .18s ease; }
+.theater-config-extra-details[open] > summary > i { transform: rotate(180deg); }
+.theater-config-extra-body { padding-top: 10px; }
+.theater-config-extra-body > .theater-section {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.theater-config-extra-body .theater-config-token-field {
+    margin: 0 0 4px;
+    padding: 0 0 10px;
+    border-bottom: 1px solid var(--t-border);
+}
+.theater-config-extra-body .theater-config-inline-details {
+    border-top: 0;
+    border-bottom: 1px solid var(--t-border);
+}
+.theater-config-card .theater-config-action-row {
+    flex-wrap: nowrap;
+}
+.theater-config-card .theater-config-action-row .theater-btn {
+    flex: 0 0 auto;
+    min-height: 32px;
+    padding: 5px 10px;
+    font-size: 11px;
+}
+
 /* ============================================================
  * Buttons
  * ============================================================ */
@@ -3520,32 +3689,32 @@ body.theater-reader-open {
 
 @media (max-width: 768px) {
     .theater-config-groups { gap: 12px; }
-    .theater-config-card { padding: 13px; border-radius: 15px; }
-    .theater-config-card-title { margin-bottom: 10px; }
-    .theater-config-card .theater-api-mode-switch button { min-height: 44px; }
+    .theater-config-card { padding: 14px; border-radius: 16px; }
+    .theater-config-card-title { margin-bottom: 12px; }
+    .theater-config-card .theater-api-mode-switch button { min-height: 40px; }
     .theater-config-card .theater-api-preset-control { grid-template-columns: 1fr; }
     .theater-config-card .theater-api-preset-actions { justify-content: flex-end; }
-    .theater-config-card .theater-config-icon-btn { width: 44px; height: 44px; }
+    .theater-config-card .theater-config-icon-btn { width: 40px; height: 40px; }
     .theater-config-card .theater-config-field > label { align-items: flex-start; flex-direction: column; gap: 2px; }
     .theater-config-card .theater-config-field .theater-input,
     .theater-config-card .theater-config-field .theater-select,
     .theater-config-card .theater-api-preset-control .theater-select,
-    .theater-config-card .theater-config-field-action { min-height: 44px; }
-    .theater-config-card .theater-config-api-actions .theater-btn { min-height: 44px; }
+    .theater-config-card .theater-config-field-action { min-height: 40px; }
+    .theater-config-card .theater-config-api-actions .theater-btn { min-height: 40px; }
     .theater-config-card .theater-config-setting-row,
     .theater-config-card .theater-config-choice-row,
-    .theater-config-card .theater-config-action-row { gap: 9px; min-height: 58px; }
+    .theater-config-card .theater-config-action-row { gap: 10px; min-height: 0; }
     .theater-config-card .theater-config-setting-copy,
     .theater-config-card .theater-config-choice-row > span,
-    .theater-config-card .theater-config-action-row > span { padding-right: 2px; }
+    .theater-config-card .theater-config-action-row > span { padding-right: 12px; }
     .theater-config-card .theater-config-choice-row .theater-select {
-        flex-basis: 126px;
-        width: min(126px, 45%);
-        min-height: 40px;
+        flex-basis: 110px;
+        width: 110px;
+        min-height: 32px;
     }
-    .theater-config-card .theater-config-action-row { align-items: flex-start; }
-    .theater-config-card .theater-config-action-row > span { flex-basis: 100%; }
-    .theater-config-card .theater-config-action-row > .theater-btn { flex: 1 1 140px; justify-content: center; min-height: 44px; }
+    .theater-config-card .theater-config-action-row { align-items: center; }
+    .theater-config-card .theater-config-action-row > span { flex-basis: auto; }
+    .theater-config-card .theater-config-action-row > .theater-btn { flex: 0 0 auto; justify-content: center; min-height: 32px; }
     .theater-config-card .theater-config-detail-line { align-items: stretch; }
     .theater-config-card .theater-memory-api-body > label { grid-template-columns: 1fr; gap: 5px; }
     .theater-result-meta-row { min-height: 38px; }
