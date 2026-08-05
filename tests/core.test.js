@@ -798,6 +798,7 @@ test('页边书签位置会限制在可见范围并按拖动落点吸附', () =>
 
 test('设置页重排为四组控制台且保留所有旧功能入口', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     for (const id of [
         'theater-api-mode', 'theater-api-preset-select', 'theater-api-protocol', 'theater-api-url',
         'theater-api-key', 'theater-api-model', 'theater-max-output-tokens', 'theater-auto-continue',
@@ -809,6 +810,13 @@ test('设置页重排为四组控制台且保留所有旧功能入口', () => {
     for (const group of ['api', 'generation', 'experience', 'extension']) {
         assert.match(source, new RegExp(`data-config-group="\\$\\{group.id\\}"|id: '${group}'`));
     }
+    const decorator = source.match(/function decorateConfigLayout\(\)[\s\S]*?\n\}/)?.[0] || '';
+    assert.doesNotMatch(decorator, /theater-config-index/);
+    assert.match(source, /theater-api-preset-menu/);
+    assert.match(source, /theater-config-api-actions/);
+    assert.match(source, /theater-config-inline-details/);
+    assert.match(styles, /\.theater-config-field/);
+    assert.match(styles, /\.theater-api-preset-actions\s*\{[\s\S]*?position:\s*absolute/);
 });
 
 test('final HTML renderer hydrates every paragraph without rewriting source text', () => {
