@@ -15,11 +15,37 @@ import {
     retryAfterMilliseconds,
 } from './api-client.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, createDiagnosticError } from './request-diagnostics.js';
+import { filterTaggedReasoning } from './reasoning-filter.js';
+import { applyPromptPostProcessing } from './request-layout.js';
 
 export const RATE_LIMIT_DEFAULT_WAIT_MS = 3000;
 export const RATE_LIMIT_MAX_AUTO_WAIT_MS = 15000;
 
 const noop = () => {};
+
+function emitReasoningSafeChunk(onChunk, value) {
+    onChunk(filterTaggedReasoning(value).content);
+}
+
+function reasoningOnlyError({ phase = 'body', transport = '' } = {}) {
+    return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.REASONING_ONLY, {
+        code: 'THEATER_REASONING_ONLY', phase, transport,
+    });
+}
+
+function reasoningSafeResult(result, { phase = 'body', transport = '' } = {}) {
+    const rawText = typeof result === 'string'
+        ? result
+        : (result?.text || result?.content || '');
+    const parsed = filterTaggedReasoning(rawText);
+    if (!String(parsed.content || '').trim()) {
+        if (parsed.hadReasoning) throw reasoningOnlyError({ phase, transport });
+        throw noTextResponseError(result || {}, { phase, transport });
+    }
+    return typeof result === 'string'
+        ? { text: parsed.content }
+        : { ...result, text: parsed.content };
+}
 
 function noTextResponseError(meta = {}, { phase = 'body', transport = '' } = {}) {
     const rawStopReason = meta?.rawStopReason || meta?.blockReason || null;
@@ -65,7 +91,7 @@ function statusError(status, body = '', { phase = 'body', transport = '' } = {})
 }
 
 function shouldNotFallbackMainApi(error) {
-    return ['THEATER_CONTENT_FILTER', 'THEATER_RATE_LIMIT', 'THEATER_OUTPUT_LIMIT', 'THEATER_CONFIG'].includes(error?.code);
+    return ['THEATER_CONTENT_FILTER', 'THEATER_RATE_LIMIT', 'THEATER_OUTPUT_LIMIT', 'THEATER_CONFIG', 'THEATER_REASONING_ONLY'].includes(error?.code);
 }
 
 function normalizeMainApiFallbackError(error) {
@@ -93,7 +119,11 @@ export async function requestMainApi({
     ctx,
     systemPrompt,
     userPrompt,
+    messages,
+    postProcessing = '',
+    presetName = '',
     onChunk = noop,
+    onRequest = noop,
     shouldStream = true,
     signal,
     log = noop,
@@ -103,10 +133,13 @@ export async function requestMainApi({
     getContext = () => globalThis.SillyTavern?.getContext?.(),
     chatCompletionService,
 } = {}) {
-    const messages = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-    ];
+    const finalMessages = applyPromptPostProcessing(
+        Array.isArray(messages) ? messages : [
+            { role: 'system', content: systemPrompt, source: 'request', sourceId: 'system' },
+            { role: 'user', content: userPrompt, source: 'request', sourceId: 'user' },
+        ],
+        postProcessing,
+    );
     const oai = ctx?.oai_settings || globalThis.oai_settings;
     const maxTokens = oai?.openai_max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
     const model = resolveMainApiModel(ctx, oai) || '未识别';
@@ -141,26 +174,30 @@ export async function requestMainApi({
             if (String(text || '').trim() && shouldStream) {
                 armTimeout(45000, 'MAIN_STREAM_IDLE_TIMEOUT');
             }
-            onChunk(text);
+            emitReasoningSafeChunk(onChunk, text);
         };
         try {
             const timeout = new Promise((_, reject) => {
                 rejectTimeout = reject;
                 armTimeout(shouldStream ? 10000 : 45000, shouldStream ? 'MAIN_FIRST_TOKEN_TIMEOUT' : 'MAIN_RESPONSE_TIMEOUT');
             });
-            return await Promise.race([
+            const result = await Promise.race([
                 callViaChatCompletionService({
                     CCS,
-                    messages,
+                    messages: finalMessages,
                     maxTokens,
                     signal: firstPathController.signal,
                     onChunk: firstAwareChunk,
                     shouldStream,
                     ctx,
                     getContext,
+                    onRequest,
+                    presetName,
+                    postProcessing,
                 }),
                 timeout,
             ]);
+            return reasoningSafeResult(result, { phase: 'main', transport: 'ChatCompletionService' });
         } catch (error) {
             clearTimeout(timeoutId);
             if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -172,7 +209,16 @@ export async function requestMainApi({
             console.warn('[Theater] ChatCompletionService failed, fallback to TavernHelper:', safeError?.code || safeError?.name || 'unknown');
             if (tavernHelper && typeof tavernHelper.generateRaw === 'function') {
                 onPath('main:TavernHelper');
-                return await callViaGenerateRaw({ tavernHelper, messages, signal, onChunk, shouldStream });
+                const result = await callViaGenerateRaw({
+                    tavernHelper, messages: finalMessages, signal,
+                    onChunk: text => emitReasoningSafeChunk(onChunk, text),
+                    shouldStream,
+                    onRequest,
+                    model,
+                    presetName,
+                    postProcessing,
+                });
+                return reasoningSafeResult(result, { phase: 'main', transport: 'TavernHelper' });
             }
             throwFriendlyMainApi(safeError, onChunk);
         } finally {
@@ -187,7 +233,16 @@ export async function requestMainApi({
         });
     }
     onPath('main:TavernHelper');
-    return await callViaGenerateRaw({ tavernHelper, messages, signal, onChunk, shouldStream });
+    const result = await callViaGenerateRaw({
+        tavernHelper, messages: finalMessages, signal,
+        onChunk: text => emitReasoningSafeChunk(onChunk, text),
+        shouldStream,
+        onRequest,
+        model,
+        presetName,
+        postProcessing,
+    });
+    return reasoningSafeResult(result, { phase: 'main', transport: 'TavernHelper' });
 }
 
 export async function callViaChatCompletionService({
@@ -199,6 +254,9 @@ export async function callViaChatCompletionService({
     shouldStream = true,
     ctx,
     getContext = () => globalThis.SillyTavern?.getContext?.(),
+    onRequest = noop,
+    presetName = '',
+    postProcessing = '',
 } = {}) {
     const currentContext = getContext?.() || ctx;
     const oai = currentContext?.oai_settings || ctx?.oai_settings || globalThis.oai_settings;
@@ -212,8 +270,12 @@ export async function callViaChatCompletionService({
         });
     }
 
+    onRequest({
+        route: 'main', transport: 'ChatCompletionService', protocol: API_PROTOCOLS.OPENAI,
+        model, presetName, postProcessing, maxTokens, messages,
+    });
     const result = await CCS.processRequest(
-        { messages, model, chat_completion_source: source, max_tokens: maxTokens, stream: shouldStream },
+        { messages: messages.map(message => ({ role: message.role, content: message.content })), model, chat_completion_source: source, max_tokens: maxTokens, stream: shouldStream },
         { signal },
         false,
         signal,
@@ -293,6 +355,10 @@ export async function callViaGenerateRaw({
     signal,
     onChunk = noop,
     shouldStream = true,
+    onRequest = noop,
+    model = '',
+    presetName = '',
+    postProcessing = '',
 } = {}) {
     const timeoutMs = 5 * 60 * 1000;
     let abortHandler = null;
@@ -313,6 +379,10 @@ export async function callViaGenerateRaw({
     );
 
     try {
+        onRequest({
+            route: 'main', transport: 'TavernHelper', protocol: API_PROTOCOLS.OPENAI,
+            model, presetName, postProcessing, maxTokens: null, messages,
+        });
         const result = await Promise.race([
             tavernHelper.generateRaw({
                 user_input: '',
@@ -390,7 +460,11 @@ export async function requestCustomApi({
     config = {},
     systemPrompt,
     userPrompt,
+    messages,
+    postProcessing = '',
+    presetName = '',
     onChunk = noop,
+    onRequest = noop,
     shouldStream = true,
     signal,
     log = noop,
@@ -399,6 +473,8 @@ export async function requestCustomApi({
 } = {}) {
     const url = String(config.apiUrl || '').replace(/\/+$/, '');
     const candidates = maxTokenFallbackSequence(config.maxOutputTokens);
+    const safeChunk = text => emitReasoningSafeChunk(onChunk, text);
+    const finalize = (result, transport) => reasoningSafeResult(result, { phase: 'body', transport });
     for (let index = 0; index < candidates.length; index++) {
         const maxTokens = candidates[index];
         const request = buildApiRequest({
@@ -408,6 +484,8 @@ export async function requestCustomApi({
             model: config.apiModel,
             systemPrompt,
             userPrompt,
+            messages,
+            postProcessing,
             maxTokens,
             stream: shouldStream,
         });
@@ -417,6 +495,10 @@ export async function requestCustomApi({
             });
         }
         log('info', '请求发出', { mode: 'custom', url: request.endpoint, protocol: request.protocol, max_tokens: maxTokens });
+        onRequest({
+            route: 'custom', transport: shouldStream ? 'stream' : 'non-stream', protocol: request.protocol,
+            model: config.apiModel, presetName, postProcessing, maxTokens, messages: request.messages,
+        });
         const performRequest = body => fetchImpl(request.endpoint, {
             method: 'POST',
             headers: request.headers,
@@ -444,7 +526,7 @@ export async function requestCustomApi({
         if (shouldStream) {
             while (true) {
                 try {
-                    return await readSSEStream(response, onChunk, request.protocol);
+                    return finalize(await readSSEStream(response, safeChunk, request.protocol), request.protocol);
                 } catch (streamError) {
                     if (streamError?.code === 'THEATER_RATE_LIMIT' && !rateLimitRetried) {
                         rateLimitRetried = true;
@@ -472,6 +554,10 @@ export async function requestCustomApi({
                         max_tokens: maxTokens,
                         transport: 'non_stream_fallback',
                     });
+                    onRequest({
+                        route: 'custom', transport: 'non-stream-fallback', protocol: request.protocol,
+                        model: config.apiModel, presetName, postProcessing, maxTokens, messages: request.messages,
+                    });
                     const fallbackBody = { ...request.body, stream: false };
                     let fallbackResponse = await performRequest(fallbackBody);
                     if (!rateLimitRetried) {
@@ -486,11 +572,11 @@ export async function requestCustomApi({
                     if (!fallbackResponse.ok) {
                         throw await customApiStatusError(fallbackResponse, 'API 非流式重试');
                     }
-                    return await readNonStreamingResponse(fallbackResponse, onChunk, request.protocol);
+                    return finalize(await readNonStreamingResponse(fallbackResponse, safeChunk, request.protocol), request.protocol);
                 }
             }
         }
-        return await readNonStreamingResponse(response, onChunk, request.protocol);
+        return finalize(await readNonStreamingResponse(response, safeChunk, request.protocol), request.protocol);
     }
     throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TOKEN_LIMIT, {
         code: 'THEATER_OUTPUT_LIMIT', phase: 'body', transport: 'custom',

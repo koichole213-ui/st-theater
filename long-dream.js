@@ -31,6 +31,8 @@ export const LONG_DREAM_DRAFT_STATUS = Object.freeze({
     REVIEW: 'review',
 });
 
+export const LONG_DREAM_MAX_CANDIDATES = 3;
+
 function cleanText(value, maxLength = 0) {
     const text = String(value || '').trim();
     return maxLength > 0 ? text.slice(0, maxLength) : text;
@@ -144,21 +146,58 @@ function normalizeMemory(memory = {}, chapterCount = 0) {
     };
 }
 
+function normalizeDraftCandidate(candidate, fallbackDate) {
+    if (!candidate || typeof candidate !== 'object') return null;
+    const text = String(candidate.text || '');
+    const html = String(candidate.html || '');
+    if (!text.trim() || !html.trim()) return null;
+    return {
+        text,
+        html,
+        mode: cleanText(candidate.mode, 40) || 'html',
+        createdAt: normalizeIsoDate(candidate.createdAt || candidate.updatedAt, fallbackDate),
+    };
+}
+
 function normalizeDraft(draft, chapterNumber, fallbackDate) {
     if (!draft || typeof draft !== 'object') return null;
-    const text = String(draft.text || '');
-    const html = String(draft.html || '');
+    const draftText = String(draft.text || '');
+    const draftHtml = String(draft.html || '');
     const instruction = String(draft.instruction || '');
-    if (!text.trim() && !html.trim() && !instruction.trim()) return null;
+    const candidates = (Array.isArray(draft.candidates) ? draft.candidates : [])
+        .map(candidate => normalizeDraftCandidate(candidate, fallbackDate))
+        .filter(Boolean)
+        .slice(0, LONG_DREAM_MAX_CANDIDATES);
+    if (!candidates.length && draft.status === LONG_DREAM_DRAFT_STATUS.REVIEW) {
+        const legacyCandidate = normalizeDraftCandidate({
+            text: draftText,
+            html: draftHtml,
+            mode: draft.mode,
+            createdAt: draft.updatedAt,
+        }, fallbackDate);
+        if (legacyCandidate) candidates.push(legacyCandidate);
+    }
+    if (!draftText.trim() && !draftHtml.trim() && !instruction.trim() && !candidates.length) return null;
+    const selectedCandidateIndex = candidates.length
+        ? Math.min(candidates.length - 1, Math.max(0, Math.floor(Number(draft.selectedCandidateIndex) || 0)))
+        : 0;
+    const status = draft.status === LONG_DREAM_DRAFT_STATUS.REVIEW && candidates.length
+        ? LONG_DREAM_DRAFT_STATUS.REVIEW
+        : LONG_DREAM_DRAFT_STATUS.WRITING;
+    const selectedCandidate = status === LONG_DREAM_DRAFT_STATUS.REVIEW
+        ? candidates[selectedCandidateIndex]
+        : null;
     return {
-        status: draft.status === LONG_DREAM_DRAFT_STATUS.REVIEW ? LONG_DREAM_DRAFT_STATUS.REVIEW : LONG_DREAM_DRAFT_STATUS.WRITING,
+        status,
         chapterNumber,
         title: cleanText(draft.title, 80) || `第 ${chapterNumber} 章`,
         instruction,
         targetChars: Math.max(500, Math.min(8000, Math.round(Number(draft.targetChars) || 3000))),
-        text,
-        html,
-        mode: cleanText(draft.mode, 40) || (html.trim() ? 'html' : 'text'),
+        text: selectedCandidate?.text ?? draftText,
+        html: selectedCandidate?.html ?? draftHtml,
+        mode: selectedCandidate?.mode || cleanText(draft.mode, 40) || (draftHtml.trim() ? 'html' : 'text'),
+        candidates,
+        selectedCandidateIndex,
         updatedAt: normalizeIsoDate(draft.updatedAt, fallbackDate),
     };
 }
@@ -532,6 +571,60 @@ export function saveLongDreamDraft(record, draft = {}, now = new Date()) {
     return { ...normalized, draft: nextDraft, updatedAt };
 }
 
+export function appendLongDreamDraftCandidate(record, candidate = {}, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized?.draft) throw new Error('没有可加入候选的长梦草稿');
+    const nextCandidate = normalizeDraftCandidate(candidate, normalizeIsoDate(now, new Date().toISOString()));
+    if (!nextCandidate) throw new Error('待确认候选必须同时包含纯正文与最终 HTML');
+    const candidates = Array.isArray(normalized.draft.candidates) ? normalized.draft.candidates : [];
+    if (candidates.length >= LONG_DREAM_MAX_CANDIDATES) throw new Error(`同一章最多保留 ${LONG_DREAM_MAX_CANDIDATES} 版候选`);
+    const nextCandidates = [...candidates, nextCandidate];
+    return saveLongDreamDraft(normalized, {
+        ...normalized.draft,
+        status: LONG_DREAM_DRAFT_STATUS.REVIEW,
+        text: nextCandidate.text,
+        html: nextCandidate.html,
+        mode: nextCandidate.mode,
+        candidates: nextCandidates,
+        selectedCandidateIndex: nextCandidates.length - 1,
+    }, now);
+}
+
+export function selectLongDreamDraftCandidate(record, candidateIndex, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized?.draft || normalized.draft.status !== LONG_DREAM_DRAFT_STATUS.REVIEW) {
+        throw new Error('当前没有可切换的待确认候选');
+    }
+    const candidates = normalized.draft.candidates || [];
+    const index = Math.floor(Number(candidateIndex));
+    if (!Number.isInteger(index) || index < 0 || index >= candidates.length) throw new Error('候选版本不存在');
+    return saveLongDreamDraft(normalized, {
+        ...normalized.draft,
+        selectedCandidateIndex: index,
+    }, now);
+}
+
+export function discardLongDreamWritingAttempt(record, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized?.draft) throw new Error('没有可放弃的长梦草稿');
+    if (normalized.draft.status !== LONG_DREAM_DRAFT_STATUS.WRITING || !normalized.draft.candidates?.length) {
+        return clearLongDreamDraft(normalized, now);
+    }
+    const index = Math.min(
+        normalized.draft.candidates.length - 1,
+        Math.max(0, Math.floor(Number(normalized.draft.selectedCandidateIndex) || 0)),
+    );
+    const candidate = normalized.draft.candidates[index];
+    return saveLongDreamDraft(normalized, {
+        ...normalized.draft,
+        status: LONG_DREAM_DRAFT_STATUS.REVIEW,
+        text: candidate.text,
+        html: candidate.html,
+        mode: candidate.mode,
+        selectedCandidateIndex: index,
+    }, now);
+}
+
 export function clearLongDreamDraft(record, now = new Date()) {
     const normalized = normalizeLongDreamRecord(record);
     if (!normalized) throw new Error('长梦记录无效');
@@ -542,6 +635,11 @@ export function promoteLongDreamDraft(record, now = new Date()) {
     const normalized = normalizeLongDreamRecord(record);
     if (!normalized?.draft) throw new Error('没有可保存的长梦草稿');
     if (normalized.draft.status !== LONG_DREAM_DRAFT_STATUS.REVIEW) throw new Error('草稿尚未进入确认保存状态');
-    const withChapter = appendLongDreamChapter(normalized, normalized.draft, now);
+    const candidate = normalized.draft.candidates?.[normalized.draft.selectedCandidateIndex];
+    if (!candidate) throw new Error('没有选中的待确认候选');
+    const withChapter = appendLongDreamChapter(normalized, {
+        ...normalized.draft,
+        ...candidate,
+    }, now);
     return { ...withChapter, draft: null };
 }

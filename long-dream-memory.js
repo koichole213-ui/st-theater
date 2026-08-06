@@ -1,4 +1,5 @@
 import { LONG_DREAM_WORLD_LINE_RELATION } from './long-dream.js';
+import { reasoningSafeContent } from './reasoning-filter.js';
 
 export const DEFAULT_LONG_DREAM_MEMORY_PRESET = `你负责“梦脉织录”：只从已经确认保存的章节中提取可核对的连续性事实。
 
@@ -116,7 +117,7 @@ chapterNumber 只能使用本次章节编号：${allowedNumbers.join('、')}。�
 }
 
 function parseJsonObject(value) {
-    const text = String(value || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    const text = reasoningSafeContent(value).trim();
     const unfenced = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     const start = unfenced.indexOf('{');
     const end = unfenced.lastIndexOf('}');

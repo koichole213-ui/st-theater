@@ -1,6 +1,7 @@
 export const REQUEST_DIAGNOSTIC_SIGNAL = Object.freeze({
     CONTENT_FILTER: 'T-API-CONTENT-FILTER',
     EMPTY: 'T-API-EMPTY',
+    REASONING_ONLY: 'T-API-REASONING-ONLY',
     TRUNCATED: 'T-API-TRUNCATED',
     RATE_LIMIT: 'T-HTTP-429',
     HTTP_SERVER: 'T-HTTP-5XX',
@@ -26,6 +27,12 @@ const CATALOG = Object.freeze({
         title: '接口没有返回可读正文',
         detail: '请求已得到响应，但其中没有可显示的正文，也没有明确的内容策略结束原因。',
         action: '检查“最近请求计时”和“自动恢复”。若流式兼容重试后仍为空，向线路提供者确认该模型是否支持当前协议与流式格式。',
+    },
+    [REQUEST_DIAGNOSTIC_SIGNAL.REASONING_ONLY]: {
+        status: 'bad',
+        title: '模型只返回了思考内容',
+        detail: '插件已经隐藏模型输出中的 <thinking> / <think> 内容，但没有在标签外找到可保存的正文。思考内容不会进入小剧场、长梦、梦脉或备份。',
+        action: '检查预设是否要求模型在思考标签后继续输出正文；必要时调整预设的输出结构后重新生成。',
     },
     [REQUEST_DIAGNOSTIC_SIGNAL.TRUNCATED]: {
         status: 'warn',

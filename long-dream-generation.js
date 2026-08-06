@@ -1,10 +1,14 @@
 import {
     LONG_DREAM_DRAFT_STATUS,
+    LONG_DREAM_MAX_CANDIDATES,
+    appendLongDreamDraftCandidate,
     normalizeLongDreamRecord,
     promoteLongDreamDraft,
     saveLongDreamDraft,
 } from './long-dream.js';
 import { buildLongDreamChapterPayload } from './long-dream-payload.js';
+import { targetCompletionChars } from './generation-job.js';
+import { readableCharCount } from './text-counter.js';
 
 export const LONG_DREAM_GENERATION_STAGE = Object.freeze({
     WRITING: 'writing',
@@ -25,7 +29,12 @@ function composeDraftText(existingText, generatedText) {
     const generated = cleanText(generatedText);
     if (!existing) return generated;
     if (!generated || existing.endsWith(generated)) return existing;
+    if (generated.startsWith(existing)) return generated;
     return `${existing}\n\n${generated}`;
+}
+
+function normalizeMaxRounds(value) {
+    return Math.min(10, Math.max(1, Math.floor(Number(value) || 1)));
 }
 
 function normalizeRenderedChapter(rendered, fallbackMode = 'html') {
@@ -79,14 +88,27 @@ export function createLongDreamGenerationController({
         instruction,
         chapterTitle = '',
         targetChars,
+        autoContinue = false,
+        maxRounds = 3,
         maxOptionalContextChars = Infinity,
+        appendCandidate = false,
     } = {}) {
         if (active) throw new Error('已有长梦章节正在生成');
         let currentRecord = normalizeLongDreamRecord(record);
         if (!currentRecord) throw new Error('长梦记录无效');
-        if (currentRecord.draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW) {
+        if (currentRecord.draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW && !appendCandidate) {
             throw new Error('当前有一章等待确认，请先保存或放弃后再续写');
         }
+        const retainedCandidates = Array.isArray(currentRecord.draft?.candidates)
+            ? currentRecord.draft.candidates
+            : [];
+        if (appendCandidate && retainedCandidates.length >= LONG_DREAM_MAX_CANDIDATES) {
+            throw new Error(`同一章最多保留 ${LONG_DREAM_MAX_CANDIDATES} 版候选`);
+        }
+        const retainedSelectedCandidateIndex = Math.min(
+            Math.max(0, retainedCandidates.length - 1),
+            Math.max(0, Math.floor(Number(currentRecord.draft?.selectedCandidateIndex) || 0)),
+        );
 
         const controller = createAbortController();
         const existingDraftText = currentRecord.draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING
@@ -101,20 +123,31 @@ export function createLongDreamGenerationController({
         const normalizedTargetChars = targetChars === undefined
             ? (currentRecord.draft?.targetChars || 3000)
             : targetChars;
+        const target = Math.max(500, Math.min(8000, Math.round(Number(normalizedTargetChars) || 3000)));
+        const shouldAutoContinue = autoContinue !== false;
+        const allowedRounds = shouldAutoContinue ? normalizeMaxRounds(maxRounds) : 1;
+        const completionChars = targetCompletionChars(target);
+        let accumulatedText = existingDraftText;
+        let roundBaseText = accumulatedText;
         let streamedText = '';
         let hasStreamCheckpoint = false;
         let lastCheckpointAt = Number.NEGATIVE_INFINITY;
         let persistence = Promise.resolve(currentRecord);
+        let payload = null;
+        let requestResult = null;
+        let completedRounds = 0;
 
         const queueDraftPersistence = ({ status, text, html = '', mode = 'text' }) => {
             const draftSnapshot = {
                 status,
                 title: normalizedTitle,
                 instruction: normalizedInstruction,
-                targetChars: payload.targetChars,
+                targetChars: target,
                 text,
                 html,
                 mode,
+                candidates: retainedCandidates,
+                selectedCandidateIndex: retainedSelectedCandidateIndex,
             };
             persistence = persistence.then(async latestRecord => {
                 const nextRecord = saveLongDreamDraft(latestRecord, draftSnapshot, now());
@@ -126,7 +159,7 @@ export function createLongDreamGenerationController({
         const checkpointWritingDraft = (force = false) => {
             const checkpointAt = Number(clock());
             const firstStreamCheckpoint = !hasStreamCheckpoint && cleanText(streamedText);
-            const draftText = composeDraftText(existingDraftText, streamedText);
+            const draftText = composeDraftText(roundBaseText, streamedText);
             // 本章方向允许留空；在首个正文片段到来前，不制造一份完全空的草稿。
             if (!draftText && !cleanText(normalizedInstruction)) return persistence;
             if (!force && !firstStreamCheckpoint
@@ -141,18 +174,12 @@ export function createLongDreamGenerationController({
             });
         };
 
-        const payload = buildLongDreamChapterPayload({
-            record: currentRecord,
-            preset,
-            addons,
-            instruction: normalizedInstruction,
-            chapterTitle: normalizedTitle,
-            targetChars: normalizedTargetChars,
-            currentDraft: existingDraftText,
-            maxOptionalContextChars,
-        });
-
-        active = { controller, stage: LONG_DREAM_GENERATION_STAGE.WRITING };
+        active = {
+            controller,
+            stage: LONG_DREAM_GENERATION_STAGE.WRITING,
+            round: 1,
+            maxRounds: allowedRounds,
+        };
 
         try {
             await checkpointWritingDraft(true);
@@ -160,44 +187,83 @@ export function createLongDreamGenerationController({
             emitState(LONG_DREAM_GENERATION_STAGE.WRITING, {
                 record: currentRecord,
                 chapterTitle: normalizedTitle,
-                targetChars: payload.targetChars,
+                targetChars: target,
+                round: 1,
+                maxRounds: allowedRounds,
             });
 
-            const requestResult = await requestChapter({
-                systemPrompt: payload.systemPrompt,
-                userPrompt: payload.userPrompt,
-                signal: controller.signal,
-                targetChars: payload.targetChars,
-                onChunk: cumulativeText => {
-                    streamedText = String(cumulativeText || '');
-                    const draftText = composeDraftText(existingDraftText, streamedText);
-                    onStream({ generatedText: streamedText, draftText });
-                    checkpointWritingDraft(false);
-                },
-            });
-            streamedText = String(requestResult?.text ?? requestResult ?? streamedText);
-            const finalText = composeDraftText(existingDraftText, streamedText);
+            for (let round = 1; round <= allowedRounds; round++) {
+                roundBaseText = accumulatedText;
+                streamedText = '';
+                hasStreamCheckpoint = false;
+                lastCheckpointAt = Number.NEGATIVE_INFINITY;
+                if (active) active.round = round;
+                payload = buildLongDreamChapterPayload({
+                    record: currentRecord,
+                    preset,
+                    addons,
+                    instruction: normalizedInstruction,
+                    chapterTitle: normalizedTitle,
+                    targetChars: target,
+                    currentDraft: roundBaseText,
+                    finishThisRound: !shouldAutoContinue || round === allowedRounds,
+                    maxOptionalContextChars,
+                });
+
+                requestResult = await requestChapter({
+                    systemPrompt: payload.systemPrompt,
+                    userPrompt: payload.userPrompt,
+                    signal: controller.signal,
+                    targetChars: payload.targetChars,
+                    round,
+                    maxRounds: allowedRounds,
+                    onChunk: cumulativeText => {
+                        streamedText = String(cumulativeText || '');
+                        const draftText = composeDraftText(roundBaseText, streamedText);
+                        onStream({
+                            generatedText: streamedText,
+                            draftText,
+                            round,
+                            maxRounds: allowedRounds,
+                        });
+                        checkpointWritingDraft(false);
+                    },
+                });
+                streamedText = String(requestResult?.text ?? requestResult ?? streamedText);
+                if (!cleanText(streamedText)) throw new Error('长梦正文请求没有返回有效内容');
+                accumulatedText = composeDraftText(roundBaseText, streamedText);
+                completedRounds = round;
+                await checkpointWritingDraft(true);
+                currentRecord = await persistence;
+
+                if (!shouldAutoContinue || readableCharCount(accumulatedText) >= completionChars) break;
+            }
+
+            const finalText = accumulatedText;
             if (!finalText.trim()) throw new Error('长梦正文请求没有返回有效内容');
-            await checkpointWritingDraft(true);
-            currentRecord = await persistence;
 
             emitState(LONG_DREAM_GENERATION_STAGE.RENDERING, {
                 record: currentRecord,
                 chapterTitle: normalizedTitle,
                 text: finalText,
+                rounds: completedRounds,
             });
             const rendered = normalizeRenderedChapter(await renderChapter({
                 text: finalText,
                 chapterTitle: normalizedTitle,
-                targetChars: payload.targetChars,
+                targetChars: target,
                 signal: controller.signal,
             }));
-            currentRecord = await queueDraftPersistence({
-                status: LONG_DREAM_DRAFT_STATUS.REVIEW,
-                text: finalText,
-                html: rendered.html,
-                mode: rendered.mode,
+            persistence = persistence.then(async latestRecord => {
+                const nextRecord = appendLongDreamDraftCandidate(latestRecord, {
+                    text: finalText,
+                    html: rendered.html,
+                    mode: rendered.mode,
+                    createdAt: now(),
+                }, now());
+                return storeRecord(nextRecord);
             });
+            currentRecord = await persistence;
             emitState(LONG_DREAM_GENERATION_STAGE.REVIEW, {
                 record: currentRecord,
                 chapterTitle: normalizedTitle,
@@ -209,6 +275,10 @@ export function createLongDreamGenerationController({
                 record: currentRecord,
                 payload,
                 requestResult,
+                rounds: completedRounds,
+                actualChars: readableCharCount(finalText),
+                targetCompletionChars: completionChars,
+                completedBelowTarget: readableCharCount(finalText) < completionChars,
                 stage: LONG_DREAM_GENERATION_STAGE.REVIEW,
             };
         } catch (error) {
@@ -247,7 +317,12 @@ export function createLongDreamGenerationController({
         confirm,
         abort,
         get active() {
-            return active ? { stage: active.stage, aborted: active.controller.signal.aborted } : null;
+            return active ? {
+                stage: active.stage,
+                aborted: active.controller.signal.aborted,
+                round: active.round,
+                maxRounds: active.maxRounds,
+            } : null;
         },
     };
 }

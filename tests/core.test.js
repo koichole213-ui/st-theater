@@ -9,6 +9,7 @@ import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenera
 import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, normalizeContinuationText, readableCharCount } from '../text-counter.js';
 import { RENDER_REPORT_TIMEOUT_MS, injectResizeReporter, installSafeResizeListener, renderSafeIframe, sandboxPermissions } from '../safe-renderer.js';
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from '../request-metrics.js';
+import { filterTaggedReasoning, reasoningSafeContent } from '../reasoning-filter.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, createDiagnosticError, diagnosticSignalInfo } from '../request-diagnostics.js';
 import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkYRatio } from '../result-bookmark.js';
 import { autoSourceLabel, resolveAutoInstruction } from '../auto-mode.js';
@@ -24,11 +25,13 @@ import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from '../plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from '../history-backup.js';
-import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, appendLongDreamChapter, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, recoverInterruptedLongDreamMemory, saveLongDreamDraft, setLongDreamMemoryStatus, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition } from '../long-dream.js';
+import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, appendLongDreamChapter, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, discardLongDreamWritingAttempt, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, recoverInterruptedLongDreamMemory, saveLongDreamDraft, selectLongDreamDraftCandidate, setLongDreamMemoryStatus, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition } from '../long-dream.js';
 import { buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBookContext } from '../long-dream-payload.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from '../long-dream-generation.js';
 import { LONG_DREAM_BACKUP_FORMAT, LONG_DREAM_BACKUP_VERSION, createLongDreamBackup, parseLongDreamBackup } from '../long-dream-backup.js';
 import { buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, pendingLongDreamChapters, shouldWeaveLongDreamMemory } from '../long-dream-memory.js';
+import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing, composePresetMessages, normalizeRequestMessages } from '../request-layout.js';
+import { createRequestTrace, formatRequestTrace } from '../request-trace.js';
 
 test('长梦以完整首章开卷，并默认隔离原世界书', () => {
     const now = new Date('2026-07-31T12:30:00.000Z');
@@ -211,6 +214,184 @@ test('长梦生成控制器先保存可恢复正文和待确认 HTML，再原子
     assert.equal(confirmed.draft, null);
 });
 
+test('长梦待确认章节最多保留三版，并只晋升用户选中的候选', async () => {
+    const record = createLongDreamRecord({
+        title: '三重月影',
+        source: { text: '第一章。', html: '<main>第一章。</main>' },
+    });
+    let requestCount = 0;
+    const controller = createLongDreamGenerationController({
+        requestChapter: async () => ({ text: `第 ${++requestCount} 版正文。` }),
+        renderChapter: async ({ text }) => ({ html: `<main>${text}</main>`, mode: 'html' }),
+    });
+
+    const first = await controller.run({ record, instruction: '继续追踪月影。' });
+    const second = await controller.run({ record: first.record, appendCandidate: true });
+    const third = await controller.run({ record: second.record, appendCandidate: true });
+
+    assert.equal(LONG_DREAM_MAX_CANDIDATES, 3);
+    assert.equal(third.record.draft.candidates.length, 3);
+    assert.equal(third.record.draft.selectedCandidateIndex, 2);
+    assert.equal(third.record.draft.text, '第 3 版正文。');
+    assert.deepEqual(third.record.draft.candidates.map(candidate => candidate.text), [
+        '第 1 版正文。',
+        '第 2 版正文。',
+        '第 3 版正文。',
+    ]);
+    await assert.rejects(
+        controller.run({ record: third.record, appendCandidate: true }),
+        /最多保留 3 版候选/,
+    );
+    assert.equal(requestCount, 3);
+
+    const selected = selectLongDreamDraftCandidate(third.record, 0);
+    assert.equal(selected.draft.selectedCandidateIndex, 0);
+    assert.equal(selected.draft.text, '第 1 版正文。');
+    const confirmed = await controller.confirm(selected);
+    assert.equal(confirmed.chapters.length, 2);
+    assert.equal(confirmed.chapters[1].text, '第 1 版正文。');
+    assert.equal(confirmed.chapters[1].html, '<main>第 1 版正文。</main>');
+    assert.equal(confirmed.draft, null);
+});
+
+test('生成下一版中途停止时保留旧候选，放弃本轮后可回到待确认状态', async () => {
+    const record = createLongDreamRecord({
+        source: { text: '第一章。', html: '<main>第一章。</main>' },
+    });
+    let requestCount = 0;
+    let secondStarted;
+    const started = new Promise(resolve => { secondStarted = resolve; });
+    const controller = createLongDreamGenerationController({
+        checkpointIntervalMs: 0,
+        requestChapter: ({ signal, onChunk }) => {
+            requestCount++;
+            if (requestCount === 1) return Promise.resolve({ text: '第一版完整正文。' });
+            return new Promise((resolve, reject) => {
+                onChunk('第二版只写到一半。');
+                secondStarted();
+                signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+            });
+        },
+        renderChapter: async ({ text }) => `<main>${text}</main>`,
+    });
+
+    const first = await controller.run({ record });
+    const running = controller.run({ record: first.record, appendCandidate: true });
+    await started;
+    controller.abort();
+    await assert.rejects(running, error => {
+        assert.equal(error.longDreamRecord.draft.status, LONG_DREAM_DRAFT_STATUS.WRITING);
+        assert.equal(error.longDreamRecord.draft.text, '第二版只写到一半。');
+        assert.equal(error.longDreamRecord.draft.candidates.length, 1);
+        assert.equal(error.longDreamRecord.draft.candidates[0].text, '第一版完整正文。');
+        const restored = discardLongDreamWritingAttempt(error.longDreamRecord);
+        assert.equal(restored.draft.status, LONG_DREAM_DRAFT_STATUS.REVIEW);
+        assert.equal(restored.draft.text, '第一版完整正文。');
+        assert.equal(restored.draft.candidates.length, 1);
+        return true;
+    });
+});
+
+test('长梦正文不足目标时自动追加补写，达到九成后只排版一次', async () => {
+    const record = createLongDreamRecord({
+        source: { text: '第一章。', html: '<main>第一章。</main>' },
+    });
+    const requests = [];
+    let renderCount = 0;
+    const controller = createLongDreamGenerationController({
+        checkpointIntervalMs: 0,
+        requestChapter: async ({ userPrompt, round, maxRounds, onChunk }) => {
+            requests.push({ userPrompt, round, maxRounds });
+            const text = round === 1 ? '甲'.repeat(200) : '乙'.repeat(260);
+            onChunk(text);
+            return { text, stopReason: 'stop' };
+        },
+        renderChapter: async ({ text }) => {
+            renderCount++;
+            return `<main>${text}</main>`;
+        },
+    });
+
+    const result = await controller.run({
+        record,
+        targetChars: 500,
+        autoContinue: true,
+        maxRounds: 3,
+    });
+
+    assert.equal(requests.length, 2);
+    assert.deepEqual(requests.map(item => [item.round, item.maxRounds]), [[1, 3], [2, 3]]);
+    assert.doesNotMatch(requests[0].userPrompt, /本章可恢复草稿/);
+    assert.match(requests[0].userPrompt, /不要为了提前结束而仓促总结或收束/);
+    assert.match(requests[1].userPrompt, /本章可恢复草稿/);
+    assert.match(requests[1].userPrompt, /本章已有约 200 字/);
+    assert.equal(renderCount, 1);
+    assert.equal(result.rounds, 2);
+    assert.equal(result.actualChars, 460);
+    assert.equal(result.targetCompletionChars, 450);
+    assert.equal(result.completedBelowTarget, false);
+    assert.equal(result.record.draft.text, `${'甲'.repeat(200)}\n\n${'乙'.repeat(260)}`);
+});
+
+test('长梦自动补写达到最大轮数后停止，并明确记录仍低于目标', async () => {
+    const record = createLongDreamRecord({
+        source: { text: '第一章。', html: '<main>第一章。</main>' },
+    });
+    let requestCount = 0;
+    const controller = createLongDreamGenerationController({
+        requestChapter: async () => ({ text: String(++requestCount).repeat(100) }),
+        renderChapter: async ({ text }) => `<main>${text}</main>`,
+    });
+
+    const result = await controller.run({
+        record,
+        targetChars: 500,
+        autoContinue: true,
+        maxRounds: 2,
+    });
+
+    assert.equal(requestCount, 2);
+    assert.equal(result.rounds, 2);
+    assert.equal(result.actualChars, 200);
+    assert.equal(result.completedBelowTarget, true);
+});
+
+test('长梦在第二轮补写中停止时保留首轮和当前流式草稿', async () => {
+    const record = createLongDreamRecord({
+        source: { text: '第一章。', html: '<main>第一章。</main>' },
+    });
+    let secondRoundStarted;
+    const started = new Promise(resolve => { secondRoundStarted = resolve; });
+    const controller = createLongDreamGenerationController({
+        checkpointIntervalMs: 0,
+        requestChapter: ({ round, signal, onChunk }) => {
+            if (round === 1) return Promise.resolve({ text: '甲'.repeat(200) });
+            return new Promise((resolve, reject) => {
+                onChunk('乙'.repeat(50));
+                secondRoundStarted();
+                signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+            });
+        },
+        renderChapter: async () => assert.fail('停止后不应进入最终排版'),
+    });
+
+    const running = controller.run({ record, targetChars: 500, autoContinue: true, maxRounds: 3 });
+    await started;
+    assert.deepEqual(controller.active, {
+        stage: LONG_DREAM_GENERATION_STAGE.WRITING,
+        aborted: false,
+        round: 2,
+        maxRounds: 3,
+    });
+    assert.equal(controller.abort(), true);
+    await assert.rejects(running, error => {
+        assert.equal(error.name, 'AbortError');
+        assert.equal(error.longDreamRecord.draft.status, LONG_DREAM_DRAFT_STATUS.WRITING);
+        assert.equal(error.longDreamRecord.draft.text, `${'甲'.repeat(200)}\n\n${'乙'.repeat(50)}`);
+        return true;
+    });
+});
+
 test('长梦生成停止时保留 WRITING 草稿，不追加半章', async () => {
     const record = createLongDreamRecord({
         source: { text: '第一章。', html: '<main>第一章。</main>' },
@@ -332,14 +513,22 @@ test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => 
     assert.match(source, /id="theater-dream-confirm-chapter"/);
     assert.match(source, /id="theater-dream-review-fullscreen"/);
     assert.match(source, /id="theater-dream-regenerate-draft"/);
+    assert.match(source, /data-dream-candidate-step="-1"/);
+    assert.match(source, /data-dream-candidate-step="1"/);
+    assert.match(source, /changeLongDreamDraftCandidate/);
+    assert.match(source, /按原要求再生成一版/);
+    assert.match(source, /LONG_DREAM_MAX_CANDIDATES/);
     assert.match(source, /longDreamComposerDrafts/);
     assert.match(source, /lastTheaterTab/);
     assert.match(source, /regenerateLongDreamDraft/);
     assert.match(source, /requestFinalRenderedHtml/);
+    assert.match(source, /autoContinue: settings\.autoContinue !== false/);
+    assert.match(source, /maxRounds: Math\.min\(10, Math\.max\(1, Number\(settings\.maxAutoRounds\) \|\| 3\)\)/);
     assert.match(source, /class="theater-dream-next-options"/);
     assert.match(source, /<details class="theater-dream-settings">/);
     assert.match(source, /旧记录中有一份指令，请核对/);
     assert.match(styles, /梦中页只保留一条主线：续写/);
+    assert.match(styles, /\.theater-dream-candidate-switcher/);
 });
 
 test('下一章请求读取整部长卷正文和梦脉，但不携带旧 HTML', () => {
@@ -623,6 +812,43 @@ test('长梦备份以白名单导出，导入会保留章节但不携带本地 I
     assert.doesNotMatch(serialized, /never-export-this|not-a-reference|also-never-export-this|not-an-id/);
 });
 
+test('长梦 JSON 不导出待确认候选，但仍能导入旧备份中的单版待确认稿', () => {
+    const record = createLongDreamRecord({
+        title: '候选不出卷',
+        source: { text: '第一章', html: '<main>第一章</main>' },
+    });
+    const review = saveLongDreamDraft(record, {
+        status: LONG_DREAM_DRAFT_STATUS.REVIEW,
+        title: '第二章',
+        instruction: '沿河而下。',
+        text: '不应出现在新备份里的候选正文',
+        html: '<main>不应出现在新备份里的候选正文</main>',
+    });
+    const backup = createLongDreamBackup([review]);
+    const serialized = JSON.stringify(backup);
+    assert.equal(backup.dreams[0].draft, null);
+    assert.doesNotMatch(serialized, /不应出现在新备份里的候选正文/);
+
+    const imported = parseLongDreamBackup({
+        format: LONG_DREAM_BACKUP_FORMAT,
+        version: LONG_DREAM_BACKUP_VERSION,
+        dreams: [{
+            title: '旧备份',
+            chapters: [{ text: '第一章', html: '<main>第一章</main>' }],
+            draft: {
+                status: 'review',
+                title: '第二章',
+                text: '旧备份待确认正文',
+                html: '<main>旧备份待确认正文</main>',
+            },
+        }],
+    });
+    const normalizedImported = normalizeLongDreamRecord(imported[0]);
+    assert.equal(normalizedImported.draft.status, LONG_DREAM_DRAFT_STATUS.REVIEW);
+    assert.equal(normalizedImported.draft.candidates.length, 1);
+    assert.equal(normalizedImported.draft.text, '旧备份待确认正文');
+});
+
 test('长梦备份拒绝错格式，并能保留仅 HTML 的旧章节以便安全阅读', () => {
     assert.throws(() => parseLongDreamBackup({ format: 'st-theater-history', version: 1, dreams: [] }), /不是千夜浮梦长梦备份/);
     const imported = parseLongDreamBackup({
@@ -679,6 +905,10 @@ test('插件更新成功后只提供需确认的酒馆刷新操作', () => {
     assert.match(confirmFlow, /Popup\.show\.confirm\('现在刷新酒馆并启用新版本？'/);
     assert.match(confirmFlow, /if \(!confirmed\) return;[\s\S]*?window\.location\.reload\(\)/);
     assert.match(styles, /\.theater-reload-after-update\[hidden\][\s\S]*?display: none/);
+    assert.match(source, /theater-update-button-stack[\s\S]*?theater-update-btn[\s\S]*?theater-reload-after-update-btn/);
+    assert.match(styles, /\.theater-config-card \.theater-update-actions\s*\{[\s\S]*?display:\s*grid/);
+    assert.match(styles, /\.theater-config-card \.theater-update-actions > span\s*\{[\s\S]*?white-space:\s*nowrap/);
+    assert.match(styles, /\.theater-update-button-stack\s*\{[\s\S]*?display:\s*grid[\s\S]*?gap:\s*8px/);
 });
 
 test('常见问题汇总是诊断报告后的独立可折叠界面', () => {
@@ -1031,6 +1261,56 @@ test('流式解析兼容 OpenAI、Gemini 原生与 Responses API 正文格式', 
     assert.equal(extractStreamText({ output: [{ content: [{ type: 'output_text', text: '完整响应正文' }] }] }), '完整响应正文');
 });
 
+test('思考标签在流式未闭合时不会闪出，并在闭合后只保留正文', () => {
+    assert.deepEqual(filterTaggedReasoning('<thin'), {
+        content: '',
+        hadReasoning: true,
+        incomplete: false,
+    });
+    assert.deepEqual(filterTaggedReasoning('<thinking>不能显示'), {
+        content: '',
+        hadReasoning: true,
+        incomplete: true,
+    });
+    assert.equal(reasoningSafeContent('<thinking>不能显示</thinking>真正正文'), '真正正文');
+    assert.equal(reasoningSafeContent('<think>旧标签也隐藏</think>第二段正文'), '第二段正文');
+    assert.equal(reasoningSafeContent('开头正文<thinking>中间思考</thinking>结尾正文'), '开头正文结尾正文');
+});
+
+test('独立 API 会在交付前隐藏 thinking，只有思考内容时给出稳定信号', async () => {
+    const visibleChunks = [];
+    const config = {
+        apiUrl: 'https://api.example.com/v1',
+        apiProtocol: API_PROTOCOLS.OPENAI,
+        apiKey: 'secret',
+        apiModel: 'model-name',
+        maxOutputTokens: 1024,
+    };
+    const result = await requestCustomApi({
+        config,
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        shouldStream: false,
+        onChunk: text => visibleChunks.push(text),
+        fetchImpl: async () => new Response(JSON.stringify({
+            choices: [{ message: { content: '<thinking>私密思考</thinking>可见正文' } }],
+        }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    });
+    assert.equal(result.text, '可见正文');
+    assert.deepEqual(visibleChunks, ['可见正文']);
+
+    await assert.rejects(() => requestCustomApi({
+        config,
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        shouldStream: false,
+        fetchImpl: async () => new Response(JSON.stringify({
+            choices: [{ message: { content: '<thinking>只有思考，没有正文</thinking>' } }],
+        }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    }), error => error?.diagnosticSignal === REQUEST_DIAGNOSTIC_SIGNAL.REASONING_ONLY
+        && error?.code === 'THEATER_REASONING_ONLY');
+});
+
 test('流式解析能取出状态为 200 的错误事件，而不是只报告空流', () => {
     assert.equal(extractApiErrorMessage({ error: { message: 'upstream overloaded' } }), 'upstream overloaded');
     assert.equal(extractApiErrorMessage({ type: 'error', message: 'model unavailable' }), 'model unavailable');
@@ -1250,6 +1530,43 @@ test('酒馆主 API 没有 ChatCompletionService 时复用 TavernHelper 路径',
     assert.equal(result.text, 'TavernHelper 正文');
 });
 
+test('酒馆主 API 隐藏 thinking，且只有思考内容时不会降级重发', async () => {
+    const ctx = { oai_settings: { chat_completion_source: 'openai', openai_model: 'main-model' } };
+    const chunks = [];
+    const result = await requestMainApi({
+        ctx,
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        shouldStream: false,
+        onChunk: text => chunks.push(text),
+        chatCompletionService: {
+            processRequest: async () => ({ content: '<thinking>主线路思考</thinking>主线路正文' }),
+        },
+        getContext: () => ctx,
+    });
+    assert.equal(result.text, '主线路正文');
+    assert.deepEqual(chunks, ['主线路正文']);
+
+    let helperCalls = 0;
+    await assert.rejects(() => requestMainApi({
+        ctx,
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        shouldStream: false,
+        chatCompletionService: {
+            processRequest: async () => ({ content: '<thinking>只有思考</thinking>' }),
+        },
+        tavernHelper: {
+            generateRaw: async () => {
+                helperCalls++;
+                return '不应重发';
+            },
+        },
+        getContext: () => ctx,
+    }), error => error?.diagnosticSignal === REQUEST_DIAGNOSTIC_SIGNAL.REASONING_ONLY);
+    assert.equal(helperCalls, 0);
+});
+
 test('酒馆主 API 无法识别 ChatCompletionService 字段时安全降级到 TavernHelper', async () => {
     const fallbacks = [];
     let serviceCalls = 0;
@@ -1336,6 +1653,109 @@ test('用户本轮指令位于前情之后、最终规则之前', () => {
     assert.ok(payload.userPrompt.indexOf('续写前情') < payload.userPrompt.indexOf('用户本轮指令'));
     assert.ok(payload.userPrompt.indexOf('用户本轮指令') < payload.userPrompt.indexOf('渲染规则'));
     assert.ok(payload.userPrompt.indexOf('渲染规则') < payload.userPrompt.indexOf('最终创作约束'));
+});
+
+test('预设 prompt_order 的多角色顺序与动态锚点保持结构，不再压成 system/user 两段', () => {
+    const messages = composePresetMessages({
+        presetEntries: [
+            { id: 'main', role: 'system', content: 'SYS-MAIN' },
+            { id: 'personaDescription', role: 'system', content: '' },
+            { id: 'custom-user', role: 'user', content: 'USR-CUSTOM' },
+            { id: 'chatHistory', role: 'system', content: '' },
+            { id: 'post', role: 'assistant', content: 'AST-POST' },
+        ],
+        slots: { personaDescription: 'PERSONA-SLOT' },
+        chatMessages: [
+            { role: 'user', content: 'CHAT-USER' },
+            { role: 'assistant', content: 'CHAT-AST' },
+        ],
+        tailMessages: [{ role: 'user', content: 'CURRENT-INSTRUCTION', source: 'theater' }],
+    });
+    assert.deepEqual(messages.map(message => message.role), [
+        'system', 'system', 'user', 'user', 'assistant', 'assistant', 'user',
+    ]);
+    assert.deepEqual(messages.map(message => message.content), [
+        'SYS-MAIN', 'PERSONA-SLOT', 'USR-CUSTOM', 'CHAT-USER', 'CHAT-AST', 'AST-POST', 'CURRENT-INSTRUCTION',
+    ]);
+});
+
+test('世界书八种位置、同深度顺序和 outlet 宏按酒馆语义进入消息布局', () => {
+    const wi = [
+        { uid: 1, position: WORLD_INFO_POSITION.BEFORE_CHARACTER, order: 20, content: 'WB-BEFORE' },
+        { uid: 2, position: WORLD_INFO_POSITION.AFTER_CHARACTER, order: 20, content: 'WB-AFTER' },
+        { uid: 3, position: WORLD_INFO_POSITION.AUTHOR_NOTE_TOP, order: 20, content: 'AN-TOP' },
+        { uid: 4, position: WORLD_INFO_POSITION.AUTHOR_NOTE_BOTTOM, order: 20, content: 'AN-BOTTOM' },
+        { uid: 5, position: WORLD_INFO_POSITION.EXAMPLES_TOP, order: 20, content: 'EXAMPLE-TOP' },
+        { uid: 6, position: WORLD_INFO_POSITION.EXAMPLES_BOTTOM, order: 20, content: 'EXAMPLE-BOTTOM' },
+        { uid: 7, position: WORLD_INFO_POSITION.AT_DEPTH, depth: 1, order: 10, role: 1, content: 'DEPTH-FIRST' },
+        { uid: 8, position: WORLD_INFO_POSITION.AT_DEPTH, depth: 1, order: 30, role: 2, content: 'DEPTH-SECOND' },
+        { uid: 9, position: WORLD_INFO_POSITION.OUTLET, outletName: 'Lore', order: 20, content: 'OUTLET-ONLY-HERE' },
+    ];
+    const messages = composePresetMessages({
+        presetEntries: [
+            { id: 'worldInfoBefore', role: 'system', content: '' },
+            { id: 'charDescription', role: 'system', content: '' },
+            { id: 'worldInfoAfter', role: 'system', content: '' },
+            { id: 'dialogueExamples', role: 'system', content: '' },
+            { id: 'outlet-holder', role: 'system', content: '宏：{{outlet::Lore}}' },
+            { id: 'chatHistory', role: 'system', content: '' },
+        ],
+        slots: { charDescription: 'CHAR', dialogueExamples: 'EXAMPLES' },
+        worldInfoEntries: wi,
+        chatMessages: [
+            { role: 'user', content: 'CHAT-1' },
+            { role: 'assistant', content: 'CHAT-2' },
+        ],
+    });
+    const content = messages.map(message => message.content);
+    assert.deepEqual(content, [
+        'WB-BEFORE', 'CHAR', 'WB-AFTER', 'EXAMPLE-TOP\n\nEXAMPLES\n\nEXAMPLE-BOTTOM',
+        '宏：OUTLET-ONLY-HERE', 'AN-TOP', 'CHAT-1', 'DEPTH-FIRST', 'DEPTH-SECOND', 'CHAT-2', 'AN-BOTTOM',
+    ]);
+    assert.equal(content.filter(text => text.includes('OUTLET-ONLY-HERE')).length, 1);
+    assert.equal(messages[7].role, 'user');
+    assert.equal(messages[8].role, 'assistant');
+});
+
+test('请求后处理始终转换为 no-tools 变体，并清除 tool/function 消息与工具字段', () => {
+    const source = [
+        { role: 'system', content: '系统' },
+        { role: 'assistant', content: '助手先说', tool_calls: [{ id: '不应保留' }] },
+        { role: 'tool', content: '工具结果' },
+        { role: 'user', content: '用户', tool_call_id: '不应保留' },
+    ];
+    const strict = applyPromptPostProcessing(source, PROMPT_POST_PROCESSING.STRICT_TOOLS);
+    assert.deepEqual(strict.map(message => message.role), ['system', 'user', 'assistant', 'user']);
+    assert.equal(strict.some(message => message.content === '工具结果'), false);
+    assert.equal(strict.every(message => !('tool_calls' in message) && !('tool_call_id' in message)), true);
+    assert.deepEqual(normalizeRequestMessages(source).map(message => message.role), ['system', 'assistant', 'user']);
+});
+
+test('实际请求快照等于传输层输入且不包含 Key、Authorization 或接口 URL', async () => {
+    let traceInput;
+    let wireBody;
+    await requestCustomApi({
+        config: {
+            apiUrl: 'https://secret-host.example/v1', apiProtocol: API_PROTOCOLS.OPENAI,
+            apiKey: 'sk-super-secret-value', apiModel: 'trace-model', maxOutputTokens: 1024,
+        },
+        messages: [
+            { role: 'system', content: '系统', source: 'preset', sourceId: 'main' },
+            { role: 'user', content: '用户', source: 'theater', sourceId: 'instruction' },
+        ],
+        shouldStream: false,
+        onRequest: input => { traceInput = input; },
+        fetchImpl: async (_url, options) => {
+            wireBody = JSON.parse(options.body);
+            return new Response(JSON.stringify({ choices: [{ message: { content: '完成' } }] }), {
+                status: 200, headers: { 'content-type': 'application/json' },
+            });
+        },
+    });
+    assert.deepEqual(traceInput.messages.map(({ role, content }) => ({ role, content })), wireBody.messages);
+    const report = formatRequestTrace(createRequestTrace(traceInput));
+    assert.doesNotMatch(report, /sk-super-secret|secret-host\.example|Authorization/i);
+    assert.match(report, /工具：已强制禁用/);
 });
 
 test('429 限流识别支持 Retry-After 秒数、日期和常见错误文字', () => {
@@ -1427,6 +1847,36 @@ test('独立 API 只使用显式配置，不读取或改写酒馆主线路', asy
     } finally {
         globalThis.oai_settings = originalOaiSettings;
     }
+});
+
+test('两个独立 API 连接并发请求时各自只携带自己的地址、模型和 Key', async () => {
+    const seen = [];
+    const run = (label, apiUrl, apiKey, apiModel) => requestCustomApi({
+        config: { apiUrl, apiKey, apiModel, apiProtocol: API_PROTOCOLS.OPENAI, maxOutputTokens: 1024 },
+        systemPrompt: `系统-${label}`,
+        userPrompt: `用户-${label}`,
+        shouldStream: false,
+        fetchImpl: async (url, options) => {
+            seen.push({ label, url, authorization: options.headers.Authorization, body: JSON.parse(options.body) });
+            return new Response(JSON.stringify({ choices: [{ message: { content: `完成-${label}` } }] }), {
+                status: 200, headers: { 'content-type': 'application/json' },
+            });
+        },
+    });
+    await Promise.all([
+        run('A', 'https://a.example/v1', 'key-a', 'model-a'),
+        run('B', 'https://b.example/v1', 'key-b', 'model-b'),
+    ]);
+    const a = seen.find(item => item.label === 'A');
+    const b = seen.find(item => item.label === 'B');
+    assert.equal(a.url, 'https://a.example/v1/chat/completions');
+    assert.equal(a.authorization, 'Bearer key-a');
+    assert.equal(a.body.model, 'model-a');
+    assert.equal(a.body.messages[1].content, '用户-A');
+    assert.equal(b.url, 'https://b.example/v1/chat/completions');
+    assert.equal(b.authorization, 'Bearer key-b');
+    assert.equal(b.body.model, 'model-b');
+    assert.equal(b.body.messages[1].content, '用户-B');
 });
 
 test('单轮输出默认 16384，低上限模型按标准档位回落', () => {

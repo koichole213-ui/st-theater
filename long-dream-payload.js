@@ -1,4 +1,5 @@
 import { LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION } from './long-dream.js';
+import { readableCharCount } from './text-counter.js';
 
 function cleanText(value) {
     return String(value || '').trim();
@@ -131,6 +132,8 @@ export function buildLongDreamChapterPayload({
     if (!context.chapters) throw new Error('长梦缺少可续写的已保存章节');
     const target = Math.max(500, Math.min(8000, Math.round(Number(targetChars) || 3000)));
     const draft = cleanText(currentDraft);
+    const draftChars = readableCharCount(draft);
+    const remainingChars = Math.max(0, target - draftChars);
     const direction = cleanText(instruction) || '自然承接上一章尚未解决的动作、情绪与伏笔。';
     const title = cleanText(chapterTitle) || `第 ${context.chapterCount + 1} 章`;
     const requestedBudget = Number(maxOptionalContextChars);
@@ -150,7 +153,9 @@ export function buildLongDreamChapterPayload({
         style ? `【写作风格｜只控制表达，不得改写事实】\n${style}` : '',
     ].filter(Boolean).join('\n\n');
     const sections = [
-        `【本章方向｜用户本次明确要求】\n章名：${title}\n创作方向：${direction}\n目标正文约 ${target} 字；不需要自行统计、报告或标注字数。`,
+        `【本章方向｜用户本次明确要求】\n章名：${title}\n创作方向：${direction}\n${draft
+            ? `目标是本章完整正文约 ${target} 字；本章已有约 ${draftChars} 字，本轮只补写为接近总目标仍需新增的内容（约 ${remainingChars} 字，可随情节自然浮动），不要报告或标注字数。`
+            : `目标正文约 ${target} 字；不需要自行统计、报告或标注字数。`}`,
         context.canon ? `【此梦设定｜用户已确认的持续硬事实】\n${context.canon}` : '【此梦设定】\n暂无额外设定；以已保存章节中已经成立的事实为准。',
         chapters ? `【已保存章节｜只作前情，不得复述】\n${chapters}` : '【已保存章节】\n受本次上下文预算限制，未附带章节原文；不得自行补入其他世界线。',
         current ? `【本章可恢复草稿｜只承接结尾，不得重复】\n${current}` : '',
@@ -160,7 +165,7 @@ export function buildLongDreamChapterPayload({
             : `【世界书继承】\n${record?.inheritance?.worldBookPolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
                 ? '这部长卷没有可用的冻结快照，本次不得读取或补入当前酒馆世界书。'
                 : '本长卷与原世界书隔离，不得读取或自行补入原世界线设定。'}`,
-        `【输出协议】\n1. 只输出本章新增的纯正文，不输出标题、HTML、CSS、JavaScript、Markdown 代码块或创作说明；\n2. 不复述、改写或总结已保存章节${current ? '及本章已有正文' : ''}；\n3. 延续既有视角、时态、人物语气、叙事质感与因果；\n4. 用新的动作、对白、心理变化和情节推进承接上一章；\n5. ${finishThisRound ? '本轮可以在本章情节充分展开后自然收束，但不要结束整部长卷。' : '本轮继续推进本章，不要总结、收束或写出章末式结尾。'}`,
+        `【输出协议】\n1. 只输出本章新增的纯正文，不输出标题、HTML、CSS、JavaScript、Markdown 代码块或创作说明；\n2. 不复述、改写或总结已保存章节${current ? '及本章已有正文' : ''}；\n3. 延续既有视角、时态、人物语气、叙事质感与因果；\n4. 用新的动作、对白、心理变化和情节推进承接上一章；\n5. ${finishThisRound ? '本轮可以在本章情节充分展开后自然收束，但不要结束整部长卷。' : '本轮继续充分推进本章，不要为了提前结束而仓促总结或收束；若内容已经充分达到目标，可以自然形成章末，但不要结束整部长卷。'}`,
     ].filter(Boolean);
     return {
         systemPrompt,

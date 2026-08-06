@@ -94,8 +94,10 @@ function safeChapter(chapter = {}, fallbackDate, index = 0) {
     };
 }
 
-function safeDraft(draft = null, fallbackDate, nextNumber) {
+function safeDraft(draft = null, fallbackDate, nextNumber, { includeReviewDraft = false } = {}) {
     if (!draft || typeof draft !== 'object') return null;
+    const hasCandidates = Array.isArray(draft.candidates) && draft.candidates.length > 0;
+    if ((draft.status === 'review' || hasCandidates) && !includeReviewDraft) return null;
     const text = String(draft.text || '');
     const html = String(draft.html || '');
     const instruction = String(draft.instruction || '');
@@ -149,7 +151,7 @@ function safeMemory(memory = {}, fallbackDate) {
     };
 }
 
-export function sanitizeLongDreamBackupRecord(record = {}) {
+export function sanitizeLongDreamBackupRecord(record = {}, { includeReviewDraft = false } = {}) {
     const normalized = normalizeLongDreamRecord(record);
     if (!normalized) return null;
     const createdAt = safeDate(normalized.createdAt, new Date().toISOString());
@@ -179,13 +181,13 @@ export function sanitizeLongDreamBackupRecord(record = {}) {
         sourceConfig: safeSourceConfig(normalized.sourceConfig),
         chapters,
         memory: safeMemory(normalized.memory, updatedAt),
-        draft: safeDraft(normalized.draft, updatedAt, chapters.length + 1),
+        draft: safeDraft(normalized.draft, updatedAt, chapters.length + 1, { includeReviewDraft }),
     };
 }
 
 export function createLongDreamBackup(records = [], { now = new Date() } = {}) {
     const dreams = (Array.isArray(records) ? records : [])
-        .map(sanitizeLongDreamBackupRecord)
+        .map(record => sanitizeLongDreamBackupRecord(record))
         .filter(Boolean);
     return {
         format: LONG_DREAM_BACKUP_FORMAT,
@@ -204,7 +206,7 @@ export function parseLongDreamBackup(data) {
         throw new Error(`不支持的长梦备份版本：${data.version ?? '未知'}`);
     }
     const dreams = (Array.isArray(data.dreams) ? data.dreams : [])
-        .map(sanitizeLongDreamBackupRecord)
+        .map(record => sanitizeLongDreamBackupRecord(record, { includeReviewDraft: true }))
         .filter(Boolean);
     if (!dreams.length) throw new Error('备份中没有可导入的有效长梦');
     return dreams;

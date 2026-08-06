@@ -27,11 +27,13 @@ import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from './plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from './history-backup.js';
-import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, latestLongDreamChapter, normalizeLongDreamRecord, recoverInterruptedLongDreamMemory, setLongDreamMemoryStatus, setLongDreamStatus, updateLongDreamDefinition } from './long-dream.js';
+import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, discardLongDreamWritingAttempt, latestLongDreamChapter, normalizeLongDreamRecord, recoverInterruptedLongDreamMemory, selectLongDreamDraftCandidate, setLongDreamMemoryStatus, setLongDreamStatus, updateLongDreamDefinition } from './long-dream.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from './long-dream-generation.js';
 import { MAX_LONG_DREAM_BACKUP_BYTES, createLongDreamBackup, parseLongDreamBackup } from './long-dream-backup.js';
 import { DEFAULT_LONG_DREAM_MEMORY_PRESET, buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, shouldWeaveLongDreamMemory } from './long-dream-memory.js';
 import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkSide, normalizeBookmarkYRatio } from './result-bookmark.js';
+import { composePresetMessages, noToolsPostProcessingMode, normalizePromptRole } from './request-layout.js';
+import { createRequestTrace, formatRequestTrace } from './request-trace.js';
 
 const MODULE_NAME = 'theater_generator';
 const VERSION = '3.6.3';
@@ -41,6 +43,7 @@ let lastRequestMetrics = null;
 const requestMetricsLog = [];
 let lastRequestIssue = null;
 let lastRequestContext = null;
+let lastRequestTrace = null;
 let lastAutoIssue = null;
 let lastAutoIssueFingerprint = '';
 let currentGenerationJob = null;
@@ -1725,8 +1728,10 @@ function buildPopupHTML() {
             </div>` : ''}
             <div class="theater-config-action-row theater-update-actions">
                 <span><b>插件更新</b></span>
-                <button type="button" id="theater-update-btn" class="theater-btn primary"><i class="fa-solid fa-cloud-arrow-down"></i><span>检查更新</span></button>
-                <button type="button" id="theater-reload-after-update-btn" class="theater-btn theater-reload-after-update" ${updateReadyToReload ? '' : 'hidden'}><i class="fa-solid fa-rotate-right"></i><span>刷新酒馆并启用</span></button>
+                <div class="theater-update-button-stack">
+                    <button type="button" id="theater-update-btn" class="theater-btn primary"><i class="fa-solid fa-cloud-arrow-down"></i><span>检查更新</span></button>
+                    <button type="button" id="theater-reload-after-update-btn" class="theater-btn theater-reload-after-update" ${updateReadyToReload ? '' : 'hidden'}><i class="fa-solid fa-rotate-right"></i><span>刷新酒馆并启用</span></button>
+                </div>
             </div>
             <p id="theater-update-ready-hint" class="theater-update-ready-hint" ${updateReadyToReload ? '' : 'hidden'}><i class="fa-solid fa-circle-check"></i><span>更新文件已下载；你可以稍后刷新，不会自动打断当前操作。</span></p>
         </div>
@@ -2171,6 +2176,10 @@ function longDreamDetailHTML(dream) {
         ? `${longDreamRelationLabel(worldLineRelation)} · ${selectedBooks.length} 本资料库`
         : '完全隔离';
     const draft = dream.draft || null;
+    const draftCandidates = Array.isArray(draft?.candidates) ? draft.candidates : [];
+    const selectedCandidateIndex = draftCandidates.length
+        ? Math.min(draftCandidates.length - 1, Math.max(0, Math.floor(Number(draft?.selectedCandidateIndex) || 0)))
+        : 0;
     const isGeneratingThisDream = String(activeLongDreamGenerationId) === String(dream.id)
         && !!longDreamGenerationController?.active;
     const activeStage = isGeneratingThisDream
@@ -2186,9 +2195,11 @@ function longDreamDetailHTML(dream) {
     const nextInstruction = draft ? draft.instruction : composerDraft.instruction;
     const nextTarget = Math.max(500, Math.min(8000, Math.round(Number(draft?.targetChars || composerDraft.targetChars) || 3000)));
     const generationHint = hasReviewDraft
-        ? '新章节已排版完成，请先检查下方预览并确认保存。'
+        ? `${draftCandidates.length} 版候选已安全保留；切换不会改动内容，只会决定最终保存哪一版。`
         : (hasWritingDraft
-            ? '检测到可恢复草稿；继续时只会承接草稿结尾，不会重复已经写好的正文。'
+            ? (draftCandidates.length
+                ? `正在准备第 ${draftCandidates.length + 1} 版；此前 ${draftCandidates.length} 版候选仍安全保留。`
+                : '检测到可恢复草稿；继续时只会承接草稿结尾，不会重复已经写好的正文。')
             : '新章节只会进入这部长卷，不会自动写入普通历史或最近生成。');
     const chapterDirectory = dream.chapters.map(chapter => {
         const text = chapter.text || htmlToPlainText(chapter.html || '');
@@ -2232,7 +2243,7 @@ function longDreamDetailHTML(dream) {
             </div>
             <div class="theater-dream-next-actions">
                 <span>${esc(generationHint)}</span>
-                ${hasWritingDraft && !isGeneratingThisDream ? '<button type="button" id="theater-dream-discard-draft" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>放弃草稿</span></button>' : ''}
+                ${hasWritingDraft && !isGeneratingThisDream ? `<button type="button" id="theater-dream-discard-draft" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>${draftCandidates.length ? '放弃本轮生成' : '放弃草稿'}</span></button>` : ''}
                 ${isGeneratingThisDream
                     ? '<button type="button" id="theater-dream-stop-generation" class="theater-btn danger"><i class="fa-solid fa-stop"></i><span>停止</span></button>'
                     : `<button type="button" id="theater-dream-generate-next" class="theater-dream-primary" ${controlsDisabled ? 'disabled' : ''}><i class="fa-solid fa-feather-pointed"></i><span>${hasReviewDraft ? '等待确认' : (hasWritingDraft ? '继续未完成草稿' : '续写下一章')}</span></button>`}
@@ -2240,8 +2251,15 @@ function longDreamDetailHTML(dream) {
         </section>
         ${hasReviewDraft ? `<section class="theater-dream-review">
             <div class="theater-dream-review-head">
-                <div><span>待确认新章</span><b>${esc(draft.title || `第 ${nextNumber} 章`)}</b><p>正文约 ${readableCharCount(draft.text || '')} 字；确认前不会进入正式章节。</p></div>
-                <button type="button" id="theater-dream-review-fullscreen" class="theater-dream-review-fullscreen" title="全屏阅读待确认章节" aria-label="全屏阅读待确认章节"><i class="fa-solid fa-expand"></i></button>
+                <div><span>待确认新章 · 第 ${selectedCandidateIndex + 1} 版</span><b>${esc(draft.title || `第 ${nextNumber} 章`)}</b><p>正文约 ${readableCharCount(draft.text || '')} 字；只有当前选中的这一版会收入正式章节。</p></div>
+                <div class="theater-dream-review-tools">
+                    <div class="theater-dream-candidate-switcher" aria-label="切换待确认候选版本">
+                        <button type="button" data-dream-candidate-step="-1" title="上一版" aria-label="上一版" ${selectedCandidateIndex <= 0 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i></button>
+                        <strong aria-live="polite">${selectedCandidateIndex + 1}/${draftCandidates.length}</strong>
+                        <button type="button" data-dream-candidate-step="1" title="下一版" aria-label="下一版" ${selectedCandidateIndex >= draftCandidates.length - 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-right"></i></button>
+                    </div>
+                    <button type="button" id="theater-dream-review-fullscreen" class="theater-dream-review-fullscreen" title="全屏阅读当前候选" aria-label="全屏阅读当前候选"><i class="fa-solid fa-expand"></i></button>
+                </div>
             </div>
             <div class="theater-dream-review-canvas">
                 <iframe id="theater-dream-review-frame" sandbox="" title="待确认长梦章节"></iframe>
@@ -2249,7 +2267,7 @@ function longDreamDetailHTML(dream) {
             </div>
             <div class="theater-dream-review-actions">
                 <button type="button" id="theater-dream-discard-draft" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>放弃本章</span></button>
-                <button type="button" id="theater-dream-regenerate-draft" class="theater-btn"><i class="fa-solid fa-rotate-left"></i><span>按原要求重新生成</span></button>
+                <button type="button" id="theater-dream-regenerate-draft" class="theater-btn" ${draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? 'disabled' : ''}><i class="fa-solid fa-rotate-left"></i><span>${draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? '已保留三版' : '按原要求再生成一版'}</span></button>
                 <button type="button" id="theater-dream-confirm-chapter" class="theater-dream-primary"><i class="fa-solid fa-bookmark"></i><span>确认保存为第 ${nextNumber} 章</span></button>
             </div>
         </section>` : ''}
@@ -3072,6 +3090,9 @@ function bindEvents() {
     $d.off('click.tdconfirm').on('click.tdconfirm', '#theater-dream-confirm-chapter', confirmLongDreamChapter);
     $d.off('click.tddiscard').on('click.tddiscard', '#theater-dream-discard-draft', discardLongDreamDraft);
     $d.off('click.tdregenerate').on('click.tdregenerate', '#theater-dream-regenerate-draft', regenerateLongDreamDraft);
+    $d.off('click.tdcandidate').on('click.tdcandidate', '[data-dream-candidate-step]', function () {
+        changeLongDreamDraftCandidate(Number($(this).attr('data-dream-candidate-step')) || 0);
+    });
     $d.off('click.tdweave').on('click.tdweave', '#theater-dream-weave-now', function () {
         queueLongDreamMemoryWeave(activeLongDreamId, { force: true, announce: true });
     });
@@ -3187,6 +3208,7 @@ function bindEvents() {
         } else {
             $('#theater-preset-current').hide();
             cachedPresetEntries = [];
+            cachedPresetPostProcessing = '';
             $('#theater-preset-entries').html('<p class="theater-empty">请选择预设</p>');
         }
     });
@@ -4057,6 +4079,7 @@ function loadPersona(options = {}) {
 // Preset Entries
 // ============================================================
 let cachedPresetEntries = [];
+let cachedPresetPostProcessing = '';
 let presetNamesCache = [];
 let presetSearch = '';
 
@@ -4266,7 +4289,7 @@ function extractPromptsFromData(data) {
     }
 
     const entries = data.prompts
-        .filter(p => p.content && !p.forbid)
+        .filter(p => !p.forbid)
         .map((p, i) => {
             const id = p.identifier || `prompt_${i}`;
             const enabledInST = orderEnabled
@@ -4275,12 +4298,21 @@ function extractPromptsFromData(data) {
             return {
                 id,
                 name: p.name || p.identifier || `条目 ${i + 1}`,
-                role: p.role || 'system',
-                content: p.content,
+                role: normalizePromptRole(p.role),
+                content: String(p.content || ''),
                 enabledInST,
+                injectionPosition: p.injection_position ?? null,
+                injectionDepth: p.injection_depth ?? null,
+                injectionOrder: p.injection_order ?? null,
+                systemPrompt: p.system_prompt !== false,
+                forbidOverrides: !!p.forbid_overrides,
                 _orderIdx: orderIndex?.has(id) ? orderIndex.get(id) : 10000 + i,
             };
-        });
+        })
+        .filter(entry => entry.content.trim() || [
+            'worldInfoBefore', 'charDescription', 'charPersonality', 'scenario',
+            'personaDescription', 'worldInfoAfter', 'dialogueExamples', 'chatHistory',
+        ].includes(entry.id));
 
     entries.sort((a, b) => a._orderIdx - b._orderIdx);
     entries.forEach(e => delete e._orderIdx);
@@ -4289,6 +4321,7 @@ function extractPromptsFromData(data) {
 
 async function loadPresetEntries() {
     cachedPresetEntries = [];
+    cachedPresetPostProcessing = '';
     const sel = settings.selectedPresetName;
 
     if (!sel) {
@@ -4301,6 +4334,12 @@ async function loadPresetEntries() {
     const data = await fetchPresetByName(sel);
     if (data) {
         cachedPresetEntries = extractPromptsFromData(data);
+        cachedPresetPostProcessing = noToolsPostProcessingMode(
+            data.custom_prompt_post_processing
+            ?? data.prompt_post_processing
+            ?? data.openai_settings?.custom_prompt_post_processing
+            ?? '',
+        );
         console.log(`[Theater] Extracted ${cachedPresetEntries.length} entries from preset "${sel}"`);
     }
 
@@ -4354,6 +4393,11 @@ function getSelectedPresetPrompt() {
         .filter(e => states[e.id] !== false)
         .map(e => e.content)
         .join('\n\n');
+}
+
+function getSelectedPresetEntries() {
+    const states = settings.presetEntryStates || {};
+    return cachedPresetEntries.filter(entry => states[entry.id] !== false);
 }
 
 // ============================================================
@@ -4442,6 +4486,11 @@ async function reloadWorldBooks({ silent = false } = {}) {
                                 content: source.content,
                                 disabled: !!source.disable,
                                 strategy: worldBookEntryStrategy(source),
+                                position: Number.isFinite(Number(source.position)) ? Number(source.position) : 0,
+                                depth: Math.max(0, Math.floor(Number(source.depth) || 0)),
+                                order: Number.isFinite(Number(source.order)) ? Number(source.order) : 100,
+                                role: normalizePromptRole(source.role),
+                                outletName: String(source.outletName || source.outlet || ''),
                                 raw: source,
                             },
                         };
@@ -5232,6 +5281,13 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     const contextCount = normalizeContextRange(settings.contextRange);
     const readChatContext = settings.readChatContext !== false;
     const recentChatMessages = readChatContext ? takeRecentMessages(chat, contextCount) : [];
+    const structuredChatMessages = recentChatMessages.map((message, index) => ({
+        role: message.is_user ? 'user' : 'assistant',
+        content: extractMesContent(message.mes),
+        name: message.is_user ? (name1 || 'User') : (message.name || name2 || 'Char'),
+        source: 'chat-history',
+        sourceId: `chat-${index + 1}`,
+    })).filter(message => message.content.trim());
     const chatCtx = recentChatMessages.map(m =>
         `${m.is_user ? (name1 || 'User') : (m.name || name2 || 'Char')}: ${extractMesContent(m.mes)}`
     ).join('\n\n');
@@ -5254,6 +5310,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     const currentPersona = settings.followUserPersona ? loadPersona({ silent: true }) : (settings.userPersona || '');
     const persona = currentPersona?.trim() ? `User人设：\n${currentPersona.trim()}` : '';
     const selectedWBEntries = wbEntries.filter((_entry, index) => wbStates[index] !== false);
+    let activeWorldInfoEntries = [...selectedWBEntries];
     let wbParts = selectedWBEntries.map(entry => entry.content);
     if (evaluateWorldBook && settings.worldBookReadMode === 'lights') {
         const rawEntries = selectedWBEntries.filter(entry => !entry.manual && entry.raw).map(entry => entry.raw);
@@ -5286,12 +5343,13 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
             });
             if (Array.isArray(activated)) {
                 const activatedKeys = new Set(activated.map(entry => `${entry.world}.${entry.uid}`));
-                wbParts = [
+                activeWorldInfoEntries = [
                     ...selectedWBEntries
                         .filter(entry => !entry.manual && activatedKeys.has(`${entry.book}.${entry.uid}`))
-                        .map(entry => entry.content),
-                    ...manualParts,
+                        .map(entry => entry),
+                    ...selectedWBEntries.filter(entry => entry.manual),
                 ];
+                wbParts = activeWorldInfoEntries.map(entry => entry.content);
                 runtimeLog('info', '世界书按酒馆规则触发', { candidates: rawEntries.length, activated: activatedKeys.size, manual: manualParts.length });
             }
         } catch (error) {
@@ -5336,8 +5394,39 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         fixed,
         instruction: `用户指令：${cleanInstruction}`,
     });
+    const selectedPresetEntries = getSelectedPresetEntries();
+    const presetEntriesForLayout = selectedPresetEntries.length
+        ? selectedPresetEntries
+        : [{ id: 'main', role: 'system', content: DEFAULT_SYSTEM_PROMPT }];
+    const tailMessages = [
+        addons ? { role: 'system', content: addons, source: 'theater-addon', sourceId: 'addons' } : null,
+        (!structuredChatMessages.length && context)
+            ? { role: 'system', content: context, source: 'theater-context', sourceId: 'context-policy' }
+            : null,
+        continuation
+            ? { role: 'user', content: continuation, source: 'theater-continuation', sourceId: 'continuation' }
+            : null,
+        { role: 'user', content: `用户指令：${cleanInstruction}`, source: 'theater-instruction', sourceId: 'instruction' },
+        { role: 'system', content: [rules, fixed].filter(Boolean).join('\n\n'), source: 'theater-rules', sourceId: 'final-rules' },
+    ].filter(Boolean);
+    const messages = composePresetMessages({
+        presetEntries: presetEntriesForLayout,
+        slots: {
+            charDescription: description ? `角色设定：\n${description}` : '',
+            charPersonality: personality ? `角色性格：\n${personality}` : '',
+            scenario: scenario ? `场景设定：\n${scenario}` : '',
+            personaDescription: persona,
+            dialogueExamples: '',
+        },
+        worldInfoEntries: activeWorldInfoEntries,
+        chatMessages: structuredChatMessages,
+        tailMessages,
+    });
     return {
         ...payload,
+        messages,
+        postProcessing: cachedPresetPostProcessing,
+        presetName: settings.selectedPresetName || '内置默认预设',
         isPlainTextRender,
         textTheme,
         targetWordCount,
@@ -5351,7 +5440,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
             character: !!role.trim(),
             persona: !!persona.trim(),
             worldBookBooks: (settings.selectedWorldBooks || []).length,
-            worldBookEntries: wbParts.length,
+            worldBookEntries: activeWorldInfoEntries.length,
             styleAddon: !!settings.customStyleAddon?.trim(),
             nsfwAddon: !!settings.customNsfwAddon?.trim(),
             continuation: !!contCtx,
@@ -5632,7 +5721,7 @@ function getLongDreamGenerationController() {
     return longDreamGenerationController;
 }
 
-async function generateNextLongDreamChapter() {
+async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
     if (isGenerating) {
         toastr.warning('普通小剧场正在生成，请完成或停止后再续写长梦');
         return;
@@ -5648,8 +5737,13 @@ async function generateNextLongDreamChapter() {
         toastr.warning('已经有一章正在生成');
         return;
     }
-    if (dream.draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW) {
+    const existingCandidateCount = Array.isArray(dream.draft?.candidates) ? dream.draft.candidates.length : 0;
+    if (dream.draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW && !appendCandidate) {
         toastr.warning('请先确认或放弃当前待确认章节');
+        return;
+    }
+    if (appendCandidate && existingCandidateCount >= LONG_DREAM_MAX_CANDIDATES) {
+        toastr.info(`同一章最多保留 ${LONG_DREAM_MAX_CANDIDATES} 版候选`);
         return;
     }
     if (!cachedPresetEntries.length) await loadPresetEntries();
@@ -5688,13 +5782,23 @@ async function generateNextLongDreamChapter() {
             instruction,
             chapterTitle,
             targetChars,
+            autoContinue: settings.autoContinue !== false,
+            maxRounds: Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3)),
+            appendCandidate,
         });
         runtimeLog('info', '长梦续章等待确认', {
             dream_id: String(dream.id),
             chapter_number: dream.chapters.length + 1,
             chars: readableCharCount(result.record.draft?.text || ''),
+            candidate: (result.record.draft?.selectedCandidateIndex || 0) + 1,
+            candidate_count: result.record.draft?.candidates?.length || 1,
+            rounds: result.rounds,
+            completed_below_target: result.completedBelowTarget,
         });
-        toastr.success('新章节已经写好，请检查排版后确认保存', '', { timeOut: 7000 });
+        const candidateCount = result.record.draft?.candidates?.length || 1;
+        toastr.success(candidateCount > 1
+            ? `第 ${candidateCount} 版候选已经写好，可切换比较后确认保存`
+            : '新章节已经写好，请检查排版后确认保存', '', { timeOut: 7000 });
         playNotificationSound();
     } catch (error) {
         const retainedChars = readableCharCount(error?.longDreamRecord?.draft?.text || '');
@@ -5812,30 +5916,57 @@ async function weaveLongDreamMemory(dreamId, { force = false, announce = false }
 async function discardLongDreamDraft() {
     const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
     if (!dream?.draft) return;
-    const label = dream.draft.status === LONG_DREAM_DRAFT_STATUS.REVIEW ? '待确认章节' : '未完成草稿';
-    const ok = await SillyTavern.getContext().Popup.show.confirm(`放弃${label}？`, '已经生成但尚未保存为正式章节的内容会被清除，已有章节不会受影响。');
+    const candidateCount = Array.isArray(dream.draft.candidates) ? dream.draft.candidates.length : 0;
+    const isWritingCandidate = dream.draft.status === LONG_DREAM_DRAFT_STATUS.WRITING && candidateCount > 0;
+    const label = dream.draft.status === LONG_DREAM_DRAFT_STATUS.REVIEW
+        ? `${candidateCount || 1} 版待确认候选`
+        : (isWritingCandidate ? '本轮生成' : '未完成草稿');
+    const detail = isWritingCandidate
+        ? `本轮尚未完成的内容会被清除，已经完成的 ${candidateCount} 版候选仍会保留。`
+        : '已经生成但尚未保存为正式章节的内容会被清除，已有章节不会受影响。';
+    const ok = await SillyTavern.getContext().Popup.show.confirm(`放弃${label}？`, detail);
     if (!ok) return;
-    const saved = await longDreamPut(clearLongDreamDraft(dream));
+    const saved = await longDreamPut(isWritingCandidate
+        ? discardLongDreamWritingAttempt(dream)
+        : clearLongDreamDraft(dream));
     if (!saved) return;
-    clearLongDreamComposerDraft(dream.id);
+    if (!saved.draft) clearLongDreamComposerDraft(dream.id);
     renderLongDreamPanel();
-    toastr.info(`${label}已清除`);
+    toastr.info(isWritingCandidate ? `本轮生成已清除，已回到 ${candidateCount} 版候选` : `${label}已清除`);
 }
 
 async function regenerateLongDreamDraft() {
     const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
     const draft = dream?.draft;
     if (draft?.status !== LONG_DREAM_DRAFT_STATUS.REVIEW) return;
+    const candidateCount = Array.isArray(draft.candidates) ? draft.candidates.length : 0;
+    if (candidateCount >= LONG_DREAM_MAX_CANDIDATES) {
+        toastr.info(`同一章最多保留 ${LONG_DREAM_MAX_CANDIDATES} 版候选`);
+        return;
+    }
     setLongDreamComposerDraft(dream.id, {
         instruction: draft.instruction,
         title: draft.title,
         targetChars: draft.targetChars,
     });
-    const saved = await longDreamPut(clearLongDreamDraft(dream));
+    toastr.info(`正在按原要求生成第 ${candidateCount + 1} 版，已有候选不会被覆盖`);
+    await generateNextLongDreamChapter({ appendCandidate: true });
+}
+
+async function changeLongDreamDraftCandidate(step) {
+    if (!step || longDreamGenerationController?.active) return;
+    const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+    const draft = dream?.draft;
+    if (draft?.status !== LONG_DREAM_DRAFT_STATUS.REVIEW || !draft.candidates?.length) return;
+    const current = Math.min(
+        draft.candidates.length - 1,
+        Math.max(0, Math.floor(Number(draft.selectedCandidateIndex) || 0)),
+    );
+    const next = Math.min(draft.candidates.length - 1, Math.max(0, current + step));
+    if (next === current) return;
+    const saved = await longDreamPut(selectLongDreamDraftCandidate(dream, next));
     if (!saved) return;
     renderLongDreamPanel();
-    toastr.info('正在按原来的章名、方向和目标字数重新生成');
-    await generateNextLongDreamChapter();
 }
 
 // 设置续写上下文并跳转到生成面板
@@ -6034,17 +6165,22 @@ async function runGeneration(instruction, isAuto) {
             systemPrompt = roundPayload.systemPrompt;
             prompt = roundPayload.userPrompt;
             ctx = roundPayload.ctx;
+            const requestOptions = {
+                messages: roundPayload.messages,
+                postProcessing: roundPayload.postProcessing || '',
+                presetName: roundPayload.presetName || settings.selectedPresetName || '内置默认预设',
+            };
             lastRequestMetrics = createRequestMetrics(settings.apiMode === 'main' ? 'main:ChatCompletionService' : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}`);
             let result;
             if (settings.apiMode === 'main') {
-                result = await generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, settings.streamEnabled !== false);
+                result = await generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, settings.streamEnabled !== false, abortController?.signal, requestOptions);
             } else {
                 if (!settings.apiUrl || !settings.apiModel) {
                     runtimeLog('error', '生成停止', { reason: 'config_missing', round });
                     toastr.warning('请先在【设置】里填好 API URL 和模型再生成', '', { timeOut: 5000 });
                     return;
                 }
-                result = await callCustomAPIStream(systemPrompt, prompt, onChunk, settings.streamEnabled !== false);
+                result = await callCustomAPIStream(systemPrompt, prompt, onChunk, settings.streamEnabled !== false, abortController?.signal, requestOptions);
             }
             const responseText = typeof result === 'string' ? result : result?.text;
             if (!responseText) throw new Error('API未返回内容');
@@ -6342,12 +6478,20 @@ function setBallDot(on) {
 // ============================================================
 // API runtime adapters
 // ============================================================
-async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStream = true, signal = abortController?.signal) {
+function captureActualRequestTrace(details) {
+    lastRequestTrace = createRequestTrace(details);
+}
+
+async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStream = true, signal = abortController?.signal, requestOptions = {}) {
     return requestMainApi({
         ctx,
         systemPrompt,
         userPrompt: prompt,
+        messages: requestOptions.messages,
+        postProcessing: requestOptions.postProcessing || '',
+        presetName: requestOptions.presetName || settings.selectedPresetName || '未指定',
         onChunk,
+        onRequest: captureActualRequestTrace,
         shouldStream,
         signal,
         log: runtimeLog,
@@ -6358,7 +6502,7 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
     });
 }
 
-async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStream = true, signal = abortController?.signal) {
+async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStream = true, signal = abortController?.signal, requestOptions = {}) {
     return requestCustomApi({
         config: {
             apiUrl: settings.apiUrl,
@@ -6369,7 +6513,11 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
         },
         systemPrompt,
         userPrompt,
+        messages: requestOptions.messages,
+        postProcessing: requestOptions.postProcessing || '',
+        presetName: requestOptions.presetName || settings.selectedPresetName || '未指定',
         onChunk,
+        onRequest: captureActualRequestTrace,
         shouldStream,
         signal,
         log: runtimeLog,
@@ -6455,6 +6603,9 @@ function buildDiagnostics() {
             : (bgError ? `${REQUEST_DIAGNOSTIC_SIGNAL.UNKNOWN} · 请打开“常见问题汇总”查询` : '无')),
         ...(lastRequestIssue ? [diagnosticLine('warn', '错误处理建议', `${lastRequestIssue.signal}：${lastRequestIssue.action}`)] : []),
         diagnosticLine(lastRequestContext ? 'ok' : 'warn', '最近请求摘要', formatRequestContextSummary(lastRequestContext)),
+        diagnosticLine(lastRequestTrace ? 'ok' : 'warn', '实际请求快照', lastRequestTrace
+            ? `${lastRequestTrace.route}/${lastRequestTrace.transport} · ${lastRequestTrace.messages.length} 条消息 · 工具已强制禁用`
+            : '暂无；完成一次插件正文请求后会在此显示发送前的最终消息顺序'),
         buildAutoModeDiagnostic(),
         diagnosticLine('ok', '数据数量', `历史 ${historyCache.length} 条，最近生成 ${recentCache.length} 条，指令模板 ${(settings.instructionTemplates || []).length} 个`),
         diagnosticLine(recentContentOk ? 'ok' : 'warn', '最近生成正文', recentContentDetail),
@@ -6467,6 +6618,8 @@ function buildDiagnostics() {
             `千夜浮梦插件诊断报告`,
             `时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`,
             ...rows.map(r => r.text),
+            '',
+            formatRequestTrace(lastRequestTrace),
         ].join('\n'),
     };
 }
@@ -6479,7 +6632,25 @@ function runDiagnostics() {
             <div><b>${esc(r.name)}</b><br><span>${esc(r.detail)}</span></div>
         </div>
     `).join('');
-    $('#theater-diagnostics-output').html(rowsHtml).data('report', report.text).show();
+    const traceHtml = lastRequestTrace ? `
+        <details class="theater-request-trace">
+            <summary>查看实际请求消息（${lastRequestTrace.messages.length} 条）</summary>
+            <div class="theater-request-trace-meta">
+                <span>线路 ${esc(lastRequestTrace.route)}/${esc(lastRequestTrace.transport)}</span>
+                <span>协议 ${esc(lastRequestTrace.protocol)}</span>
+                <span>模型 ${esc(lastRequestTrace.model)}</span>
+                <span>预设 ${esc(lastRequestTrace.presetName)}</span>
+                <span>后处理 ${esc(lastRequestTrace.postProcessing)}</span>
+                <span>工具 已强制禁用</span>
+            </div>
+            ${(lastRequestTrace.messages || []).map(message => `
+                <details class="theater-request-trace-message">
+                    <summary>${message.index}. ${esc(message.role)} · ${esc(message.source)}/${esc(message.sourceId)}</summary>
+                    <pre>${esc(message.content)}</pre>
+                </details>
+            `).join('')}
+        </details>` : '';
+    $('#theater-diagnostics-output').html(rowsHtml + traceHtml).data('report', report.text).show();
     $('#theater-copy-diagnostics-btn').show();
     $('#theater-toggle-diagnostics-btn').show().find('i').removeClass('fa-chevron-down').addClass('fa-chevron-up');
     $('#theater-toggle-diagnostics-btn').find('span').text('收起报告');

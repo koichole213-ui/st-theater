@@ -1,6 +1,8 @@
 export const API_PROTOCOLS = Object.freeze({ AUTO: 'auto', OPENAI: 'openai', ANTHROPIC: 'anthropic' });
 export const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 
+import { applyPromptPostProcessing } from './request-layout.js';
+
 export function resolveMainApiModel(ctx, oai = ctx?.oai_settings) {
     let fromContext = '';
     if (typeof ctx?.getChatCompletionModel === 'function') {
@@ -45,21 +47,40 @@ export function buildApiEndpoint(url, protocol) {
     return base + '/v1' + path;
 }
 
-export function buildApiRequest({ url, protocol, key, model, systemPrompt, userPrompt, maxTokens = DEFAULT_MAX_OUTPUT_TOKENS, stream = true }) {
+export function buildApiRequest({
+    url, protocol, key, model, systemPrompt, userPrompt, messages,
+    postProcessing = '', maxTokens = DEFAULT_MAX_OUTPUT_TOKENS, stream = true,
+}) {
     const resolved = resolveProtocol(protocol, url);
     const endpoint = buildApiEndpoint(url, resolved);
+    const finalMessages = applyPromptPostProcessing(
+        Array.isArray(messages) ? messages : [
+            { role: 'system', content: systemPrompt, source: 'request', sourceId: 'system' },
+            { role: 'user', content: userPrompt, source: 'request', sourceId: 'user' },
+        ],
+        postProcessing,
+    );
     if (resolved === API_PROTOCOLS.ANTHROPIC) {
+        const system = finalMessages
+            .filter(message => message.role === 'system')
+            .map(message => message.content)
+            .join('\n\n');
+        const anthropicMessages = finalMessages
+            .filter(message => message.role !== 'system')
+            .map(message => ({ role: message.role, content: message.content }));
         return {
             protocol: resolved, endpoint,
             headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-            body: { model, max_tokens: maxTokens, stream, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] },
+            body: { model, max_tokens: maxTokens, stream, system, messages: anthropicMessages },
+            messages: finalMessages,
         };
     }
     const headers = { 'Content-Type': 'application/json' };
     if (key) headers.Authorization = `Bearer ${key}`;
     return {
         protocol: resolved, endpoint, headers,
-        body: { model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], stream, max_tokens: maxTokens },
+        body: { model, messages: finalMessages.map(message => ({ role: message.role, content: message.content })), stream, max_tokens: maxTokens },
+        messages: finalMessages,
     };
 }
 

@@ -403,6 +403,49 @@
 .theater-diagnostic-row.ok .theater-diagnostic-status { background: #2f8f5b; }
 .theater-diagnostic-row.warn .theater-diagnostic-status { background: #b7791f; }
 .theater-diagnostic-row.bad .theater-diagnostic-status { background: #b94444; }
+.theater-request-trace {
+    margin-top: var(--t-space-2);
+    border: 1px solid var(--t-border);
+    border-radius: var(--t-radius-md);
+    background: var(--t-surface-1);
+    color: var(--t-fg);
+    overflow: hidden;
+}
+.theater-request-trace > summary,
+.theater-request-trace-message > summary {
+    cursor: pointer;
+    padding: var(--t-space-3);
+    font-size: var(--t-text-sm);
+    font-weight: 650;
+}
+.theater-request-trace-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 var(--t-space-3) var(--t-space-3);
+}
+.theater-request-trace-meta span {
+    padding: 3px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--t-surface-2) 84%, var(--t-accent) 16%);
+    color: var(--t-fg-mute);
+    font-size: var(--t-text-xs);
+}
+.theater-request-trace-message {
+    border-top: 1px solid var(--t-border);
+}
+.theater-request-trace-message pre {
+    max-height: 260px;
+    margin: 0;
+    padding: 0 var(--t-space-3) var(--t-space-3);
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--t-fg-mute);
+    font: inherit;
+    font-size: var(--t-text-xs);
+    line-height: 1.6;
+}
 .theater-diagnostic-catalog {
     border: 1px solid var(--t-border);
     border-radius: var(--t-radius-md);
@@ -3468,6 +3511,32 @@ body.theater-reader-open {
 .theater-dream-review-head span { color: var(--t-success, #4f8067); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
 .theater-dream-review-head b { color: var(--t-fg); font-family: var(--t-font-serif); font-size: var(--t-text-lg); }
 .theater-dream-review-head p { margin: 1px 0 0; color: var(--t-fg-mute); font-size: var(--t-text-xs); }
+.theater-dream-review-tools { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+.theater-dream-candidate-switcher {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--t-success, #4f8067) 38%, var(--t-border));
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--t-success, #4f8067) 8%, var(--t-surface-2));
+}
+.theater-dream-candidate-switcher button {
+    display: inline-grid;
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0;
+    place-items: center;
+    border: 0;
+    background: transparent;
+    color: var(--t-success, #4f8067);
+    cursor: pointer;
+}
+.theater-dream-candidate-switcher button:hover:not(:disabled) { background: color-mix(in srgb, var(--t-success, #4f8067) 14%, transparent); }
+.theater-dream-candidate-switcher button:disabled { color: var(--t-fg-mute); cursor: default; opacity: .46; }
+.theater-dream-candidate-switcher button:focus-visible { outline: 2px solid var(--t-accent); outline-offset: -2px; }
+.theater-dream-candidate-switcher strong { min-width: 40px; color: var(--t-fg-soft); font-size: var(--t-text-xs); text-align: center; font-variant-numeric: tabular-nums; }
 .theater-dream-review-fullscreen {
     display: inline-grid;
     flex: 0 0 auto;
@@ -3754,6 +3823,8 @@ body.theater-reader-open {
     .theater-dream-next-actions > span { margin-right: 0; }
     .theater-dream-next-actions .theater-dream-primary,
     .theater-dream-next-actions .theater-btn { width: 100%; }
+    .theater-dream-review-head { flex-wrap: wrap; }
+    .theater-dream-review-tools { margin-left: auto; }
     .theater-dream-review-canvas,
     .theater-dream-review-canvas iframe,
     .theater-dream-review-fallback { min-height: 260px; }
@@ -3977,8 +4048,31 @@ body.theater-reader-open {
     color: var(--t-accent);
 }
 
-.theater-update-actions {
+.theater-config-card .theater-update-actions {
+    display: grid;
+    grid-template-columns: max-content minmax(150px, 190px);
     align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.theater-config-card .theater-update-actions > span {
+    min-width: max-content;
+    padding-right: 0;
+    white-space: nowrap;
+    word-break: keep-all;
+    writing-mode: horizontal-tb;
+}
+
+.theater-update-button-stack {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+}
+
+.theater-config-card .theater-update-button-stack .theater-btn {
+    width: 100%;
+    justify-content: center;
 }
 
 .theater-reload-after-update[hidden],
