@@ -30,7 +30,7 @@ import { buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBo
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from '../long-dream-generation.js';
 import { LONG_DREAM_BACKUP_FORMAT, LONG_DREAM_BACKUP_VERSION, createLongDreamBackup, parseLongDreamBackup } from '../long-dream-backup.js';
 import { buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, pendingLongDreamChapters, shouldWeaveLongDreamMemory } from '../long-dream-memory.js';
-import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing, composePresetMessages, normalizeRequestMessages } from '../request-layout.js';
+import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing, composePresetMessages, normalizeRequestMessages, normalizeWorldInfoEntry, squashAdjacentSystemMessages } from '../request-layout.js';
 import { createRequestTrace, formatRequestTrace } from '../request-trace.js';
 
 test('长梦以完整首章开卷，并默认隔离原世界书', () => {
@@ -1677,6 +1677,46 @@ test('预设 prompt_order 的多角色顺序与动态锚点保持结构，不再
     assert.deepEqual(messages.map(message => message.content), [
         'SYS-MAIN', 'PERSONA-SLOT', 'USR-CUSTOM', 'CHAT-USER', 'CHAT-AST', 'AST-POST', 'CURRENT-INSTRUCTION',
     ]);
+});
+
+test('插件直接读取酒馆预设角色与绝对深度，并只压合相邻 system 段', () => {
+    const messages = composePresetMessages({
+        presetEntries: [
+            { id: 'sys-a', role: 'system', content: 'SYSTEM-A', injectionPosition: 0 },
+            { id: 'sys-b', role: 'system', content: 'SYSTEM-B', injectionPosition: 0 },
+            { id: 'assistant-break', role: 'assistant', content: 'ASSISTANT-BREAK', injectionPosition: 0 },
+            { id: 'sys-c', role: 'system', content: 'SYSTEM-C', injectionPosition: 0 },
+            { id: 'depth-user', role: 'user', content: 'DEPTH-USER', injectionPosition: 1, injectionDepth: 1, injectionOrder: 80 },
+            { id: 'chatHistory', role: 'system', content: '' },
+        ],
+        chatMessages: [
+            { role: 'user', content: 'CHAT-OLD' },
+            { role: 'assistant', content: 'CHAT-LATEST' },
+        ],
+        squashSystemMessages: true,
+    });
+    assert.deepEqual(messages.map(message => message.role), [
+        'system', 'assistant', 'system', 'user', 'user', 'assistant',
+    ]);
+    assert.equal(messages[0].content, 'SYSTEM-A\n\nSYSTEM-B');
+    assert.equal(messages[1].content, 'ASSISTANT-BREAK');
+    assert.equal(messages[4].content, 'DEPTH-USER');
+    assert.equal(messages.filter(message => message.content === 'DEPTH-USER').length, 1);
+    assert.deepEqual(
+        squashAdjacentSystemMessages([
+            { role: 'system', content: '一' },
+            { role: 'system', content: '二' },
+            { role: 'assistant', content: '断开' },
+            { role: 'system', content: '三' },
+        ]).map(message => message.content),
+        ['一\n\n二', '断开', '三'],
+    );
+});
+
+test('世界书深度原样读取，不被插件自行限制为固定档位', () => {
+    assert.equal(normalizeWorldInfoEntry({ content: '深层条目', position: 4, depth: 0 }).depth, 0);
+    assert.equal(normalizeWorldInfoEntry({ content: '深层条目', position: 4, depth: 100 }).depth, 100);
+    assert.equal(normalizeWorldInfoEntry({ content: '深层条目', position: 4, depth: 1000 }).depth, 1000);
 });
 
 test('世界书八种位置、同深度顺序和 outlet 宏按酒馆语义进入消息布局', () => {

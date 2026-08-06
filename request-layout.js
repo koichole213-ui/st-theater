@@ -67,6 +67,24 @@ function mergeAdjacentMessages(messages) {
     return merged;
 }
 
+export function squashAdjacentSystemMessages(messages = []) {
+    const normalized = normalizeRequestMessages(messages);
+    const squashed = [];
+    for (const message of normalized) {
+        const previous = squashed[squashed.length - 1];
+        const isDialogueExample = message.sourceId === 'dialogueExamples'
+            || previous?.sourceId === 'dialogueExamples';
+        if (message.role === 'system' && previous?.role === 'system' && !isDialogueExample) {
+            previous.content = [previous.content, message.content].filter(Boolean).join('\n\n');
+            previous.source = previous.source === message.source ? previous.source : 'squashed-system';
+            previous.sourceId = [previous.sourceId, message.sourceId].filter(Boolean).join('+');
+        } else {
+            squashed.push({ ...message });
+        }
+    }
+    return squashed;
+}
+
 export function noToolsPostProcessingMode(value = '') {
     const mode = String(value || '').toLowerCase();
     if (mode === PROMPT_POST_PROCESSING.MERGE_TOOLS) return PROMPT_POST_PROCESSING.MERGE;
@@ -168,22 +186,40 @@ export function expandWorldInfoOutlets(content = '', outlets = new Map()) {
     });
 }
 
-export function insertWorldInfoAtDepth(chatMessages = [], entries = []) {
+export function insertMessagesAtDepth(chatMessages = [], entries = []) {
     const result = normalizeRequestMessages(chatMessages);
     const ordered = (Array.isArray(entries) ? entries : [])
-        .map(normalizeWorldInfoEntry)
+        .map((entry, index) => ({
+            content: String(entry?.content || '').trim(),
+            depth: Math.max(0, Math.floor(numeric(entry?.depth, 4))),
+            order: numeric(entry?.order, 100),
+            role: normalizePromptRole(entry?.role),
+            source: String(entry?.source || 'depth-injection'),
+            sourceId: String(entry?.sourceId || `depth-${index + 1}`),
+            _index: index,
+        }))
         .filter(entry => entry.content)
-        .sort((a, b) => b.depth - a.depth || a.order - b.order || a._index - b._index);
+        .sort((a, b) => b.depth - a.depth
+            || a.order - b.order
+            || ['system', 'user', 'assistant'].indexOf(a.role) - ['system', 'user', 'assistant'].indexOf(b.role)
+            || a._index - b._index);
     for (const entry of ordered) {
         const index = Math.max(0, result.length - Math.min(entry.depth, result.length));
         result.splice(index, 0, {
             role: entry.role,
             content: entry.content,
-            source: 'world-info-depth',
+            source: entry.source,
             sourceId: entry.sourceId,
         });
     }
     return result;
+}
+
+export function insertWorldInfoAtDepth(chatMessages = [], entries = []) {
+    return insertMessagesAtDepth(chatMessages, (Array.isArray(entries) ? entries : []).map((entry, index) => {
+        const normalized = normalizeWorldInfoEntry(entry, index);
+        return { ...normalized, source: 'world-info-depth' };
+    }));
 }
 
 const SLOT_IDENTIFIERS = Object.freeze({
@@ -209,10 +245,13 @@ export function composePresetMessages({
     chatMessages = [],
     tailMessages = [],
     postProcessing = '',
+    squashSystemMessages = false,
 } = {}) {
     const world = classifyWorldInfoEntries(worldInfoEntries);
     const messages = [];
     const entries = Array.isArray(presetEntries) ? presetEntries : [];
+    const relativeEntries = entries.filter(entry => Number(entry?.injectionPosition) !== 1);
+    const absoluteEntries = entries.filter(entry => Number(entry?.injectionPosition) === 1);
     const hasSlot = new Set(entries.map(entry => SLOT_IDENTIFIERS[entry.id]).filter(Boolean));
     const slotText = {
         worldInfoBefore: entriesText(world.before),
@@ -223,11 +262,22 @@ export function composePresetMessages({
         worldInfoAfter: entriesText(world.after),
         dialogueExamples: [entriesText(world.examplesTop), slots.dialogueExamples, entriesText(world.examplesBottom)].filter(Boolean).join('\n\n'),
     };
-    const history = insertWorldInfoAtDepth(chatMessages, world.atDepth);
+    const depthEntries = [
+        ...world.atDepth.map(entry => ({ ...entry, source: 'world-info-depth' })),
+        ...absoluteEntries.map((entry, index) => ({
+            content: expandWorldInfoOutlets(entry.content || '', world.outlets),
+            depth: entry.injectionDepth ?? 4,
+            order: entry.injectionOrder ?? 100,
+            role: entry.role,
+            source: 'preset-depth',
+            sourceId: String(entry.id || `preset-depth-${index + 1}`),
+        })),
+    ];
+    const history = insertMessagesAtDepth(chatMessages, depthEntries);
     const authorNoteTop = entriesText(world.authorNoteTop);
     const authorNoteBottom = entriesText(world.authorNoteBottom);
 
-    for (const entry of entries) {
+    for (const entry of relativeEntries) {
         const id = String(entry.id || '');
         const role = normalizePromptRole(entry.role);
         if (id === 'chatHistory') {
@@ -255,5 +305,6 @@ export function composePresetMessages({
         addMessage(messages, 'system', authorNoteBottom, 'world-info-author-note', 'author-note-bottom');
     }
     messages.push(...normalizeRequestMessages(tailMessages));
-    return applyPromptPostProcessing(messages, postProcessing);
+    const presetProcessed = squashSystemMessages ? squashAdjacentSystemMessages(messages) : messages;
+    return applyPromptPostProcessing(presetProcessed, postProcessing);
 }

@@ -2505,6 +2505,15 @@ function wbEntryHTML(entry, i) {
     const deleteBtn = entry.manual
         ? `<span class="theater-wb-entry-delete" data-index="${i}" title="删除此手动添加的条目"><i class="fa-solid fa-trash-can"></i></span>`
         : '';
+    const placementLabels = {
+        0: '角色前', 1: '角色后', 2: '作者注释顶部', 3: '作者注释底部',
+        5: '示例顶部', 6: '示例底部', 7: 'Outlet',
+    };
+    const placementBadge = entry.manual
+        ? ''
+        : Number(entry.position) === 4
+            ? `<span class="theater-wb-placement" title="按酒馆世界书设置插入聊天历史">@D${Math.max(0, Math.floor(Number(entry.depth) || 0))} · ${entry.role === 'user' ? 'USR' : entry.role === 'assistant' ? 'AST' : 'SYS'}</span>`
+            : `<span class="theater-wb-placement" title="酒馆世界书插入位置">${esc(placementLabels[Number(entry.position)] || '角色前')}</span>`;
     return `
 <div class="theater-wb-entry ${checked ? '' : 'theater-wb-entry-off'}">
     <div class="theater-wb-entry-header" data-index="${i}">
@@ -2512,6 +2521,7 @@ function wbEntryHTML(entry, i) {
         <div class="theater-wb-entry-info">
             <span class="theater-wb-entry-name">${esc(entry.name || '#' + (i + 1))}</span>
             ${strategyBadge}
+            ${placementBadge}
         </div>
         <div class="theater-wb-entry-actions">
             ${deleteBtn}
@@ -3209,6 +3219,7 @@ function bindEvents() {
             $('#theater-preset-current').hide();
             cachedPresetEntries = [];
             cachedPresetPostProcessing = '';
+            cachedPresetSquashSystemMessages = false;
             $('#theater-preset-entries').html('<p class="theater-empty">请选择预设</p>');
         }
     });
@@ -4080,6 +4091,7 @@ function loadPersona(options = {}) {
 // ============================================================
 let cachedPresetEntries = [];
 let cachedPresetPostProcessing = '';
+let cachedPresetSquashSystemMessages = false;
 let presetNamesCache = [];
 let presetSearch = '';
 
@@ -4305,6 +4317,7 @@ function extractPromptsFromData(data) {
                 injectionDepth: p.injection_depth ?? null,
                 injectionOrder: p.injection_order ?? null,
                 systemPrompt: p.system_prompt !== false,
+                marker: !!p.marker,
                 forbidOverrides: !!p.forbid_overrides,
                 _orderIdx: orderIndex?.has(id) ? orderIndex.get(id) : 10000 + i,
             };
@@ -4322,6 +4335,7 @@ function extractPromptsFromData(data) {
 async function loadPresetEntries() {
     cachedPresetEntries = [];
     cachedPresetPostProcessing = '';
+    cachedPresetSquashSystemMessages = false;
     const sel = settings.selectedPresetName;
 
     if (!sel) {
@@ -4340,6 +4354,7 @@ async function loadPresetEntries() {
             ?? data.openai_settings?.custom_prompt_post_processing
             ?? '',
         );
+        cachedPresetSquashSystemMessages = !!data.squash_system_messages;
         console.log(`[Theater] Extracted ${cachedPresetEntries.length} entries from preset "${sel}"`);
     }
 
@@ -4371,11 +4386,17 @@ function renderPresetEntries() {
     return cachedPresetEntries.map(entry => {
         const checked = states[entry.id] !== false;
         const roleTag = entry.role === 'system' ? 'SYS' : entry.role === 'user' ? 'USR' : 'AST';
+        const depth = Math.max(0, Math.floor(Number(entry.injectionDepth) || 0));
+        const order = Number.isFinite(Number(entry.injectionOrder)) ? Number(entry.injectionOrder) : 100;
+        const depthTag = Number(entry.injectionPosition) === 1
+            ? `<span class="theater-preset-entry-depth" title="按酒馆设置插入聊天历史：深度 ${depth}，顺序 ${order}">@${depth}</span>`
+            : '';
         return `
 <div class="theater-wb-entry ${checked ? '' : 'theater-wb-entry-off'}">
     <div class="theater-preset-entry-header" data-id="${esc(entry.id)}">
         <input type="checkbox" class="theater-preset-check" data-id="${esc(entry.id)}" ${checked ? 'checked' : ''}>
-        <span class="theater-wb-entry-source">${roleTag}</span>
+        <span class="theater-wb-entry-source" title="酒馆预设角色：${esc(entry.role)}">${roleTag}</span>
+        ${depthTag}
         <span class="theater-wb-entry-name">${esc(entry.name)}</span>
         <span class="theater-preset-entry-toggle" data-id="${esc(entry.id)}"><i class="fa-solid fa-chevron-right"></i></span>
     </div>
@@ -5421,6 +5442,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         worldInfoEntries: activeWorldInfoEntries,
         chatMessages: structuredChatMessages,
         tailMessages,
+        squashSystemMessages: cachedPresetSquashSystemMessages,
     });
     return {
         ...payload,

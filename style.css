@@ -873,6 +873,19 @@
 .theater-wb-strategy-blue { color: #4f8fda; }
 .theater-wb-strategy-green { color: #4f9b6d; }
 .theater-wb-strategy-chain { color: var(--t-fg-mute); }
+.theater-wb-placement,
+.theater-preset-entry-depth {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--t-accent) 48%, var(--t-border));
+    background: color-mix(in srgb, var(--t-accent) 9%, transparent);
+    color: var(--t-accent-deep, var(--t-accent));
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.45;
+    white-space: nowrap;
+}
 .theater-select {
     cursor: pointer;
     -webkit-appearance: none;
