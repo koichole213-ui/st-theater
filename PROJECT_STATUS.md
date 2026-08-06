@@ -17,7 +17,7 @@ git log -1 --oneline
 
 建议禾禾在新窗口使用这句话开场：
 
-> 请先完整阅读 `D:\st-theater\PROJECT_STATUS.md` 和 AGENTS.md，核对真实仓库、`codex/long-dream-preview` 分支和工作区状态后，继续长梦补全四阶段中的阶段 2（梦脉有效状态与长篇检索）。不要改动 `standalone-scripts/`，不要升级版本、提交或推送；先汇报当前状态和下一原子步骤。
+> 请先完整阅读 `D:\st-theater\PROJECT_STATUS.md` 和 AGENTS.md，核对真实仓库、`codex/long-dream-preview` 分支和工作区状态后，先完成阶段 1 的真实预设/世界书读取修正验收，再继续阶段 2（梦脉有效状态与长篇检索）。不要改动 `standalone-scripts/`，不要升级版本、提交或推送；先汇报当前状态和下一原子步骤。
 
 ## 当前稳定快照
 
@@ -26,10 +26,10 @@ git log -1 --oneline
 - 远端：`https://github.com/koichole213-ui/st-theater.git`
 - 施工分支：`codex/long-dream-preview`（从 `main` 的 `8d97011` 分出，仅供酒馆验收，不视为正式发布）
 - 版本：`v3.6.3`
-- 当前已推送代码提交：`51a7293`（`feat: expand long dream generation and request fidelity`）；包含更新按钮布局、`<thinking>` 自动隐藏、长梦正文自动补写、三版候选与阶段 1 请求保真
+- 当前代码提交：`81895a1`（`fix: respect tavern prompt roles and depths`）；此前长梦四阶段主体提交为 `51a7293`（`feat: expand long dream generation and request fidelity`）
 - 远端状态：正式分支 `main` 与 `origin/main` 一致；本轮只推送独立测试分支，不改正式 `main`
-- 工作区：上述项目改动均已提交并推送；只剩原有未跟踪目录 `standalone-scripts/`，保持未动
-- 自动测试：`128/128` 通过
+- 工作区：真实预设角色/深度与世界书深度读取修正已提交为 `81895a1`；本交接状态提交后与代码一起推送；原有未跟踪目录 `standalone-scripts/` 保持未动
+- 自动测试：`130/130` 通过
 - JavaScript 语法检查：通过
 
 ## 长梦阶段 3 最新施工（2026-08-06）
@@ -55,6 +55,7 @@ git log -1 --oneline
 - 新增 `request-trace.js` 与诊断页“实际请求消息”折叠区：快照在最终消息进入传输层前生成，仅保存在内存，显示线路、协议、模型、预设、后处理、来源与完整消息顺序；不记录 API Key、Authorization 或独立 API URL，复制诊断也使用脱敏内容。
 - 独立 API 继续只使用函数入参中的显式配置，不读取或改写酒馆主线路；新增两个独立连接并发时地址、模型、Key 与消息互不串线的回归测试。
 - 新增纯函数与传输层回归测试后，`node --test --test-isolation=none .\tests\core.test.js` 为 `128/128`；`index.js`、`api-client.js`、`api-runtime.js`、`request-layout.js`、`request-trace.js` 语法检查通过。尚未在真实 SillyTavern 验证复杂预设与八位置世界书的实际表现。
+- 禾禾提供真实复杂预设 `【MoM】果实G5.50丨喵喵电波@KKM@YUKI-2.json` 后明确了产品范围：插件不复制酒馆编辑器，只读取酒馆已有分类和深度。当前修正读取并使用预设的 `role/injection_position/injection_depth/injection_order/squash_system_messages`，绝对深度条目按角色插入聊天历史，连续 system 按预设设置合并而 assistant/user 断开；预设列表显示角色与 `@深度`。世界书继续读取 `position/depth/role/order`，列表显示位置或 `@D深度 · 角色`，深度不在插件内擅自限制为 100。新增回归后为 `130/130`，该修正已包含在 `81895a1`。
 
 真实验收仍未完成：禾禾与朋友已经在真实 SillyTavern 确认“切换两张角色卡时自动世界书正确替换”已修好；酒馆主 API 修正尚未测试。主 API、真实流式、停止/恢复、最终 HTML、确认保存、完卷/恢复、导入导出和手机端仍不能描述为整套人工通过。下一项真实验收应是酒馆主 API 的一章长梦闭环。
 
