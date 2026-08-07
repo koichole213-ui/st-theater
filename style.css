@@ -411,8 +411,7 @@
     color: var(--t-fg);
     overflow: hidden;
 }
-.theater-request-trace > summary,
-.theater-request-trace-message > summary {
+.theater-request-trace > summary {
     cursor: pointer;
     padding: var(--t-space-3);
     font-size: var(--t-text-sm);
@@ -432,19 +431,18 @@
     font-size: var(--t-text-xs);
 }
 .theater-request-trace-message {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--t-space-2);
     border-top: 1px solid var(--t-border);
+    padding: var(--t-space-2) var(--t-space-3);
+    font-size: var(--t-text-sm);
 }
-.theater-request-trace-message pre {
-    max-height: 260px;
-    margin: 0;
-    padding: 0 var(--t-space-3) var(--t-space-3);
-    overflow: auto;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+.theater-request-trace-message small {
+    flex: 0 0 auto;
     color: var(--t-fg-mute);
-    font: inherit;
     font-size: var(--t-text-xs);
-    line-height: 1.6;
 }
 .theater-diagnostic-catalog {
     border: 1px solid var(--t-border);

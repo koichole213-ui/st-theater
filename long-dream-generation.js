@@ -7,7 +7,7 @@ import {
     promoteLongDreamDraft,
     saveLongDreamDraft,
 } from './long-dream.js';
-import { buildLongDreamChapterPayload } from './long-dream-payload.js';
+import { buildLongDreamChapterMessages, buildLongDreamChapterPayload } from './long-dream-payload.js';
 import { targetCompletionChars } from './generation-job.js';
 import { readableCharCount } from './text-counter.js';
 
@@ -85,6 +85,10 @@ export function createLongDreamGenerationController({
     async function run({
         record,
         preset = '',
+        presetEntries = [],
+        presetName = '',
+        postProcessing = '',
+        squashSystemMessages = false,
         addons = '',
         instruction,
         chapterTitle = '',
@@ -222,11 +226,20 @@ export function createLongDreamGenerationController({
                         currentDraft: roundBaseText,
                         finishThisRound: !shouldAutoContinue || round === allowedRounds,
                         maxOptionalContextChars,
+                        structuredPreset: true,
+                    });
+                    const messages = buildLongDreamChapterMessages({
+                        payload,
+                        presetEntries,
+                        squashSystemMessages,
                     });
 
                     requestResult = await requestChapter({
                         systemPrompt: payload.systemPrompt,
                         userPrompt: payload.userPrompt,
+                        messages,
+                        postProcessing,
+                        presetName,
                         signal: controller.signal,
                         targetChars: payload.targetChars,
                         round,

@@ -1,3 +1,5 @@
+import { estimateTokenCount } from './token-estimator.js';
+
 const SECRET_PATTERNS = [
     [/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]'],
     [/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[REDACTED-KEY]'],
@@ -10,7 +12,7 @@ export function redactRequestTraceText(value = '') {
 
 export function createRequestTrace({
     route = '', transport = '', protocol = '', model = '', presetName = '',
-    postProcessing = '', maxTokens = null, messages = [],
+    postProcessing = '', maxTokens = null, messages = [], purpose = 'creative',
 } = {}) {
     return {
         capturedAt: new Date().toISOString(),
@@ -20,28 +22,40 @@ export function createRequestTrace({
         model: redactRequestTraceText(String(model || '未识别')),
         presetName: redactRequestTraceText(String(presetName || '未指定')),
         postProcessing: String(postProcessing || 'none'),
+        purpose: String(purpose || 'creative'),
         toolsDisabled: true,
         maxTokens: Number.isFinite(Number(maxTokens)) ? Number(maxTokens) : null,
-        messages: (Array.isArray(messages) ? messages : []).map((message, index) => ({
-            index: index + 1,
-            role: String(message?.role || 'unknown'),
-            source: String(message?.source || 'request'),
-            sourceId: String(message?.sourceId || `message-${index + 1}`),
-            content: redactRequestTraceText(String(message?.content || '')),
-        })),
+        messages: (Array.isArray(messages) ? messages : []).map((message, index) => {
+            const content = String(message?.content || '');
+            return {
+                index: index + 1,
+                role: String(message?.role || 'unknown'),
+                source: String(message?.source || 'request'),
+                sourceId: String(message?.sourceId || `message-${index + 1}`),
+                chars: content.length,
+                estimatedTokens: estimateTokenCount(content),
+            };
+        }),
     };
 }
 
+export function requestTraceMessageLabel(message = {}) {
+    const source = String(message.source || '');
+    const sourceId = String(message.sourceId || '');
+    if (!source || source === 'request') return String(message.role || 'unknown');
+    return `${message.role || 'unknown'} · ${source}${sourceId ? `/${sourceId}` : ''}`;
+}
+
 export function formatRequestTrace(trace) {
-    if (!trace) return '暂无实际请求快照。';
+    if (!trace) return '暂无创作请求结构。';
     const header = [
-        `实际请求快照 ${trace.capturedAt || ''}`.trim(),
+        `创作请求结构 ${trace.capturedAt || ''}`.trim(),
         `线路：${trace.route} / ${trace.transport}`,
         `协议：${trace.protocol} · 模型：${trace.model} · 最大输出：${trace.maxTokens ?? '未指定'}`,
         `预设：${trace.presetName} · 后处理：${trace.postProcessing} · 工具：${trace.toolsDisabled ? '已强制禁用' : '未知'}`,
     ];
     const body = (trace.messages || []).map(message =>
-        `\n[${message.index}] ${message.role} · ${message.source}${message.sourceId ? `/${message.sourceId}` : ''}\n${message.content}`
+        `[${message.index}] ${requestTraceMessageLabel(message)} · ${message.chars ?? 0} 字符 · 约 ${message.estimatedTokens ?? 0} token`
     );
     return [...header, ...body].join('\n');
 }

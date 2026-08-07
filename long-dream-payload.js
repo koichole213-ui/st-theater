@@ -1,4 +1,5 @@
 import { LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION } from './long-dream.js';
+import { composePresetMessages } from './request-layout.js';
 import { readableCharCount } from './text-counter.js';
 
 function cleanText(value) {
@@ -55,6 +56,20 @@ export function longDreamWorldBookContext(record = {}) {
             .join('\n');
         return entries ? `《${cleanText(book?.name) || '未命名世界书'}》\n${entries}` : '';
     }).filter(Boolean).join('\n\n');
+}
+
+export function longDreamWorldBookEntries(record = {}) {
+    if (record?.inheritance?.worldBookPolicy !== LONG_DREAM_WORLD_BOOK_POLICY.SELECTED) return [];
+    const books = Array.isArray(record?.inheritance?.snapshot?.books)
+        ? record.inheritance.snapshot.books
+        : [];
+    return books.flatMap((book, bookIndex) => (Array.isArray(book?.entries) ? book.entries : [])
+        .map((entry, entryIndex) => ({
+            ...entry,
+            content: cleanText(entry?.content),
+            sourceId: `long-dream-world-book-${bookIndex + 1}-${entry?.uid ?? entryIndex + 1}`,
+        }))
+        .filter(entry => entry.content));
 }
 
 export function longDreamChapterContext(record = {}) {
@@ -117,6 +132,36 @@ function takeBudgeted(value, state, key, { keepTail = false } = {}) {
     return keepTail ? `${marker}${keep ? text.slice(-keep) : ''}` : `${text.slice(0, keep)}${marker}`;
 }
 
+function takeBudgetedEntries(entries, state, key) {
+    const source = (Array.isArray(entries) ? entries : []).filter(entry => cleanText(entry?.content));
+    if (!source.length) return [];
+    if (!Number.isFinite(state.remaining)) {
+        state.included.push(key);
+        return source;
+    }
+    if (state.remaining <= 0) {
+        state.omitted.push(key);
+        return [];
+    }
+    const result = [];
+    for (const entry of source) {
+        const content = cleanText(entry.content);
+        if (content.length <= state.remaining) {
+            result.push({ ...entry, content });
+            state.remaining -= content.length;
+            continue;
+        }
+        const marker = '\n……（已按上下文预算截断）';
+        const keep = Math.max(0, state.remaining - marker.length);
+        if (keep) result.push({ ...entry, content: `${content.slice(0, keep)}${marker}` });
+        state.remaining = 0;
+        state.truncated.push(key);
+        return result;
+    }
+    state.included.push(key);
+    return result;
+}
+
 export function buildLongDreamChapterPayload({
     record = {},
     preset = '',
@@ -127,6 +172,7 @@ export function buildLongDreamChapterPayload({
     currentDraft = '',
     finishThisRound = true,
     maxOptionalContextChars = Infinity,
+    structuredPreset = false,
 } = {}) {
     const context = longDreamChapterContext(record);
     if (!context.chapters) throw new Error('长梦缺少可续写的已保存章节');
@@ -144,8 +190,16 @@ export function buildLongDreamChapterPayload({
     const current = takeBudgeted(draft, budgetState, 'currentDraft', { keepTail: true });
     const chapters = takeBudgeted(context.chapters, budgetState, 'chapters', { keepTail: true });
     const memory = takeBudgeted(context.memory, budgetState, 'memory');
-    const worldBook = takeBudgeted(context.worldBook, budgetState, 'worldBookSnapshot');
-    const style = takeBudgeted([cleanText(preset), cleanText(addons)].filter(Boolean).join('\n\n'), budgetState, 'style');
+    const worldInfoEntries = structuredPreset
+        ? takeBudgetedEntries(longDreamWorldBookEntries(record), budgetState, 'worldBookSnapshot')
+        : [];
+    const worldBook = structuredPreset
+        ? worldInfoEntries.map(entry => entry.content).join('\n\n')
+        : takeBudgeted(context.worldBook, budgetState, 'worldBookSnapshot');
+    const style = takeBudgeted([
+        structuredPreset ? '' : cleanText(preset),
+        cleanText(addons),
+    ].filter(Boolean).join('\n\n'), budgetState, 'style');
 
     const systemPrompt = [
         '你正在续写一部长篇支线故事。你只能依据用户已经确认的此梦世界线、这部长卷自身的章节与已确认梦脉继续创作；不得读取、猜测或恢复原聊天前文、普通续写缓存及未提供的世界书设定。此梦设定是不可静默推翻的硬事实；若本章方向与它冲突，应停止创作并明确指出冲突。',
@@ -161,7 +215,9 @@ export function buildLongDreamChapterPayload({
         current ? `【本章可恢复草稿｜只承接结尾，不得重复】\n${current}` : '',
         memory ? `【已确认梦脉｜辅助核对，不得覆盖原章节】\n${memory}` : '',
         worldBook
-            ? `【用户主动允许的冻结世界书快照｜仅作低于定梦与章节的参考】\n${worldBook}`
+            ? (structuredPreset
+                ? '【用户主动允许的冻结世界书快照】\n已按所选预设的位置、深度与角色注入；其权威级别低于此梦设定与已保存章节。'
+                : `【用户主动允许的冻结世界书快照｜仅作低于定梦与章节的参考】\n${worldBook}`)
             : `【世界书继承】\n${record?.inheritance?.worldBookPolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
                 ? '这部长卷没有可用的冻结快照，本次不得读取或补入当前酒馆世界书。'
                 : '本长卷与原世界书隔离，不得读取或自行补入原世界线设定。'}`,
@@ -170,6 +226,7 @@ export function buildLongDreamChapterPayload({
     return {
         systemPrompt,
         userPrompt: sections.join('\n\n---\n\n'),
+        worldInfoEntries,
         context,
         targetChars: target,
         budget: {
@@ -180,4 +237,38 @@ export function buildLongDreamChapterPayload({
             omitted: budgetState.omitted,
         },
     };
+}
+
+export function buildLongDreamChapterMessages({
+    payload,
+    presetEntries = [],
+    squashSystemMessages = false,
+} = {}) {
+    if (!payload?.systemPrompt || !payload?.userPrompt) {
+        throw new Error('长梦结构化消息缺少请求载荷');
+    }
+    return composePresetMessages({
+        presetEntries,
+        slots: {
+            charDescription: '',
+            charPersonality: '',
+            scenario: '',
+            personaDescription: '',
+            dialogueExamples: '',
+        },
+        worldInfoEntries: payload.worldInfoEntries || [],
+        chatMessages: [{
+            role: 'user',
+            content: payload.userPrompt,
+            source: 'long-dream',
+            sourceId: 'chapter-context',
+        }],
+        tailMessages: [{
+            role: 'system',
+            content: payload.systemPrompt,
+            source: 'long-dream',
+            sourceId: 'continuity-rules',
+        }],
+        squashSystemMessages,
+    });
 }

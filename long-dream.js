@@ -85,7 +85,12 @@ function normalizeWorldBookSnapshot(snapshot, fallbackDate = '') {
                         caseSensitive: entry?.caseSensitive === true,
                         matchWholeWords: entry?.matchWholeWords === true,
                         position: Number.isFinite(Number(entry?.position)) ? Number(entry.position) : null,
+                        depth: Number.isFinite(Number(entry?.depth)) ? Math.max(0, Math.floor(Number(entry.depth))) : 4,
                         order: Number.isFinite(Number(entry?.order)) ? Number(entry.order) : null,
+                        role: ['system', 'user', 'assistant'].includes(String(entry?.role || '').toLowerCase())
+                            ? String(entry.role).toLowerCase()
+                            : 'system',
+                        outletName: cleanText(entry?.outletName, 300),
                     };
                 })
                 .filter(Boolean);
@@ -235,8 +240,11 @@ export function createLongDreamWorldBookSnapshot({ bookNames = [], entries = [] 
                     selectiveLogic: raw.selectiveLogic,
                     caseSensitive: raw.caseSensitive === true,
                     matchWholeWords: raw.matchWholeWords === true,
-                    position: raw.position,
-                    order: raw.order,
+                    position: entry?.position ?? raw.position,
+                    depth: entry?.depth ?? raw.depth,
+                    order: entry?.order ?? raw.order,
+                    role: entry?.role ?? raw.role,
+                    outletName: entry?.outletName ?? raw.outletName ?? raw.outlet,
                 };
             })
             .filter(entry => entry.content.trim()),

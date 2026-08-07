@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { estimateTokenBreakdown } from '../token-estimator.js';
+import { estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { readNonStreamingResponse, readSSEStream, requestCustomApi, requestMainApi } from '../api-runtime.js';
@@ -26,7 +26,7 @@ import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from 
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from '../plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from '../history-backup.js';
 import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, appendLongDreamChapter, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, discardLongDreamWritingAttempt, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, recoverInterruptedLongDreamMemory, saveLongDreamDraft, selectLongDreamDraftCandidate, setLongDreamMemoryStatus, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition } from '../long-dream.js';
-import { buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBookContext } from '../long-dream-payload.js';
+import { buildLongDreamChapterMessages, buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBookContext, longDreamWorldBookEntries } from '../long-dream-payload.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from '../long-dream-generation.js';
 import { LONG_DREAM_BACKUP_FORMAT, LONG_DREAM_BACKUP_VERSION, createLongDreamBackup, parseLongDreamBackup } from '../long-dream-backup.js';
 import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, buildLongDreamCanonSuggestionPayload, composeLongDreamCanon, parseLongDreamCanonSuggestions } from '../long-dream-canon-suggestions.js';
@@ -721,6 +721,74 @@ test('只有明确沿用时才读取长卷内冻结的世界书内容', () => {
     const payload = buildLongDreamChapterPayload({ record, instruction: '寻找坏掉的钟。' });
     assert.match(payload.userPrompt, /用户主动允许的冻结世界书快照/);
     assert.match(payload.userPrompt, /站台的钟永远停在零点/);
+});
+
+test('长梦续章按预设保留 system user assistant 顺序，并按冻结位置注入世界书', () => {
+    const snapshot = createLongDreamWorldBookSnapshot({
+        bookNames: ['地点'],
+        entries: [{
+            book: '地点', uid: 7, name: '旧站', content: '站台的钟永远停在零点。',
+            position: WORLD_INFO_POSITION.AT_DEPTH, depth: 0, order: 30, role: 'assistant', outletName: 'Lore',
+        }],
+    });
+    const record = createLongDreamRecord({
+        worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED,
+        worldBookNames: ['地点'], worldBookSnapshot: snapshot,
+        source: { text: '第一章正文。', html: '<main>第一章正文。</main>' },
+    });
+    const payload = buildLongDreamChapterPayload({
+        record,
+        instruction: '寻找坏掉的钟。',
+        structuredPreset: true,
+    });
+    const messages = buildLongDreamChapterMessages({
+        payload,
+        presetEntries: [
+            { id: 'sys', role: 'system', content: 'SYSTEM-PRESET' },
+            { id: 'usr', role: 'user', content: 'USER-PRESET' },
+            { id: 'ast', role: 'assistant', content: 'ASSISTANT-PRESET' },
+            { id: 'chatHistory', role: 'system', content: '' },
+        ],
+    });
+
+    assert.deepEqual(messages.slice(0, 3).map(message => message.role), ['system', 'user', 'assistant']);
+    assert.deepEqual(messages.slice(0, 3).map(message => message.content), ['SYSTEM-PRESET', 'USER-PRESET', 'ASSISTANT-PRESET']);
+    assert.equal(messages.some(message => message.source === 'long-dream' && message.sourceId === 'chapter-context'), true);
+    assert.equal(messages.some(message => message.role === 'assistant' && message.content === '站台的钟永远停在零点。'), true);
+    assert.doesNotMatch(payload.userPrompt, /站台的钟永远停在零点/);
+    assert.deepEqual(longDreamWorldBookEntries(record).map(entry => [entry.position, entry.depth, entry.role, entry.outletName]), [
+        [WORLD_INFO_POSITION.AT_DEPTH, 0, 'assistant', 'Lore'],
+    ]);
+});
+
+test('长梦生成控制器把预设后处理与结构化消息交给请求层', async () => {
+    const record = createLongDreamRecord({
+        source: { text: '第一章正文。', html: '<main>第一章正文。</main>' },
+    });
+    let captured;
+    const controller = createLongDreamGenerationController({
+        requestChapter: async request => {
+            captured = request;
+            return { text: '第二章正文。' };
+        },
+        renderChapter: async ({ text }) => `<main>${text}</main>`,
+    });
+    await controller.run({
+        record,
+        autoContinue: false,
+        presetName: '结构预设',
+        postProcessing: PROMPT_POST_PROCESSING.STRICT,
+        squashSystemMessages: true,
+        presetEntries: [
+            { id: 'system-preset', role: 'system', content: '系统预设' },
+            { id: 'assistant-preset', role: 'assistant', content: '助手预设' },
+        ],
+    });
+
+    assert.equal(captured.presetName, '结构预设');
+    assert.equal(captured.postProcessing, PROMPT_POST_PROCESSING.STRICT);
+    assert.deepEqual(captured.messages.slice(0, 2).map(message => message.role), ['system', 'assistant']);
+    assert.equal(captured.messages.some(message => message.source === 'long-dream'), true);
 });
 
 test('长梦按世界线关系解释冻结资料，而不是让用户逐条永久勾选', () => {
@@ -1951,7 +2019,7 @@ test('请求后处理始终转换为 no-tools 变体，并清除 tool/function �
     assert.deepEqual(normalizeRequestMessages(source).map(message => message.role), ['system', 'assistant', 'user']);
 });
 
-test('实际请求快照等于传输层输入且不包含 Key、Authorization 或接口 URL', async () => {
+test('创作请求结构来自传输层输入且不包含正文、Key、Authorization 或接口 URL', async () => {
     let traceInput;
     let wireBody;
     await requestCustomApi({
@@ -1976,6 +2044,17 @@ test('实际请求快照等于传输层输入且不包含 Key、Authorization �
     const report = formatRequestTrace(createRequestTrace(traceInput));
     assert.doesNotMatch(report, /sk-super-secret|secret-host\.example|Authorization/i);
     assert.match(report, /工具：已强制禁用/);
+    assert.doesNotMatch(report, /系统|用户|request\/system|request\/user/);
+    assert.match(report, /system · preset\/main · 2 字符 · 约 3 token/);
+    assert.match(report, /user · theater\/instruction · 2 字符 · 约 3 token/);
+});
+
+test('诊断界面只展示创作请求结构，不渲染或复制真实消息正文', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    assert.match(source, /查看创作请求结构/);
+    assert.match(source, /tracePurpose: round === 1 \? 'creative' : 'continuation'/);
+    assert.match(source, /if \(purpose !== 'creative'\) return/);
+    assert.doesNotMatch(source.match(/function runDiagnostics\(\)[\s\S]*?\n\}/)?.[0] || '', /message\.content|<pre>/);
 });
 
 test('429 限流识别支持 Retry-After 秒数、日期和常见错误文字', () => {
@@ -2014,6 +2093,16 @@ test('聊天前文设为 0 时不读取任何消息，而不是误读全部消�
 test('Token 分类相加等于总数', () => {
     const result = estimateTokenBreakdown({ preset: '预设内容', context: '聊天上下文', instruction: '写一段故事' });
     assert.equal(result.total, result.preset + result.context + result.instruction);
+});
+
+test('世界书勾选上限与生成预览复用同一个 Token 估算口径', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const worldBookText = `世界书设定：\n${['第一条设定。', '第二条设定。'].join('\n\n')}`;
+    assert.equal(estimateTokenBreakdown({ worldBook: worldBookText }).worldBook, estimateTokenCount(worldBookText));
+    const updateSource = source.match(/function updateWBCount\(\)[\s\S]*?\n\}/)?.[0] || '';
+    assert.match(updateSource, /estimateTokenCount\(worldBookText\)/);
+    assert.match(updateSource, /已勾选上限约/);
+    assert.doesNotMatch(updateSource, /chars\s*\/\s*1\.5/);
 });
 
 test('关闭上下文后的 payload 不包含聊天内容', () => {

@@ -9,7 +9,7 @@ import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js'
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml } from './generation-payload.js';
-import { debounce, estimateTokenBreakdown, formatTokenCount } from './token-estimator.js';
+import { debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, diagnosticSignalCatalog, diagnosticSignalInfo, signalForStopReason } from './request-diagnostics.js';
 import { autoSourceLabel, resolveAutoInstruction } from './auto-mode.js';
@@ -34,7 +34,7 @@ import { DEFAULT_LONG_DREAM_MEMORY_PRESET, buildLongDreamMemoryPayload, parseLon
 import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, buildLongDreamCanonSuggestionPayload, composeLongDreamCanon, parseLongDreamCanonSuggestions } from './long-dream-canon-suggestions.js';
 import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkSide, normalizeBookmarkYRatio } from './result-bookmark.js';
 import { composePresetMessages, noToolsPostProcessingMode, normalizePromptRole } from './request-layout.js';
-import { createRequestTrace, formatRequestTrace } from './request-trace.js';
+import { createRequestTrace, formatRequestTrace, requestTraceMessageLabel } from './request-trace.js';
 
 const MODULE_NAME = 'theater_generator';
 const VERSION = '3.6.3';
@@ -2709,13 +2709,18 @@ function hasManualEntries() {
 
 function updateWBCount() {
     const total = wbEntries.length;
-    let active = 0, chars = 0;
+    let active = 0;
+    const parts = [];
     for (let i = 0; i < total; i++) {
-        if (wbStates[i] !== false) { active++; chars += (wbEntries[i].content || '').length; }
+        if (wbStates[i] !== false) {
+            active++;
+            parts.push(wbEntries[i].content || '');
+        }
     }
-    const roughTokens = Math.ceil(chars / 1.5);
-    const tokenStr = roughTokens >= 1000 ? `${(roughTokens / 1000).toFixed(1)}k` : String(roughTokens);
-    $('#theater-wb-count').html(`${active}/${total} 个条目已勾选 · 最多约 ${tokenStr} token`);
+    // 与生成页实时预览使用同一份包装文本和同一个估算器，避免中文内容出现两套口径。
+    const worldBookText = parts.length ? `世界书设定：\n${parts.join('\n\n')}` : '';
+    const roughTokens = estimateTokenCount(worldBookText);
+    $('#theater-wb-count').html(`${active}/${total} 个条目已勾选 · 已勾选上限约 ${formatTokenCount(roughTokens)} token`);
     $('#theater-wb-header').toggle(total > 0);
     updateWBGroupCounts();
 }
@@ -5730,11 +5735,6 @@ async function requestFinalRenderedHtml({
     metricScope = 'final-render',
 } = {}) {
     const finalRenderPayload = buildFinalRenderPayload({ sourceText, rules });
-    lastRequestContext = {
-        kind: '最终 HTML 排版',
-        sourceChars: readableCharCount(sourceText),
-        renderLabel,
-    };
     runtimeLog('info', '最终 HTML 渲染开始', {
         scope: metricScope,
         render: renderLabel,
@@ -5802,7 +5802,15 @@ function normalizeLongDreamResponseText(value) {
         : raw.replace(/^```(?:text|markdown)?\s*/i, '').replace(/```\s*$/i, '').trim();
 }
 
-async function requestLongDreamChapter({ systemPrompt, userPrompt, signal, onChunk }) {
+async function requestLongDreamChapter({
+    systemPrompt,
+    userPrompt,
+    messages,
+    postProcessing = '',
+    presetName = '',
+    signal,
+    onChunk,
+}) {
     const ctx = SillyTavern.getContext();
     if (settings.apiMode !== 'main' && (!settings.apiUrl || !settings.apiModel)) {
         throw new Error('请先在【设置】里填好 API URL 和模型再续写长梦');
@@ -5812,9 +5820,15 @@ async function requestLongDreamChapter({ systemPrompt, userPrompt, signal, onChu
         : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}:long-dream`);
     try {
         const onSafeChunk = cumulativeText => onChunk(normalizeLongDreamResponseText(cumulativeText));
+        const requestOptions = {
+            messages,
+            postProcessing,
+            presetName: presetName || settings.selectedPresetName || '内置默认预设',
+            tracePurpose: 'creative',
+        };
         const result = settings.apiMode === 'main'
-            ? await generateWithMainAPI(ctx, systemPrompt, userPrompt, onSafeChunk, settings.streamEnabled !== false, signal)
-            : await callCustomAPIStream(systemPrompt, userPrompt, onSafeChunk, settings.streamEnabled !== false, signal);
+            ? await generateWithMainAPI(ctx, systemPrompt, userPrompt, onSafeChunk, settings.streamEnabled !== false, signal, requestOptions)
+            : await callCustomAPIStream(systemPrompt, userPrompt, onSafeChunk, settings.streamEnabled !== false, signal, requestOptions);
         const rawText = typeof result === 'string' ? result : result?.text;
         const text = normalizeLongDreamResponseText(rawText);
         if (!String(text || '').trim()) throw new Error('长梦正文请求没有返回内容');
@@ -6028,6 +6042,10 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
         settings.customNsfwAddon?.trim() ? `【NSFW补充】\n${settings.customNsfwAddon.trim()}` : '',
     ].filter(Boolean).join('\n\n');
     const selectedPresetPrompt = getSelectedPresetPrompt();
+    const selectedPresetEntries = getSelectedPresetEntries();
+    const presetEntriesForLayout = selectedPresetEntries.length
+        ? selectedPresetEntries
+        : [{ id: 'main', role: 'system', content: DEFAULT_SYSTEM_PROMPT }];
     lastRequestContext = {
         kind: '长梦正文',
         presetSource: selectedPresetPrompt ? '已选酒馆预设' : '内置默认预设',
@@ -6050,6 +6068,10 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
         const result = await controller.run({
             record: dream,
             preset: selectedPresetPrompt || DEFAULT_SYSTEM_PROMPT,
+            presetEntries: presetEntriesForLayout,
+            presetName: settings.selectedPresetName || '内置默认预设',
+            postProcessing: cachedPresetPostProcessing,
+            squashSystemMessages: cachedPresetSquashSystemMessages,
             addons,
             instruction,
             chapterTitle,
@@ -6442,6 +6464,7 @@ async function runGeneration(instruction, isAuto) {
                 messages: roundPayload.messages,
                 postProcessing: roundPayload.postProcessing || '',
                 presetName: roundPayload.presetName || settings.selectedPresetName || '内置默认预设',
+                tracePurpose: round === 1 ? 'creative' : 'continuation',
             };
             lastRequestMetrics = createRequestMetrics(settings.apiMode === 'main' ? 'main:ChatCompletionService' : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}`);
             let result;
@@ -6751,8 +6774,9 @@ function setBallDot(on) {
 // ============================================================
 // API runtime adapters
 // ============================================================
-function captureActualRequestTrace(details) {
-    lastRequestTrace = createRequestTrace(details);
+function captureActualRequestTrace(details, purpose = 'support') {
+    if (purpose !== 'creative') return;
+    lastRequestTrace = createRequestTrace({ ...details, purpose });
 }
 
 async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStream = true, signal = abortController?.signal, requestOptions = {}) {
@@ -6764,7 +6788,7 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
         postProcessing: requestOptions.postProcessing || '',
         presetName: requestOptions.presetName || settings.selectedPresetName || '未指定',
         onChunk,
-        onRequest: captureActualRequestTrace,
+        onRequest: details => captureActualRequestTrace(details, requestOptions.tracePurpose),
         shouldStream,
         signal,
         log: runtimeLog,
@@ -6790,7 +6814,7 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
         postProcessing: requestOptions.postProcessing || '',
         presetName: requestOptions.presetName || settings.selectedPresetName || '未指定',
         onChunk,
-        onRequest: captureActualRequestTrace,
+        onRequest: details => captureActualRequestTrace(details, requestOptions.tracePurpose),
         shouldStream,
         signal,
         log: runtimeLog,
@@ -6876,9 +6900,9 @@ function buildDiagnostics() {
             : (bgError ? `${REQUEST_DIAGNOSTIC_SIGNAL.UNKNOWN} · 请打开“常见问题汇总”查询` : '无')),
         ...(lastRequestIssue ? [diagnosticLine('warn', '错误处理建议', `${lastRequestIssue.signal}：${lastRequestIssue.action}`)] : []),
         diagnosticLine(lastRequestContext ? 'ok' : 'warn', '最近请求摘要', formatRequestContextSummary(lastRequestContext)),
-        diagnosticLine(lastRequestTrace ? 'ok' : 'warn', '实际请求快照', lastRequestTrace
+        diagnosticLine(lastRequestTrace ? 'ok' : 'warn', '创作请求结构', lastRequestTrace
             ? `${lastRequestTrace.route}/${lastRequestTrace.transport} · ${lastRequestTrace.messages.length} 条消息 · 工具已强制禁用`
-            : '暂无；完成一次插件正文请求后会在此显示发送前的最终消息顺序'),
+            : '暂无；完成一次插件正文请求后会在此显示发送前的角色、来源和长度，不包含消息正文'),
         buildAutoModeDiagnostic(),
         diagnosticLine('ok', '数据数量', `历史 ${historyCache.length} 条，最近生成 ${recentCache.length} 条，指令模板 ${(settings.instructionTemplates || []).length} 个`),
         diagnosticLine(recentContentOk ? 'ok' : 'warn', '最近生成正文', recentContentDetail),
@@ -6907,7 +6931,7 @@ function runDiagnostics() {
     `).join('');
     const traceHtml = lastRequestTrace ? `
         <details class="theater-request-trace">
-            <summary>查看实际请求消息（${lastRequestTrace.messages.length} 条）</summary>
+            <summary>查看创作请求结构（${lastRequestTrace.messages.length} 条，不含正文）</summary>
             <div class="theater-request-trace-meta">
                 <span>线路 ${esc(lastRequestTrace.route)}/${esc(lastRequestTrace.transport)}</span>
                 <span>协议 ${esc(lastRequestTrace.protocol)}</span>
@@ -6917,10 +6941,10 @@ function runDiagnostics() {
                 <span>工具 已强制禁用</span>
             </div>
             ${(lastRequestTrace.messages || []).map(message => `
-                <details class="theater-request-trace-message">
-                    <summary>${message.index}. ${esc(message.role)} · ${esc(message.source)}/${esc(message.sourceId)}</summary>
-                    <pre>${esc(message.content)}</pre>
-                </details>
+                <div class="theater-request-trace-message">
+                    <span>${message.index}. ${esc(requestTraceMessageLabel(message))}</span>
+                    <small>${Number(message.chars) || 0} 字符 · 约 ${Number(message.estimatedTokens) || 0} token</small>
+                </div>
             `).join('')}
         </details>` : '';
     $('#theater-diagnostics-output').html(rowsHtml + traceHtml).data('report', report.text).show();

@@ -17,7 +17,7 @@ git log -1 --oneline
 
 建议禾禾在新窗口使用这句话开场：
 
-> 请先完整阅读 `D:\st-theater\PROJECT_STATUS.md` 和 AGENTS.md，核对真实仓库、`codex/long-dream-preview` 分支和未提交改动后，继续验收详细路线阶段 4“AI 定梦建议，但保留用户主权”。代码已完成本地回归，请先在真实 SillyTavern 分别用酒馆主 API 与独立 API 验证建议生成、停止、切换来源、修改/删除/采纳和最终开卷；未采纳内容不得进入 canon。不要改动 `standalone-scripts/`，不要升级版本、提交或推送。
+> 请先完整阅读 `D:\st-theater\PROJECT_STATUS.md` 和 AGENTS.md，核对真实仓库、`codex/long-dream-preview` 分支和未提交改动后，继续真实酒馆验收长梦。重点验证：长梦续章保留所选预设的 system/user/assistant 顺序与后处理；世界书页和生成预览的 Token 上限一致；复制诊断报告不包含小剧场正文。不要改动 `standalone-scripts/`，不要升级版本、提交或推送。
 
 ## 当前稳定快照
 
@@ -26,11 +26,19 @@ git log -1 --oneline
 - 远端：`https://github.com/koichole213-ui/st-theater.git`
 - 施工分支：`codex/long-dream-preview`（从 `main` 的 `8d97011` 分出，仅供酒馆验收，不视为正式发布）
 - 版本：`v3.6.3`
-- 当前 HEAD：`8f640fb`（`docs: update prompt depth handoff`）；最新代码提交为 `81895a1`，本轮阶段 3 收尾、HTML 误降级修正与阶段 4 尚未提交
+- 当前 HEAD：本轮“长梦预设保真、世界书 Token 统一与诊断精简”提交（请以 `git log -1 --oneline` 为准）；前一基线为 `c2e795a`
 - 远端状态：正式分支 `main` 与 `origin/main` 一致；本轮只推送独立测试分支，不改正式 `main`
-- 工作区：`index.js`、`long-dream.js`、`long-dream-generation.js`、`long-dream-backup.js`、`safe-renderer.js`、`style.css`、`tests/core.test.js`、新增 `long-dream-canon-suggestions.js` 与本交接有未提交改动；原有未跟踪目录 `standalone-scripts/` 保持未动
-- 自动测试：`137/137` 通过
+- 工作区：本轮提交后仅保留原有未跟踪目录 `standalone-scripts/`，始终未改动、未暂存
+- 自动测试：`141/141` 通过
 - JavaScript 语法检查：通过
+
+## 长梦预设、世界书 Token 与诊断修正（2026-08-07）
+
+- 长梦续章不再把所选预设压平成一段“写作风格”。每一轮正文请求都复用普通生成的结构化预设布局，保留启用状态、`prompt_order`、原始 `system/user/assistant`、绝对深度、相邻 system 压合设置与 no-tools 后处理；仍不读取现场聊天、当前角色卡或当前人设。
+- 长梦冻结世界书快照新增保留 `depth/role/outletName`，续章时按冻结时的 `position/depth/order/role/outlet` 进入所选预设布局；旧快照缺字段时继续安全回退，不升级插件版本或长梦 schema。
+- 世界书页和生成页实时预览现在共用 `estimateTokenCount`，并对同一份“世界书设定”包装文本估算。世界书页文案明确为“已勾选上限约”，表示所有勾选条目的输入上限，不冒充模型官方 tokenizer 或本轮绿灯实际激活量。
+- 诊断只保留创作请求的线路、协议、模型、预设、后处理、消息角色/来源、字符数和 Token 预估，不再在内存快照、界面或复制报告中保存消息正文；普通补写、最终 HTML 排版及其他辅助请求不会覆盖正文创作请求结构。无具体来源的回退消息只显示 `system/user`，不再显示 `request/system`、`request/user`。
+- 本轮新增 4 项回归；核心测试为 `141/141`。尚需在真实 SillyTavern 中分别用主 API / 独立 API 验证复杂多角色预设、冻结世界书位置，以及复制诊断报告内容。
 
 ## 长梦阶段 3 最新施工（2026-08-06）
 
