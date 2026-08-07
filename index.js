@@ -27,10 +27,11 @@ import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from './plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from './history-backup.js';
-import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, discardLongDreamWritingAttempt, latestLongDreamChapter, normalizeLongDreamRecord, recoverInterruptedLongDreamMemory, selectLongDreamDraftCandidate, setLongDreamMemoryStatus, setLongDreamStatus, updateLongDreamDefinition } from './long-dream.js';
+import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, discardLongDreamWritingAttempt, latestLongDreamChapter, normalizeLongDreamRecord, recoverInterruptedLongDreamMemory, selectLongDreamDraftCandidate, setLongDreamMemoryStatus, setLongDreamStatus, updateLongDreamDefinition } from './long-dream.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from './long-dream-generation.js';
 import { MAX_LONG_DREAM_BACKUP_BYTES, createLongDreamBackup, parseLongDreamBackup } from './long-dream-backup.js';
 import { DEFAULT_LONG_DREAM_MEMORY_PRESET, buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, shouldWeaveLongDreamMemory } from './long-dream-memory.js';
+import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, buildLongDreamCanonSuggestionPayload, composeLongDreamCanon, parseLongDreamCanonSuggestions } from './long-dream-canon-suggestions.js';
 import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkSide, normalizeBookmarkYRatio } from './result-bookmark.js';
 import { composePresetMessages, noToolsPostProcessingMode, normalizePromptRole } from './request-layout.js';
 import { createRequestTrace, formatRequestTrace } from './request-trace.js';
@@ -82,6 +83,9 @@ function formatRequestContextSummary(context) {
     if (!context) return '暂无插件请求摘要；本次无法判断实际组合输入。';
     if (context.kind === '模型列表') return '模型列表 · 只请求 API 的模型清单，不携带创作指令、聊天前文、角色卡或世界书。';
     if (context.kind === '连接测试') return '连接测试 · 只发送固定短测试语句，不携带创作指令、聊天前文、角色卡或世界书。';
+    if (context.kind === 'AI 定梦建议') {
+        return `AI 定梦建议 · 只读取所选第一章正文（约 ${context.sourceChars || 0} 字）· 不读取聊天前文或世界书 · 返回内容仅为待用户逐项确认的临时草稿。`;
+    }
     if (context.kind === '长梦正文') {
         return `长梦正文 · 创作预设：${context.presetSource} · 已保存章节：${context.chapterCount} · 已确认梦脉：${context.memoryCount} · 冻结世界书：${context.worldBookBooks} 本/${context.worldBookEntries} 条 · 聊天前文：不读取 · 文风补充：${context.styleAddon ? '已参与' : '未参与'} · NSFW 补充：${context.nsfwAddon ? '已参与' : '未参与'}`;
     }
@@ -330,6 +334,14 @@ let longDreamView = 'list';
 let activeLongDreamId = null;
 let longDreamMemoryQueue = Promise.resolve();
 const queuedLongDreamMemoryIds = new Set();
+const longDreamCanonSuggestionState = {
+    sourceKey: '',
+    items: [],
+    status: 'idle',
+    errorSignal: '',
+    controller: null,
+    requestId: 0,
+};
 
 const THEATER_TAB_NAMES = new Set(['generate', 'long-dream', 'setting', 'dialogue', 'rules', 'history', 'theme', 'diagnostics', 'config']);
 
@@ -1869,6 +1881,90 @@ function longDreamSourcePreviewHTML(source) {
         <p>${esc(longDreamExcerpt(source?.text, 220))}</p>`;
 }
 
+function resetLongDreamCanonSuggestions({ abort = true } = {}) {
+    if (abort && longDreamCanonSuggestionState.controller) {
+        longDreamCanonSuggestionState.controller.abort();
+    }
+    longDreamCanonSuggestionState.sourceKey = '';
+    longDreamCanonSuggestionState.items = [];
+    longDreamCanonSuggestionState.status = 'idle';
+    longDreamCanonSuggestionState.errorSignal = '';
+    longDreamCanonSuggestionState.controller = null;
+    longDreamCanonSuggestionState.requestId++;
+}
+
+function activeLongDreamCanonSuggestions(sourceKey) {
+    return longDreamCanonSuggestionState.sourceKey === String(sourceKey || '')
+        ? longDreamCanonSuggestionState.items
+        : [];
+}
+
+function longDreamCanonSuggestionCardsHTML(sourceKey) {
+    const items = activeLongDreamCanonSuggestions(sourceKey);
+    return items.map(item => {
+        const categoryOptions = LONG_DREAM_CANON_SUGGESTION_CATEGORIES
+            .map(category => `<option value="${esc(category)}" ${item.category === category ? 'selected' : ''}>${esc(category)}</option>`)
+            .join('');
+        return `<article class="theater-dream-canon-suggestion ${item.accepted ? 'is-accepted' : ''}" data-dream-canon-suggestion-id="${esc(item.id)}">
+            <div class="theater-dream-canon-suggestion-head">
+                <select class="theater-select" data-dream-canon-suggestion-category aria-label="建议分类">${categoryOptions}</select>
+                <span class="theater-dream-canon-suggestion-state">${item.accepted ? '<i class="fa-solid fa-check"></i>已采纳' : '待决定'}</span>
+                ${item.uncertain ? '<span class="theater-dream-canon-uncertain"><i class="fa-solid fa-circle-question"></i>不确定 · 需要确认</span>' : ''}
+            </div>
+            <textarea class="theater-textarea" rows="2" maxlength="800" data-dream-canon-suggestion-content aria-label="修改这条定梦建议">${esc(item.content)}</textarea>
+            ${item.uncertain && item.uncertaintyNote ? `<p class="theater-dream-canon-uncertainty-note">AI 标注：${esc(item.uncertaintyNote)}</p>` : ''}
+            <div class="theater-dream-canon-suggestion-actions">
+                <button type="button" class="theater-btn ${item.accepted ? 'is-selected' : ''}" data-dream-canon-suggestion-action="toggle" aria-pressed="${item.accepted}">
+                    <i class="fa-solid ${item.accepted ? 'fa-rotate-left' : 'fa-check'}"></i><span>${item.accepted ? '撤回采纳' : '采纳这条'}</span>
+                </button>
+                <button type="button" class="theater-btn danger" data-dream-canon-suggestion-action="delete"><i class="fa-solid fa-trash"></i><span>删除</span></button>
+            </div>
+        </article>`;
+    }).join('');
+}
+
+function longDreamCanonSuggestionHTML(sourceKey) {
+    const key = String(sourceKey || '');
+    const items = activeLongDreamCanonSuggestions(key);
+    const acceptedCount = items.filter(item => item.accepted).length;
+    const isLoading = longDreamCanonSuggestionState.sourceKey === key && longDreamCanonSuggestionState.status === 'loading';
+    const failed = longDreamCanonSuggestionState.sourceKey === key && longDreamCanonSuggestionState.status === 'error';
+    const empty = longDreamCanonSuggestionState.sourceKey === key && longDreamCanonSuggestionState.status === 'empty';
+    const statusText = isLoading
+        ? '正在只读分析第一章；结果回来前不会修改此梦设定。'
+        : (failed
+            ? `整理失败：${longDreamCanonSuggestionState.errorSignal || 'T-API-INVALID-RESPONSE'}。手写定梦仍可直接使用。`
+            : (empty ? 'AI 没有找到足够可靠的硬事实；你仍可直接手写定梦。' : ''));
+    return `<section id="theater-dream-canon-assist" class="theater-dream-canon-assist ${items.length ? 'has-items' : ''}">
+        <div class="theater-dream-canon-assist-head">
+            <div>
+                <span class="theater-dream-canon-assist-kicker">可选 · AI 只提供草稿</span>
+                <b>从第一章整理定梦建议</b>
+            </div>
+            <button type="button" id="theater-dream-canon-suggest" class="theater-btn" aria-busy="${isLoading}">
+                <i class="fa-solid ${isLoading ? 'fa-stop' : 'fa-wand-magic-sparkles'}"></i><span>${isLoading ? '停止整理' : (items.length ? '重新整理' : 'AI 帮我整理')}</span>
+            </button>
+        </div>
+        <p class="theater-dream-canon-assist-note">AI 只会看到所选第一章正文，不会读取聊天前文或世界书。建议可逐项修改、删除和采纳；未采纳内容不会写入长卷。</p>
+        <div id="theater-dream-canon-suggestion-status" class="theater-dream-canon-suggestion-status ${failed ? 'is-error' : ''}" role="status" ${statusText ? '' : 'hidden'}>${esc(statusText)}</div>
+        <div id="theater-dream-canon-suggestion-list" class="theater-dream-canon-suggestion-list">${longDreamCanonSuggestionCardsHTML(key)}</div>
+        <div id="theater-dream-canon-suggestion-summary" class="theater-dream-canon-suggestion-summary" ${items.length ? '' : 'hidden'}>
+            <span>已采纳 ${acceptedCount}/${items.length} 条</span>
+            <small>只有“确认定梦并开卷”后，采纳项才会和手写内容一起成为 canon。</small>
+        </div>
+    </section>`;
+}
+
+function renderLongDreamCanonSuggestions(sourceKey = $('#theater-dream-source').val()) {
+    const container = document.getElementById('theater-dream-canon-assist');
+    if (!container) return;
+    container.outerHTML = longDreamCanonSuggestionHTML(sourceKey);
+}
+
+function findLongDreamCanonSuggestion(id) {
+    return longDreamCanonSuggestionState.items.find(item => String(item.id) === String(id));
+}
+
 function captureCurrentLongDreamWorldBooks(bookNames) {
     return createLongDreamWorldBookSnapshot({
         bookNames,
@@ -2106,6 +2202,7 @@ function longDreamCreateHTML() {
                 <label for="theater-dream-canon" class="theater-dream-canon-label">此梦设定</label>
                 <textarea id="theater-dream-canon" class="theater-textarea" rows="7" placeholder="例如：两人没有血缘关系，是从小一起长大的青梅竹马；本世界线不存在学园兄妹关系。">${esc(first?.instruction || '')}</textarea>
                 <p id="theater-dream-source-hint" class="theater-hint ${longDreamSourceInstructionState(first).className}">${esc(longDreamSourceInstructionState(first).hint)}</p>
+                ${longDreamCanonSuggestionHTML(first?.key)}
             </section>
             <section class="theater-dream-form-card theater-dream-inheritance">
                 <div class="theater-dream-card-label">这场梦和原世界线是什么关系</div>
@@ -2185,11 +2282,14 @@ function longDreamDetailHTML(dream) {
     const activeStage = isGeneratingThisDream
         ? longDreamGenerationController.active.stage
         : null;
+    const draftText = draft?.text || '';
     const hasWritingDraft = draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING;
     const hasReviewDraft = draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW;
+    const hasRenderPendingDraft = hasWritingDraft
+        && draft?.resumeStage === LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING
+        && !!draftText.trim();
     const controlsDisabled = isGeneratingThisDream || hasReviewDraft || dream.status === 'complete';
     const statusControlDisabled = isGeneratingThisDream || !!draft;
-    const draftText = draft?.text || '';
     const composerDraft = getLongDreamComposerDraft(dream.id);
     const nextTitle = draft?.title || composerDraft.title || `第 ${nextNumber} 章`;
     const nextInstruction = draft ? draft.instruction : composerDraft.instruction;
@@ -2197,9 +2297,11 @@ function longDreamDetailHTML(dream) {
     const generationHint = hasReviewDraft
         ? `${draftCandidates.length} 版候选已安全保留；切换不会改动内容，只会决定最终保存哪一版。`
         : (hasWritingDraft
-            ? (draftCandidates.length
-                ? `正在准备第 ${draftCandidates.length + 1} 版；此前 ${draftCandidates.length} 版候选仍安全保留。`
-                : '检测到可恢复草稿；继续时只会承接草稿结尾，不会重复已经写好的正文。')
+            ? (hasRenderPendingDraft
+                ? '正文已经完整保存；继续时只会重新生成最终排版，不会再次请求或重复正文。'
+                : (draftCandidates.length
+                    ? `正在准备第 ${draftCandidates.length + 1} 版；此前 ${draftCandidates.length} 版候选仍安全保留。`
+                    : '检测到可恢复草稿；继续时只会承接草稿结尾，不会重复已经写好的正文。'))
             : '新章节只会进入这部长卷，不会自动写入普通历史或最近生成。');
     const chapterDirectory = dream.chapters.map(chapter => {
         const text = chapter.text || htmlToPlainText(chapter.html || '');
@@ -2238,7 +2340,7 @@ function longDreamDetailHTML(dream) {
                 </div>
             </details>
             <div id="theater-dream-generation-status" class="theater-dream-generation-status" ${isGeneratingThisDream || hasWritingDraft ? '' : 'hidden'}>
-                <div><i class="fa-solid fa-feather-pointed"></i><span id="theater-dream-generation-label">${esc(isGeneratingThisDream ? longDreamGenerationStageText(activeStage) : '发现一份未完成草稿')}</span></div>
+                <div><i class="fa-solid fa-feather-pointed"></i><span id="theater-dream-generation-label">${esc(isGeneratingThisDream ? longDreamGenerationStageText(activeStage) : (hasRenderPendingDraft ? '正文已完成，等待重新排版' : '发现一份未完成草稿'))}</span></div>
                 <pre id="theater-dream-generation-text">${esc(draftText || (isGeneratingThisDream ? '正在准备请求……' : '已保存本章方向，尚未生成正文。'))}</pre>
             </div>
             <div class="theater-dream-next-actions">
@@ -2246,7 +2348,7 @@ function longDreamDetailHTML(dream) {
                 ${hasWritingDraft && !isGeneratingThisDream ? `<button type="button" id="theater-dream-discard-draft" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>${draftCandidates.length ? '放弃本轮生成' : '放弃草稿'}</span></button>` : ''}
                 ${isGeneratingThisDream
                     ? '<button type="button" id="theater-dream-stop-generation" class="theater-btn danger"><i class="fa-solid fa-stop"></i><span>停止</span></button>'
-                    : `<button type="button" id="theater-dream-generate-next" class="theater-dream-primary" ${controlsDisabled ? 'disabled' : ''}><i class="fa-solid fa-feather-pointed"></i><span>${hasReviewDraft ? '等待确认' : (hasWritingDraft ? '继续未完成草稿' : '续写下一章')}</span></button>`}
+                    : `<button type="button" id="theater-dream-generate-next" class="theater-dream-primary" ${controlsDisabled ? 'disabled' : ''}><i class="fa-solid fa-feather-pointed"></i><span>${hasReviewDraft ? '等待确认' : (hasRenderPendingDraft ? '重新生成最终排版' : (hasWritingDraft ? '继续未完成草稿' : '续写下一章'))}</span></button>`}
             </div>
         </section>
         ${hasReviewDraft ? `<section class="theater-dream-review">
@@ -2731,6 +2833,7 @@ async function openTheaterPopup() {
     }
 
     await p;
+    resetLongDreamCanonSuggestions();
     closeFullscreenReader();
 }
 
@@ -2992,6 +3095,7 @@ function bindEvents() {
         rememberLongDreamComposerDraft();
     });
     $d.off('click.tdnew').on('click.tdnew', '#theater-dream-new', function () {
+        resetLongDreamCanonSuggestions();
         longDreamView = 'create';
         activeLongDreamId = null;
         renderLongDreamPanel();
@@ -3002,6 +3106,7 @@ function bindEvents() {
         exportLongDreamBackup(longDreamCache, 'all');
     });
     $d.off('click.tdback').on('click.tdback', '[data-dream-back]', function () {
+        resetLongDreamCanonSuggestions();
         longDreamView = 'list';
         activeLongDreamId = null;
         rememberLongDreamNavigation();
@@ -3016,6 +3121,7 @@ function bindEvents() {
     $d.off('change.tdsource').on('change.tdsource', '#theater-dream-source', function () {
         const source = resolveLongDreamSource($(this).val());
         if (!source) return;
+        resetLongDreamCanonSuggestions();
         const instructionState = longDreamSourceInstructionState(source);
         $('#theater-dream-title').val(source.title || '未命名长梦');
         $('#theater-dream-canon').val(instructionState.instruction);
@@ -3024,8 +3130,42 @@ function bindEvents() {
             .removeClass('is-saved is-legacy is-missing')
             .addClass(instructionState.className)
             .text(instructionState.hint);
+        renderLongDreamCanonSuggestions(source.key);
+    });
+    $d.off('click.tdcanonsuggest').on('click.tdcanonsuggest', '#theater-dream-canon-suggest', generateLongDreamCanonSuggestions);
+    $d.off('input.tdcanoncontent').on('input.tdcanoncontent', '[data-dream-canon-suggestion-content]', function () {
+        const id = $(this).closest('[data-dream-canon-suggestion-id]').attr('data-dream-canon-suggestion-id');
+        const item = findLongDreamCanonSuggestion(id);
+        if (item) item.content = String($(this).val() || '');
+    });
+    $d.off('change.tdcanoncategory').on('change.tdcanoncategory', '[data-dream-canon-suggestion-category]', function () {
+        const id = $(this).closest('[data-dream-canon-suggestion-id]').attr('data-dream-canon-suggestion-id');
+        const item = findLongDreamCanonSuggestion(id);
+        if (item && LONG_DREAM_CANON_SUGGESTION_CATEGORIES.includes($(this).val())) item.category = $(this).val();
+    });
+    $d.off('click.tdcanonaction').on('click.tdcanonaction', '[data-dream-canon-suggestion-action]', function () {
+        const card = $(this).closest('[data-dream-canon-suggestion-id]');
+        const id = card.attr('data-dream-canon-suggestion-id');
+        const item = findLongDreamCanonSuggestion(id);
+        if (!item) return;
+        const action = $(this).attr('data-dream-canon-suggestion-action');
+        if (action === 'delete') {
+            longDreamCanonSuggestionState.items = longDreamCanonSuggestionState.items.filter(candidate => candidate !== item);
+        } else if (action === 'toggle') {
+            item.content = String(card.find('[data-dream-canon-suggestion-content]').val() || '').trim();
+            if (!item.content) {
+                toastr.warning('这条建议是空的，请先修改内容或直接删除');
+                return;
+            }
+            item.accepted = !item.accepted;
+        }
+        renderLongDreamCanonSuggestions();
     });
     $d.off('click.tdcreate').on('click.tdcreate', '#theater-dream-create-confirm', async function () {
+        if (longDreamCanonSuggestionState.controller) {
+            toastr.warning('请先等待 AI 建议完成，或点击“停止整理”');
+            return;
+        }
         const source = resolveLongDreamSource($('#theater-dream-source').val());
         if (!source) { toastr.warning('请选择一场小剧场作为第一章'); return; }
         const title = ($('#theater-dream-title').val() || '').trim();
@@ -3049,9 +3189,13 @@ function bindEvents() {
                 return;
             }
         }
+        const canon = composeLongDreamCanon(
+            $('#theater-dream-canon').val() || '',
+            activeLongDreamCanonSuggestions(source.key),
+        );
         const record = createLongDreamRecord({
             title,
-            canon: $('#theater-dream-canon').val() || '',
+            canon,
             worldBookPolicy,
             worldLineRelation,
             worldBookNames: settings.selectedWorldBooks || [],
@@ -3067,6 +3211,7 @@ function bindEvents() {
         renderLongDreamPanel();
         $('.theater-panels-wrapper').scrollTop(0);
         toastr.success(`《${created.title}》已开卷`);
+        resetLongDreamCanonSuggestions({ abort: false });
     });
     $d.off('click.tdopen').on('click.tdopen', '.theater-dream-card', function () {
         activeLongDreamId = $(this).data('id');
@@ -5686,6 +5831,107 @@ async function requestLongDreamChapter({ systemPrompt, userPrompt, signal, onChu
     }
 }
 
+async function generateLongDreamCanonSuggestions() {
+    if (longDreamCanonSuggestionState.controller) {
+        longDreamCanonSuggestionState.controller.abort();
+        return;
+    }
+    if (isGenerating || longDreamGenerationController?.active) {
+        toastr.warning('请先完成或停止当前生成，再整理定梦建议');
+        return;
+    }
+    const source = resolveLongDreamSource($('#theater-dream-source').val());
+    if (!source?.text?.trim()) {
+        toastr.warning('所选第一章没有可分析的正文');
+        return;
+    }
+    if (settings.apiMode !== 'main' && (!settings.apiUrl || !settings.apiModel)) {
+        toastr.warning('请先在【设置】里填好 API URL 和模型；也可以不使用 AI，直接手写定梦');
+        return;
+    }
+    const existingItems = activeLongDreamCanonSuggestions(source.key);
+    if (existingItems.length) {
+        const confirmed = await SillyTavern.getContext().Popup.show.confirm(
+            '重新整理定梦建议？',
+            '当前建议中的修改和采纳状态会被新结果替换；手写的“此梦设定”不会改变。',
+        );
+        if (!confirmed) return;
+    }
+
+    const payload = buildLongDreamCanonSuggestionPayload({
+        sourceTitle: source.title,
+        sourceText: source.text,
+    });
+    resetLongDreamCanonSuggestions({ abort: false });
+    const controller = new AbortController();
+    const requestId = ++longDreamCanonSuggestionState.requestId;
+    longDreamCanonSuggestionState.sourceKey = String(source.key);
+    longDreamCanonSuggestionState.status = 'loading';
+    longDreamCanonSuggestionState.controller = controller;
+    renderLongDreamCanonSuggestions(source.key);
+    clearRequestIssue();
+    lastRequestContext = {
+        kind: 'AI 定梦建议',
+        sourceChars: payload.sourceChars,
+    };
+    lastRequestMetrics = createRequestMetrics(settings.apiMode === 'main'
+        ? 'main:long-dream-canon-suggestions'
+        : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}:long-dream-canon-suggestions`);
+    runtimeLog('info', 'AI 定梦建议开始', {
+        source: source.kind,
+        source_chars: payload.sourceChars,
+        api_mode: settings.apiMode || 'custom',
+    });
+    try {
+        const response = settings.apiMode === 'main'
+            ? await generateWithMainAPI(
+                SillyTavern.getContext(),
+                payload.systemPrompt,
+                payload.userPrompt,
+                () => {},
+                false,
+                controller.signal,
+            )
+            : await callCustomAPIStream(
+                payload.systemPrompt,
+                payload.userPrompt,
+                () => {},
+                false,
+                controller.signal,
+            );
+        if (longDreamCanonSuggestionState.requestId !== requestId) return;
+        const items = parseLongDreamCanonSuggestions(response?.text || response);
+        longDreamCanonSuggestionState.items = items;
+        longDreamCanonSuggestionState.status = items.length ? 'ready' : 'empty';
+        markCompleted(lastRequestMetrics);
+        recordRequestMetrics(lastRequestMetrics);
+        runtimeLog('info', 'AI 定梦建议完成', { suggestions: items.length });
+        renderLongDreamCanonSuggestions(source.key);
+        if (items.length) toastr.success(`已整理 ${items.length} 条建议，请逐项核对后决定是否采纳`);
+        else toastr.info('AI 没有找到足够可靠的硬事实；你仍可直接手写定梦');
+    } catch (error) {
+        if (longDreamCanonSuggestionState.requestId !== requestId) return;
+        if (error?.name === 'AbortError') {
+            longDreamCanonSuggestionState.status = 'idle';
+            longDreamCanonSuggestionState.items = [];
+            renderLongDreamCanonSuggestions(source.key);
+            toastr.info('已停止整理，手写定梦没有改变');
+            return;
+        }
+        const issue = captureRequestIssue(error, { stage: 'AI 定梦建议' });
+        longDreamCanonSuggestionState.status = 'error';
+        longDreamCanonSuggestionState.errorSignal = issue.signal;
+        runtimeLog('error', 'AI 定梦建议失败', { signal: issue.signal });
+        renderLongDreamCanonSuggestions(source.key);
+        theaterError(`AI 定梦建议失败：${issue.signal}。你仍可直接手写定梦。`);
+    } finally {
+        if (longDreamCanonSuggestionState.requestId === requestId) {
+            longDreamCanonSuggestionState.controller = null;
+            renderLongDreamCanonSuggestions(source.key);
+        }
+    }
+}
+
 async function renderLongDreamChapter({ text, signal }) {
     const selection = resolveRenderSelection(false);
     if (selection.isPlainTextRender) {
@@ -5721,7 +5967,7 @@ function updateLongDreamStream({ draftText }) {
 
 function handleLongDreamGenerationState({ stage, record }) {
     if (record?.id !== undefined && String(record.id) === String(activeLongDreamId) && longDreamView === 'detail') {
-        if (stage === LONG_DREAM_GENERATION_STAGE.WRITING || stage === LONG_DREAM_GENERATION_STAGE.REVIEW) {
+        if ([LONG_DREAM_GENERATION_STAGE.WRITING, LONG_DREAM_GENERATION_STAGE.RENDERING, LONG_DREAM_GENERATION_STAGE.REVIEW].includes(stage)) {
             renderLongDreamPanel();
         } else {
             $('#theater-dream-generation-status').prop('hidden', false);
@@ -5746,6 +5992,10 @@ function getLongDreamGenerationController() {
 async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
     if (isGenerating) {
         toastr.warning('普通小剧场正在生成，请完成或停止后再续写长梦');
+        return;
+    }
+    if (longDreamCanonSuggestionState.controller) {
+        toastr.warning('AI 定梦建议正在整理，请等待完成或先停止');
         return;
     }
     const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
@@ -6028,6 +6278,7 @@ function extractMesContent(mes) {
 async function generateTheater() {
     if (isGenerating) { toastr.warning('正在生成中，请等待完成或点击停止'); return; }
     if (longDreamGenerationController?.active) { toastr.warning('长梦章节正在生成，请完成或停止后再生成普通小剧场'); return; }
+    if (longDreamCanonSuggestionState.controller) { toastr.warning('AI 定梦建议正在整理，请等待完成或先停止'); return; }
     if (continueContext && !$('#theater-continue-hint').length) clearContinueMode({ silent: true });
     const typedInstruction = $('#theater-instruction').val().trim();
     const instruction = typedInstruction || (continueContext
@@ -6422,7 +6673,7 @@ function pickAutoInstruction() {
 // 删楼把楼数删到锚点以下时，锚点自动下移到当前楼数——
 // 既不会"永远凑不够"，也不会"一删楼就连环触发"。swipe 不加楼数，天然不计。
 async function autoTick() {
-    if (!settings.autoMode || isGenerating || longDreamGenerationController?.active) return;
+    if (!settings.autoMode || isGenerating || longDreamGenerationController?.active || longDreamCanonSuggestionState.controller) return;
     const ctx = SillyTavern.getContext();
     const chatId = String(ctx.chatId ?? '');
     if (!chatId || chatId === 'undefined' || chatId === 'null') return;
@@ -6730,6 +6981,9 @@ function showInIframe(html, mode = 'html', allowTextFallback = true) {
     $('#theater-copy-html-btn span').text(textMode ? '复制文字' : '复制HTML');
     renderSafeIframe(f, html, {
         sourceHasText: !!sourceText,
+        // 没有尺寸回报不等于 HTML 没有渲染；复杂模板启动较慢时继续保留丰富预览。
+        // 只有 iframe 明确、持续回报正文为空，才切换到父页面纯文字兜底。
+        fallbackOnNoReport: false,
         onBlank: allowTextFallback && sourceText ? ({ reason } = {}) => {
             const fallbackReason = reason === 'no-report' ? 'iframe 未回报渲染状态' : 'HTML 正文不可见';
             runtimeLog('warn', '渲染路径', { path: '父页面纯文字兜底', reason: fallbackReason });
@@ -7044,7 +7298,7 @@ function showReloadAfterUpdateAction() {
 
 async function confirmReloadAfterUpdate() {
     if (!updateReadyToReload) return;
-    const hasActiveGeneration = isGenerating || !!longDreamGenerationController?.active;
+    const hasActiveGeneration = isGenerating || !!longDreamGenerationController?.active || !!longDreamCanonSuggestionState.controller;
     const detail = hasActiveGeneration
         ? '刷新会立即中断当前仍在进行的生成。已经保存的设置和长梦草稿不会丢失；尚未保存的普通生成内容请先处理。'
         : '页面会立即重新载入以启用刚下载的插件版本。已经保存的设置、历史和长梦不会丢失。';

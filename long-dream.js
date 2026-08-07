@@ -31,6 +31,11 @@ export const LONG_DREAM_DRAFT_STATUS = Object.freeze({
     REVIEW: 'review',
 });
 
+export const LONG_DREAM_DRAFT_RESUME_STAGE = Object.freeze({
+    WRITING: 'writing',
+    RENDERING: 'rendering',
+});
+
 export const LONG_DREAM_MAX_CANDIDATES = 3;
 
 function cleanText(value, maxLength = 0) {
@@ -187,8 +192,14 @@ function normalizeDraft(draft, chapterNumber, fallbackDate) {
     const selectedCandidate = status === LONG_DREAM_DRAFT_STATUS.REVIEW
         ? candidates[selectedCandidateIndex]
         : null;
+    const resumeStage = status === LONG_DREAM_DRAFT_STATUS.WRITING
+        && draft.resumeStage === LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING
+        && draftText.trim()
+        ? LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING
+        : LONG_DREAM_DRAFT_RESUME_STAGE.WRITING;
     return {
         status,
+        resumeStage,
         chapterNumber,
         title: cleanText(draft.title, 80) || `第 ${chapterNumber} 章`,
         instruction,

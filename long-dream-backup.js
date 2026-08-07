@@ -105,6 +105,9 @@ function safeDraft(draft = null, fallbackDate, nextNumber, { includeReviewDraft 
     const status = draft.status === 'review' && text.trim() && html.trim() ? 'review' : 'writing';
     return {
         status,
+        resumeStage: status === 'writing' && draft.resumeStage === 'rendering' && text.trim()
+            ? 'rendering'
+            : 'writing',
         chapterNumber: nextNumber,
         title: cleanText(draft.title, 80) || `第 ${nextNumber} 章`,
         instruction,

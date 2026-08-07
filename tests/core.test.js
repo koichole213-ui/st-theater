@@ -25,13 +25,61 @@ import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from '../plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from '../history-backup.js';
-import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, appendLongDreamChapter, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, discardLongDreamWritingAttempt, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, recoverInterruptedLongDreamMemory, saveLongDreamDraft, selectLongDreamDraftCandidate, setLongDreamMemoryStatus, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition } from '../long-dream.js';
+import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, appendLongDreamChapter, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamRecord, createLongDreamWorldBookSnapshot, discardLongDreamWritingAttempt, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, recoverInterruptedLongDreamMemory, saveLongDreamDraft, selectLongDreamDraftCandidate, setLongDreamMemoryStatus, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition } from '../long-dream.js';
 import { buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBookContext } from '../long-dream-payload.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from '../long-dream-generation.js';
 import { LONG_DREAM_BACKUP_FORMAT, LONG_DREAM_BACKUP_VERSION, createLongDreamBackup, parseLongDreamBackup } from '../long-dream-backup.js';
+import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, buildLongDreamCanonSuggestionPayload, composeLongDreamCanon, parseLongDreamCanonSuggestions } from '../long-dream-canon-suggestions.js';
 import { buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, pendingLongDreamChapters, shouldWeaveLongDreamMemory } from '../long-dream-memory.js';
 import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing, composePresetMessages, normalizeRequestMessages, normalizeWorldInfoEntry, squashAdjacentSystemMessages } from '../request-layout.js';
 import { createRequestTrace, formatRequestTrace } from '../request-trace.js';
+
+test('AI 定梦建议只读取第一章正文，并明确输出待确认草稿', () => {
+    const payload = buildLongDreamCanonSuggestionPayload({
+        sourceTitle: '雨夜旧站',
+        sourceText: '林岚在末班车离开后独自留在旧站。',
+    });
+    assert.match(payload.userPrompt, /雨夜旧站/);
+    assert.match(payload.userPrompt, /林岚在末班车离开后独自留在旧站/);
+    assert.match(payload.systemPrompt, /只依据提供的第一章正文/);
+    assert.match(payload.systemPrompt, /uncertain/);
+    assert.doesNotMatch(payload.userPrompt, /世界书|聊天前文/);
+    assert.equal(payload.sourceChars, 16);
+});
+
+test('AI 定梦建议解析会保留不确定标记、归一分类并去重', () => {
+    const items = parseLongDreamCanonSuggestions(`<thinking>这里不能显示</thinking>\n\n\`\`\`json
+{
+  "items": [
+    { "category": "关系", "content": "林岚与周遥是旧识。", "uncertain": true, "uncertaintyNote": "正文没有说明相识年份。" },
+    { "category": "人物关系", "content": "林岚与周遥是旧识。" },
+    { "category": "事件", "content": "末班车已经离站。", "confidence": "high" }
+  ]
+}
+\`\`\``);
+    assert.equal(items.length, 2);
+    assert.equal(items[0].category, '人物关系');
+    assert.equal(items[0].uncertain, true);
+    assert.equal(items[0].uncertaintyNote, '正文没有说明相识年份。');
+    assert.equal(items[0].accepted, false);
+    assert.equal(items[1].category, '已发生事件');
+    assert.deepEqual(LONG_DREAM_CANON_SUGGESTION_CATEGORIES, ['人物关系', '时间地点', '已发生事件', '不可违反事实']);
+});
+
+test('只有用户逐项采纳的 AI 建议会与手写定梦合并，未确认项不进入 canon', () => {
+    const manual = '手写定梦：列车不能驶离环线。';
+    const canon = composeLongDreamCanon(manual, [
+        { category: '人物关系', content: '林岚与周遥是旧识。', accepted: true },
+        { category: '时间地点', content: '故事发生在冬季。', accepted: false },
+        { category: '不可违反事实', content: '列车不能驶离环线。', accepted: true },
+    ]);
+    assert.match(canon, /^手写定梦：列车不能驶离环线。/);
+    assert.match(canon, /【逐项确认的 AI 定梦建议】/);
+    assert.match(canon, /【人物关系】林岚与周遥是旧识。/);
+    assert.doesNotMatch(canon, /故事发生在冬季/);
+    assert.equal(canon.match(/列车不能驶离环线/g)?.length, 1);
+    assert.equal(composeLongDreamCanon(manual, []), manual);
+});
 
 test('长梦以完整首章开卷，并默认隔离原世界书', () => {
     const now = new Date('2026-07-31T12:30:00.000Z');
@@ -212,6 +260,38 @@ test('长梦生成控制器先保存可恢复正文和待确认 HTML，再原子
     assert.equal(confirmed.chapters[1].title, '第二章');
     assert.match(confirmed.chapters[1].html, /第二章第二段/);
     assert.equal(confirmed.draft, null);
+});
+
+test('长梦连续生成并确认五章时只按顺序追加一次，不重复写入章节', async () => {
+    let record = createLongDreamRecord({
+        title: '五夜航线',
+        source: { title: '第一章', text: '起航。', html: '<main>起航。</main>' },
+    });
+    let requestCount = 0;
+    const controller = createLongDreamGenerationController({
+        requestChapter: async ({ userPrompt }) => {
+            requestCount++;
+            if (requestCount > 1) assert.match(userPrompt, new RegExp(`新增第 ${requestCount} 章`));
+            return { text: `新增第 ${requestCount + 1} 章。` };
+        },
+        renderChapter: async ({ text }) => `<main>${text}</main>`,
+    });
+
+    for (let chapterNumber = 2; chapterNumber <= 6; chapterNumber++) {
+        const generated = await controller.run({
+            record,
+            chapterTitle: `第 ${chapterNumber} 章`,
+            instruction: `继续第 ${chapterNumber} 夜。`,
+            autoContinue: false,
+        });
+        record = await controller.confirm(generated.record);
+        assert.equal(record.chapters.length, chapterNumber);
+        assert.equal(record.draft, null);
+    }
+
+    assert.equal(requestCount, 5);
+    assert.deepEqual(record.chapters.map(chapter => chapter.number), [1, 2, 3, 4, 5, 6]);
+    assert.equal(new Set(record.chapters.map(chapter => chapter.id)).size, 6);
 });
 
 test('长梦待确认章节最多保留三版，并只晋升用户选中的候选', async () => {
@@ -477,10 +557,49 @@ test('长梦最终排版失败时保留完整正文草稿，不追加正式章�
         assert.match(error.message, /模拟排版失败/);
         assert.equal(error.longDreamRecord.chapters.length, 1);
         assert.equal(error.longDreamRecord.draft.status, LONG_DREAM_DRAFT_STATUS.WRITING);
+        assert.equal(error.longDreamRecord.draft.resumeStage, LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING);
         assert.equal(error.longDreamRecord.draft.text, '已经完成但尚未排版的第二章。');
         return true;
     });
     assert.equal(stages.at(-1), LONG_DREAM_GENERATION_STAGE.ERROR);
+});
+
+test('长梦排版失败后的恢复只重试最终排版，不再次请求或重复正文', async () => {
+    const record = createLongDreamRecord({
+        source: { text: '第一章。', html: '<main>第一章。</main>' },
+    });
+    let requestCount = 0;
+    let renderCount = 0;
+    let renderPendingRecord;
+    const controller = createLongDreamGenerationController({
+        requestChapter: async () => {
+            requestCount++;
+            return { text: '正文已经完整写完。' };
+        },
+        renderChapter: async ({ text }) => {
+            renderCount++;
+            if (renderCount === 1) throw new Error('第一次排版失败');
+            assert.equal(text, '正文已经完整写完。');
+            return `<main>${text}</main>`;
+        },
+    });
+
+    await assert.rejects(controller.run({ record, chapterTitle: '第二章' }), error => {
+        renderPendingRecord = error.longDreamRecord;
+        return true;
+    });
+    assert.equal(renderPendingRecord.draft.resumeStage, LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING);
+
+    const retried = await controller.run({ record: renderPendingRecord });
+    assert.equal(requestCount, 1);
+    assert.equal(renderCount, 2);
+    assert.equal(retried.rounds, 0);
+    assert.equal(retried.record.draft.status, LONG_DREAM_DRAFT_STATUS.REVIEW);
+    assert.equal(retried.record.draft.text, '正文已经完整写完。');
+
+    const confirmed = await controller.confirm(retried.record);
+    assert.equal(confirmed.chapters.length, 2);
+    assert.equal(confirmed.chapters[1].text, '正文已经完整写完。');
 });
 
 test('待确认长梦草稿不会被新一轮生成静默覆盖', async () => {
@@ -529,6 +648,20 @@ test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => 
     assert.match(source, /旧记录中有一份指令，请核对/);
     assert.match(styles, /梦中页只保留一条主线：续写/);
     assert.match(styles, /\.theater-dream-candidate-switcher/);
+});
+
+test('定梦页把 AI 建议保留为可编辑临时草稿，显式采纳后才参与开卷', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    assert.match(source, /id="theater-dream-canon-suggest"/);
+    assert.match(source, /data-dream-canon-suggestion-content/);
+    assert.match(source, /data-dream-canon-suggestion-action="toggle"/);
+    assert.match(source, /data-dream-canon-suggestion-action="delete"/);
+    assert.match(source, /composeLongDreamCanon\(/);
+    assert.match(source, /activeLongDreamCanonSuggestions\(source\.key\)/);
+    assert.match(source, /只会看到所选第一章正文，不会读取聊天前文或世界书/);
+    assert.match(styles, /\.theater-dream-canon-suggestion\.is-accepted/);
+    assert.match(styles, /\.theater-dream-canon-uncertain/);
 });
 
 test('下一章请求读取整部长卷正文和梦脉，但不携带旧 HTML', () => {
@@ -874,6 +1007,23 @@ test('不完整的待确认长梦草稿会安全回退为可继续的 writing �
     assert.equal(imported[0].draft.text, '尚未排版的正文');
 });
 
+test('正文已完成的长梦草稿经过备份恢复后仍只需重新排版', () => {
+    const record = createLongDreamRecord({
+        source: { text: '第一章', html: '<main>第一章</main>' },
+    });
+    const renderPending = saveLongDreamDraft(record, {
+        status: LONG_DREAM_DRAFT_STATUS.WRITING,
+        resumeStage: LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING,
+        title: '第二章',
+        instruction: '走进旧站。',
+        text: '已经完整写完、只差排版的第二章。',
+    });
+    const restored = parseLongDreamBackup(createLongDreamBackup([renderPending]))[0];
+    assert.equal(restored.draft.status, LONG_DREAM_DRAFT_STATUS.WRITING);
+    assert.equal(restored.draft.resumeStage, LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING);
+    assert.equal(restored.draft.text, '已经完整写完、只差排版的第二章。');
+});
+
 test('全屏阅读使用原生模态弹窗进入浏览器顶层', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
@@ -1206,7 +1356,7 @@ test('历史导入兼容旧 JSON、带清单的新 JSON 和只有 HTML 的旧 ZI
     assert.equal(legacyZipItems[0].html, '<html>ZIP 内容</html>');
 });
 
-test('iframe 导航更换窗口引用后仍能接收渲染回报', () => {
+test('iframe 导航更换窗口引用后仍能接收渲染回报，短暂空正文不会误降级', async () => {
     const originalWindow = globalThis.window;
     let messageHandler = null;
     globalThis.window = {
@@ -1222,16 +1372,46 @@ test('iframe 导航更换窗口引用后仍能接收渲染回报', () => {
         setAttribute() {},
         set srcdoc(value) { this.rendered = value; },
     };
+    let fallbackReason = '';
     try {
         installSafeResizeListener();
-        renderSafeIframe(frame, '<html><body>已有正文</body></html>', { sourceHasText: true });
+        renderSafeIframe(frame, '<html><body>已有正文</body></html>', {
+            sourceHasText: true,
+            blankGraceMs: 20,
+            onBlank: ({ reason }) => { fallbackReason = reason; },
+        });
         const navigatedWindow = {};
         frame.contentWindow = navigatedWindow;
         messageHandler({
             source: navigatedWindow,
+            data: { type: 'st-theater:height', height: 240, textLength: 0 },
+        });
+        messageHandler({
+            source: navigatedWindow,
             data: { type: 'st-theater:height', height: 360, textLength: 4 },
         });
+        await new Promise(resolve => setTimeout(resolve, 30));
+        assert.equal(fallbackReason, '');
         assert.equal(frame.style.height, '360px');
+
+        const blankWindow = {};
+        const blankFrame = {
+            contentWindow: blankWindow,
+            style: {},
+            setAttribute() {},
+            set srcdoc(value) { this.rendered = value; },
+        };
+        renderSafeIframe(blankFrame, '<html><body></body></html>', {
+            sourceHasText: true,
+            blankGraceMs: 10,
+            onBlank: ({ reason }) => { fallbackReason = reason; },
+        });
+        messageHandler({
+            source: blankWindow,
+            data: { type: 'st-theater:height', height: 240, textLength: 0 },
+        });
+        await new Promise(resolve => setTimeout(resolve, 20));
+        assert.equal(fallbackReason, 'empty-body');
 
         const fullscreenWindow = {};
         const fullscreenFrame = {
@@ -2273,6 +2453,8 @@ test('安全 iframe 在 body 末尾注入尺寸与可见正文上报脚本', () 
     const html = injectResizeReporter('<html><body><p>正文</p></body></html>');
     assert.match(html, /st-theater:height/);
     assert.match(html, /textLength/);
+    assert.match(html, /cloneNode\(true\)/);
+    assert.match(html, /script, style, noscript, template, svg/);
     assert.ok(html.indexOf('st-theater:height') < html.indexOf('</body>'));
 });
 

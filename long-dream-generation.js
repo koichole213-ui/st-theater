@@ -1,4 +1,5 @@
 import {
+    LONG_DREAM_DRAFT_RESUME_STAGE,
     LONG_DREAM_DRAFT_STATUS,
     LONG_DREAM_MAX_CANDIDATES,
     appendLongDreamDraftCandidate,
@@ -114,6 +115,9 @@ export function createLongDreamGenerationController({
         const existingDraftText = currentRecord.draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING
             ? currentRecord.draft.text
             : '';
+        const resumeRendering = currentRecord.draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING
+            && currentRecord.draft?.resumeStage === LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING
+            && !!cleanText(existingDraftText);
         const normalizedTitle = cleanText(chapterTitle)
             || currentRecord.draft?.title
             || `第 ${currentRecord.chapters.length + 1} 章`;
@@ -137,9 +141,16 @@ export function createLongDreamGenerationController({
         let requestResult = null;
         let completedRounds = 0;
 
-        const queueDraftPersistence = ({ status, text, html = '', mode = 'text' }) => {
+        const queueDraftPersistence = ({
+            status,
+            text,
+            html = '',
+            mode = 'text',
+            resumeStage = LONG_DREAM_DRAFT_RESUME_STAGE.WRITING,
+        }) => {
             const draftSnapshot = {
                 status,
+                resumeStage,
                 title: normalizedTitle,
                 instruction: normalizedInstruction,
                 targetChars: target,
@@ -176,71 +187,81 @@ export function createLongDreamGenerationController({
 
         active = {
             controller,
-            stage: LONG_DREAM_GENERATION_STAGE.WRITING,
-            round: 1,
+            stage: resumeRendering
+                ? LONG_DREAM_GENERATION_STAGE.RENDERING
+                : LONG_DREAM_GENERATION_STAGE.WRITING,
+            round: resumeRendering ? 0 : 1,
             maxRounds: allowedRounds,
         };
 
         try {
-            await checkpointWritingDraft(true);
-            currentRecord = await persistence;
-            emitState(LONG_DREAM_GENERATION_STAGE.WRITING, {
-                record: currentRecord,
-                chapterTitle: normalizedTitle,
-                targetChars: target,
-                round: 1,
-                maxRounds: allowedRounds,
-            });
-
-            for (let round = 1; round <= allowedRounds; round++) {
-                roundBaseText = accumulatedText;
-                streamedText = '';
-                hasStreamCheckpoint = false;
-                lastCheckpointAt = Number.NEGATIVE_INFINITY;
-                if (active) active.round = round;
-                payload = buildLongDreamChapterPayload({
-                    record: currentRecord,
-                    preset,
-                    addons,
-                    instruction: normalizedInstruction,
-                    chapterTitle: normalizedTitle,
-                    targetChars: target,
-                    currentDraft: roundBaseText,
-                    finishThisRound: !shouldAutoContinue || round === allowedRounds,
-                    maxOptionalContextChars,
-                });
-
-                requestResult = await requestChapter({
-                    systemPrompt: payload.systemPrompt,
-                    userPrompt: payload.userPrompt,
-                    signal: controller.signal,
-                    targetChars: payload.targetChars,
-                    round,
-                    maxRounds: allowedRounds,
-                    onChunk: cumulativeText => {
-                        streamedText = String(cumulativeText || '');
-                        const draftText = composeDraftText(roundBaseText, streamedText);
-                        onStream({
-                            generatedText: streamedText,
-                            draftText,
-                            round,
-                            maxRounds: allowedRounds,
-                        });
-                        checkpointWritingDraft(false);
-                    },
-                });
-                streamedText = String(requestResult?.text ?? requestResult ?? streamedText);
-                if (!cleanText(streamedText)) throw new Error('长梦正文请求没有返回有效内容');
-                accumulatedText = composeDraftText(roundBaseText, streamedText);
-                completedRounds = round;
+            if (!resumeRendering) {
                 await checkpointWritingDraft(true);
                 currentRecord = await persistence;
+                emitState(LONG_DREAM_GENERATION_STAGE.WRITING, {
+                    record: currentRecord,
+                    chapterTitle: normalizedTitle,
+                    targetChars: target,
+                    round: 1,
+                    maxRounds: allowedRounds,
+                });
 
-                if (!shouldAutoContinue || readableCharCount(accumulatedText) >= completionChars) break;
+                for (let round = 1; round <= allowedRounds; round++) {
+                    roundBaseText = accumulatedText;
+                    streamedText = '';
+                    hasStreamCheckpoint = false;
+                    lastCheckpointAt = Number.NEGATIVE_INFINITY;
+                    if (active) active.round = round;
+                    payload = buildLongDreamChapterPayload({
+                        record: currentRecord,
+                        preset,
+                        addons,
+                        instruction: normalizedInstruction,
+                        chapterTitle: normalizedTitle,
+                        targetChars: target,
+                        currentDraft: roundBaseText,
+                        finishThisRound: !shouldAutoContinue || round === allowedRounds,
+                        maxOptionalContextChars,
+                    });
+
+                    requestResult = await requestChapter({
+                        systemPrompt: payload.systemPrompt,
+                        userPrompt: payload.userPrompt,
+                        signal: controller.signal,
+                        targetChars: payload.targetChars,
+                        round,
+                        maxRounds: allowedRounds,
+                        onChunk: cumulativeText => {
+                            streamedText = String(cumulativeText || '');
+                            const draftText = composeDraftText(roundBaseText, streamedText);
+                            onStream({
+                                generatedText: streamedText,
+                                draftText,
+                                round,
+                                maxRounds: allowedRounds,
+                            });
+                            checkpointWritingDraft(false);
+                        },
+                    });
+                    streamedText = String(requestResult?.text ?? requestResult ?? streamedText);
+                    if (!cleanText(streamedText)) throw new Error('长梦正文请求没有返回有效内容');
+                    accumulatedText = composeDraftText(roundBaseText, streamedText);
+                    completedRounds = round;
+                    await checkpointWritingDraft(true);
+                    currentRecord = await persistence;
+
+                    if (!shouldAutoContinue || readableCharCount(accumulatedText) >= completionChars) break;
+                }
             }
 
             const finalText = accumulatedText;
             if (!finalText.trim()) throw new Error('长梦正文请求没有返回有效内容');
+
+            currentRecord = await queueDraftPersistence({
+                status: LONG_DREAM_DRAFT_STATUS.WRITING,
+                resumeStage: LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING,
+                text: finalText,
+            });
 
             emitState(LONG_DREAM_GENERATION_STAGE.RENDERING, {
                 record: currentRecord,
@@ -283,7 +304,15 @@ export function createLongDreamGenerationController({
             };
         } catch (error) {
             try {
-                await checkpointWritingDraft(true);
+                if (active?.stage === LONG_DREAM_GENERATION_STAGE.RENDERING && cleanText(accumulatedText)) {
+                    await queueDraftPersistence({
+                        status: LONG_DREAM_DRAFT_STATUS.WRITING,
+                        resumeStage: LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING,
+                        text: accumulatedText,
+                    });
+                } else {
+                    await checkpointWritingDraft(true);
+                }
                 currentRecord = await persistence;
             } catch (persistError) {
                 attachRecord(persistError, currentRecord);
