@@ -33,10 +33,59 @@ function memoryText(cards = []) {
             if (status && !['active', 'confirmed', 'accepted', '已确认'].includes(status)) return '';
             const title = cleanText(card?.title || card?.type || `记忆 ${index + 1}`);
             const content = cleanText(card?.content || card?.text || card?.summary);
-            return content ? `${title}：${content}` : '';
+            const slot = cleanText(card?.key);
+            const sources = (Array.isArray(card?.sourceChapterNumbers) ? card.sourceChapterNumbers : [card?.chapterNumber])
+                .map(Number).filter(Number.isFinite);
+            return content ? `${title}${slot ? `｜${slot}` : ''}${sources.length ? `（来源第 ${sources.join('、')} 章）` : ''}：${content}` : '';
         })
         .filter(Boolean)
         .join('\n');
+}
+
+function relevanceTerms(value = '') {
+    const text = cleanText(value).toLocaleLowerCase();
+    const terms = new Set((text.match(/[a-z0-9_]{2,}|[\u3400-\u9fff]{2,}/g) || []).slice(0, 80));
+    for (const sequence of text.match(/[\u3400-\u9fff]{3,}/g) || []) {
+        for (let index = 0; index < sequence.length - 1 && terms.size < 120; index++) {
+            terms.add(sequence.slice(index, index + 2));
+        }
+    }
+    return [...terms];
+}
+
+export function selectRelevantLongDreamMemoryCards(record = {}, {
+    instruction = '',
+    recentChapterCount = 4,
+    maxCards = 30,
+} = {}) {
+    const cards = (Array.isArray(record?.memory?.cards) ? record.memory.cards : [])
+        .filter(card => card?.status !== 'dismissed');
+    if (cards.length <= maxCards) return cards;
+    const chapterCount = Array.isArray(record?.chapters) ? record.chapters.length : 0;
+    const recentStart = Math.max(1, chapterCount - Math.max(1, recentChapterCount) + 1);
+    const query = cleanText(instruction).toLocaleLowerCase();
+    const terms = relevanceTerms(instruction);
+    const importantTypes = new Set(['人物状态', '关系', '世界线偏离', '伏笔/约定', '地点/物品']);
+    return cards.map((card, index) => {
+        const haystack = [card.type, card.key, card.content, ...(card.tags || [])].join(' ').toLocaleLowerCase();
+        const tagHit = (card.tags || []).some(tag => query.includes(cleanText(tag).toLocaleLowerCase()));
+        const keyHit = card.key && (query.includes(cleanText(card.key).toLocaleLowerCase())
+            || cleanText(card.key).toLocaleLowerCase().includes(query));
+        const termHits = terms.reduce((score, term) => score + (haystack.includes(term) ? 1 : 0), 0);
+        const sources = Array.isArray(card.sourceChapterNumbers) ? card.sourceChapterNumbers : [card.chapterNumber];
+        const recent = sources.some(number => Number(number) >= recentStart);
+        const score = (card.editedByUser ? 40 : 0)
+            + (keyHit ? 24 : 0)
+            + (tagHit ? 18 : 0)
+            + Math.min(18, termHits * 2)
+            + (recent ? 12 : 0)
+            + (importantTypes.has(card.type) ? 6 : 0)
+            + Math.min(5, Math.max(0, Number(card.chapterNumber) || 0) / Math.max(1, chapterCount) * 5);
+        return { card, score, index };
+    }).sort((a, b) => b.score - a.score || Number(b.card.chapterNumber) - Number(a.card.chapterNumber) || a.index - b.index)
+        .slice(0, Math.max(1, Math.floor(Number(maxCards) || 30)))
+        .sort((a, b) => Number(a.card.chapterNumber) - Number(b.card.chapterNumber) || a.index - b.index)
+        .map(item => item.card);
 }
 
 export function longDreamWorldBookContext(record = {}) {
@@ -72,24 +121,64 @@ export function longDreamWorldBookEntries(record = {}) {
         .filter(entry => entry.content));
 }
 
-export function longDreamChapterContext(record = {}) {
-    const chapters = (Array.isArray(record.chapters) ? record.chapters : [])
+export function longDreamChapterContext(record = {}, {
+    instruction = '',
+    recentChapterCount = 4,
+    maxMemoryCards = 30,
+    maxOlderOutlineChars = 12000,
+} = {}) {
+    const allChapters = Array.isArray(record.chapters) ? record.chapters : [];
+    const keepRecent = Math.max(1, Math.floor(Number(recentChapterCount) || 4));
+    const recentChapters = allChapters.slice(-keepRecent);
+    const olderChapters = allChapters.slice(0, Math.max(0, allChapters.length - recentChapters.length));
+    const chapters = recentChapters
         .map((chapter, index) => {
             const text = chapterText(chapter);
             if (!text) return '';
-            return `【第 ${index + 1} 章 · ${cleanText(chapter.title) || `第 ${index + 1} 章`}】\n${text}`;
+            const number = Number(chapter.number) || olderChapters.length + index + 1;
+            return `【第 ${number} 章 · ${cleanText(chapter.title) || `第 ${number} 章`}】\n${text}`;
         })
         .filter(Boolean)
         .join('\n\n');
+    const olderOutlineItems = olderChapters.map(chapter => {
+        const text = chapterText(chapter);
+        const excerpt = text.length > 180 ? `${text.slice(0, 90)}……${text.slice(-90)}` : text;
+        return `- 第 ${chapter.number} 章《${cleanText(chapter.title) || `第 ${chapter.number} 章`}》${chapter.instruction ? `；原方向：${cleanText(chapter.instruction).slice(0, 100)}` : ''}${excerpt ? `；首尾摘记：${excerpt}` : ''}`;
+    });
+    const outlineLimit = Math.max(1000, Math.floor(Number(maxOlderOutlineChars) || 12000));
+    let olderOutline = olderOutlineItems.join('\n');
+    if (olderOutline.length > outlineLimit) {
+        const first = olderOutlineItems[0] || '';
+        const marker = '- ……（更早章节索引已压缩；连续事实以梦脉为准）';
+        const tail = [];
+        let used = first.length + marker.length + 2;
+        for (let index = olderOutlineItems.length - 1; index > 0; index--) {
+            const item = olderOutlineItems[index];
+            if (used + item.length + 1 > outlineLimit) break;
+            tail.unshift(item);
+            used += item.length + 1;
+        }
+        olderOutline = [first, marker, ...tail].filter(Boolean).join('\n');
+    }
     const currentState = cleanText(record?.memory?.currentState);
-    const cards = memoryText(record?.memory?.cards);
+    const selectedCards = selectRelevantLongDreamMemoryCards(record, {
+        instruction,
+        recentChapterCount: keepRecent,
+        maxCards: maxMemoryCards,
+    });
+    const cards = memoryText(selectedCards);
     return {
         canon: cleanText(record.canon),
         chapters,
+        olderOutline,
         memory: [currentState ? `当前脉象：${currentState}` : '', cards].filter(Boolean).join('\n'),
+        selectedMemoryCount: selectedCards.length,
+        activeMemoryCount: (record?.memory?.cards || []).filter(card => card?.status !== 'dismissed').length,
         worldBook: longDreamWorldBookContext(record),
         worldLineRelation: record?.inheritance?.worldLineRelation || LONG_DREAM_WORLD_LINE_RELATION.ISOLATED,
-        chapterCount: Array.isArray(record.chapters) ? record.chapters.length : 0,
+        chapterCount: allChapters.length,
+        recentChapterCount: recentChapters.length,
+        olderChapterCount: olderChapters.length,
     };
 }
 
@@ -174,13 +263,13 @@ export function buildLongDreamChapterPayload({
     maxOptionalContextChars = Infinity,
     structuredPreset = false,
 } = {}) {
-    const context = longDreamChapterContext(record);
+    const direction = cleanText(instruction) || '自然承接上一章尚未解决的动作、情绪与伏笔。';
+    const context = longDreamChapterContext(record, { instruction: direction });
     if (!context.chapters) throw new Error('长梦缺少可续写的已保存章节');
     const target = Math.max(500, Math.min(8000, Math.round(Number(targetChars) || 3000)));
     const draft = cleanText(currentDraft);
     const draftChars = readableCharCount(draft);
     const remainingChars = Math.max(0, target - draftChars);
-    const direction = cleanText(instruction) || '自然承接上一章尚未解决的动作、情绪与伏笔。';
     const title = cleanText(chapterTitle) || `第 ${context.chapterCount + 1} 章`;
     const requestedBudget = Number(maxOptionalContextChars);
     const budget = Number.isFinite(requestedBudget) && requestedBudget >= 0 ? Math.floor(requestedBudget) : Infinity;
@@ -190,6 +279,7 @@ export function buildLongDreamChapterPayload({
     const current = takeBudgeted(draft, budgetState, 'currentDraft', { keepTail: true });
     const chapters = takeBudgeted(context.chapters, budgetState, 'chapters', { keepTail: true });
     const memory = takeBudgeted(context.memory, budgetState, 'memory');
+    const olderOutline = takeBudgeted(context.olderOutline, budgetState, 'olderChapterOutline');
     const worldInfoEntries = structuredPreset
         ? takeBudgetedEntries(longDreamWorldBookEntries(record), budgetState, 'worldBookSnapshot')
         : [];
@@ -211,7 +301,8 @@ export function buildLongDreamChapterPayload({
             ? `目标是本章完整正文约 ${target} 字；本章已有约 ${draftChars} 字，本轮只补写为接近总目标仍需新增的内容（约 ${remainingChars} 字，可随情节自然浮动），不要报告或标注字数。`
             : `目标正文约 ${target} 字；不需要自行统计、报告或标注字数。`}`,
         context.canon ? `【此梦设定｜用户已确认的持续硬事实】\n${context.canon}` : '【此梦设定】\n暂无额外设定；以已保存章节中已经成立的事实为准。',
-        chapters ? `【已保存章节｜只作前情，不得复述】\n${chapters}` : '【已保存章节】\n受本次上下文预算限制，未附带章节原文；不得自行补入其他世界线。',
+        chapters ? `【近期已保存章节｜最近 ${context.recentChapterCount} 章全文，只作前情不得复述】\n${chapters}` : '【近期已保存章节】\n受本次上下文预算限制，未附带章节原文；不得自行补入其他世界线。',
+        olderOutline ? `【较早章节压缩索引｜${context.olderChapterCount} 章】\n${olderOutline}` : '',
         current ? `【本章可恢复草稿｜只承接结尾，不得重复】\n${current}` : '',
         memory ? `【已确认梦脉｜辅助核对，不得覆盖原章节】\n${memory}` : '',
         worldBook

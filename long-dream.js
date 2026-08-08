@@ -26,6 +26,10 @@ export const LONG_DREAM_MEMORY_STATUS = Object.freeze({
     FAILED: 'failed',
 });
 
+export const LONG_DREAM_MEMORY_TYPES = Object.freeze([
+    '人物状态', '人生经历', '关系', '世界线偏离', '伏笔/约定', '地点/物品', '事件', '关键原话', '事实',
+]);
+
 export const LONG_DREAM_DRAFT_STATUS = Object.freeze({
     WRITING: 'writing',
     REVIEW: 'review',
@@ -120,16 +124,37 @@ function normalizeMemoryCard(card, index = 0) {
     const status = ['dismissed', '废止'].includes(cleanText(card.status, 30).toLocaleLowerCase())
         ? 'dismissed'
         : 'active';
+    const sourceChapterNumbers = [...new Set([
+        ...(Array.isArray(card.sourceChapterNumbers) ? card.sourceChapterNumbers : []),
+        card.chapterNumber,
+    ].map(value => Math.floor(Number(value))).filter(value => value >= 1))].sort((a, b) => a - b);
     return {
         id: cleanText(card.id, 100) || `memory-${chapterNumber}-${index + 1}`,
         type: cleanText(card.type, 60) || '事实',
+        key: cleanText(card.key || card.subject, 120),
         content,
         chapterId: cleanText(card.chapterId, 100) || `chapter-${chapterNumber}`,
         chapterNumber,
+        sourceChapterNumbers: sourceChapterNumbers.length ? sourceChapterNumbers : [chapterNumber],
         quote: cleanText(card.quote, 240),
         status,
         tags: cleanStringList(card.tags, 20),
+        editedByUser: card.editedByUser === true,
+        updatedAt: cleanText(card.updatedAt, 60),
     };
+}
+
+function resetMemoryForChapters(chapters = []) {
+    const numbers = chapters.map(chapter => Math.max(1, Math.floor(Number(chapter?.number) || 1)));
+    return normalizeMemory({
+        status: numbers.length ? LONG_DREAM_MEMORY_STATUS.PENDING : LONG_DREAM_MEMORY_STATUS.NOT_STARTED,
+        cards: [],
+        currentState: '',
+        processedThroughChapter: 0,
+        pendingChapterNumbers: numbers,
+        updatedAt: '',
+        lastErrorSignal: '',
+    }, numbers.length);
 }
 
 function normalizeMemory(memory = {}, chapterCount = 0) {
@@ -501,12 +526,56 @@ export function truncateLongDreamAfter(record, chapterId, now = new Date()) {
     if (!normalized) throw new Error('长梦记录无效');
     const index = normalized.chapters.findIndex(chapter => String(chapter.id) === String(chapterId));
     if (index < 0) throw new Error('没有找到截断位置');
+    const chapters = normalized.chapters.slice(0, index + 1);
+    if (chapters.length === normalized.chapters.length && !normalized.draft) return normalized;
     return {
         ...normalized,
-        chapters: normalized.chapters.slice(0, index + 1),
+        chapters,
+        memory: resetMemoryForChapters(chapters),
         status: LONG_DREAM_STATUS.ACTIVE,
         draft: null,
         updatedAt: normalizeIsoDate(now, new Date().toISOString()),
+    };
+}
+
+export function deleteLongDreamFrom(record, chapterId, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) throw new Error('长梦记录无效');
+    const index = normalized.chapters.findIndex(chapter => String(chapter.id) === String(chapterId));
+    if (index < 0) throw new Error('没有找到删除位置');
+    if (index === 0) throw new Error('第一章不能单独删除；如需移除请删除整部长卷');
+    return truncateLongDreamAfter(normalized, normalized.chapters[index - 1].id, now);
+}
+
+export function createLongDreamBranch(record, chapterId, {
+    includeChapter = true,
+    title = '',
+} = {}, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) throw new Error('长梦记录无效');
+    const index = normalized.chapters.findIndex(chapter => String(chapter.id) === String(chapterId));
+    if (index < 0) throw new Error('没有找到分支位置');
+    const end = includeChapter ? index + 1 : index;
+    if (end < 1) throw new Error('不能在第一章之前创建空长卷');
+    const createdAt = normalizeIsoDate(now, new Date().toISOString());
+    const chapters = normalized.chapters.slice(0, end);
+    return {
+        ...normalized,
+        id: undefined,
+        title: cleanText(title, 80) || `${normalized.title}（第 ${includeChapter ? index + 1 : index} 章支线）`,
+        status: LONG_DREAM_STATUS.ACTIVE,
+        createdAt,
+        updatedAt: createdAt,
+        source: {
+            kind: 'long-dream-branch',
+            refId: normalized.id ?? null,
+            title: normalized.title,
+            instruction: '',
+            capturedAt: createdAt,
+        },
+        chapters,
+        memory: resetMemoryForChapters(chapters),
+        draft: null,
     };
 }
 
@@ -556,14 +625,45 @@ export function applyLongDreamMemoryPatch(record, patch = {}, throughChapter, no
         Math.min(normalized.chapters.length, Math.floor(Number(throughChapter) || 0)),
     );
     const cards = normalized.memory.cards.slice();
-    const known = new Set(cards.map(card => `${card.type}\u0000${card.content}`.toLocaleLowerCase()));
     for (const rawCard of Array.isArray(patch.cards) ? patch.cards : []) {
         const card = normalizeMemoryCard(rawCard, cards.length);
         if (!card) continue;
-        const key = `${card.type}\u0000${card.content}`.toLocaleLowerCase();
-        if (known.has(key)) continue;
-        known.add(key);
-        cards.push(card);
+        const exactIndex = cards.findIndex(existing => existing.status !== 'dismissed'
+            && `${existing.type}\u0000${existing.content}`.toLocaleLowerCase()
+                === `${card.type}\u0000${card.content}`.toLocaleLowerCase());
+        if (exactIndex >= 0) {
+            cards[exactIndex] = normalizeMemoryCard({
+                ...cards[exactIndex],
+                sourceChapterNumbers: [
+                    ...(cards[exactIndex].sourceChapterNumbers || []),
+                    ...(card.sourceChapterNumbers || []),
+                ],
+                tags: [...(cards[exactIndex].tags || []), ...(card.tags || [])],
+                quote: card.quote || cards[exactIndex].quote,
+                updatedAt: normalizeIsoDate(now, new Date().toISOString()),
+            }, exactIndex);
+            continue;
+        }
+        const slotIndex = card.key ? cards.findIndex(existing => existing.status !== 'dismissed'
+            && existing.type.toLocaleLowerCase() === card.type.toLocaleLowerCase()
+            && existing.key.toLocaleLowerCase() === card.key.toLocaleLowerCase()) : -1;
+        if (slotIndex >= 0) {
+            const previous = cards[slotIndex];
+            cards[slotIndex] = normalizeMemoryCard({
+                ...previous,
+                ...(previous.editedByUser ? {} : card),
+                id: previous.id,
+                sourceChapterNumbers: [
+                    ...(previous.sourceChapterNumbers || []),
+                    ...(card.sourceChapterNumbers || []),
+                ],
+                tags: [...(previous.tags || []), ...(card.tags || [])],
+                quote: previous.editedByUser ? previous.quote : (card.quote || previous.quote),
+                updatedAt: normalizeIsoDate(now, new Date().toISOString()),
+            }, slotIndex);
+            continue;
+        }
+        cards.push({ ...card, updatedAt: normalizeIsoDate(now, new Date().toISOString()) });
     }
     const updatedAt = normalizeIsoDate(now, new Date().toISOString());
     const memory = normalizeMemory({
@@ -579,6 +679,68 @@ export function applyLongDreamMemoryPatch(record, patch = {}, throughChapter, no
         lastErrorSignal: '',
     }, normalized.chapters.length);
     return { ...normalized, memory, updatedAt };
+}
+
+export function updateLongDreamMemoryCard(record, cardId, changes = {}, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) throw new Error('长梦记录无效');
+    const index = normalized.memory.cards.findIndex(card => String(card.id) === String(cardId));
+    if (index < 0) throw new Error('没有找到要修改的梦脉');
+    const previous = normalized.memory.cards[index];
+    const updatedAt = normalizeIsoDate(now, new Date().toISOString());
+    const next = normalizeMemoryCard({
+        ...previous,
+        type: changes.type ?? previous.type,
+        key: changes.key ?? previous.key,
+        content: changes.content ?? previous.content,
+        tags: changes.tags ?? previous.tags,
+        quote: changes.quote ?? previous.quote,
+        editedByUser: true,
+        updatedAt,
+    }, index);
+    if (!next) throw new Error('梦脉内容不能为空');
+    const cards = normalized.memory.cards.slice();
+    cards[index] = next;
+    return {
+        ...normalized,
+        memory: { ...normalized.memory, cards, updatedAt },
+        updatedAt,
+    };
+}
+
+export function setLongDreamMemoryCardStatus(record, cardId, status, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) throw new Error('长梦记录无效');
+    const index = normalized.memory.cards.findIndex(card => String(card.id) === String(cardId));
+    if (index < 0) throw new Error('没有找到要处理的梦脉');
+    const updatedAt = normalizeIsoDate(now, new Date().toISOString());
+    const cards = normalized.memory.cards.slice();
+    cards[index] = {
+        ...cards[index],
+        status: status === 'dismissed' ? 'dismissed' : 'active',
+        editedByUser: true,
+        updatedAt,
+    };
+    return {
+        ...normalized,
+        memory: { ...normalized.memory, cards, updatedAt },
+        updatedAt,
+    };
+}
+
+export function updateLongDreamMemoryState(record, currentState, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) throw new Error('长梦记录无效');
+    const updatedAt = normalizeIsoDate(now, new Date().toISOString());
+    return {
+        ...normalized,
+        memory: {
+            ...normalized.memory,
+            currentState: cleanText(currentState, 5000),
+            updatedAt,
+        },
+        updatedAt,
+    };
 }
 
 export function saveLongDreamDraft(record, draft = {}, now = new Date()) {

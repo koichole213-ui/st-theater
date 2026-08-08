@@ -69,7 +69,12 @@ function safeSnapshot(snapshot = null, fallbackDate) {
                 caseSensitive: entry?.caseSensitive === true,
                 matchWholeWords: entry?.matchWholeWords === true,
                 position: Number.isFinite(Number(entry?.position)) ? Number(entry.position) : null,
+                depth: Number.isFinite(Number(entry?.depth)) ? Math.max(0, Math.floor(Number(entry.depth))) : 4,
                 order: Number.isFinite(Number(entry?.order)) ? Number(entry.order) : null,
+                role: ['system', 'user', 'assistant'].includes(String(entry?.role || '').toLowerCase())
+                    ? String(entry.role).toLowerCase()
+                    : 'system',
+                outletName: cleanText(entry?.outletName, 300),
             };
         }).filter(Boolean);
         return { name, entries };
@@ -130,6 +135,7 @@ function safeMemory(memory = {}, fallbackDate) {
         return {
             id: cleanText(card?.id, 120) || `memory-${index + 1}`,
             type: cleanText(card?.type, 80) || 'note',
+            key: cleanText(card?.key || card?.subject, 120),
             title: cleanText(card?.title, 200),
             content,
             quote: cleanText(card?.quote, 1000),
@@ -137,6 +143,9 @@ function safeMemory(memory = {}, fallbackDate) {
             tags: cleanList(card?.tags, 50),
             chapterId: cleanText(card?.chapterId, 120),
             chapterNumber: Number.isFinite(Number(card?.chapterNumber)) ? Math.max(1, Math.floor(Number(card.chapterNumber))) : null,
+            sourceChapterNumbers: [...new Set((Array.isArray(card?.sourceChapterNumbers) ? card.sourceChapterNumbers : [card?.chapterNumber])
+                .map(value => Math.floor(Number(value))).filter(value => value >= 1))].sort((a, b) => a - b),
+            editedByUser: card?.editedByUser === true,
             createdAt: safeDate(card?.createdAt, fallbackDate),
             updatedAt: safeDate(card?.updatedAt, fallbackDate),
         };

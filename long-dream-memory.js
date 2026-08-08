@@ -1,14 +1,16 @@
-import { LONG_DREAM_WORLD_LINE_RELATION } from './long-dream.js';
+import { LONG_DREAM_MEMORY_TYPES, LONG_DREAM_WORLD_LINE_RELATION } from './long-dream.js';
 import { reasoningSafeContent } from './reasoning-filter.js';
 
 export const DEFAULT_LONG_DREAM_MEMORY_PRESET = `你负责“梦脉织录”：只从已经确认保存的章节中提取可核对的连续性事实。
 
 规则：
 1. 不续写、不润色、不替故事补全空白，不把推测写成事实；
-2. 只记录会影响后续连载的事件、人物状态、关系变化、地点或物品、伏笔、约定、关键原话与世界线偏离；
+2. 只记录会影响后续连载的人物状态、人生经历、关系、世界线偏离、伏笔/约定、地点/物品、事件与关键原话；
 3. 此梦设定和已保存章节高于原世界书参考；发现冲突时记录“世界线偏离”，不能把原设定覆盖回来；
-4. 每条内容必须简短、明确，并标出来源章节；quote 只保留确有必要的短句；
-5. 只能输出合法 JSON，不输出 Markdown、代码围栏、解释或创作建议。`;
+4. “世界线偏离”必须在 content 中依次写清：原线事实 → 本梦改变 → 直接结果 → 此后不能再默认成立的关系/经历；缺少原线参考时明确写“原线未知”，不得猜测；
+5. 每条内容必须简短、明确，并标出来源章节；quote 只保留确有必要的短句；
+6. 对“某人物的当前位置”“两人的当前关系”等会变化的状态，使用稳定 key；同一 type + key 的新事实会原位更新，而不是无限追加旧版本；
+7. 只能输出合法 JSON，不输出 Markdown、代码围栏、解释或创作建议。`;
 
 const RELATION_GUIDANCE = Object.freeze({
     [LONG_DREAM_WORLD_LINE_RELATION.ISOLATED]: '完全隔离：原世界书不属于本梦事实，也不用于判断偏离。',
@@ -39,7 +41,7 @@ function activeMemoryText(memory = {}) {
     const state = cleanText(memory.currentState);
     const cards = (Array.isArray(memory.cards) ? memory.cards : [])
         .filter(card => card?.status !== 'dismissed')
-        .map(card => `- [${cleanText(card.type) || '事实'}｜第 ${Number(card.chapterNumber) || '?'} 章] ${cleanText(card.content)}`)
+        .map(card => `- [${cleanText(card.type) || '事实'}${card.key ? `｜${cleanText(card.key)}` : ''}｜来源第 ${(card.sourceChapterNumbers || [card.chapterNumber]).join('、')} 章] ${cleanText(card.content)}`)
         .filter(Boolean)
         .join('\n');
     return [state ? `当前脉象：${state}` : '', cards].filter(Boolean).join('\n');
@@ -98,7 +100,8 @@ export function buildLongDreamMemoryPayload({
   "currentState": "截至第 ${allowedNumbers.at(-1)} 章的当前时间、地点、人物与关系状态，控制在 600 字内",
   "cards": [
     {
-      "type": "事件|人物状态|关系变化|地点/物品|伏笔|约定|关键原话|世界线偏离",
+      "type": "人物状态|人生经历|关系|世界线偏离|伏笔/约定|地点/物品|事件|关键原话|事实",
+      "key": "会变化状态的稳定槽位，例如 林岚/所在地点、林岚与周砚/关系；一次性事件可留空",
       "content": "可核对的简短事实",
       "chapterNumber": ${allowedNumbers.at(-1)},
       "quote": "可选的短原句",
@@ -139,12 +142,16 @@ export function parseLongDreamMemoryResponse(value, { pendingChapterNumbers = []
             const tags = [...new Set((Array.isArray(card?.tags) ? card.tags : [])
                 .map(tag => cleanText(tag, 80))
                 .filter(Boolean))].slice(0, 20);
+            const requestedType = cleanText(card?.type, 60) || '事实';
+            const type = LONG_DREAM_MEMORY_TYPES.includes(requestedType) ? requestedType : '事实';
             return {
                 id: `memory-${chapterNumber}-${Date.now().toString(36)}-${index + 1}`,
-                type: cleanText(card?.type, 60) || '事实',
+                type,
+                key: cleanText(card?.key || card?.subject, 120),
                 content,
                 chapterId: `chapter-${chapterNumber}`,
                 chapterNumber,
+                sourceChapterNumbers: [chapterNumber],
                 quote: cleanText(card?.quote, 240),
                 status: 'active',
                 tags,
