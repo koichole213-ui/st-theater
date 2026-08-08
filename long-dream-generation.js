@@ -58,7 +58,7 @@ export function createLongDreamGenerationController({
     persistRecord = async record => record,
     onState = noop,
     onStream = noop,
-    checkpointIntervalMs = 750,
+    checkpointIntervalMs = 3000,
     clock = () => Date.now(),
     now = () => new Date(),
     createAbortController = () => new AbortController(),
@@ -97,6 +97,7 @@ export function createLongDreamGenerationController({
         maxRounds = 3,
         maxOptionalContextChars = Infinity,
         appendCandidate = false,
+        apiRoute,
     } = {}) {
         if (active) throw new Error('已有长梦章节正在生成');
         let currentRecord = normalizeLongDreamRecord(record);
@@ -144,6 +145,8 @@ export function createLongDreamGenerationController({
         let payload = null;
         let requestResult = null;
         let completedRounds = 0;
+        let pendingDraftSnapshot = null;
+        let persistenceActive = false;
 
         const queueDraftPersistence = ({
             status,
@@ -152,7 +155,7 @@ export function createLongDreamGenerationController({
             mode = 'text',
             resumeStage = LONG_DREAM_DRAFT_RESUME_STAGE.WRITING,
         }) => {
-            const draftSnapshot = {
+            pendingDraftSnapshot = {
                 status,
                 resumeStage,
                 title: normalizedTitle,
@@ -164,9 +167,20 @@ export function createLongDreamGenerationController({
                 candidates: retainedCandidates,
                 selectedCandidateIndex: retainedSelectedCandidateIndex,
             };
+            if (persistenceActive) return persistence;
+            persistenceActive = true;
             persistence = persistence.then(async latestRecord => {
-                const nextRecord = saveLongDreamDraft(latestRecord, draftSnapshot, now());
-                return storeRecord(nextRecord);
+                try {
+                    while (pendingDraftSnapshot) {
+                        const nextSnapshot = pendingDraftSnapshot;
+                        pendingDraftSnapshot = null;
+                        const nextRecord = saveLongDreamDraft(latestRecord, nextSnapshot, now());
+                        latestRecord = await storeRecord(nextRecord);
+                    }
+                    return latestRecord;
+                } finally {
+                    persistenceActive = false;
+                }
             });
             return persistence;
         };
@@ -244,6 +258,7 @@ export function createLongDreamGenerationController({
                         targetChars: payload.targetChars,
                         round,
                         maxRounds: allowedRounds,
+                        apiRoute,
                         onChunk: cumulativeText => {
                             streamedText = String(cumulativeText || '');
                             const draftText = composeDraftText(roundBaseText, streamedText);
@@ -287,6 +302,7 @@ export function createLongDreamGenerationController({
                 chapterTitle: normalizedTitle,
                 targetChars: target,
                 signal: controller.signal,
+                apiRoute,
             }));
             persistence = persistence.then(async latestRecord => {
                 const nextRecord = appendLongDreamDraftCandidate(latestRecord, {

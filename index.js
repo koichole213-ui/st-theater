@@ -6221,6 +6221,7 @@ async function requestFinalRenderedHtml({
     rules,
     ctx,
     signal,
+    apiRoute,
     onChunk = () => {},
     onRetry = () => {},
     renderLabel = '所选模板',
@@ -6242,26 +6243,16 @@ async function requestFinalRenderedHtml({
             });
             onRetry(lastValidationError);
         }
-        lastRequestMetrics = createRequestMetrics(settings.apiMode === 'main'
-            ? `main:${metricScope}`
-            : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}:${metricScope}`);
         try {
-            const result = settings.apiMode === 'main'
-                ? await generateWithMainAPI(
-                    ctx,
-                    finalRenderPayload.systemPrompt,
-                    finalRenderPayload.userPrompt + retryNote,
-                    onChunk,
-                    settings.streamEnabled !== false,
-                    signal,
-                )
-                : await callCustomAPIStream(
-                    finalRenderPayload.systemPrompt,
-                    finalRenderPayload.userPrompt + retryNote,
-                    onChunk,
-                    settings.streamEnabled !== false,
-                    signal,
-                );
+            const result = await requestConfiguredGenerationApi({
+                apiRoute,
+                ctx,
+                systemPrompt: finalRenderPayload.systemPrompt,
+                userPrompt: finalRenderPayload.userPrompt + retryNote,
+                onChunk,
+                signal,
+                metricScope,
+            });
             const renderText = typeof result === 'string' ? result : result?.text;
             if (!renderText) throw new Error('最终渲染未返回内容');
             markCompleted(lastRequestMetrics);
@@ -6302,14 +6293,9 @@ async function requestLongDreamChapter({
     presetName = '',
     signal,
     onChunk,
+    apiRoute,
 }) {
     const ctx = SillyTavern.getContext();
-    if (settings.apiMode !== 'main' && (!settings.apiUrl || !settings.apiModel)) {
-        throw new Error('请先在【设置】里填好 API URL 和模型再续写长梦');
-    }
-    lastRequestMetrics = createRequestMetrics(settings.apiMode === 'main'
-        ? 'main:long-dream'
-        : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}:long-dream`);
     try {
         const onSafeChunk = cumulativeText => onChunk(normalizeLongDreamResponseText(cumulativeText));
         const requestOptions = {
@@ -6318,9 +6304,16 @@ async function requestLongDreamChapter({
             presetName: presetName || settings.selectedPresetName || '内置默认预设',
             tracePurpose: 'creative',
         };
-        const result = settings.apiMode === 'main'
-            ? await generateWithMainAPI(ctx, systemPrompt, userPrompt, onSafeChunk, settings.streamEnabled !== false, signal, requestOptions)
-            : await callCustomAPIStream(systemPrompt, userPrompt, onSafeChunk, settings.streamEnabled !== false, signal, requestOptions);
+        const result = await requestConfiguredGenerationApi({
+            apiRoute,
+            ctx,
+            systemPrompt,
+            userPrompt,
+            onChunk: onSafeChunk,
+            signal,
+            requestOptions,
+            metricScope: 'long-dream',
+        });
         const rawText = typeof result === 'string' ? result : result?.text;
         const text = normalizeLongDreamResponseText(rawText);
         if (!String(text || '').trim()) throw new Error('长梦正文请求没有返回内容');
@@ -6438,7 +6431,7 @@ async function generateLongDreamCanonSuggestions() {
     }
 }
 
-async function renderLongDreamChapter({ text, signal }) {
+async function renderLongDreamChapter({ text, signal, apiRoute }) {
     const selection = resolveRenderSelection(false);
     if (selection.isPlainTextRender) {
         return {
@@ -6451,6 +6444,7 @@ async function renderLongDreamChapter({ text, signal }) {
         rules: selection.rules,
         ctx: SillyTavern.getContext(),
         signal,
+        apiRoute,
         renderLabel: selection.label,
         metricScope: 'long-dream-final-render',
         onChunk: rendered => {
@@ -6463,12 +6457,66 @@ async function renderLongDreamChapter({ text, signal }) {
     });
 }
 
+function createCumulativeStreamRenderer(resolveElement, intervalMs = 100) {
+    let pendingText = '';
+    let timer = null;
+
+    const flush = () => {
+        if (timer) clearTimeout(timer);
+        timer = null;
+        const el = typeof resolveElement === 'function' ? resolveElement() : resolveElement;
+        if (!el) return;
+        const currentText = String(el.textContent || '');
+        const wasNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+        if (pendingText.startsWith(currentText)) {
+            const delta = pendingText.slice(currentText.length);
+            if (delta) el.appendChild(document.createTextNode(delta));
+        } else if (currentText !== pendingText) {
+            el.textContent = pendingText;
+        }
+        if (wasNearBottom) el.scrollTop = el.scrollHeight;
+    };
+
+    return {
+        update(value, { immediate = false } = {}) {
+            pendingText = String(value || '');
+            if (immediate) {
+                flush();
+            } else if (!timer) {
+                timer = setTimeout(flush, Math.max(0, Number(intervalMs) || 0));
+            }
+        },
+        flush,
+        reset({ flushPending = false } = {}) {
+            if (flushPending) flush();
+            else if (timer) clearTimeout(timer);
+            timer = null;
+            pendingText = '';
+        },
+    };
+}
+
+let longDreamStreamRenderer = null;
+let longDreamStreamFirstChunk = true;
+
+function getLongDreamStreamRenderer() {
+    if (!longDreamStreamRenderer) {
+        longDreamStreamRenderer = createCumulativeStreamRenderer(
+            () => document.getElementById('theater-dream-generation-text'),
+        );
+    }
+    return longDreamStreamRenderer;
+}
+
+function resetLongDreamStreamRenderer({ flushPending = false } = {}) {
+    getLongDreamStreamRenderer().reset({ flushPending });
+    longDreamStreamFirstChunk = true;
+}
+
 function updateLongDreamStream({ draftText }) {
-    const el = document.getElementById('theater-dream-generation-text');
-    if (!el) return;
-    const wasNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
-    el.textContent = draftText || '';
-    if (wasNearBottom) el.scrollTop = el.scrollHeight;
+    const immediate = longDreamStreamFirstChunk && !!String(draftText || '').trim();
+    if (immediate) longDreamStreamFirstChunk = false;
+    getLongDreamStreamRenderer().update(draftText, { immediate });
 }
 
 function handleLongDreamGenerationState({ stage, record }) {
@@ -6553,11 +6601,14 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
     };
     clearRequestIssue();
     activeLongDreamGenerationId = dream.id;
+    resetLongDreamStreamRenderer();
+    const apiRoute = captureGenerationApiRoute(SillyTavern.getContext());
     runtimeLog('info', '长梦续章开始', {
         dream_id: String(dream.id),
         chapter_number: dream.chapters.length + 1,
         target_chars: targetChars,
-        api_mode: settings.apiMode || 'custom',
+        api_mode: apiRoute.mode,
+        api_model: apiRoute.model,
     });
     try {
         const result = await controller.run({
@@ -6574,6 +6625,7 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
             autoContinue: settings.autoContinue !== false,
             maxRounds: Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3)),
             appendCandidate,
+            apiRoute,
         });
         runtimeLog('info', '长梦续章等待确认', {
             dream_id: String(dream.id),
@@ -6612,6 +6664,7 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
             theaterError(requestFailureMessage('长梦续章失败', issue, { retained: !!retainedChars }));
         }
     } finally {
+        resetLongDreamStreamRenderer({ flushPending: true });
         activeLongDreamGenerationId = null;
         renderLongDreamPanel();
     }
@@ -6840,14 +6893,7 @@ async function runGeneration(instruction, isAuto) {
     const autoTargetContinue = !!targetWordCount && settings.autoContinue;
     let { ctx, systemPrompt, userPrompt: prompt, isPlainTextRender } = payload;
     const { selectedRender: selectedRenderProfile, label: renderTemplate, isPlainTextRender: selectedPlainTextRender, textTheme: selectedTextTheme } = resolveRenderSelection(false);
-    const mainOai = ctx?.oai_settings || globalThis.oai_settings;
-    const resolvedProtocol = settings.apiMode === 'main' ? 'main' : resolveProtocol(settings.apiProtocol, settings.apiUrl);
-    const modelName = settings.apiMode === 'main'
-        ? (resolveMainApiModel(ctx, mainOai) || '未识别')
-        : (settings.apiModel || '未填写');
-    const configuredMaxTokens = settings.apiMode === 'main'
-        ? (mainOai?.openai_max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS)
-        : normalizeMaxTokens(settings.maxOutputTokens);
+    const apiRoute = captureGenerationApiRoute(ctx);
     const generationSourceConfig = {
         metadataCaptured: true,
         presetName: settings.selectedPresetName || '',
@@ -6861,9 +6907,9 @@ async function runGeneration(instruction, isAuto) {
     runtimeLog('info', '生成开始', {
         trigger: isAuto ? 'auto' : (contCtx ? 'continue' : 'manual'),
         render: renderTemplate,
-        protocol: resolvedProtocol,
-        model: modelName,
-        max_tokens: configuredMaxTokens,
+        protocol: apiRoute.protocol,
+        model: apiRoute.model,
+        max_tokens: apiRoute.maxTokens,
         target_chars: targetWordCount || null,
         length_tier: classifyLengthTier(targetWordCount),
         staged_render_mode: stagedRenderMode,
@@ -6888,29 +6934,13 @@ async function runGeneration(instruction, isAuto) {
     $('#theater-generate-btn').hide();
     $('#theater-stop-btn').show();
     abortController = new AbortController();
-    let chunkThrottle = null;
     let firstChunkShown = false;
-    let renderedStreamText = '';
+    const streamRenderer = createCumulativeStreamRenderer(
+        () => document.getElementById('theater-stream-text'),
+    );
     let activeRound = 1;
     let progressLogged = false;
     let nextProgressAt = 1000;
-    const flushStream = () => {
-        const el = document.getElementById('theater-stream-text');
-        if (!el) return;
-        const domText = el.textContent || '';
-        if (domText !== renderedStreamText) renderedStreamText = domText;
-        const nextText = String(bgStreamText || '');
-        const wasNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
-        if (nextText.startsWith(renderedStreamText)) {
-            const delta = nextText.slice(renderedStreamText.length);
-            if (delta) el.appendChild(document.createTextNode(delta));
-        } else {
-            // 某些非标准接口会从全量文本切回较短内容，此时只做一次整体校正。
-            el.textContent = nextText;
-        }
-        renderedStreamText = nextText;
-        if (wasNearBottom) el.scrollTop = el.scrollHeight;
-    };
     const onChunk = (text) => {
         bgStreamText = text;
         const cumulativeChars = String(text || '').length;
@@ -6922,12 +6952,10 @@ async function runGeneration(instruction, isAuto) {
         if (!firstChunkShown && String(text || '').trim()) {
             firstChunkShown = true;
             markFirstToken(lastRequestMetrics);
-            flushStream();
+            streamRenderer.update(bgStreamText, { immediate: true });
             return;
         }
-        if (!chunkThrottle) {
-            chunkThrottle = setTimeout(() => { chunkThrottle = null; flushStream(); }, 100);
-        }
+        streamRenderer.update(bgStreamText);
     };
     let generationSucceeded = false;
     currentGenerationJob = createGenerationJob({
@@ -6964,18 +6992,15 @@ async function runGeneration(instruction, isAuto) {
                 presetName: roundPayload.presetName || settings.selectedPresetName || '内置默认预设',
                 tracePurpose: round === 1 ? 'creative' : 'continuation',
             };
-            lastRequestMetrics = createRequestMetrics(settings.apiMode === 'main' ? 'main:ChatCompletionService' : `custom:${resolveProtocol(settings.apiProtocol, settings.apiUrl)}`);
-            let result;
-            if (settings.apiMode === 'main') {
-                result = await generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, settings.streamEnabled !== false, abortController?.signal, requestOptions);
-            } else {
-                if (!settings.apiUrl || !settings.apiModel) {
-                    runtimeLog('error', '生成停止', { reason: 'config_missing', round });
-                    toastr.warning('请先在【设置】里填好 API URL 和模型再生成', '', { timeOut: 5000 });
-                    return;
-                }
-                result = await callCustomAPIStream(systemPrompt, prompt, onChunk, settings.streamEnabled !== false, abortController?.signal, requestOptions);
-            }
+            const result = await requestConfiguredGenerationApi({
+                apiRoute,
+                ctx,
+                systemPrompt,
+                userPrompt: prompt,
+                onChunk,
+                signal: abortController?.signal,
+                requestOptions,
+            });
             const responseText = typeof result === 'string' ? result : result?.text;
             if (!responseText) throw new Error('API未返回内容');
             markCompleted(lastRequestMetrics);
@@ -7018,6 +7043,7 @@ async function runGeneration(instruction, isAuto) {
             };
             firstChunkShown = false;
             bgStreamText = '';
+            streamRenderer.reset();
         }
 
         let newText = currentGenerationJob.segments.join('\n\n').trim();
@@ -7033,13 +7059,13 @@ async function runGeneration(instruction, isAuto) {
             activeRound = 'render';
             firstChunkShown = false;
             bgStreamText = '';
-            renderedStreamText = '';
             try {
                 const rendered = await requestFinalRenderedHtml({
                     sourceText: newText,
                     rules,
                     ctx,
                     signal: abortController?.signal,
+                    apiRoute,
                     onChunk,
                     renderLabel: renderTemplate,
                     metricScope: 'final-render',
@@ -7047,7 +7073,7 @@ async function runGeneration(instruction, isAuto) {
                         if (popupAlive()) $('#theater-stream-text').text('排版完整性校验未通过，正在修复 HTML……');
                         firstChunkShown = false;
                         bgStreamText = '';
-                        renderedStreamText = '';
+                        streamRenderer.reset();
                     },
                 });
                 lastGeneratedHtml = rendered.html;
@@ -7148,8 +7174,7 @@ async function runGeneration(instruction, isAuto) {
         theaterError(requestFailureMessage('生成失败', issue, { retained: !!partialText }));
     } finally {
         isGenerating = false;
-        if (chunkThrottle) { clearTimeout(chunkThrottle); chunkThrottle = null; }
-        flushStream();
+        streamRenderer.reset({ flushPending: true });
         if (!isAuto && !contCtx) {
             continueContext = '';
             $('#theater-continue-hint').remove();
@@ -7277,6 +7302,73 @@ function captureActualRequestTrace(details, purpose = 'support') {
     lastRequestTrace = createRequestTrace({ ...details, purpose });
 }
 
+function captureGenerationApiRoute(ctx = SillyTavern.getContext()) {
+    const mode = settings.apiMode === 'main' ? 'main' : 'custom';
+    const shouldStream = settings.streamEnabled !== false;
+    if (mode === 'main') {
+        const oai = ctx?.oai_settings || globalThis.oai_settings;
+        return Object.freeze({
+            mode,
+            protocol: 'main',
+            model: resolveMainApiModel(ctx, oai) || '未识别',
+            maxTokens: oai?.openai_max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+            shouldStream,
+        });
+    }
+    const custom = Object.freeze({
+        apiUrl: String(settings.apiUrl || '').replace(/\/+$/, ''),
+        apiProtocol: settings.apiProtocol || API_PROTOCOLS.AUTO,
+        apiKey: settings.apiKey || '',
+        apiModel: settings.apiModel || '',
+        maxOutputTokens: normalizeMaxTokens(settings.maxOutputTokens),
+    });
+    return Object.freeze({
+        mode,
+        protocol: resolveProtocol(custom.apiProtocol, custom.apiUrl),
+        model: custom.apiModel || '未填写',
+        maxTokens: custom.maxOutputTokens,
+        shouldStream,
+        custom,
+    });
+}
+
+async function requestConfiguredGenerationApi({
+    apiRoute = captureGenerationApiRoute(),
+    ctx = SillyTavern.getContext(),
+    systemPrompt,
+    userPrompt,
+    onChunk,
+    signal,
+    requestOptions = {},
+    metricScope = '',
+} = {}) {
+    const scope = metricScope ? `:${metricScope}` : '';
+    if (apiRoute.mode === 'main') {
+        lastRequestMetrics = createRequestMetrics(`main:ChatCompletionService${scope}`);
+        return generateWithMainAPI(
+            ctx,
+            systemPrompt,
+            userPrompt,
+            onChunk,
+            apiRoute.shouldStream,
+            signal,
+            requestOptions,
+        );
+    }
+    if (!apiRoute.custom?.apiUrl || !apiRoute.custom?.apiModel) {
+        throw new Error('请先在【设置】里填好 API URL 和模型再生成');
+    }
+    lastRequestMetrics = createRequestMetrics(`custom:${apiRoute.protocol}${scope}`);
+    return callCustomAPIStream(
+        systemPrompt,
+        userPrompt,
+        onChunk,
+        apiRoute.shouldStream,
+        signal,
+        { ...requestOptions, apiConfig: apiRoute.custom },
+    );
+}
+
 async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStream = true, signal = abortController?.signal, requestOptions = {}) {
     return requestMainApi({
         ctx,
@@ -7298,14 +7390,15 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
 }
 
 async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStream = true, signal = abortController?.signal, requestOptions = {}) {
+    const apiConfig = requestOptions.apiConfig || {
+        apiUrl: settings.apiUrl,
+        apiProtocol: settings.apiProtocol,
+        apiKey: settings.apiKey,
+        apiModel: settings.apiModel,
+        maxOutputTokens: settings.maxOutputTokens,
+    };
     return requestCustomApi({
-        config: {
-            apiUrl: settings.apiUrl,
-            apiProtocol: settings.apiProtocol,
-            apiKey: settings.apiKey,
-            apiModel: settings.apiModel,
-            maxOutputTokens: settings.maxOutputTokens,
-        },
+        config: apiConfig,
         systemPrompt,
         userPrompt,
         messages: requestOptions.messages,

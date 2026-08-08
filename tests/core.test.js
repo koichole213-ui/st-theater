@@ -264,6 +264,69 @@ test('长梦生成控制器先保存可恢复正文和待确认 HTML，再原子
     assert.equal(confirmed.draft, null);
 });
 
+test('长梦正文、自动补写和最终排版沿用同一份生成线路快照', async () => {
+    const record = createLongDreamRecord({
+        source: { text: '第一章。', html: '<main>第一章。</main>' },
+    });
+    const apiRoute = Object.freeze({ mode: 'custom', protocol: 'openai', model: 'dream-model' });
+    const seen = [];
+    const controller = createLongDreamGenerationController({
+        requestChapter: async ({ round, apiRoute: received }) => {
+            seen.push({ stage: `round-${round}`, route: received });
+            return { text: round === 1 ? '甲'.repeat(200) : '乙'.repeat(260) };
+        },
+        renderChapter: async ({ text, apiRoute: received }) => {
+            seen.push({ stage: 'render', route: received });
+            return `<main>${text}</main>`;
+        },
+    });
+
+    await controller.run({
+        record,
+        apiRoute,
+        targetChars: 500,
+        autoContinue: true,
+        maxRounds: 3,
+    });
+
+    assert.deepEqual(seen.map(item => item.stage), ['round-1', 'round-2', 'render']);
+    assert.equal(seen.every(item => item.route === apiRoute), true);
+});
+
+test('长梦高频流片段只合并保存最新草稿，不排队写入每个中间版本', async () => {
+    const record = createLongDreamRecord({
+        source: { text: '第一章。', html: '<main>第一章。</main>' },
+    });
+    const persistedWritingTexts = [];
+    const finalText = Array.from({ length: 30 }, (_, index) => `片段${index + 1}`).join('');
+    const controller = createLongDreamGenerationController({
+        checkpointIntervalMs: 0,
+        requestChapter: async ({ onChunk }) => {
+            let cumulative = '';
+            for (let index = 1; index <= 30; index++) {
+                cumulative += `片段${index}`;
+                onChunk(cumulative);
+            }
+            return { text: cumulative };
+        },
+        renderChapter: async ({ text }) => `<main>${text}</main>`,
+        persistRecord: async next => {
+            if (next.draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING
+                && next.draft?.resumeStage === LONG_DREAM_DRAFT_RESUME_STAGE.WRITING
+                && next.draft?.text) {
+                persistedWritingTexts.push(next.draft.text);
+            }
+            await Promise.resolve();
+            return next;
+        },
+    });
+
+    const result = await controller.run({ record, autoContinue: false });
+    assert.equal(result.record.draft.text, finalText);
+    assert.equal(persistedWritingTexts.at(-1), finalText);
+    assert.ok(persistedWritingTexts.length <= 2, `实际写入 ${persistedWritingTexts.length} 个流式中间版本`);
+});
+
 test('长梦连续生成并确认五章时只按顺序追加一次，不重复写入章节', async () => {
     let record = createLongDreamRecord({
         title: '五夜航线',
@@ -1947,6 +2010,53 @@ test('API 运行层能累积 SSE 正文并保留结束原因', async () => {
     assert.equal(result.text, '第一段第二段');
     assert.equal(result.stopReason, 'stop');
     assert.equal(result.rawStopReason, 'stop');
+});
+
+test('共用独立 API 流在长时间无新数据时结束等待并保留已收到正文', async () => {
+    const chunks = [];
+    let cancelled = false;
+    const encoder = new TextEncoder();
+    const response = new Response(new ReadableStream({
+        start(controller) {
+            controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"已收到半段"}}]}\n\n'));
+        },
+        cancel() {
+            cancelled = true;
+        },
+    }), { headers: { 'content-type': 'text/event-stream' } });
+
+    await assert.rejects(
+        readSSEStream(response, text => chunks.push(text), API_PROTOCOLS.OPENAI, { idleTimeoutMs: 20 }),
+        error => {
+            assert.equal(error.code, 'THEATER_STREAM_IDLE_TIMEOUT');
+            assert.equal(error.diagnosticSignal, REQUEST_DIAGNOSTIC_SIGNAL.TIMEOUT);
+            return true;
+        },
+    );
+    assert.deepEqual(chunks, ['已收到半段']);
+    assert.equal(cancelled, true);
+});
+
+test('普通生成与长梦正文、排版共用同一个线路请求入口', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const longDreamRequest = source.slice(
+        source.indexOf('async function requestLongDreamChapter'),
+        source.indexOf('async function generateLongDreamCanonSuggestions'),
+    );
+    const finalRenderRequest = source.slice(
+        source.indexOf('async function requestFinalRenderedHtml'),
+        source.indexOf('function normalizeLongDreamResponseText'),
+    );
+    const ordinaryGeneration = source.slice(
+        source.indexOf('async function runGeneration'),
+        source.indexOf('function currentAutoInstruction'),
+    );
+    assert.match(longDreamRequest, /requestConfiguredGenerationApi/);
+    assert.doesNotMatch(longDreamRequest, /settings\.apiMode|generateWithMainAPI|callCustomAPIStream/);
+    assert.match(finalRenderRequest, /requestConfiguredGenerationApi/);
+    assert.doesNotMatch(finalRenderRequest, /settings\.apiMode|generateWithMainAPI|callCustomAPIStream/);
+    assert.match(ordinaryGeneration, /requestConfiguredGenerationApi/);
+    assert.match(source, /function captureGenerationApiRoute/);
 });
 
 test('内容策略结束原因会被统一识别，不把用户指令直接定性为 NSFW', () => {

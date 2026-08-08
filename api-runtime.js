@@ -20,6 +20,7 @@ import { applyPromptPostProcessing } from './request-layout.js';
 
 export const RATE_LIMIT_DEFAULT_WAIT_MS = 3000;
 export const RATE_LIMIT_MAX_AUTO_WAIT_MS = 15000;
+export const CUSTOM_STREAM_IDLE_TIMEOUT_MS = 60000;
 
 const noop = () => {};
 
@@ -628,7 +629,39 @@ export async function readNonStreamingResponse(response, onChunk = noop, protoco
     return { text, ...meta };
 }
 
-export async function readSSEStream(response, onChunk = noop, protocol = API_PROTOCOLS.OPENAI) {
+function streamIdleTimeoutError() {
+    return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TIMEOUT, {
+        code: 'THEATER_STREAM_IDLE_TIMEOUT', phase: 'body', transport: 'stream',
+    });
+}
+
+async function readStreamChunk(reader, idleTimeoutMs) {
+    const timeout = Math.max(0, Number(idleTimeoutMs) || 0);
+    if (!timeout) return reader.read();
+    let timeoutId = null;
+    try {
+        return await Promise.race([
+            reader.read(),
+            new Promise((_, reject) => {
+                timeoutId = setTimeout(() => reject(streamIdleTimeoutError()), timeout);
+            }),
+        ]);
+    } catch (error) {
+        if (error?.code === 'THEATER_STREAM_IDLE_TIMEOUT') {
+            await reader.cancel('stream idle timeout').catch(() => {});
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+export async function readSSEStream(
+    response,
+    onChunk = noop,
+    protocol = API_PROTOCOLS.OPENAI,
+    { idleTimeoutMs = CUSTOM_STREAM_IDLE_TIMEOUT_MS } = {},
+) {
     const contentType = response.headers.get('content-type') || '';
     if (isHtmlErrorResponse(contentType)) throw htmlResponseError(await response.text());
     if (!response.body?.getReader) {
@@ -657,7 +690,7 @@ export async function readSSEStream(response, onChunk = noop, protocol = API_PRO
     };
 
     while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await readStreamChunk(reader, idleTimeoutMs);
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
         rawText += chunk;

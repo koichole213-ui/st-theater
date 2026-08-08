@@ -1,6 +1,6 @@
 # st-theater 项目交接
 
-> 最后核对：2026-08-08（Asia/Shanghai）
+> 最后核对：2026-08-09（Asia/Shanghai）
 > 这份文件记录会变化的项目现状。长期施工规则以仓库外层的 `AGENTS.md` 和禾禾当轮要求为准。
 
 ## 新窗口先做什么
@@ -17,7 +17,7 @@ git log -1 --oneline
 
 建议禾禾在新窗口使用这句话开场：
 
-> 请先完整阅读 `D:\st-theater\PROJECT_STATUS.md`、`D:\st-theater\DREAM_MEMORY_V2_SPEC.md`、`D:\st-theater\DREAM_MEMORY_DISCUSSION.md` 和 AGENTS.md，核对真实仓库、`codex/long-dream-preview` 分支及未提交文件后，继续梦脉 v2 验收。当前已推送基线仍是 `6190a6b`，本地已经按禾禾与小澄确认的方向完成梦脉 v2 首轮实现，但尚未提交或推送。下一步优先做真实 SillyTavern 的副 API 织录、四层界面、冲突处理、旧卷迁移、提示词预设 JSON 和续章命中验收；不要改动 `standalone-scripts/`，不要升级版本、提交或推送，除非禾禾当轮明确授权。
+> 请先完整阅读 `D:\st-theater\PROJECT_STATUS.md`、`D:\st-theater\DREAM_MEMORY_V2_SPEC.md`、`D:\st-theater\DREAM_MEMORY_DISCUSSION.md` 和 AGENTS.md，核对真实仓库、`codex/long-dream-preview` 分支及未提交文件后，继续长梦真实验收。当前已推送基线是 `7224180`；本地正在修复长梦续写偶发卡流和主/独立 API 切换异常，普通生成与长梦已改为共用同一线路入口，长梦流式显示和草稿存档也已降负载，尚未提交或推送。下一步先在真实 SillyTavern 复测“主 API 停止 → 切独立 API → 继续长梦”和长篇流式输出；不要改动 `standalone-scripts/`，不要升级版本、提交或推送，除非禾禾当轮明确授权。
 
 ## 当前稳定快照
 
@@ -26,11 +26,21 @@ git log -1 --oneline
 - 远端：`https://github.com/koichole213-ui/st-theater.git`
 - 施工分支：`codex/long-dream-preview`（从 `main` 的 `8d97011` 分出，仅供酒馆验收，不视为正式发布）
 - 版本：`v3.6.3`
-- 当前 HEAD：`6190a6b feat: complete long dream continuity tools`
-- 远端状态：`codex/long-dream-preview` 与 `origin/codex/long-dream-preview` 同为 `6190a6b`；正式 `main` 未改动
-- 工作区：包含未提交的梦脉 v2 首轮实现、规格与测试样本，以及原有未跟踪目录 `standalone-scripts/`；后者始终未改动、未暂存
-- 自动测试：`154/154` 通过
+- 当前 HEAD：`7224180 feat: rebuild long dream memory v2`
+- 远端状态：`codex/long-dream-preview` 与 `origin/codex/long-dream-preview` 同为 `7224180`；正式 `main` 未改动
+- 工作区：包含未提交的长梦线路复用、流式降负载与停顿保护修正，以及原有未跟踪目录 `standalone-scripts/`；后者始终未改动、未暂存
+- 自动测试：`158/158` 通过
 - JavaScript 语法检查：通过
+
+## 最新施工：长梦续写复用普通生成线路并降低流式负载（2026-08-09）
+
+- 禾禾反馈长梦续写偶发不出字、接近结尾时停住、等待很久，以及停止主 API、切换独立 API 后仍看到酒馆小飞机被占用；普通生成页的生成、续写与线路切换实际使用正常，因此本轮明确以普通生成链路为基准，不再为长梦另造平行请求体系。
+- `index.js` 已从普通生成现有逻辑中提取共用线路入口：普通生成、普通续写、长梦正文、自动补写和最终 HTML 排版都使用同一函数。任务开始时冻结当前主/独立 API 选择和独立 API 配置，同一任务的各轮与排版不会再次各自读取全局线路；停止后重新生成会重新取得当前选择。
+- 普通生成原有的 100ms 流式节流与增量追加已抽成共用渲染器，长梦不再每个流片段都覆盖整段 DOM。长梦草稿检查点从 750ms 调整为 3000ms，并把并发中间快照合并成最新一份；轮次结束、停止和排版前仍强制等待最新草稿写入，保留防丢能力。
+- 共用独立 API SSE 读取新增 60 秒无新数据保护；连接保持但不再继续传输时会返回 `T-NET-TIMEOUT`，长梦控制器随后保存已收到的正文草稿，不会无限卡在“仍在生成”。该保护位于既有 `api-runtime.js`，不是长梦专用副本。
+- 新增 4 项回归：同一长梦正文各轮和排版沿用同一线路快照；高频流只合并保存最新草稿；共用独立 API 流停顿后结束等待并保留已收正文；普通生成、长梦正文和排版必须引用同一线路入口。当前核心测试 `158/158`、三个改动 JavaScript 文件语法检查和 `git diff --check` 均通过。
+- 尚未在真实 SillyTavern 验收；重点复现顺序为：主 API 开始长梦 → 停止并等界面恢复可继续 → 切独立 API → 继续未完成草稿/重新生成 → 关闭弹窗观察酒馆小飞机是否释放，同时验证长篇后半段持续出字。
+- 本轮没有升级 `v3.6.3`，没有提交或推送。
 
 ## 最新施工：梦脉 v2 首轮实现完成，本地待真实酒馆验收（2026-08-08）
 
