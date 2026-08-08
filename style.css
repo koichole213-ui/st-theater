@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v3.6.3
+/* 千夜浮梦 · 小剧场生成器 v3.6.4
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -3589,6 +3589,19 @@ body.theater-reader-open {
 .theater-dream-next-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 14px; }
 .theater-dream-next-actions > span { margin-right: auto; color: var(--t-fg-mute); font-size: 10.5px; line-height: 1.55; }
 .theater-dream-primary { min-height: 44px; }
+.theater-dream-token-summary {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px 14px;
+    margin-top: 10px;
+    padding: 9px 11px;
+    border: 1px solid color-mix(in srgb, var(--t-accent) 20%, var(--t-border));
+    border-radius: var(--t-radius-sm);
+    background: color-mix(in srgb, var(--t-accent) 5%, var(--t-surface-2));
+}
+.theater-dream-token-summary span { color: var(--t-accent-deep); font-size: var(--t-text-xs); font-weight: 750; white-space: nowrap; }
+.theater-dream-token-summary small { color: var(--t-fg-mute); font-size: 10px; line-height: 1.5; text-align: right; }
 
 .theater-dream-review {
     margin-top: 12px;
@@ -3597,15 +3610,16 @@ body.theater-reader-open {
     border-radius: var(--t-radius-xl);
     background: color-mix(in srgb, var(--t-success, #4f8067) 7%, var(--t-surface-1));
 }
-.theater-dream-review-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
-.theater-dream-review-head > div { display: flex; flex-direction: column; gap: 4px; }
+.theater-dream-review-head { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: start; gap: 18px; }
+.theater-dream-review-copy { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .theater-dream-review-head span { color: var(--t-success, #4f8067); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
 .theater-dream-review-head b { color: var(--t-fg); font-family: var(--t-font-serif); font-size: var(--t-text-lg); }
 .theater-dream-review-head p { margin: 1px 0 0; color: var(--t-fg-mute); font-size: var(--t-text-xs); }
-.theater-dream-review-tools { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 .theater-dream-candidate-switcher {
     display: inline-flex;
+    grid-column: 2;
     align-items: center;
+    justify-self: center;
     min-height: 34px;
     overflow: hidden;
     border: 1px solid color-mix(in srgb, var(--t-success, #4f8067) 38%, var(--t-border));
@@ -3630,6 +3644,8 @@ body.theater-reader-open {
 .theater-dream-candidate-switcher strong { min-width: 40px; color: var(--t-fg-soft); font-size: var(--t-text-xs); text-align: center; font-variant-numeric: tabular-nums; }
 .theater-dream-review-fullscreen {
     display: inline-grid;
+    grid-column: 3;
+    justify-self: end;
     flex: 0 0 auto;
     width: 34px;
     height: 34px;
@@ -3744,6 +3760,7 @@ body.theater-reader-open {
 .theater-dream-memory-details {
     margin-top: 8px;
     overflow: hidden;
+    text-align: left;
     border: 1px solid var(--t-border);
     border-radius: var(--t-radius-lg);
     background: var(--t-surface-1);
@@ -3765,7 +3782,7 @@ body.theater-reader-open {
 .theater-dream-memory-state-editor > label { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 10px; color: var(--t-accent-deep); font-size: var(--t-text-xs); font-weight: 700; }
 .theater-dream-memory-state-editor > label small { color: var(--t-fg-mute); font-weight: 400; }
 .theater-dream-memory-state-editor textarea { min-height: 92px; resize: vertical; }
-.theater-dream-memory-current-state-readonly { grid-column: 1 / -1; padding: 10px 12px; color: var(--t-fg-soft); border: 1px solid var(--t-border); border-radius: var(--t-radius-sm); background: var(--t-surface-1); font-size: var(--t-text-xs); line-height: 1.75; white-space: pre-wrap; }
+.theater-dream-memory-current-state-readonly { grid-column: 1 / -1; padding: 10px 12px; color: var(--t-fg-soft); border: 1px solid var(--t-border); border-radius: var(--t-radius-sm); background: var(--t-surface-1); font-size: var(--t-text-xs); line-height: 1.75; text-align: justify; text-justify: inter-ideograph; white-space: pre-wrap; }
 .theater-dream-memory-v2-group { margin: 0 12px 10px; overflow: hidden; border: 1px solid var(--t-border); border-radius: var(--t-radius-md); background: color-mix(in srgb, var(--t-surface-2) 82%, transparent); }
 .theater-dream-memory-v2-group > summary { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; cursor: pointer; list-style: none; color: var(--t-accent-deep); font-size: var(--t-text-xs); font-weight: 750; }
 .theater-dream-memory-v2-group > summary::-webkit-details-marker { display: none; }
@@ -3788,6 +3805,10 @@ body.theater-reader-open {
 .theater-dream-memory-list article .theater-input,
 .theater-dream-memory-list article .theater-select,
 .theater-dream-memory-list article .theater-textarea { width: 100%; font-size: var(--t-text-xs); }
+.theater-dream-memory-list article .theater-textarea,
+.theater-dream-memory-list blockquote,
+.theater-dream-memory-list details p,
+.theater-dream-memory-conflicts p { text-align: justify; text-justify: inter-ideograph; }
 .theater-dream-memory-list blockquote { margin: 7px 0 0; padding-left: 9px; border-left: 2px solid color-mix(in srgb, var(--t-accent) 45%, var(--t-border)); color: var(--t-fg-mute); font-size: 10.5px; }
 .theater-dream-memory-card-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding-top: 2px; }
 
@@ -3863,6 +3884,8 @@ body.theater-reader-open {
     border-radius: var(--t-radius-lg);
     background: var(--t-surface-1);
 }
+.theater-dream-world-book-freeze { display: grid; gap: 8px; justify-items: start; }
+.theater-dream-world-book-freeze .theater-hint { margin: 0; }
 .theater-dream-settings > summary {
     display: flex;
     align-items: center;
@@ -3972,8 +3995,12 @@ body.theater-reader-open {
     .theater-dream-next-actions > span { margin-right: 0; }
     .theater-dream-next-actions .theater-dream-primary,
     .theater-dream-next-actions .theater-btn { width: 100%; }
-    .theater-dream-review-head { flex-wrap: wrap; }
-    .theater-dream-review-tools { margin-left: auto; }
+    .theater-dream-token-summary { align-items: flex-start; flex-direction: column; }
+    .theater-dream-token-summary span { white-space: normal; }
+    .theater-dream-token-summary small { text-align: left; }
+    .theater-dream-review-copy { grid-column: 1 / -1; }
+    .theater-dream-candidate-switcher { grid-column: 2; grid-row: 2; }
+    .theater-dream-review-fullscreen { grid-column: 3; grid-row: 2; }
     .theater-dream-review-canvas,
     .theater-dream-review-canvas iframe,
     .theater-dream-review-fallback { min-height: 260px; }
@@ -4010,6 +4037,8 @@ body.theater-reader-open {
     .theater-dream-chapter-actions button { justify-content: center; width: 100%; }
     .theater-dream-settings-actions { align-items: stretch; flex-direction: column; }
     .theater-dream-settings-actions .theater-btn { width: 100%; justify-content: center; }
+    .theater-dream-world-book-freeze { justify-items: stretch; }
+    .theater-dream-world-book-freeze .theater-btn { width: 100%; justify-content: center; }
 }
 
 /* ============================================================

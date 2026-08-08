@@ -31,16 +31,17 @@ import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from './long-dream-generation.js';
 import { MAX_LONG_DREAM_BACKUP_BYTES, createLongDreamBackup, parseLongDreamBackup } from './long-dream-backup.js';
 import { LONG_DREAM_ARCHIVE_MANIFEST, MAX_LONG_DREAM_ARCHIVE_BYTES, MAX_LONG_DREAM_ARCHIVE_FILES, createLongDreamArchive, parseLongDreamArchive } from './long-dream-archive.js';
-import { selectRelevantLongDreamMemoryCards, selectRelevantLongDreamMemoryItems } from './long-dream-payload.js';
+import { buildLongDreamChapterMessages, buildLongDreamChapterPayload, longDreamWorldBookEntries, selectRelevantLongDreamMemoryCards, selectRelevantLongDreamMemoryItems } from './long-dream-payload.js';
 import { DEFAULT_LONG_DREAM_MEMORY_PRESET, LEGACY_DEFAULT_LONG_DREAM_MEMORY_PRESET, buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, shouldWeaveLongDreamMemory } from './long-dream-memory.js';
 import { LONG_DREAM_MEMORY_BUILTIN_PRESET_ID, MAX_LONG_DREAM_MEMORY_PRESET_BYTES, createLongDreamMemoryPreset, exportLongDreamMemoryPreset, normalizeLongDreamMemoryPresetList, parseLongDreamMemoryPreset } from './long-dream-memory-presets.js';
 import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, buildLongDreamCanonSuggestionPayload, composeLongDreamCanon, parseLongDreamCanonSuggestions } from './long-dream-canon-suggestions.js';
 import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkSide, normalizeBookmarkYRatio } from './result-bookmark.js';
-import { composePresetMessages, noToolsPostProcessingMode, normalizePromptRole } from './request-layout.js';
+import { applyPromptPostProcessing, composePresetMessages, noToolsPostProcessingMode, normalizePromptRole } from './request-layout.js';
 import { createRequestTrace, formatRequestTrace, requestTraceMessageLabel } from './request-trace.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.6.3';
+const VERSION = '3.6.4';
+const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let updateReadyToReload = false;
 let lastRequestMetrics = null;
@@ -90,7 +91,7 @@ function formatRequestContextSummary(context) {
         return `AI 定梦建议 · 只读取所选第一章正文（约 ${context.sourceChars || 0} 字）· 不读取聊天前文或世界书 · 返回内容仅为待用户逐项确认的临时草稿。`;
     }
     if (context.kind === '长梦正文') {
-        return `长梦正文 · 创作预设：${context.presetSource} · 已保存章节：${context.chapterCount} · 本章检索梦脉：${context.memoryCount}/${context.activeMemoryCount ?? context.memoryCount} · 冻结世界书：${context.worldBookBooks} 本/${context.worldBookEntries} 条 · 聊天前文：不读取 · 文风补充：${context.styleAddon ? '已参与' : '未参与'} · NSFW 补充：${context.nsfwAddon ? '已参与' : '未参与'}`;
+        return `长梦正文 · 创作预设：${context.presetSource} · Char：${context.character ? '已参与' : '未读取'} · User 人设：${context.persona ? '已参与' : '未读取'} · 已保存章节：${context.chapterCount} · 本章检索梦脉：${context.memoryCount}/${context.activeMemoryCount ?? context.memoryCount} · 冻结世界书：${context.worldBookBooks} 本/${context.worldBookEntries} 条 · 聊天前文：不读取 · 文风补充：${context.styleAddon ? '已参与' : '未参与'} · NSFW 补充：${context.nsfwAddon ? '已参与' : '未参与'}`;
     }
     if (context.kind === '最终 HTML 排版') {
         return `最终 HTML 排版 · 来源正文约 ${context.sourceChars} 字 · 模板：${context.renderLabel || '当前模板'} · 不携带聊天前文、角色卡、世界书或用户指令原文。`;
@@ -2237,7 +2238,7 @@ function longDreamListHTML() {
 }
 
 const LONG_DREAM_RELATION_OPTIONS = [
-    { value: LONG_DREAM_WORLD_LINE_RELATION.ISOLATED, label: '完全隔离', description: '不读取原世界书，所有事实只来自此梦设定与章节。' },
+    { value: LONG_DREAM_WORLD_LINE_RELATION.ISOLATED, label: '完全隔离', description: '不读取原世界书或原作场景；仍以当前 Char 与 User 人设保持人物性格。' },
     { value: LONG_DREAM_WORLD_LINE_RELATION.PARALLEL, label: '平行支线 / AU', description: '沿用世界背景与人物素材；原剧情、关系和现状只作参考。' },
     { value: LONG_DREAM_WORLD_LINE_RELATION.PREQUEL, label: '前传补完', description: '当前发生在原线以前；原设定是可能的未来，本梦变化优先。' },
     { value: LONG_DREAM_WORLD_LINE_RELATION.CANON_CONCURRENT, label: '原线同期补完', description: '在原时间线中补写支线，原重大事件与关系默认成立。' },
@@ -2288,7 +2289,7 @@ function longDreamCreateHTML() {
             </section>
             <section class="theater-dream-form-card theater-dream-inheritance">
                 <div class="theater-dream-card-label">这场梦和原世界线是什么关系</div>
-                <p class="theater-hint">选择关系，不需要逐条预测以后会用到哪些资料。非隔离模式会冻结当前选中的世界书：${esc(bookText)}</p>
+                <p class="theater-hint">非隔离模式只冻结素材页当前明确勾选的条目，不会自行判断或追加其他条目。当前世界书：${esc(bookText)}</p>
                 ${longDreamRelationChoicesHTML({ name: 'theater-dream-world-line-relation', selected: LONG_DREAM_WORLD_LINE_RELATION.ISOLATED, hasBooks: selectedBooks.length > 0 })}
             </section>
         </div>
@@ -2462,7 +2463,7 @@ function longDreamMemorySelectionHTML(dream, instruction = '') {
     const selected = selectedItems.length ? selectedItems : selectRelevantLongDreamMemoryCards(dream, { instruction, maxCards: 30 }).map(item => ({ kind: 'legacy', item }));
     const visible = selected.slice(0, 8);
     return `<div id="theater-dream-memory-selection" class="theater-dream-memory-selection">
-        <div><span><i class="fa-solid fa-filter"></i> 本章梦脉命中</span><small>${selected.length}/${activeCards.length} 条会进入续章请求</small></div>
+        <div><span><i class="fa-solid fa-filter"></i> 本章梦脉命中</span><small>${selected.length}/${activeCards} 条会进入续章请求</small></div>
         <div class="theater-dream-memory-selection-chips">${visible.map(entry => {
             const card = entry.item || entry;
             const label = card.threadKey || card.deviationKey || card.topic || card.key || longDreamExcerpt(card.value || card.content || card.to || card.dreamChange, 36) || '梦脉事实';
@@ -2592,6 +2593,9 @@ function longDreamDetailHTML(dream) {
     const selectedBooks = dream.inheritance?.worldBookNames || [];
     const snapshotEntries = longDreamSnapshotEntryCount(dream.inheritance?.snapshot);
     const availableBooks = (settings.selectedWorldBooks || []).filter(Boolean);
+    const currentCheckedEntries = wbEntries.filter((entry, index) => !entry.manual
+        && availableBooks.includes(entry.book)
+        && wbStates[index] !== false).length;
     const bookText = selectedBooks.length ? selectedBooks.join('、') : (availableBooks.length ? availableBooks.join('、') : '当前没有选中的世界书');
     const nextNumber = dream.chapters.length + 1;
     const activeMemoryCount = longDreamActiveMemoryCount(dream);
@@ -2668,6 +2672,10 @@ function longDreamDetailHTML(dream) {
             </div>
             <label class="theater-dream-next-direction"><span>这一章想发生什么？</span><textarea id="theater-dream-next-instruction" class="theater-textarea" rows="5" placeholder="可以留空，让故事自然继续；也可以写下想发生的事件、情绪走向或不能触碰的内容。" ${controlsDisabled ? 'disabled' : ''}>${esc(nextInstruction)}</textarea></label>
             ${longDreamMemorySelectionHTML(dream, nextInstruction)}
+            <div id="theater-dream-token-summary" class="theater-dream-token-summary" aria-live="polite">
+                <span id="theater-dream-token-summary-value">正在估算输入 Token…</span>
+                <small id="theater-dream-token-details">会按实际预设、Char、User 人设、冻结世界书和长梦前情计算</small>
+            </div>
             <details class="theater-dream-next-options">
                 <summary><span><i class="fa-solid fa-sliders"></i> 更多选项</span><small>章名与目标字数</small></summary>
                 <div class="theater-dream-next-grid">
@@ -2689,15 +2697,13 @@ function longDreamDetailHTML(dream) {
         </section>
         ${hasReviewDraft ? `<section class="theater-dream-review">
             <div class="theater-dream-review-head">
-                <div><span>待确认新章 · 第 ${selectedCandidateIndex + 1} 版</span><b>${esc(draft.title || `第 ${nextNumber} 章`)}</b><p>正文约 ${readableCharCount(draft.text || '')} 字；只有当前选中的这一版会收入正式章节。</p></div>
-                <div class="theater-dream-review-tools">
-                    <div class="theater-dream-candidate-switcher" aria-label="切换待确认候选版本">
-                        <button type="button" data-dream-candidate-step="-1" title="上一版" aria-label="上一版" ${selectedCandidateIndex <= 0 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i></button>
-                        <strong aria-live="polite">${selectedCandidateIndex + 1}/${draftCandidates.length}</strong>
-                        <button type="button" data-dream-candidate-step="1" title="下一版" aria-label="下一版" ${selectedCandidateIndex >= draftCandidates.length - 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-right"></i></button>
-                    </div>
-                    <button type="button" id="theater-dream-review-fullscreen" class="theater-dream-review-fullscreen" title="全屏阅读当前候选" aria-label="全屏阅读当前候选"><i class="fa-solid fa-expand"></i></button>
+                <div class="theater-dream-review-copy"><span>待确认新章 · 第 ${selectedCandidateIndex + 1} 版</span><b>${esc(draft.title || `第 ${nextNumber} 章`)}</b><p>正文约 ${readableCharCount(draft.text || '')} 字；只有当前选中的这一版会收入正式章节。</p></div>
+                <div class="theater-dream-candidate-switcher" aria-label="切换待确认候选版本">
+                    <button type="button" data-dream-candidate-step="-1" title="上一版" aria-label="上一版" ${selectedCandidateIndex <= 0 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i></button>
+                    <strong aria-live="polite">${selectedCandidateIndex + 1}/${draftCandidates.length}</strong>
+                    <button type="button" data-dream-candidate-step="1" title="下一版" aria-label="下一版" ${selectedCandidateIndex >= draftCandidates.length - 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-right"></i></button>
                 </div>
+                <button type="button" id="theater-dream-review-fullscreen" class="theater-dream-review-fullscreen" title="全屏阅读当前候选" aria-label="全屏阅读当前候选"><i class="fa-solid fa-expand"></i></button>
             </div>
             <div class="theater-dream-review-canvas">
                 <iframe id="theater-dream-review-frame" sandbox="" title="待确认长梦章节"></iframe>
@@ -2748,7 +2754,10 @@ function longDreamDetailHTML(dream) {
                 <div class="theater-dream-relation-list">
                     ${longDreamRelationChoicesHTML({ name: 'theater-dream-edit-relation', selected: worldLineRelation, hasBooks: !!(selectedBooks.length || availableBooks.length), disabled: isGeneratingThisDream || hasReviewDraft })}
                 </div>
-                <p class="theater-hint">${selectedPolicy ? `当前冻结资料库：${esc(bookText)} · ${snapshotEntries} 条；原书变化不会自动进入长梦。` : '当前完全隔离；不会读取或猜测原世界书。'}</p>
+                <div class="theater-dream-world-book-freeze">
+                    <p class="theater-hint">${selectedPolicy ? `当前冻结资料库：${esc(bookText)} · ${snapshotEntries} 条；原书变化不会自动进入长梦。` : '当前完全隔离；不会读取或猜测原世界书。'}</p>
+                    ${selectedPolicy ? `<button type="button" id="theater-dream-refresh-world-book" class="theater-btn" ${isGeneratingThisDream || hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-snowflake"></i><span>用素材页当前勾选更新冻结资料${currentCheckedEntries ? `（${currentCheckedEntries} 条）` : ''}</span></button>` : ''}
+                </div>
                 <div class="theater-dream-settings-actions">
                     <button type="button" id="theater-dream-save-definition" class="theater-btn primary" ${isGeneratingThisDream || hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-floppy-disk"></i><span>保存设置</span></button>
                     <button type="button" id="theater-dream-delete" class="theater-btn danger" ${isGeneratingThisDream || hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-trash"></i><span>删除这部长卷</span></button>
@@ -2770,6 +2779,7 @@ function renderLongDreamPanel() {
         if (dream) {
             $root.html(longDreamDetailHTML(dream));
             renderLongDreamReviewDraft(dream);
+            scheduleLongDreamTokenEstimate();
             return;
         }
     }
@@ -3435,6 +3445,7 @@ function bindEvents() {
     $d.off('input.tdcompose change.tdcompose').on('input.tdcompose change.tdcompose', '#theater-dream-next-instruction,#theater-dream-next-title,#theater-dream-next-target', function () {
         rememberLongDreamComposerDraft();
         if (this.id === 'theater-dream-next-instruction') refreshLongDreamMemorySelection();
+        scheduleLongDreamTokenEstimate();
     });
     $d.off('click.tdnew').on('click.tdnew', '#theater-dream-new', function () {
         resetLongDreamCanonSuggestions();
@@ -3694,6 +3705,44 @@ function bindEvents() {
             mode: draft.mode || 'html',
             text: draft.text,
         });
+    });
+    $d.off('click.tdrefreshwb').on('click.tdrefreshwb', '#theater-dream-refresh-world-book', async function () {
+        if (String(activeLongDreamGenerationId) === String(activeLongDreamId) && longDreamGenerationController?.active) {
+            toastr.warning('请先完成或停止当前章节生成');
+            return;
+        }
+        const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+        if (!dream) return;
+        const bookNames = (settings.selectedWorldBooks || []).filter(Boolean);
+        if (!bookNames.length) {
+            toastr.warning('素材页当前没有选中的世界书');
+            return;
+        }
+        if (!wbEntries.some(entry => bookNames.includes(entry.book))) await reloadWorldBooks({ silent: true });
+        const snapshot = captureCurrentLongDreamWorldBooks(bookNames);
+        const entryCount = longDreamSnapshotEntryCount(snapshot);
+        if (!entryCount) {
+            toastr.warning('素材页当前没有已勾选的世界书条目');
+            return;
+        }
+        const confirmed = await SillyTavern.getContext().Popup.show.confirm(
+            '更新这部长梦的冻结资料？',
+            `将用素材页当前勾选的 ${entryCount} 条内容替换原来冻结的 ${longDreamSnapshotEntryCount(dream.inheritance?.snapshot)} 条；已经保存的章节不会改变。`,
+        );
+        if (!confirmed) return;
+        const relation = dream.inheritance?.worldLineRelation === LONG_DREAM_WORLD_LINE_RELATION.ISOLATED
+            ? LONG_DREAM_WORLD_LINE_RELATION.PARALLEL
+            : dream.inheritance?.worldLineRelation;
+        const updated = updateLongDreamDefinition(dream, {
+            worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED,
+            worldLineRelation: relation,
+            worldBookNames: bookNames,
+            worldBookSnapshot: snapshot,
+        });
+        const saved = await longDreamPut(updated);
+        if (!saved) return;
+        renderLongDreamPanel();
+        toastr.success(`冻结资料已更新为当前勾选的 ${entryCount} 条`);
     });
     $d.off('click.tdsave').on('click.tdsave', '#theater-dream-save-definition', async function () {
         if (String(activeLongDreamGenerationId) === String(activeLongDreamId) && longDreamGenerationController?.active) {
@@ -5938,9 +5987,48 @@ function resolveRenderSelection(forcePlainText = false) {
     return { selectedRender, isPlainTextRender, textTheme, rules, label };
 }
 
+function resolveGenerationIdentity(ctx = SillyTavern.getContext()) {
+    const { characters = [], characterId, name1, name2 } = ctx || {};
+    const character = characterId !== undefined ? characters[characterId] : null;
+    const description = character?.data?.description || character?.description || '';
+    const personality = character?.data?.personality || character?.personality || '';
+    const scenario = character?.data?.scenario || character?.scenario || '';
+    const creatorNotes = character?.data?.creator_notes || character?.creator_notes || '';
+    const currentPersona = settings.followUserPersona ? loadPersona({ silent: true }) : (settings.userPersona || '');
+    let role = '';
+    if (character) {
+        if (description) role += `角色设定：\n${description}\n\n`;
+        if (personality) role += `角色性格：\n${personality}`;
+    }
+    return {
+        character,
+        description,
+        personality,
+        scenario,
+        creatorNotes,
+        currentPersona,
+        role,
+        persona: currentPersona?.trim() ? `User人设：\n${currentPersona.trim()}` : '',
+        name1,
+        name2,
+    };
+}
+
+function generationIdentitySlots(identity = {}, { includeScenario = true } = {}) {
+    return {
+        charDescription: identity.description ? `角色设定：\n${identity.description}` : '',
+        charPersonality: identity.personality ? `角色性格：\n${identity.personality}` : '',
+        scenario: includeScenario && identity.scenario ? `场景设定：\n${identity.scenario}` : '',
+        personaDescription: identity.persona || '',
+        dialogueExamples: '',
+    };
+}
+
 async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, longFormPlan = false, loadPreset = true, evaluateWorldBook = true } = {}) {
     const ctx = SillyTavern.getContext();
-    const { chat = [], characters = [], characterId, name1, name2 } = ctx;
+    const { chat = [] } = ctx;
+    const identity = resolveGenerationIdentity(ctx);
+    const { character, description, personality, scenario, creatorNotes, currentPersona, role, persona, name1, name2 } = identity;
     const contextCount = normalizeContextRange(settings.contextRange);
     const readChatContext = settings.readChatContext !== false;
     const recentChatMessages = readChatContext ? takeRecentMessages(chat, contextCount) : [];
@@ -5960,18 +6048,6 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
             ? '本次聊天前文读取条数设为 0，请只根据角色设定、世界书和用户指令生成小剧场。'
         : '本次不读取聊天前文，请只根据角色设定、世界书和用户指令生成小剧场。';
 
-    const character = characterId !== undefined ? characters[characterId] : null;
-    const description = character?.data?.description || character?.description || '';
-    const personality = character?.data?.personality || character?.personality || '';
-    const scenario = character?.data?.scenario || character?.scenario || '';
-    const creatorNotes = character?.data?.creator_notes || character?.creator_notes || '';
-    let role = '';
-    if (character) {
-        if (description) role += `角色设定：\n${description}\n\n`;
-        if (personality) role += `角色性格：\n${personality}`;
-    }
-    const currentPersona = settings.followUserPersona ? loadPersona({ silent: true }) : (settings.userPersona || '');
-    const persona = currentPersona?.trim() ? `User人设：\n${currentPersona.trim()}` : '';
     const selectedWBEntries = wbEntries.filter((_entry, index) => wbStates[index] !== false);
     let activeWorldInfoEntries = [...selectedWBEntries];
     let wbParts = selectedWBEntries.map(entry => entry.content);
@@ -6074,13 +6150,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     ].filter(Boolean);
     const messages = composePresetMessages({
         presetEntries: presetEntriesForLayout,
-        slots: {
-            charDescription: description ? `角色设定：\n${description}` : '',
-            charPersonality: personality ? `角色性格：\n${personality}` : '',
-            scenario: scenario ? `场景设定：\n${scenario}` : '',
-            personaDescription: persona,
-            dialogueExamples: '',
-        },
+        slots: generationIdentitySlots(identity),
         worldInfoEntries: activeWorldInfoEntries,
         chatMessages: structuredChatMessages,
         tailMessages,
@@ -6297,7 +6367,15 @@ async function requestLongDreamChapter({
 }) {
     const ctx = SillyTavern.getContext();
     try {
-        const onSafeChunk = cumulativeText => onChunk(normalizeLongDreamResponseText(cumulativeText));
+        let firstChunkSeen = false;
+        const onSafeChunk = cumulativeText => {
+            const normalized = normalizeLongDreamResponseText(cumulativeText);
+            if (!firstChunkSeen && normalized.trim()) {
+                firstChunkSeen = true;
+                markFirstToken(lastRequestMetrics);
+            }
+            onChunk(normalized);
+        };
         const requestOptions = {
             messages,
             postProcessing,
@@ -6543,6 +6621,91 @@ function getLongDreamGenerationController() {
     return longDreamGenerationController;
 }
 
+async function resolveLongDreamRequestFoundation(dream) {
+    if (!cachedPresetEntries.length) await loadPresetEntries();
+    const ctx = SillyTavern.getContext();
+    const identity = resolveGenerationIdentity(ctx);
+    const relation = dream?.inheritance?.worldLineRelation || LONG_DREAM_WORLD_LINE_RELATION.ISOLATED;
+    const identitySlots = generationIdentitySlots(identity, {
+        // 完全隔离的 AU 不沿用原作场景，但仍保留 Char 与 User 的人物身份和性格。
+        includeScenario: relation !== LONG_DREAM_WORLD_LINE_RELATION.ISOLATED,
+    });
+    const selectedPresetPrompt = getSelectedPresetPrompt();
+    const selectedPresetEntries = getSelectedPresetEntries();
+    return {
+        ctx,
+        identitySlots,
+        protagonistAnchor: buildProtagonistAnchor({
+            userName: identity.name1,
+            charName: identity.name2 || identity.character?.name || identity.character?.data?.name,
+        }),
+        addons: [
+            settings.customStyleAddon?.trim() ? `【文风补充】\n${settings.customStyleAddon.trim()}` : '',
+            settings.customNsfwAddon?.trim() ? `【NSFW补充】\n${settings.customNsfwAddon.trim()}` : '',
+        ].filter(Boolean).join('\n\n'),
+        selectedPresetPrompt,
+        presetEntries: selectedPresetEntries.length
+            ? selectedPresetEntries
+            : [{ id: 'main', role: 'system', content: DEFAULT_SYSTEM_PROMPT }],
+        presetName: settings.selectedPresetName || '内置默认预设',
+        postProcessing: cachedPresetPostProcessing,
+        squashSystemMessages: cachedPresetSquashSystemMessages,
+    };
+}
+
+let longDreamTokenEstimateRequestId = 0;
+
+async function refreshLongDreamTokenEstimate() {
+    const valueEl = document.getElementById('theater-dream-token-summary-value');
+    const detailsEl = document.getElementById('theater-dream-token-details');
+    if (!valueEl || !detailsEl) return;
+    const requestId = ++longDreamTokenEstimateRequestId;
+    try {
+        const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+        if (!dream) return;
+        const instruction = String($('#theater-dream-next-instruction').val() || '');
+        const chapterTitle = String($('#theater-dream-next-title').val() || `第 ${dream.chapters.length + 1} 章`);
+        const targetChars = Math.max(500, Math.min(8000, Math.round(Number($('#theater-dream-next-target').val()) || 3000)));
+        const foundation = await resolveLongDreamRequestFoundation(dream);
+        const currentDraft = dream.draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING ? String(dream.draft.text || '') : '';
+        const payload = buildLongDreamChapterPayload({
+            record: dream,
+            preset: foundation.selectedPresetPrompt || DEFAULT_SYSTEM_PROMPT,
+            addons: foundation.addons,
+            instruction,
+            chapterTitle,
+            targetChars,
+            currentDraft,
+            finishThisRound: false,
+            maxOptionalContextChars: LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET,
+            structuredPreset: true,
+            continuationRound: !!currentDraft.trim(),
+            hasIdentityContext: Object.values(foundation.identitySlots).some(value => String(value || '').trim()),
+            protagonistAnchor: foundation.protagonistAnchor,
+        });
+        const messages = applyPromptPostProcessing(buildLongDreamChapterMessages({
+            payload,
+            presetEntries: foundation.presetEntries,
+            slots: foundation.identitySlots,
+            squashSystemMessages: foundation.squashSystemMessages,
+        }), foundation.postProcessing);
+        const total = messages.reduce((sum, message) => sum + estimateTokenCount(message.content), 0);
+        const presetTokens = foundation.presetEntries.reduce((sum, entry) => sum + estimateTokenCount(entry.content), 0);
+        const identityTokens = Object.values(foundation.identitySlots).reduce((sum, text) => sum + estimateTokenCount(text), 0);
+        const worldBookTokens = payload.worldInfoEntries.reduce((sum, entry) => sum + estimateTokenCount(entry.content), 0);
+        const continuityTokens = Math.max(0, total - presetTokens - identityTokens - worldBookTokens);
+        if (requestId !== longDreamTokenEstimateRequestId || !document.getElementById('theater-dream-token-summary-value')) return;
+        valueEl.textContent = `预计${payload.continuationRound ? '恢复续写轮' : '首轮'}输入约 ${formatTokenCount(total)} Token`;
+        detailsEl.textContent = `预设 ${formatTokenCount(presetTokens)} · Char/User ${formatTokenCount(identityTokens)} · 冻结世界书 ${payload.worldInfoEntries.length} 条 / ${formatTokenCount(worldBookTokens)} · 长梦前情与规则 ${formatTokenCount(continuityTokens)}`;
+    } catch (error) {
+        if (requestId !== longDreamTokenEstimateRequestId) return;
+        valueEl.textContent = '预计输入 Token 暂不可用';
+        detailsEl.textContent = String(error?.message || error);
+    }
+}
+
+const scheduleLongDreamTokenEstimate = debounce(refreshLongDreamTokenEstimate, 220);
+
 async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
     if (isGenerating) {
         toastr.warning('普通小剧场正在生成，请完成或停止后再续写长梦');
@@ -6572,25 +6735,18 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
         toastr.info(`同一章最多保留 ${LONG_DREAM_MAX_CANDIDATES} 版候选`);
         return;
     }
-    if (!cachedPresetEntries.length) await loadPresetEntries();
     const chapterTitle = ($('#theater-dream-next-title').val() || `第 ${dream.chapters.length + 1} 章`).trim();
     const instruction = String($('#theater-dream-next-instruction').val() || '');
     const targetChars = Math.max(500, Math.min(8000, Math.round(Number($('#theater-dream-next-target').val()) || 3000)));
     setLongDreamComposerDraft(dream.id, { chapterTitle, title: chapterTitle, instruction, targetChars });
-    const addons = [
-        settings.customStyleAddon?.trim() ? `【文风补充】\n${settings.customStyleAddon.trim()}` : '',
-        settings.customNsfwAddon?.trim() ? `【NSFW补充】\n${settings.customNsfwAddon.trim()}` : '',
-    ].filter(Boolean).join('\n\n');
-    const selectedPresetPrompt = getSelectedPresetPrompt();
-    const selectedPresetEntries = getSelectedPresetEntries();
-    const presetEntriesForLayout = selectedPresetEntries.length
-        ? selectedPresetEntries
-        : [{ id: 'main', role: 'system', content: DEFAULT_SYSTEM_PROMPT }];
-    const selectedMemoryCount = selectRelevantLongDreamMemoryCards(dream, { instruction, maxCards: 30 }).length;
+    const foundation = await resolveLongDreamRequestFoundation(dream);
+    const selectedMemoryCount = selectRelevantLongDreamMemoryItems(dream, { instruction, maxItems: 30 }).length;
     const activeMemoryCount = longDreamActiveMemoryCount(dream);
     lastRequestContext = {
         kind: '长梦正文',
-        presetSource: selectedPresetPrompt ? '已选酒馆预设' : '内置默认预设',
+        presetSource: foundation.selectedPresetPrompt ? '已选酒馆预设' : '内置默认预设',
+        character: !!(foundation.identitySlots.charDescription || foundation.identitySlots.charPersonality),
+        persona: !!foundation.identitySlots.personaDescription,
         chapterCount: dream.chapters.length,
         memoryCount: selectedMemoryCount,
         activeMemoryCount,
@@ -6613,17 +6769,20 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
     try {
         const result = await controller.run({
             record: dream,
-            preset: selectedPresetPrompt || DEFAULT_SYSTEM_PROMPT,
-            presetEntries: presetEntriesForLayout,
-            presetName: settings.selectedPresetName || '内置默认预设',
-            postProcessing: cachedPresetPostProcessing,
-            squashSystemMessages: cachedPresetSquashSystemMessages,
-            addons,
+            preset: foundation.selectedPresetPrompt || DEFAULT_SYSTEM_PROMPT,
+            presetEntries: foundation.presetEntries,
+            presetName: foundation.presetName,
+            postProcessing: foundation.postProcessing,
+            squashSystemMessages: foundation.squashSystemMessages,
+            addons: foundation.addons,
+            identitySlots: foundation.identitySlots,
+            protagonistAnchor: foundation.protagonistAnchor,
             instruction,
             chapterTitle,
             targetChars,
             autoContinue: settings.autoContinue !== false,
             maxRounds: Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3)),
+            maxOptionalContextChars: LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET,
             appendCandidate,
             apiRoute,
         });

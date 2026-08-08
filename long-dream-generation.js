@@ -95,9 +95,11 @@ export function createLongDreamGenerationController({
         targetChars,
         autoContinue = false,
         maxRounds = 3,
-        maxOptionalContextChars = Infinity,
+        maxOptionalContextChars = 32000,
         appendCandidate = false,
         apiRoute,
+        identitySlots = {},
+        protagonistAnchor = '',
     } = {}) {
         if (active) throw new Error('已有长梦章节正在生成');
         let currentRecord = normalizeLongDreamRecord(record);
@@ -241,10 +243,14 @@ export function createLongDreamGenerationController({
                         finishThisRound: !shouldAutoContinue || round === allowedRounds,
                         maxOptionalContextChars,
                         structuredPreset: true,
+                        continuationRound: round > 1 || !!cleanText(roundBaseText),
+                        hasIdentityContext: Object.values(identitySlots || {}).some(value => cleanText(value)),
+                        protagonistAnchor,
                     });
                     const messages = buildLongDreamChapterMessages({
                         payload,
                         presetEntries,
+                        slots: identitySlots,
                         squashSystemMessages,
                     });
 

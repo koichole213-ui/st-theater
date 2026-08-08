@@ -709,10 +709,14 @@ test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => 
     assert.match(source, /autoContinue: settings\.autoContinue !== false/);
     assert.match(source, /maxRounds: Math\.min\(10, Math\.max\(1, Number\(settings\.maxAutoRounds\) \|\| 3\)\)/);
     assert.match(source, /class="theater-dream-next-options"/);
+    assert.match(source, /id="theater-dream-token-summary-value"/);
+    assert.match(source, /id="theater-dream-refresh-world-book"/);
     assert.match(source, /<details class="theater-dream-settings">/);
     assert.match(source, /旧记录中有一份指令，请核对/);
     assert.match(styles, /梦中页只保留一条主线：续写/);
     assert.match(styles, /\.theater-dream-candidate-switcher/);
+    assert.match(styles, /\.theater-dream-review-head \{[^}]*grid-template-columns:/);
+    assert.match(styles, /\.theater-dream-memory-current-state-readonly \{[^}]*text-align:\s*justify/);
 });
 
 test('定梦页把 AI 建议保留为可编辑临时草稿，显式采纳后才参与开卷', () => {
@@ -826,6 +830,82 @@ test('长梦续章按预设保留 system user assistant 顺序，并按冻结位
     ]);
 });
 
+test('长梦与普通生成共用 Char 和 User 身份插槽，定梦冲突时仍以长梦事实为准', () => {
+    const record = createLongDreamRecord({
+        canon: '在本梦中两人是没有血缘关系的侦探搭档。',
+        source: { text: '第一章正文。', html: '<main>第一章正文。</main>' },
+    });
+    const payload = buildLongDreamChapterPayload({
+        record,
+        hasIdentityContext: true,
+        protagonistAnchor: '故事的中心人物固定为 User「禾禾」与 Char「麓」。',
+        structuredPreset: true,
+    });
+    const messages = buildLongDreamChapterMessages({
+        payload,
+        presetEntries: [
+            { id: 'charDescription', role: 'system', content: '' },
+            { id: 'charPersonality', role: 'system', content: '' },
+            { id: 'personaDescription', role: 'system', content: '' },
+            { id: 'chatHistory', role: 'system', content: '' },
+        ],
+        slots: {
+            charDescription: '角色设定：旧世界线身份资料',
+            charPersonality: '角色性格：沉静但护短',
+            personaDescription: 'User人设：敏锐而直接',
+        },
+    });
+    const text = messages.map(message => message.content).join('\n');
+    assert.match(text, /旧世界线身份资料/);
+    assert.match(text, /沉静但护短/);
+    assert.match(text, /敏锐而直接/);
+    assert.match(text, /人物继承规则/);
+    assert.match(text, /以此梦设定和本卷已经发生的内容为准/);
+    assert.match(text, /中心人物固定为 User「禾禾」与 Char「麓」/);
+});
+
+test('长梦同章第二轮保留身份与冻结条目，但不重复发送整部长卷前情', async () => {
+    const snapshot = createLongDreamWorldBookSnapshot({
+        bookNames: ['人物'],
+        entries: [{ book: '人物', enabled: true, content: '麓不喜欢别人触碰旧怀表。' }],
+    });
+    const record = createLongDreamRecord({
+        canon: '故事发生在冬季海港。',
+        worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED,
+        worldBookNames: ['人物'],
+        worldBookSnapshot: snapshot,
+        source: { text: '第一章里两人在码头重逢。', html: '<main>第一章里两人在码头重逢。</main>' },
+    });
+    const requests = [];
+    const controller = createLongDreamGenerationController({
+        requestChapter: async request => {
+            requests.push(request);
+            return { text: requests.length === 1 ? '短开头。' : '后续正文。'.repeat(120) };
+        },
+        renderChapter: async ({ text }) => `<main>${text}</main>`,
+    });
+    await controller.run({
+        record,
+        targetChars: 500,
+        autoContinue: true,
+        maxRounds: 2,
+        identitySlots: {
+            charPersonality: '角色性格：沉静但护短',
+            personaDescription: 'User人设：敏锐而直接',
+        },
+    });
+    assert.equal(requests.length, 2);
+    const first = requests[0].messages.map(message => message.content).join('\n');
+    const second = requests[1].messages.map(message => message.content).join('\n');
+    assert.match(first, /第一章里两人在码头重逢/);
+    assert.doesNotMatch(second, /第一章里两人在码头重逢/);
+    assert.match(second, /同章补写/);
+    assert.match(second, /沉静但护短/);
+    assert.match(second, /敏锐而直接/);
+    assert.match(second, /麓不喜欢别人触碰旧怀表/);
+    assert.match(second, /故事发生在冬季海港/);
+});
+
 test('长梦生成控制器把预设后处理与结构化消息交给请求层', async () => {
     const record = createLongDreamRecord({
         source: { text: '第一章正文。', html: '<main>第一章正文。</main>' },
@@ -856,7 +936,7 @@ test('长梦生成控制器把预设后处理与结构化消息交给请求层',
     assert.equal(captured.messages.some(message => message.source === 'long-dream'), true);
 });
 
-test('长梦按世界线关系解释冻结资料，而不是让用户逐条永久勾选', () => {
+test('长梦按世界线关系解释用户勾选的冻结资料，并让定梦覆盖冲突原设', () => {
     const snapshot = createLongDreamWorldBookSnapshot({
         bookNames: ['人物与地点'],
         entries: [{ book: '人物与地点', name: '成年设定', content: '成年后两人住在临海市。' }],

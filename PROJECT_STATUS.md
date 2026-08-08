@@ -17,7 +17,7 @@ git log -1 --oneline
 
 建议禾禾在新窗口使用这句话开场：
 
-> 请先完整阅读 `D:\st-theater\PROJECT_STATUS.md`、`D:\st-theater\DREAM_MEMORY_V2_SPEC.md`、`D:\st-theater\DREAM_MEMORY_DISCUSSION.md` 和 AGENTS.md，核对真实仓库、`codex/long-dream-preview` 分支及未提交文件后，继续长梦真实验收。当前已推送基线是 `7224180`；本地正在修复长梦续写偶发卡流和主/独立 API 切换异常，普通生成与长梦已改为共用同一线路入口，长梦流式显示和草稿存档也已降负载，尚未提交或推送。下一步先在真实 SillyTavern 复测“主 API 停止 → 切独立 API → 继续长梦”和长篇流式输出；不要改动 `standalone-scripts/`，不要升级版本、提交或推送，除非禾禾当轮明确授权。
+> 请先完整阅读 `D:\st-theater\PROJECT_STATUS.md`、`D:\st-theater\DREAM_MEMORY_V2_SPEC.md`、`D:\st-theater\DREAM_MEMORY_DISCUSSION.md` 和 AGENTS.md，核对真实仓库、`codex/long-dream-preview` 分支及未提交文件后，继续 `v3.6.4` 长梦真实验收。重点复测现有长梦用“素材页当前勾选”把旧的 33 条冻结资料更新为实际 5–7 条后，独立 API 首轮、自动补写第二轮、实时 Token、Char/User 人设继承与候选页码居中；不要改动 `standalone-scripts/`，不要继续施工或推送，除非禾禾当轮明确授权。
 
 ## 当前稳定快照
 
@@ -25,12 +25,22 @@ git log -1 --oneline
 - 仓库：`D:\st-theater`
 - 远端：`https://github.com/koichole213-ui/st-theater.git`
 - 施工分支：`codex/long-dream-preview`（从 `main` 的 `8d97011` 分出，仅供酒馆验收，不视为正式发布）
-- 版本：`v3.6.3`
-- 当前 HEAD：`7224180 feat: rebuild long dream memory v2`
-- 远端状态：`codex/long-dream-preview` 与 `origin/codex/long-dream-preview` 同为 `7224180`；正式 `main` 未改动
-- 工作区：包含未提交的长梦线路复用、流式降负载与停顿保护修正，以及原有未跟踪目录 `standalone-scripts/`；后者始终未改动、未暂存
-- 自动测试：`158/158` 通过
+- 版本：`v3.6.4`
+- 当前 HEAD：`codex/long-dream-preview` 最新提交（精确哈希以 `git log -1 --oneline` 为准）
+- 远端状态：本轮完成后 `codex/long-dream-preview` 与 `origin/codex/long-dream-preview` 同步；正式 `main` 未改动
+- 工作区：本轮提交不包含原有未跟踪目录 `standalone-scripts/`；该目录始终未改动、未暂存
+- 自动测试：`160/160` 通过
 - JavaScript 语法检查：通过
+
+## 最新施工：统一长梦基础注入、冻结勾选条目与实时 Token（2026-08-09）
+
+- 普通生成与长梦现在共用同一份人物身份解析：长梦每一轮都会按当前设置注入所选酒馆预设、Char 描述与性格、User 人设、文风/NSFW 补充和主角锚点。完全隔离 AU 只排除原作场景与世界书，不再清空人物性格；若角色卡资料与定梦冲突，定梦和已保存章节优先。
+- 长梦世界书不做关键词触发推断。新开卷只冻结素材页当前明确勾选的条目，续章完整保留这些条目的位置、深度、角色、顺序和 Outlet；用户明确勾选的冻结资料不受可选上下文预算裁剪。
+- 旧长梦不会被静默改写。长梦设置新增“用素材页当前勾选更新冻结资料”，明确显示当前条目数并在确认后替换旧快照；用于把已有的 33 条快照安全更新成当前实际勾选的 5–7 条，正式章节不变。
+- 长梦第一轮读取定梦、近期章节、梦脉和冻结资料；同章第二轮及中断恢复轮仍保留预设、Char/User、定梦、梦脉与冻结资料，但只带本章正文最近 4000 字，不再重复整部长卷章节前情。可替代上下文启用 32000 字符安全预算。
+- 续章输入区新增实时 Token 估算，按实际结构化消息和预设后处理计算，并拆分显示预设、Char/User、冻结世界书条目数与 Token、长梦前情及规则。长梦流式首字现在也写入诊断计时。
+- 候选版本切换 `< 1/3 >` 整组在桌面与手机端居中，全屏按钮仍靠右；梦脉容器不继承居中，当前脉象、内容文本框、引用和历史正文改为两端对齐。本章梦脉命中计数同时修正了把数字误当数组读取的问题。
+- 版本同步升级为 `v3.6.4`：`index.js`、`manifest.json`、`style.css` 文件头一致。新增 2 项行为回归与界面静态断言，核心测试 `160/160` 通过。
 
 ## 最新施工：长梦续写复用普通生成线路并降低流式负载（2026-08-09）
 

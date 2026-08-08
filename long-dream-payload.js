@@ -364,34 +364,11 @@ function takeBudgeted(value, state, key, { keepTail = false } = {}) {
     return keepTail ? `${marker}${keep ? text.slice(-keep) : ''}` : `${text.slice(0, keep)}${marker}`;
 }
 
-function takeBudgetedEntries(entries, state, key) {
-    const source = (Array.isArray(entries) ? entries : []).filter(entry => cleanText(entry?.content));
-    if (!source.length) return [];
-    if (!Number.isFinite(state.remaining)) {
-        state.included.push(key);
-        return source;
-    }
-    if (state.remaining <= 0) {
-        state.omitted.push(key);
-        return [];
-    }
-    const result = [];
-    for (const entry of source) {
-        const content = cleanText(entry.content);
-        if (content.length <= state.remaining) {
-            result.push({ ...entry, content });
-            state.remaining -= content.length;
-            continue;
-        }
-        const marker = '\n……（已按上下文预算截断）';
-        const keep = Math.max(0, state.remaining - marker.length);
-        if (keep) result.push({ ...entry, content: `${content.slice(0, keep)}${marker}` });
-        state.remaining = 0;
-        state.truncated.push(key);
-        return result;
-    }
-    state.included.push(key);
-    return result;
+function continuationTail(value, maxChars = 4000) {
+    const text = cleanText(value);
+    const limit = Math.max(1000, Math.floor(Number(maxChars) || 4000));
+    if (text.length <= limit) return text;
+    return `……（同章较早正文已省略，只保留结尾继续）\n${text.slice(-limit)}`;
 }
 
 export function buildLongDreamChapterPayload({
@@ -405,6 +382,10 @@ export function buildLongDreamChapterPayload({
     finishThisRound = true,
     maxOptionalContextChars = Infinity,
     structuredPreset = false,
+    continuationRound = false,
+    continuationTailChars = 4000,
+    hasIdentityContext = false,
+    protagonistAnchor = '',
 } = {}) {
     const direction = cleanText(instruction) || '自然承接上一章尚未解决的动作、情绪与伏笔。';
     const context = longDreamChapterContext(record, { instruction: direction });
@@ -419,13 +400,14 @@ export function buildLongDreamChapterPayload({
     const budgetState = { remaining: budget, included: [], truncated: [], omitted: [] };
 
     // 预算只裁剪可替代上下文。用户本章方向、定梦和输出协议永远完整保留。
-    const current = takeBudgeted(draft, budgetState, 'currentDraft', { keepTail: true });
-    const chapters = takeBudgeted(context.chapters, budgetState, 'chapters', { keepTail: true });
+    const draftForPrompt = continuationRound ? continuationTail(draft, continuationTailChars) : draft;
+    const current = takeBudgeted(draftForPrompt, budgetState, 'currentDraft', { keepTail: true });
+    const chapters = continuationRound ? '' : takeBudgeted(context.chapters, budgetState, 'chapters', { keepTail: true });
     const memory = takeBudgeted(context.memory, budgetState, 'memory');
-    const olderOutline = takeBudgeted(context.olderOutline, budgetState, 'olderChapterOutline');
-    const worldInfoEntries = structuredPreset
-        ? takeBudgetedEntries(longDreamWorldBookEntries(record), budgetState, 'worldBookSnapshot')
-        : [];
+    const olderOutline = continuationRound ? '' : takeBudgeted(context.olderOutline, budgetState, 'olderChapterOutline');
+    // 用户明确勾选并冻结的条目属于基础资料，不再由程序二次触发或按可选预算裁掉。
+    const worldInfoEntries = structuredPreset ? longDreamWorldBookEntries(record) : [];
+    if (worldInfoEntries.length) budgetState.included.push('worldBookSnapshot');
     const worldBook = structuredPreset
         ? worldInfoEntries.map(entry => entry.content).join('\n\n')
         : takeBudgeted(context.worldBook, budgetState, 'worldBookSnapshot');
@@ -437,6 +419,8 @@ export function buildLongDreamChapterPayload({
     const systemPrompt = [
         '你正在续写一部长篇支线故事。你只能依据用户已经确认的此梦世界线、这部长卷自身的章节与已确认梦脉继续创作；不得读取、猜测或恢复原聊天前文、普通续写缓存及未提供的世界书设定。此梦设定是不可静默推翻的硬事实；若本章方向与它冲突，应停止创作并明确指出冲突。',
         worldLineRelationInstruction(context.worldLineRelation),
+        hasIdentityContext ? '【人物继承规则】角色卡与 User 人设用于保持人物身份、核心性格、说话方式和行为倾向；其中若含有与此梦设定或已保存章节冲突的原世界线事实，以此梦设定和本卷已经发生的内容为准。' : '',
+        cleanText(protagonistAnchor),
         style ? `【写作风格｜只控制表达，不得改写事实】\n${style}` : '',
     ].filter(Boolean).join('\n\n');
     const sections = [
@@ -444,7 +428,11 @@ export function buildLongDreamChapterPayload({
             ? `目标是本章完整正文约 ${target} 字；本章已有约 ${draftChars} 字，本轮只补写为接近总目标仍需新增的内容（约 ${remainingChars} 字，可随情节自然浮动），不要报告或标注字数。`
             : `目标正文约 ${target} 字；不需要自行统计、报告或标注字数。`}`,
         context.canon ? `【此梦设定｜用户已确认的持续硬事实】\n${context.canon}` : '【此梦设定】\n暂无额外设定；以已保存章节中已经成立的事实为准。',
-        chapters ? `【近期已保存章节｜最近 ${context.recentChapterCount} 章全文，只作前情不得复述】\n${chapters}` : '【近期已保存章节】\n受本次上下文预算限制，未附带章节原文；不得自行补入其他世界线。',
+        chapters
+            ? `【近期已保存章节｜最近 ${context.recentChapterCount} 章全文，只作前情不得复述】\n${chapters}`
+            : (continuationRound
+                ? '【同章补写】\n本轮承接下方本章已有正文继续创作；不再重复发送整部长卷前情。人物身份、此梦设定、梦脉和冻结资料仍然有效。'
+                : '【近期已保存章节】\n受本次上下文预算限制，未附带章节原文；不得自行补入其他世界线。'),
         olderOutline ? `【较早章节压缩索引｜${context.olderChapterCount} 章】\n${olderOutline}` : '',
         current ? `【本章可恢复草稿｜只承接结尾，不得重复】\n${current}` : '',
         memory ? `【已确认梦脉｜辅助核对，不得覆盖原章节】\n${memory}` : '',
@@ -470,12 +458,14 @@ export function buildLongDreamChapterPayload({
             truncated: budgetState.truncated,
             omitted: budgetState.omitted,
         },
+        continuationRound,
     };
 }
 
 export function buildLongDreamChapterMessages({
     payload,
     presetEntries = [],
+    slots = {},
     squashSystemMessages = false,
 } = {}) {
     if (!payload?.systemPrompt || !payload?.userPrompt) {
@@ -484,11 +474,11 @@ export function buildLongDreamChapterMessages({
     return composePresetMessages({
         presetEntries,
         slots: {
-            charDescription: '',
-            charPersonality: '',
-            scenario: '',
-            personaDescription: '',
-            dialogueExamples: '',
+            charDescription: String(slots.charDescription || ''),
+            charPersonality: String(slots.charPersonality || ''),
+            scenario: String(slots.scenario || ''),
+            personaDescription: String(slots.personaDescription || ''),
+            dialogueExamples: String(slots.dialogueExamples || ''),
         },
         worldInfoEntries: payload.worldInfoEntries || [],
         chatMessages: [{
