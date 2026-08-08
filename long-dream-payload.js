@@ -88,6 +88,145 @@ export function selectRelevantLongDreamMemoryCards(record = {}, {
         .map(item => item.card);
 }
 
+function v2ItemText(kind, item = {}) {
+    const subjects = (item.subjects || []).join('、');
+    const sources = (item.sourceChapterNumbers || [item.chapterNumber || item.validFromChapter || item.introducedAt])
+        .map(Number).filter(Number.isFinite);
+    const source = sources.length ? `（来源第 ${sources.join('、')} 章）` : '';
+    if (kind === 'state') {
+        return `当前状态｜${subjects}｜${item.attribute}${item.topic ? `｜${item.topic}` : ''}${source}：${item.value}`;
+    }
+    if (kind === 'transition') {
+        return `关键变化｜${item.domain}｜${subjects}${source}：${item.from ? `${item.from} → ` : ''}${item.to || ''}${item.cause ? `；原因：${item.cause}` : ''}${item.impact ? `；长期影响：${item.impact}` : ''}`;
+    }
+    if (kind === 'thread') {
+        const ending = item.status === 'resolved'
+            ? `；已经解决：${item.resolution}`
+            : (item.status === 'abandoned' ? `；已经放弃：${item.abandonedReason}` : (item.progress ? `；当前进展：${item.progress}` : ''));
+        return `事项｜${item.kind}｜${item.status}｜${item.threadKey}${source}：${item.content}${ending}`;
+    }
+    if (kind === 'deviation') {
+        return `世界线偏离｜${item.deviationKey}${source}：原线：${item.originalCanon || '未知'}；本梦改变：${item.dreamChange}；直接后果：${(item.directConsequences || []).join('、') || '暂无'}；失效默认：${(item.invalidatedAssumptions || []).join('、') || '暂无'}`;
+    }
+    return memoryText([item]);
+}
+
+function v2ItemHaystack(kind, item = {}) {
+    return [
+        kind,
+        ...(item.subjects || []),
+        item.attribute,
+        item.topic,
+        item.value,
+        item.domain,
+        item.from,
+        item.to,
+        item.cause,
+        item.impact,
+        item.threadKey,
+        item.kind,
+        item.content,
+        item.progress,
+        item.resolution,
+        item.deviationKey,
+        item.originalCanon,
+        item.dreamChange,
+        ...(item.directConsequences || []),
+        ...(item.invalidatedAssumptions || []),
+        ...(item.tags || []),
+    ].filter(Boolean).join(' ').toLocaleLowerCase();
+}
+
+function scoreV2Item(kind, item, query, terms, recentStart, chapterCount) {
+    const haystack = v2ItemHaystack(kind, item);
+    const tags = item.tags || [];
+    const tagHit = tags.some(tag => query.includes(cleanText(tag).toLocaleLowerCase()));
+    const subjectHit = (item.subjects || []).some(subject => query.includes(cleanText(subject).toLocaleLowerCase()));
+    const key = cleanText(item.threadKey || item.deviationKey || item.topic);
+    const keyHit = key && (query.includes(key.toLocaleLowerCase()) || key.toLocaleLowerCase().includes(query));
+    const termHits = terms.reduce((score, term) => score + (haystack.includes(term) ? 1 : 0), 0);
+    const sources = item.sourceChapterNumbers || [item.chapterNumber || item.validFromChapter || item.lastTouchedAt];
+    const recent = sources.some(number => Number(number) >= recentStart);
+    const newest = Math.max(0, ...sources.map(Number).filter(Number.isFinite));
+    const layer = kind === 'state' ? 12 : (kind === 'thread' && ['open', 'progressed'].includes(item.status) ? 10 : (kind === 'deviation' ? 7 : 5));
+    const closedPenalty = kind === 'thread' && ['resolved', 'abandoned'].includes(item.status) && !keyHit && !tagHit && !subjectHit ? -30 : 0;
+    return (item.editedByUser ? 40 : 0)
+        + (item.lockedByUser ? 25 : 0)
+        + (keyHit ? 24 : 0)
+        + (subjectHit ? 20 : 0)
+        + (tagHit ? 18 : 0)
+        + Math.min(18, termHits * 2)
+        + (recent ? 12 : 0)
+        + layer
+        + Math.min(5, newest / Math.max(1, chapterCount) * 5)
+        + closedPenalty;
+}
+
+export function selectRelevantLongDreamMemoryItems(record = {}, {
+    instruction = '',
+    recentChapterCount = 4,
+    maxItems = 30,
+    quotas = { state: 12, thread: 8, deviation: 5, transition: 5 },
+} = {}) {
+    const memory = record?.memory || {};
+    const legacySeen = new Set();
+    const legacy = [...(memory.legacyCards || []), ...(memory.cards || [])]
+        .filter(item => item?.status !== 'dismissed')
+        .filter(item => {
+            const key = `${item?.id || ''}\u0000${item?.content || ''}`;
+            if (legacySeen.has(key)) return false;
+            legacySeen.add(key);
+            return true;
+        });
+    const raw = [
+        ...(memory.states || []).filter(item => !item.hiddenFromPrompt).map(item => ({ kind: 'state', item })),
+        ...(memory.threads || []).filter(item => !item.hiddenFromPrompt).map(item => ({ kind: 'thread', item })),
+        ...(memory.deviations || []).filter(item => !item.hiddenFromPrompt).map(item => ({ kind: 'deviation', item })),
+        ...(memory.transitions || []).filter(item => !item.hiddenFromPrompt).map(item => ({ kind: 'transition', item })),
+        ...legacy.map(item => ({ kind: 'legacy', item })),
+    ];
+    if (!raw.length) return [];
+    const chapterCount = Array.isArray(record?.chapters) ? record.chapters.length : 0;
+    const recentStart = Math.max(1, chapterCount - Math.max(1, recentChapterCount) + 1);
+    const query = cleanText(instruction).toLocaleLowerCase();
+    const terms = relevanceTerms(instruction);
+    const scored = raw.map((entry, index) => ({
+        ...entry,
+        index,
+        text: v2ItemText(entry.kind, entry.item),
+        score: scoreV2Item(entry.kind, entry.item, query, terms, recentStart, chapterCount),
+    })).sort((a, b) => b.score - a.score || a.index - b.index);
+    const selected = [];
+    const selectedIds = new Set();
+    for (const kind of ['state', 'thread', 'deviation', 'transition']) {
+        const limit = Math.max(0, Math.floor(Number(quotas[kind]) || 0));
+        for (const entry of scored.filter(candidate => candidate.kind === kind).slice(0, limit)) {
+            selected.push(entry);
+            selectedIds.add(`${kind}:${entry.item.id}`);
+        }
+    }
+    const target = Math.max(1, Math.floor(Number(maxItems) || 30));
+    for (const entry of scored) {
+        if (selected.length >= target) break;
+        const id = `${entry.kind}:${entry.item.id}`;
+        if (selectedIds.has(id)) continue;
+        selected.push(entry);
+        selectedIds.add(id);
+    }
+    for (const entry of scored.filter(candidate => candidate.kind === 'legacy')) {
+        if (selectedIds.has(`legacy:${entry.item.id}`) || entry.score <= 5 || selected.length < target) continue;
+        const replaceIndex = selected.reduce((lowest, candidate, index) => candidate.score < selected[lowest].score ? index : lowest, 0);
+        if (entry.score <= selected[replaceIndex].score) continue;
+        selectedIds.delete(`${selected[replaceIndex].kind}:${selected[replaceIndex].item.id}`);
+        selected[replaceIndex] = entry;
+        selectedIds.add(`legacy:${entry.item.id}`);
+    }
+    return selected.slice(0, target).sort((a, b) => {
+        const order = { state: 0, thread: 1, deviation: 2, transition: 3, legacy: 4 };
+        return order[a.kind] - order[b.kind] || b.score - a.score || a.index - b.index;
+    });
+}
+
 export function longDreamWorldBookContext(record = {}) {
     if (record?.inheritance?.worldBookPolicy !== LONG_DREAM_WORLD_BOOK_POLICY.SELECTED) return '';
     const books = Array.isArray(record?.inheritance?.snapshot?.books)
@@ -161,19 +300,23 @@ export function longDreamChapterContext(record = {}, {
         olderOutline = [first, marker, ...tail].filter(Boolean).join('\n');
     }
     const currentState = cleanText(record?.memory?.currentState);
-    const selectedCards = selectRelevantLongDreamMemoryCards(record, {
+    const selectedItems = selectRelevantLongDreamMemoryItems(record, {
         instruction,
         recentChapterCount: keepRecent,
-        maxCards: maxMemoryCards,
+        maxItems: maxMemoryCards,
     });
-    const cards = memoryText(selectedCards);
+    const cards = selectedItems.map(entry => entry.text).filter(Boolean).join('\n');
+    const v2Count = ['states', 'transitions', 'threads', 'deviations']
+        .reduce((count, key) => count + (record?.memory?.[key] || []).filter(item => !item.hiddenFromPrompt).length, 0);
+    const legacyCount = (record?.memory?.cards || []).filter(card => card?.status !== 'dismissed').length;
     return {
         canon: cleanText(record.canon),
         chapters,
         olderOutline,
         memory: [currentState ? `当前脉象：${currentState}` : '', cards].filter(Boolean).join('\n'),
-        selectedMemoryCount: selectedCards.length,
-        activeMemoryCount: (record?.memory?.cards || []).filter(card => card?.status !== 'dismissed').length,
+        selectedMemoryCount: selectedItems.length,
+        selectedMemoryItems: selectedItems,
+        activeMemoryCount: v2Count + legacyCount,
         worldBook: longDreamWorldBookContext(record),
         worldLineRelation: record?.inheritance?.worldLineRelation || LONG_DREAM_WORLD_LINE_RELATION.ISOLATED,
         chapterCount: allChapters.length,

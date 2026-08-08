@@ -1,3 +1,15 @@
+import {
+    LONG_DREAM_MEMORY_SCHEMA_VERSION,
+    applyLongDreamMemoryOperations,
+    normalizeLongDreamMemoryV2,
+    rejectLongDreamMemoryV2Item,
+    resolveLongDreamMemoryConflict,
+    setLongDreamMemoryV2ItemHidden,
+    updateLongDreamMemoryV2Item,
+} from './long-dream-memory-model.js';
+
+export { LONG_DREAM_MEMORY_SCHEMA_VERSION } from './long-dream-memory-model.js';
+
 export const LONG_DREAM_SCHEMA_VERSION = 4;
 
 export const LONG_DREAM_STATUS = Object.freeze({
@@ -148,13 +160,57 @@ function resetMemoryForChapters(chapters = []) {
     const numbers = chapters.map(chapter => Math.max(1, Math.floor(Number(chapter?.number) || 1)));
     return normalizeMemory({
         status: numbers.length ? LONG_DREAM_MEMORY_STATUS.PENDING : LONG_DREAM_MEMORY_STATUS.NOT_STARTED,
+        schemaVersion: LONG_DREAM_MEMORY_SCHEMA_VERSION,
         cards: [],
+        legacyCards: [],
+        states: [],
+        transitions: [],
+        threads: [],
+        deviations: [],
+        rejections: [],
+        pendingConflicts: [],
+        lastBatchChanges: [],
         currentState: '',
         processedThroughChapter: 0,
         pendingChapterNumbers: numbers,
         updatedAt: '',
         lastErrorSignal: '',
     }, numbers.length);
+}
+
+function conservativeLegacyState(card, index = 0) {
+    const normalized = normalizeMemoryCard(card, index);
+    if (!normalized || !['人物状态', '关系', '地点/物品'].includes(normalized.type) || !normalized.key.includes('/')) return null;
+    const [subjectText, ...attributeParts] = normalized.key.split('/').map(part => cleanText(part, 120)).filter(Boolean);
+    const label = attributeParts.join('/') || '';
+    const subjects = subjectText.split(/[、,，&]|(?:与|和)/).map(value => cleanText(value, 80)).filter(Boolean);
+    if (!subjects.length || !label) return null;
+    let attribute = 'other';
+    if (/所在|位置|地点/.test(label)) attribute = 'location';
+    else if (/伤|健康|身体/.test(label)) attribute = 'physical_condition';
+    else if (/关系/.test(label) || normalized.type === '关系') attribute = 'relationship';
+    else if (/知情|知道|认知/.test(label)) attribute = 'knowledge';
+    else if (/身份|公开|隐藏/.test(label)) attribute = 'identity';
+    else if (/持有|归属|拥有/.test(label)) attribute = 'possession';
+    else if (/完好|损坏|可用|状态/.test(label)) attribute = 'condition';
+    else if (/行动|正在/.test(label)) attribute = 'ongoing_action';
+    else if (/目标|目的/.test(label)) attribute = 'goal';
+    return {
+        id: `state-migrated-${normalized.id}`,
+        subjects,
+        attribute,
+        topic: ['location', 'physical_condition', 'relationship', 'identity', 'possession'].includes(attribute) ? '' : label,
+        value: normalized.content,
+        validFromChapter: normalized.chapterNumber,
+        sourceChapterNumbers: normalized.sourceChapterNumbers,
+        quote: normalized.quote,
+        history: [],
+        tags: normalized.tags,
+        editedByUser: normalized.editedByUser,
+        lockedByUser: normalized.editedByUser,
+        hiddenFromPrompt: normalized.status === 'dismissed',
+        updatedAt: normalized.updatedAt,
+    };
 }
 
 function normalizeMemory(memory = {}, chapterCount = 0) {
@@ -170,9 +226,29 @@ function normalizeMemory(memory = {}, chapterCount = 0) {
         : (pendingChapterNumbers.length
             ? LONG_DREAM_MEMORY_STATUS.PENDING
             : (processedThroughChapter ? LONG_DREAM_MEMORY_STATUS.READY : LONG_DREAM_MEMORY_STATUS.NOT_STARTED));
+    const cards = (Array.isArray(memory?.cards) ? memory.cards : []).map(normalizeMemoryCard).filter(Boolean);
+    const fallbackDate = cleanText(memory?.updatedAt, 60) || new Date().toISOString();
+    const migratedStates = Number(memory?.schemaVersion) >= LONG_DREAM_MEMORY_SCHEMA_VERSION || (memory?.states || []).length
+        ? (memory?.states || [])
+        : cards.map(conservativeLegacyState).filter(Boolean);
+    const v2 = normalizeLongDreamMemoryV2({ ...memory, states: migratedStates }, fallbackDate);
+    const legacyCandidates = [
+        ...(Array.isArray(memory?.legacyCards) ? memory.legacyCards : []),
+    ].map(normalizeMemoryCard).filter(Boolean);
+    const legacyCards = [];
+    const legacySeen = new Set();
+    for (const card of legacyCandidates) {
+        const key = `${card.id}\u0000${card.type}\u0000${card.content}`.toLocaleLowerCase();
+        if (legacySeen.has(key)) continue;
+        legacySeen.add(key);
+        legacyCards.push(card);
+    }
     return {
+        schemaVersion: LONG_DREAM_MEMORY_SCHEMA_VERSION,
         status,
-        cards: (Array.isArray(memory?.cards) ? memory.cards : []).map(normalizeMemoryCard).filter(Boolean),
+        cards,
+        legacyCards,
+        ...v2,
         currentState: cleanText(memory?.currentState, 5000),
         processedThroughChapter,
         pendingChapterNumbers,
@@ -624,6 +700,28 @@ export function applyLongDreamMemoryPatch(record, patch = {}, throughChapter, no
         normalized.memory.processedThroughChapter,
         Math.min(normalized.chapters.length, Math.floor(Number(throughChapter) || 0)),
     );
+    if (Array.isArray(patch.operations)) {
+        const application = applyLongDreamMemoryOperations(normalized.memory, patch.operations, {
+            worldLineRelation: normalized.inheritance.worldLineRelation,
+            now,
+        });
+        const updatedAt = normalizeIsoDate(now, new Date().toISOString());
+        const memory = normalizeMemory({
+            ...normalized.memory,
+            ...application.memory,
+            currentState: application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0
+                ? normalized.memory.currentState
+                : cleanText(patch.currentState || normalized.memory.currentState, 5000),
+            processedThroughChapter,
+            pendingChapterNumbers: normalized.chapters
+                .map(chapter => chapter.number)
+                .filter(number => number > processedThroughChapter),
+            status: LONG_DREAM_MEMORY_STATUS.READY,
+            updatedAt,
+            lastErrorSignal: '',
+        }, normalized.chapters.length);
+        return { ...normalized, memory, updatedAt };
+    }
     const cards = normalized.memory.cards.slice();
     for (const rawCard of Array.isArray(patch.cards) ? patch.cards : []) {
         const card = normalizeMemoryCard(rawCard, cards.length);
@@ -739,6 +837,57 @@ export function updateLongDreamMemoryState(record, currentState, now = new Date(
             currentState: cleanText(currentState, 5000),
             updatedAt,
         },
+        updatedAt,
+    };
+}
+
+export function updateLongDreamMemoryV2RecordItem(record, kind, itemId, changes = {}, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) throw new Error('长梦记录无效');
+    const updatedAt = normalizeIsoDate(now, new Date().toISOString());
+    const v2 = updateLongDreamMemoryV2Item(normalized.memory, kind, itemId, changes, now);
+    return {
+        ...normalized,
+        memory: normalizeMemory({ ...normalized.memory, ...v2, updatedAt }, normalized.chapters.length),
+        updatedAt,
+    };
+}
+
+export function setLongDreamMemoryV2RecordItemHidden(record, kind, itemId, hidden = true, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) throw new Error('长梦记录无效');
+    const updatedAt = normalizeIsoDate(now, new Date().toISOString());
+    const v2 = setLongDreamMemoryV2ItemHidden(normalized.memory, kind, itemId, hidden, now);
+    return {
+        ...normalized,
+        memory: normalizeMemory({ ...normalized.memory, ...v2, updatedAt }, normalized.chapters.length),
+        updatedAt,
+    };
+}
+
+export function rejectLongDreamMemoryV2RecordItem(record, kind, itemId, reason = '', now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) throw new Error('长梦记录无效');
+    const updatedAt = normalizeIsoDate(now, new Date().toISOString());
+    const v2 = rejectLongDreamMemoryV2Item(normalized.memory, kind, itemId, reason, now);
+    return {
+        ...normalized,
+        memory: normalizeMemory({ ...normalized.memory, ...v2, updatedAt }, normalized.chapters.length),
+        updatedAt,
+    };
+}
+
+export function resolveLongDreamMemoryV2RecordConflict(record, conflictId, action = 'keep', now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) throw new Error('长梦记录无效');
+    const updatedAt = normalizeIsoDate(now, new Date().toISOString());
+    const v2 = resolveLongDreamMemoryConflict(normalized.memory, conflictId, action, {
+        worldLineRelation: normalized.inheritance.worldLineRelation,
+        now,
+    });
+    return {
+        ...normalized,
+        memory: normalizeMemory({ ...normalized.memory, ...v2, updatedAt }, normalized.chapters.length),
         updatedAt,
     };
 }

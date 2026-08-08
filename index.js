@@ -27,12 +27,13 @@ import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from './plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from './history-backup.js';
-import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_MEMORY_TYPES, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamBranch, createLongDreamRecord, createLongDreamWorldBookSnapshot, deleteLongDreamFrom, discardLongDreamWritingAttempt, latestLongDreamChapter, normalizeLongDreamRecord, recoverInterruptedLongDreamMemory, selectLongDreamDraftCandidate, setLongDreamMemoryCardStatus, setLongDreamMemoryStatus, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamDefinition, updateLongDreamMemoryCard, updateLongDreamMemoryState } from './long-dream.js';
+import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_MEMORY_TYPES, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamBranch, createLongDreamRecord, createLongDreamWorldBookSnapshot, deleteLongDreamFrom, discardLongDreamWritingAttempt, latestLongDreamChapter, normalizeLongDreamRecord, recoverInterruptedLongDreamMemory, rejectLongDreamMemoryV2RecordItem, resolveLongDreamMemoryV2RecordConflict, selectLongDreamDraftCandidate, setLongDreamMemoryCardStatus, setLongDreamMemoryStatus, setLongDreamMemoryV2RecordItemHidden, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamDefinition, updateLongDreamMemoryCard, updateLongDreamMemoryV2RecordItem } from './long-dream.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from './long-dream-generation.js';
 import { MAX_LONG_DREAM_BACKUP_BYTES, createLongDreamBackup, parseLongDreamBackup } from './long-dream-backup.js';
 import { LONG_DREAM_ARCHIVE_MANIFEST, MAX_LONG_DREAM_ARCHIVE_BYTES, MAX_LONG_DREAM_ARCHIVE_FILES, createLongDreamArchive, parseLongDreamArchive } from './long-dream-archive.js';
-import { selectRelevantLongDreamMemoryCards } from './long-dream-payload.js';
-import { DEFAULT_LONG_DREAM_MEMORY_PRESET, buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, shouldWeaveLongDreamMemory } from './long-dream-memory.js';
+import { selectRelevantLongDreamMemoryCards, selectRelevantLongDreamMemoryItems } from './long-dream-payload.js';
+import { DEFAULT_LONG_DREAM_MEMORY_PRESET, LEGACY_DEFAULT_LONG_DREAM_MEMORY_PRESET, buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, shouldWeaveLongDreamMemory } from './long-dream-memory.js';
+import { LONG_DREAM_MEMORY_BUILTIN_PRESET_ID, MAX_LONG_DREAM_MEMORY_PRESET_BYTES, createLongDreamMemoryPreset, exportLongDreamMemoryPreset, normalizeLongDreamMemoryPresetList, parseLongDreamMemoryPreset } from './long-dream-memory-presets.js';
 import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, buildLongDreamCanonSuggestionPayload, composeLongDreamCanon, parseLongDreamCanonSuggestions } from './long-dream-canon-suggestions.js';
 import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkSide, normalizeBookmarkYRatio } from './result-bookmark.js';
 import { composePresetMessages, noToolsPostProcessingMode, normalizePromptRole } from './request-layout.js';
@@ -317,6 +318,8 @@ const defaultSettings = Object.freeze({
     longDreamMemoryApiPresetId: '',
     longDreamMemoryBatchSize: 3,
     longDreamMemoryPrompt: DEFAULT_LONG_DREAM_MEMORY_PRESET,
+    longDreamMemoryPresetId: LONG_DREAM_MEMORY_BUILTIN_PRESET_ID,
+    longDreamMemoryPresets: [],
 });
 
 const SKIN_LABELS = { default: '内置默认', theater: '跟随酒馆', custom: '自定义' };
@@ -668,6 +671,7 @@ async function init() {
     const upgradeNeedsProtocolCompatibility = !!existingSettings && !hasOwn(existingSettings, 'apiProtocol');
     const upgradeNeedsMaxOutputDefault = !!existingSettings && !hasOwn(existingSettings, 'maxOutputTokensSchema');
     const upgradeNeedsFollowedWorldBookTracking = !!existingSettings && !hasOwn(existingSettings, 'followedWorldBooks');
+    const upgradeNeedsMemoryPresetLibrary = !!existingSettings && !hasOwn(existingSettings, 'longDreamMemoryPresets');
     const autoContinueDefaultMigrated = !!existingSettings && migrateAutoContinueDefault(existingSettings);
     if (!existingSettings) extensionSettings[MODULE_NAME] = cloneDefaultSettings();
     for (const k of Object.keys(defaultSettings)) {
@@ -678,6 +682,18 @@ async function init() {
     setRuntimeLogSecretProvider(() => [settings?.apiKey, ...apiPresetSecretValues(settings?.apiPresets)]);
     if (upgradeNeedsProtocolCompatibility) settings.apiProtocol = 'auto';
     settings.apiPresets = normalizeApiPresetList(settings.apiPresets);
+    const previousMemoryPrompt = String(settings.longDreamMemoryPrompt || '').trim();
+    settings.longDreamMemoryPresets = normalizeLongDreamMemoryPresetList(settings.longDreamMemoryPresets);
+    if (upgradeNeedsMemoryPresetLibrary && previousMemoryPrompt && previousMemoryPrompt !== LEGACY_DEFAULT_LONG_DREAM_MEMORY_PRESET && previousMemoryPrompt !== DEFAULT_LONG_DREAM_MEMORY_PRESET) {
+        const migratedPreset = createLongDreamMemoryPreset({ name: '原有自定义梦脉侧重点', focusPrompt: previousMemoryPrompt });
+        settings.longDreamMemoryPresets = normalizeLongDreamMemoryPresetList([...settings.longDreamMemoryPresets, migratedPreset]);
+        settings.longDreamMemoryPresetId = migratedPreset.id;
+    }
+    if (!settings.longDreamMemoryPresets.some(preset => preset.id === settings.longDreamMemoryPresetId)) {
+        settings.longDreamMemoryPresetId = LONG_DREAM_MEMORY_BUILTIN_PRESET_ID;
+    }
+    const activeMemoryPromptPreset = settings.longDreamMemoryPresets.find(preset => preset.id === settings.longDreamMemoryPresetId);
+    settings.longDreamMemoryPrompt = activeMemoryPromptPreset?.focusPrompt || DEFAULT_LONG_DREAM_MEMORY_PRESET;
     if (!settings.apiPresets.some(preset => preset.id === settings.selectedApiPresetId)) settings.selectedApiPresetId = '';
     if (upgradeNeedsMaxOutputDefault) {
         if (Number(settings.maxOutputTokens) === 8192) {
@@ -1152,6 +1168,8 @@ function buildPopupHTML() {
     const selRender = settings.selectedRenderIndex || '__default__';
     const runtimeEntries = getRuntimeLogEntries();
     const apiPresets = normalizeApiPresetList(settings.apiPresets);
+    const memoryPresets = normalizeLongDreamMemoryPresetList(settings.longDreamMemoryPresets);
+    const activeMemoryPreset = memoryPresets.find(preset => preset.id === settings.longDreamMemoryPresetId) || memoryPresets[0];
 
     const skin = settings.skinMode || 'default';
     return `
@@ -1589,9 +1607,17 @@ function buildPopupHTML() {
                         ${[1, 3, 5].map(size => `<option value="${size}" ${Number(settings.longDreamMemoryBatchSize || 3) === size ? 'selected' : ''}>每 ${size} 章${size === 3 ? '（推荐）' : ''}</option>`).join('')}
                     </select></label>
                     <details class="theater-memory-prompt-details">
-                        <summary>梦脉织录预设</summary>
-                        <textarea id="theater-dream-memory-prompt" class="theater-textarea" rows="10">${esc(settings.longDreamMemoryPrompt || DEFAULT_LONG_DREAM_MEMORY_PRESET)}</textarea>
-                        <button type="button" id="theater-reset-dream-memory-prompt" class="theater-btn theater-config-text-button"><i class="fa-solid fa-rotate-left"></i><span>恢复内置预设</span></button>
+                        <summary>梦脉分析预设库</summary>
+                        <label><span>当前预设</span><select id="theater-dream-memory-analysis-preset" class="theater-select">${memoryPresets.map(preset => `<option value="${esc(preset.id)}" ${preset.id === activeMemoryPreset.id ? 'selected' : ''}>${esc(preset.name)}${preset.author ? ` · ${esc(preset.author)}` : ''}</option>`).join('')}</select></label>
+                        <small id="theater-dream-memory-preset-description">${esc(activeMemoryPreset.description || '只改变梦脉的分析侧重点；数据结构和输出合同由程序固定。')}</small>
+                        <textarea id="theater-dream-memory-prompt" class="theater-textarea" rows="10" ${activeMemoryPreset.builtin ? 'readonly' : ''}>${esc(activeMemoryPreset.focusPrompt || DEFAULT_LONG_DREAM_MEMORY_PRESET)}</textarea>
+                        <div class="theater-memory-preset-actions">
+                            <button type="button" id="theater-copy-dream-memory-preset" class="theater-btn theater-config-text-button"><i class="fa-solid fa-copy"></i><span>新建副本</span></button>
+                            <button type="button" id="theater-import-dream-memory-preset" class="theater-btn theater-config-text-button"><i class="fa-solid fa-file-import"></i><span>导入 JSON</span></button>
+                            <button type="button" id="theater-export-dream-memory-preset" class="theater-btn theater-config-text-button"><i class="fa-solid fa-file-export"></i><span>导出当前</span></button>
+                            <button type="button" id="theater-delete-dream-memory-preset" class="theater-btn theater-config-text-button danger" ${activeMemoryPreset.builtin ? 'hidden' : ''}><i class="fa-solid fa-trash"></i><span>删除当前</span></button>
+                            <button type="button" id="theater-reset-dream-memory-prompt" class="theater-btn theater-config-text-button"><i class="fa-solid fa-rotate-left"></i><span>切回内置</span></button>
+                        </div>
                     </details>
                 </div>
             </details>
@@ -2155,7 +2181,7 @@ function longDreamListHTML() {
     const cards = dreams.map(dream => {
         const latest = latestLongDreamChapter(dream);
         const chapterCount = dream.chapters?.length || 0;
-        const memoryCount = (dream.memory?.cards || []).filter(card => card?.status !== 'dismissed').length;
+        const memoryCount = longDreamActiveMemoryCount(dream);
         const canon = longDreamExcerpt(dream.canon, 110) || '尚未填写此梦设定';
         return `<button type="button" class="theater-dream-card" data-id="${esc(dream.id)}" aria-label="打开长卷《${esc(dream.title)}》">
             <div class="theater-dream-thread" aria-hidden="true"><span></span></div>
@@ -2291,6 +2317,30 @@ function selectedLongDreamMemoryApiPreset() {
     return normalizeApiPresetList(settings.apiPresets).find(preset => String(preset.id) === presetId) || null;
 }
 
+function longDreamMemoryAnalysisPresets() {
+    settings.longDreamMemoryPresets = normalizeLongDreamMemoryPresetList(settings.longDreamMemoryPresets);
+    return settings.longDreamMemoryPresets;
+}
+
+function selectedLongDreamMemoryAnalysisPreset() {
+    const presets = longDreamMemoryAnalysisPresets();
+    return presets.find(preset => preset.id === settings.longDreamMemoryPresetId) || presets[0];
+}
+
+function refreshLongDreamMemoryPresetControls() {
+    const presets = longDreamMemoryAnalysisPresets();
+    const preset = selectedLongDreamMemoryAnalysisPreset();
+    const select = $('#theater-dream-memory-analysis-preset');
+    if (select.length) {
+        select.empty().append(presets.map(item => `<option value="${esc(item.id)}">${esc(item.name)}${item.author ? ` · ${esc(item.author)}` : ''}</option>`).join('')).val(preset.id);
+    }
+    $('#theater-dream-memory-preset-description').text(preset.description || '只改变梦脉的分析侧重点；数据结构和输出合同由程序固定。');
+    $('#theater-dream-memory-prompt').val(preset.focusPrompt).prop('readonly', preset.builtin === true);
+    $('#theater-delete-dream-memory-preset').prop('hidden', preset.builtin === true);
+    settings.longDreamMemoryPresetId = preset.id;
+    settings.longDreamMemoryPrompt = preset.focusPrompt;
+}
+
 function longDreamMemoryStatusText(dream) {
     const memory = dream?.memory || {};
     const pending = Array.isArray(memory.pendingChapterNumbers) ? memory.pendingChapterNumbers.length : 0;
@@ -2302,21 +2352,86 @@ function longDreamMemoryStatusText(dream) {
     return '尚未开始织录';
 }
 
+function longDreamActiveMemoryCount(dream) {
+    const memory = dream?.memory || {};
+    const v2 = ['states', 'transitions', 'threads', 'deviations']
+        .reduce((count, key) => count + (memory[key] || []).filter(item => !item.hiddenFromPrompt).length, 0);
+    const legacy = [...(memory.cards || []), ...(memory.legacyCards || [])]
+        .filter(card => card?.status !== 'dismissed').length;
+    return v2 + legacy;
+}
+
 function longDreamMemoryCardsHTML(dream) {
-    const cards = Array.isArray(dream?.memory?.cards) ? dream.memory.cards : [];
+    const memory = dream?.memory || {};
+    const cards = Array.isArray(memory.cards) ? memory.cards : [];
+    const legacyCards = Array.isArray(memory.legacyCards) ? memory.legacyCards : [];
     const activeCount = cards.filter(card => card?.status !== 'dismissed').length;
     const dismissedCount = cards.length - activeCount;
-    const currentState = String(dream?.memory?.currentState || '');
-    const memoryLocked = dream?.memory?.status === LONG_DREAM_MEMORY_STATUS.WEAVING;
-    if (!cards.length && !currentState) return '';
+    const currentState = String(memory.currentState || '');
+    const memoryLocked = memory.status === LONG_DREAM_MEMORY_STATUS.WEAVING;
+    const groups = [
+        ['state', '当前状态', '下一章开始时仍然成立的事实', memory.states || []],
+        ['transition', '关键变化', '人物、关系和长期因果为什么发生变化', memory.transitions || []],
+        ['thread', '未完事项', '伏笔、约定、谜团、秘密、任务和威胁的生命周期', memory.threads || []],
+        ['deviation', '世界线偏离', '原线事实、本梦改变、后果和失效默认', memory.deviations || []],
+    ];
+    const v2Count = groups.reduce((count, group) => count + group[3].length, 0);
+    const conflicts = Array.isArray(memory.pendingConflicts) ? memory.pendingConflicts : [];
+    const conflictLabels = {
+        'locked-by-user': '新章节与一条由你锁定的记忆不同',
+        'rejected-by-user': '新章节再次出现了你曾否定的记忆',
+        'closed-thread': '已经结束的事项似乎再次被提起',
+        'missing-target': '新变化引用的旧记忆已经不存在',
+        'target-type-mismatch': '新变化引用了不匹配的记忆类型',
+    };
+    if (!cards.length && !legacyCards.length && !v2Count && !currentState && !conflicts.length) return '';
+
+    const field = (name, label, value, { rows = 0, placeholder = '', list = null } = {}) => {
+        if (list) return `<label><span>${label}</span><select class="theater-select" data-dream-memory-v2-field="${name}" ${memoryLocked ? 'disabled' : ''}>${list.map(([option, text]) => `<option value="${esc(option)}" ${option === value ? 'selected' : ''}>${esc(text)}</option>`).join('')}</select></label>`;
+        if (rows) return `<label><span>${label}</span><textarea class="theater-textarea" rows="${rows}" data-dream-memory-v2-field="${name}" placeholder="${esc(placeholder)}" ${memoryLocked ? 'disabled' : ''}>${esc(value || '')}</textarea></label>`;
+        return `<label><span>${label}</span><input class="theater-input" data-dream-memory-v2-field="${name}" value="${esc(value || '')}" placeholder="${esc(placeholder)}" ${memoryLocked ? 'disabled' : ''}></label>`;
+    };
+    const v2Card = (kind, item) => {
+        const sources = (item.sourceChapterNumbers || [item.chapterNumber || item.validFromChapter || item.introducedAt]).filter(Boolean);
+        const common = `${field('subjects', '主体', (item.subjects || []).join('、'), { placeholder: '多个主体用顿号分隔' })}`;
+        let body = '';
+        let lifecycleActions = '';
+        if (kind === 'state') {
+            body = `${common}${field('attribute', '状态属性', item.attribute, { list: [['location', '所在地'], ['physical_condition', '身体/伤势'], ['relationship', '当前关系'], ['knowledge', '知情状态'], ['identity', '身份状态'], ['possession', '物品归属'], ['condition', '完好/可用状态'], ['ongoing_action', '正在行动'], ['goal', '当前目标'], ['other', '其他']] })}${field('topic', '具体主题', item.topic, { placeholder: '例如：泄密调查、银钥匙' })}${field('value', '当前值', item.value, { rows: 3 })}${item.history?.length ? `<details><summary>查看 ${item.history.length} 条旧值历史</summary>${item.history.map(old => `<p>第 ${old.fromChapter}–${old.toChapter} 章：${esc(old.value)}</p>`).join('')}</details>` : ''}`;
+        } else if (kind === 'transition') {
+            body = `${common}${field('domain', '变化领域', item.domain, { list: [['character', '人物'], ['relationship', '关系'], ['identity', '身份'], ['experience', '重要经历'], ['world', '局势/世界']] })}${field('from', '变化前', item.from, { rows: 2 })}${field('to', '变化后', item.to, { rows: 2 })}${field('cause', '变化原因', item.cause, { rows: 2 })}${field('impact', '长期影响', item.impact, { rows: 2 })}`;
+        } else if (kind === 'thread') {
+            const statusLabels = { open: '未解决', progressed: '已推进', resolved: '已解决', abandoned: '已放弃' };
+            body = `${field('threadKey', '事项名称', item.threadKey)}${common}${field('kind', '事项类型', item.kind, { list: [['foreshadow', '伏笔/待回收因果'], ['promise', '约定/承诺'], ['mystery', '谜团'], ['secret', '秘密'], ['task', '任务'], ['threat', '威胁']] })}${field('content', '事项内容', item.content, { rows: 3 })}${field('progress', '最新进展', item.progress, { rows: 2 })}<div class="theater-dream-memory-lifecycle"><span>生命周期</span><b>${esc(statusLabels[item.status] || item.status)}</b></div>${item.status === 'resolved' ? field('resolution', '解决结果', item.resolution, { rows: 2 }) : ''}${item.status === 'abandoned' ? field('abandonedReason', '放弃/失效原因', item.abandonedReason, { rows: 2 }) : ''}${item.progressHistory?.length ? `<details><summary>查看 ${item.progressHistory.length} 次推进</summary>${item.progressHistory.map(step => `<p>第 ${step.chapterNumber} 章：${esc(step.content)}</p>`).join('')}</details>` : ''}`;
+            lifecycleActions = ['open', 'progressed'].includes(item.status)
+                ? `<button type="button" class="theater-btn" data-dream-memory-v2-action="resolve" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid fa-check-double"></i><span>标记已解决</span></button><button type="button" class="theater-btn" data-dream-memory-v2-action="abandon" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid fa-box-archive"></i><span>标记已放弃</span></button>`
+                : `<button type="button" class="theater-btn" data-dream-memory-v2-action="reopen" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid fa-rotate-left"></i><span>重新开启事项</span></button>`;
+        } else {
+            body = `${field('deviationKey', '偏离名称', item.deviationKey)}${common}${field('originalCanon', '原线事实', item.originalCanon, { rows: 2 })}${field('dreamChange', '本梦改变', item.dreamChange, { rows: 3 })}${field('directConsequences', '直接后果', (item.directConsequences || []).join('\n'), { rows: 3, placeholder: '每行一项' })}${field('invalidatedAssumptions', '失效默认', (item.invalidatedAssumptions || []).join('\n'), { rows: 3, placeholder: '每行一项' })}`;
+        }
+        return `<article class="${item.hiddenFromPrompt ? 'is-dismissed' : ''}" data-dream-memory-v2-kind="${kind}" data-dream-memory-v2-id="${esc(item.id)}">
+            <div class="theater-dream-memory-card-head"><span>${item.lockedByUser ? '用户锁定' : (item.editedByUser ? '人工校正' : '自动织录')}${item.hiddenFromPrompt ? ' · 已隐藏' : ''}</span><small>来源第 ${sources.length ? sources.join('、') : '?'} 章</small></div>
+            <div class="theater-dream-memory-card-grid">${body}</div>
+            ${field('tags', '检索标签', (item.tags || []).join('、'), { placeholder: '用顿号或逗号分隔' })}
+            ${item.quote ? `<blockquote>${esc(item.quote)}</blockquote>` : ''}
+            <div class="theater-dream-memory-card-actions">
+                <button type="button" class="theater-btn" data-dream-memory-v2-action="save" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid fa-check"></i><span>保存并锁定</span></button>
+                ${item.lockedByUser ? `<button type="button" class="theater-btn" data-dream-memory-v2-action="unlock" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid fa-lock-open"></i><span>交还自动更新</span></button>` : ''}
+                ${lifecycleActions}
+                <button type="button" class="theater-btn" data-dream-memory-v2-action="${item.hiddenFromPrompt ? 'show' : 'hide'}" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid ${item.hiddenFromPrompt ? 'fa-eye' : 'fa-eye-slash'}"></i><span>${item.hiddenFromPrompt ? '恢复注入' : '隐藏不注入'}</span></button>
+                <button type="button" class="theater-btn danger" data-dream-memory-v2-action="reject" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid fa-ban"></i><span>否定为错误</span></button>
+            </div>
+        </article>`;
+    };
     return `<details class="theater-dream-memory-details">
-        <summary><span><i class="fa-solid fa-route"></i> 当前有效梦脉</span><small>${activeCount} 条有效${dismissedCount ? ` · ${dismissedCount} 条已废止` : ''}</small></summary>
+        <summary><span><i class="fa-solid fa-route"></i> 梦脉 v2</span><small>${v2Count} 条结构化记忆${conflicts.length ? ` · ${conflicts.length} 项待确认` : ''}${cards.length || legacyCards.length ? ` · ${activeCount + legacyCards.length} 条旧版兼容` : ''}</small></summary>
         <div class="theater-dream-memory-state-editor">
-            <label for="theater-dream-memory-current-state"><span>当前脉象</span><small>概括此刻时间、地点、人物与关系状态，可人工校正。</small></label>
-            <textarea id="theater-dream-memory-current-state" class="theater-textarea" rows="4" placeholder="尚未形成当前状态摘要。" ${memoryLocked ? 'disabled' : ''}>${esc(currentState)}</textarea>
-            <button type="button" id="theater-dream-save-memory-state" class="theater-btn" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid fa-floppy-disk"></i><span>保存当前脉象</span></button>
+            <label><span>当前脉象</span><small>这是副 API 生成的只读阅读摘要；如有错误，请校正下方对应梦脉。</small></label>
+            <div class="theater-dream-memory-current-state-readonly">${currentState ? esc(currentState) : '尚未形成当前状态摘要。'}</div>
         </div>
-        <div class="theater-dream-memory-list">${cards.map(card => {
+        ${conflicts.length ? `<section class="theater-dream-memory-conflicts"><h4>有 ${conflicts.length} 处需要你决定</h4>${conflicts.map(conflict => `<article data-dream-memory-conflict="${esc(conflict.id)}"><p>${esc(conflictLabels[conflict.reason] || '新章节提出了不能静默覆盖的变化')}。</p><small>来自第 ${conflict.chapterNumber} 章 · 原记忆暂时保持不变</small><div class="theater-dream-memory-card-actions"><button type="button" class="theater-btn" data-dream-memory-conflict-action="accept">以新章节为准</button><button type="button" class="theater-btn danger" data-dream-memory-conflict-action="keep">保留我的版本</button></div></article>`).join('')}</section>` : ''}
+        ${groups.map(([kind, title, help, items]) => items.length ? `<details class="theater-dream-memory-v2-group" ${kind === 'state' || kind === 'thread' ? 'open' : ''}><summary><span>${title}</span><small>${items.length} 条 · ${help}</small></summary><div class="theater-dream-memory-list">${items.map(item => v2Card(kind, item)).join('')}</div></details>` : '').join('')}
+        ${(cards.length || legacyCards.length) ? `<details class="theater-dream-memory-v2-group"><summary><span>旧版兼容梦脉</span><small>迁移期间保留，不会无声丢失</small></summary><div class="theater-dream-memory-list">${[...cards, ...legacyCards].map(card => {
             const dismissed = card?.status === 'dismissed';
             const sources = (Array.isArray(card?.sourceChapterNumbers) ? card.sourceChapterNumbers : [card?.chapterNumber])
                 .map(Number).filter(Number.isFinite);
@@ -2335,21 +2450,24 @@ function longDreamMemoryCardsHTML(dream) {
                 <button type="button" class="theater-btn ${dismissed ? '' : 'danger'}" data-dream-memory-action="${dismissed ? 'restore' : 'dismiss'}" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid ${dismissed ? 'fa-rotate-left' : 'fa-ban'}"></i><span>${dismissed ? '恢复有效' : '废止此条'}</span></button>
             </div>
         </article>`;
-        }).join('')}</div>
+        }).join('')}</div></details>` : ''}
     </details>`;
 }
 
 function longDreamMemorySelectionHTML(dream, instruction = '') {
-    const activeCards = (Array.isArray(dream?.memory?.cards) ? dream.memory.cards : [])
-        .filter(card => card?.status !== 'dismissed');
-    if (!activeCards.length) return '<div id="theater-dream-memory-selection" class="theater-dream-memory-selection" hidden></div>';
-    const selected = selectRelevantLongDreamMemoryCards(dream, { instruction, maxCards: 30 });
+    const selectedItems = selectRelevantLongDreamMemoryItems(dream, { instruction, maxItems: 30 });
+    const activeCards = ['states', 'transitions', 'threads', 'deviations'].reduce((count, key) => count + (dream?.memory?.[key] || []).filter(item => !item.hiddenFromPrompt).length, 0)
+        + [...(dream?.memory?.cards || []), ...(dream?.memory?.legacyCards || [])].filter(card => card?.status !== 'dismissed').length;
+    if (!activeCards) return '<div id="theater-dream-memory-selection" class="theater-dream-memory-selection" hidden></div>';
+    const selected = selectedItems.length ? selectedItems : selectRelevantLongDreamMemoryCards(dream, { instruction, maxCards: 30 }).map(item => ({ kind: 'legacy', item }));
     const visible = selected.slice(0, 8);
     return `<div id="theater-dream-memory-selection" class="theater-dream-memory-selection">
         <div><span><i class="fa-solid fa-filter"></i> 本章梦脉命中</span><small>${selected.length}/${activeCards.length} 条会进入续章请求</small></div>
-        <div class="theater-dream-memory-selection-chips">${visible.map(card => {
-            const label = card.key || longDreamExcerpt(card.content, 36) || card.type || '梦脉事实';
-            return `<span title="${esc(card.content || '')}"><b>${esc(card.type || '事实')}</b>${esc(label)}</span>`;
+        <div class="theater-dream-memory-selection-chips">${visible.map(entry => {
+            const card = entry.item || entry;
+            const label = card.threadKey || card.deviationKey || card.topic || card.key || longDreamExcerpt(card.value || card.content || card.to || card.dreamChange, 36) || '梦脉事实';
+            const labels = { state: '状态', transition: '变化', thread: '事项', deviation: '偏离', legacy: card.type || '旧版' };
+            return `<span title="${esc(entry.text || card.value || card.content || card.to || card.dreamChange || '')}"><b>${esc(labels[entry.kind] || '梦脉')}</b>${esc(label)}</span>`;
         }).join('')}${selected.length > visible.length ? `<span class="is-more">另有 ${selected.length - visible.length} 条</span>` : ''}</div>
     </div>`;
 }
@@ -2363,6 +2481,24 @@ function refreshLongDreamMemorySelection() {
 
 function longDreamMemoryTags(value = '') {
     return [...new Set(String(value || '').split(/[、,，;；\n]+/).map(tag => tag.trim()).filter(Boolean))].slice(0, 20);
+}
+
+function longDreamMemoryV2Fields(card, kind) {
+    const value = name => card.find(`[data-dream-memory-v2-field="${name}"]`).val() || '';
+    const subjects = longDreamMemoryTags(value('subjects')).slice(0, 8);
+    const tags = longDreamMemoryTags(value('tags'));
+    if (kind === 'state') return { subjects, attribute: value('attribute'), topic: value('topic'), value: value('value'), tags };
+    if (kind === 'transition') return { subjects, domain: value('domain'), from: value('from'), to: value('to'), cause: value('cause'), impact: value('impact'), tags };
+    if (kind === 'thread') return {
+        threadKey: value('threadKey'), subjects, kind: value('kind'), content: value('content'), progress: value('progress'),
+        resolution: value('resolution'), abandonedReason: value('abandonedReason'), tags,
+    };
+    return {
+        deviationKey: value('deviationKey'), subjects, originalCanon: value('originalCanon'), dreamChange: value('dreamChange'),
+        directConsequences: String(value('directConsequences')).split(/\n+/).map(item => item.trim()).filter(Boolean).slice(0, 20),
+        invalidatedAssumptions: String(value('invalidatedAssumptions')).split(/\n+/).map(item => item.trim()).filter(Boolean).slice(0, 20),
+        tags,
+    };
 }
 
 function uniqueLongDreamBranchTitle(base = '未命名长梦支线') {
@@ -2458,7 +2594,7 @@ function longDreamDetailHTML(dream) {
     const availableBooks = (settings.selectedWorldBooks || []).filter(Boolean);
     const bookText = selectedBooks.length ? selectedBooks.join('、') : (availableBooks.length ? availableBooks.join('、') : '当前没有选中的世界书');
     const nextNumber = dream.chapters.length + 1;
-    const activeMemoryCount = (dream.memory?.cards || []).filter(card => card?.status !== 'dismissed').length;
+    const activeMemoryCount = longDreamActiveMemoryCount(dream);
     const inheritanceSummary = selectedPolicy && selectedBooks.length
         ? `${longDreamRelationLabel(worldLineRelation)} · ${selectedBooks.length} 本资料库`
         : '完全隔离';
@@ -3465,14 +3601,64 @@ function bindEvents() {
     $d.off('click.tdweave').on('click.tdweave', '#theater-dream-weave-now', function () {
         queueLongDreamMemoryWeave(activeLongDreamId, { force: true, announce: true });
     });
-    $d.off('click.tdmemorysave').on('click.tdmemorysave', '#theater-dream-save-memory-state', async function () {
+    $d.off('click.tdmemoryv2').on('click.tdmemoryv2', '[data-dream-memory-v2-action]', async function () {
         const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
-        if (!dream) return;
+        const card = $(this).closest('[data-dream-memory-v2-id]');
+        const itemId = card.attr('data-dream-memory-v2-id');
+        const kind = card.attr('data-dream-memory-v2-kind');
+        const action = String($(this).attr('data-dream-memory-v2-action') || '');
+        if (!dream || !itemId || !kind) return;
         if (dream.memory?.status === LONG_DREAM_MEMORY_STATUS.WEAVING) { toastr.warning('梦脉正在织录，请完成后再修改'); return; }
-        const saved = await longDreamPut(updateLongDreamMemoryState(dream, $('#theater-dream-memory-current-state').val()));
-        if (!saved) return;
-        renderLongDreamPanel();
-        toastr.success('当前脉象已保存');
+        try {
+            let updated;
+            if (action === 'save') {
+                updated = updateLongDreamMemoryV2RecordItem(dream, kind, itemId, longDreamMemoryV2Fields(card, kind));
+            } else if (action === 'unlock') {
+                updated = updateLongDreamMemoryV2RecordItem(dream, kind, itemId, { lockedByUser: false });
+            } else if (action === 'resolve') {
+                const resolution = prompt('这件事在故事中怎样得到了解决？');
+                if (resolution === null || !String(resolution).trim()) return;
+                updated = updateLongDreamMemoryV2RecordItem(dream, kind, itemId, { status: 'resolved', resolvedAt: dream.chapters.length, resolution, abandonedReason: '' });
+            } else if (action === 'abandon') {
+                const abandonedReason = prompt('故事中明确取消、失效或不再继续的原因是什么？');
+                if (abandonedReason === null || !String(abandonedReason).trim()) return;
+                updated = updateLongDreamMemoryV2RecordItem(dream, kind, itemId, { status: 'abandoned', resolvedAt: dream.chapters.length, abandonedReason, resolution: '' });
+            } else if (action === 'reopen') {
+                if (!confirm('重新开启这项已结束事项吗？它会重新进入后续梦脉检索。')) return;
+                updated = updateLongDreamMemoryV2RecordItem(dream, kind, itemId, { status: 'open', resolvedAt: null, resolution: '', abandonedReason: '' });
+            } else if (action === 'hide' || action === 'show') {
+                updated = setLongDreamMemoryV2RecordItemHidden(dream, kind, itemId, action === 'hide');
+            } else if (action === 'reject') {
+                if (!confirm('确认这是一条错误记忆吗？它会从有效梦脉中移除，并阻止同一错误直接复活。')) return;
+                updated = rejectLongDreamMemoryV2RecordItem(dream, kind, itemId, '用户在梦脉界面确认提取错误');
+            } else return;
+            const saved = await longDreamPut(updated);
+            if (!saved) return;
+            renderLongDreamPanel();
+            const messages = {
+                save: '梦脉已校正并锁定', unlock: '这条梦脉已交还自动更新', reject: '错误梦脉已否定并建立抑制记录',
+                hide: '这条梦脉不会进入续章请求', show: '这条梦脉已恢复注入', resolve: '事项已标记为解决',
+                abandon: '事项已标记为放弃', reopen: '事项已重新开启',
+            };
+            toastr.success(messages[action] || '梦脉已更新');
+        } catch (error) {
+            toastr.warning(error?.message || String(error));
+        }
+    });
+    $d.off('click.tdmemoryconflict').on('click.tdmemoryconflict', '[data-dream-memory-conflict-action]', async function () {
+        const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+        const card = $(this).closest('[data-dream-memory-conflict]');
+        const conflictId = card.attr('data-dream-memory-conflict');
+        const action = String($(this).attr('data-dream-memory-conflict-action') || 'keep');
+        if (!dream || !conflictId) return;
+        try {
+            const saved = await longDreamPut(resolveLongDreamMemoryV2RecordConflict(dream, conflictId, action));
+            if (!saved) return;
+            renderLongDreamPanel();
+            toastr.success(action === 'accept' ? '已采用新章节带来的变化' : '已保留原记忆并否定这次变化');
+        } catch (error) {
+            toastr.warning(error?.message || String(error));
+        }
     });
     $d.off('click.tdmemoryaction').on('click.tdmemoryaction', '[data-dream-memory-action]', async function () {
         const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
@@ -4165,15 +4351,79 @@ function bindEvents() {
         refreshApiPresetControls();
         longDreamCache.forEach(dream => queueLongDreamMemoryWeave(dream.id));
     });
-    $d.off('input.tdmemoryprompt').on('input.tdmemoryprompt', '#theater-dream-memory-prompt', function () {
-        settings.longDreamMemoryPrompt = String($(this).val() || '');
+    $d.off('change.tdmemoryanalysispreset').on('change.tdmemoryanalysispreset', '#theater-dream-memory-analysis-preset', function () {
+        settings.longDreamMemoryPresetId = String($(this).val() || LONG_DREAM_MEMORY_BUILTIN_PRESET_ID);
+        refreshLongDreamMemoryPresetControls();
         save();
     });
-    $d.off('click.tdmemorypromptreset').on('click.tdmemorypromptreset', '#theater-reset-dream-memory-prompt', function () {
-        settings.longDreamMemoryPrompt = DEFAULT_LONG_DREAM_MEMORY_PRESET;
-        $('#theater-dream-memory-prompt').val(DEFAULT_LONG_DREAM_MEMORY_PRESET);
+    $d.off('input.tdmemoryprompt').on('input.tdmemoryprompt', '#theater-dream-memory-prompt', function () {
+        const preset = selectedLongDreamMemoryAnalysisPreset();
+        if (preset.builtin) return;
+        const focusPrompt = String($(this).val() || '').slice(0, 50000);
+        settings.longDreamMemoryPresets = longDreamMemoryAnalysisPresets().map(item => item.id === preset.id ? { ...item, focusPrompt } : item);
+        settings.longDreamMemoryPrompt = focusPrompt;
         save();
-        toastr.success('已恢复“梦脉织录”内置预设');
+    });
+    $d.off('click.tdmemorypresetcopy').on('click.tdmemorypresetcopy', '#theater-copy-dream-memory-preset', function () {
+        const source = selectedLongDreamMemoryAnalysisPreset();
+        const name = prompt('给新的梦脉分析预设起个名字：', source.builtin ? '我的梦脉侧重点' : `${source.name} 副本`);
+        if (name === null || !String(name).trim()) return;
+        const author = prompt('作者名（可留空）：', source.author || '') ?? '';
+        const preset = createLongDreamMemoryPreset({ name, author, description: source.description, focusPrompt: source.focusPrompt });
+        settings.longDreamMemoryPresets = normalizeLongDreamMemoryPresetList([...longDreamMemoryAnalysisPresets(), preset]);
+        settings.longDreamMemoryPresetId = preset.id;
+        refreshLongDreamMemoryPresetControls();
+        save();
+        toastr.success('已创建可编辑的梦脉预设副本');
+    });
+    $d.off('click.tdmemorypresetimport').on('click.tdmemorypresetimport', '#theater-import-dream-memory-preset', function () {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,application/json';
+        input.onchange = async () => {
+            const file = input.files?.[0];
+            if (!file) return;
+            try {
+                if (file.size > MAX_LONG_DREAM_MEMORY_PRESET_BYTES) throw new Error('梦脉预设文件过大');
+                const preset = parseLongDreamMemoryPreset(await file.text());
+                settings.longDreamMemoryPresets = normalizeLongDreamMemoryPresetList([...longDreamMemoryAnalysisPresets(), preset]);
+                const imported = settings.longDreamMemoryPresets.find(item => item.id === preset.id)
+                    || settings.longDreamMemoryPresets.slice().reverse().find(item => item.name.startsWith(preset.name));
+                settings.longDreamMemoryPresetId = imported?.id || LONG_DREAM_MEMORY_BUILTIN_PRESET_ID;
+                refreshLongDreamMemoryPresetControls();
+                save();
+                toastr.success(`已导入梦脉预设「${imported?.name || preset.name}」`);
+            } catch (error) {
+                toastr.warning(error?.message || String(error));
+            }
+        };
+        input.click();
+    });
+    $d.off('click.tdmemorypresetexport').on('click.tdmemorypresetexport', '#theater-export-dream-memory-preset', function () {
+        try {
+            const preset = selectedLongDreamMemoryAnalysisPreset();
+            const data = exportLongDreamMemoryPreset(preset);
+            const filename = `${String(preset.name || '梦脉预设').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80)}.json`;
+            downloadFile(filename, JSON.stringify(data, null, 2), 'application/json');
+            toastr.success('梦脉预设已导出；文件不包含 API 或长梦内容');
+        } catch (error) {
+            toastr.warning(error?.message || String(error));
+        }
+    });
+    $d.off('click.tdmemorypresetdelete').on('click.tdmemorypresetdelete', '#theater-delete-dream-memory-preset', function () {
+        const preset = selectedLongDreamMemoryAnalysisPreset();
+        if (preset.builtin || !confirm(`删除梦脉预设「${preset.name}」吗？这不会删除已经生成的梦脉。`)) return;
+        settings.longDreamMemoryPresets = longDreamMemoryAnalysisPresets().filter(item => item.id !== preset.id);
+        settings.longDreamMemoryPresetId = LONG_DREAM_MEMORY_BUILTIN_PRESET_ID;
+        refreshLongDreamMemoryPresetControls();
+        save();
+        toastr.success('梦脉预设已删除');
+    });
+    $d.off('click.tdmemorypromptreset').on('click.tdmemorypromptreset', '#theater-reset-dream-memory-prompt', function () {
+        settings.longDreamMemoryPresetId = LONG_DREAM_MEMORY_BUILTIN_PRESET_ID;
+        refreshLongDreamMemoryPresetControls();
+        save();
+        toastr.success('已切回“连续性梦脉 v2”内置预设');
     });
     $d.off('change.tstream').on('change.tstream', '#theater-stream-enabled', function () {
         settings.streamEnabled = this.checked; save();
@@ -6289,7 +6539,7 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
         ? selectedPresetEntries
         : [{ id: 'main', role: 'system', content: DEFAULT_SYSTEM_PROMPT }];
     const selectedMemoryCount = selectRelevantLongDreamMemoryCards(dream, { instruction, maxCards: 30 }).length;
-    const activeMemoryCount = (dream.memory?.cards || []).filter(card => card?.status !== 'dismissed').length;
+    const activeMemoryCount = longDreamActiveMemoryCount(dream);
     lastRequestContext = {
         kind: '长梦正文',
         presetSource: selectedPresetPrompt ? '已选酒馆预设' : '内置默认预设',
@@ -6438,7 +6688,10 @@ async function weaveLongDreamMemory(dreamId, { force = false, announce = false }
         runtimeLog('info', '梦脉织录完成', {
             dream_id: String(dream.id),
             through_chapter: payload.throughChapter,
-            cards_added: patch.cards.length,
+            operations_applied: Array.isArray(patch.operations) ? patch.operations.length : 0,
+            legacy_cards_added: Array.isArray(patch.cards) ? patch.cards.length : 0,
+            invalid_operations: Number(patch.invalidOperationCount) || 0,
+            corrected_chapter_numbers: Number(patch.correctedChapterCount) || 0,
         });
         if (String(activeLongDreamId) === String(dream.id) && longDreamView === 'detail') renderLongDreamPanel();
         if (announce) toastr.success(`梦脉已织录至第 ${payload.throughChapter} 章`);

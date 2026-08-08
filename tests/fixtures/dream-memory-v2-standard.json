@@ -1,0 +1,33 @@
+{
+  "name": "旧港钟楼六章连续性样本",
+  "worldLineRelation": "parallel",
+  "canon": "林岚与周砚没有血缘关系，是从小相识的邻居。",
+  "chapters": [
+    { "number": 1, "facts": ["林岚持有银钥匙。", "旧港钟楼退潮后会出现暗门。"] },
+    { "number": 2, "facts": ["林岚把银钥匙藏进旧车票夹层。", "周砚不知道钥匙去向。"] },
+    { "number": 3, "facts": ["两人约定查清失踪列车后一起旅行。"] },
+    { "number": 4, "facts": ["周砚坦白隐瞒的调查身份。", "两人的关系从互相试探变为共同承担风险。"] },
+    { "number": 5, "facts": ["林岚从旧车票夹层取回银钥匙。", "银钥匙打开钟楼侧门，但暗门后的记录仍未找到。"] },
+    { "number": 6, "facts": ["两人进入钟楼顶层等待退潮。", "林岚脚踝伤势仍未痊愈。"] }
+  ],
+  "expected": {
+    "states": [
+      { "subjects": ["林岚"], "attribute": "location", "topic": "", "value": "旧港钟楼顶层", "validFromChapter": 6 },
+      { "subjects": ["林岚"], "attribute": "physical_condition", "topic": "脚踝", "value": "仍未痊愈", "validFromChapter": 6 },
+      { "subjects": ["林岚"], "attribute": "possession", "topic": "银钥匙", "value": "已经取回并持有", "validFromChapter": 5 },
+      { "subjects": ["林岚", "周砚"], "attribute": "relationship", "topic": "", "value": "共同承担调查风险的信任关系", "validFromChapter": 4 }
+    ],
+    "transitions": [
+      { "domain": "relationship", "subjects": ["林岚", "周砚"], "chapterNumber": 4, "cause": "周砚坦白隐瞒的调查身份" }
+    ],
+    "threads": [
+      { "threadKey": "失踪列车记录", "kind": "mystery", "status": "progressed", "introducedAt": 1, "lastTouchedAt": 5 },
+      { "threadKey": "调查结束后的旅行约定", "kind": "promise", "status": "open", "introducedAt": 3, "lastTouchedAt": 3 }
+    ],
+    "deviations": [
+      { "deviationKey": "林岚与周砚/关系", "dreamChange": "本梦中两人没有血缘关系，是从小相识的邻居。" }
+    ],
+    "nextChapterMustInclude": ["旧港钟楼顶层", "林岚脚踝仍未痊愈", "失踪列车记录尚未找到", "银钥匙已由林岚取回"],
+    "nextChapterMustNotTreatAsOpen": ["寻找银钥匙"]
+  }
+}

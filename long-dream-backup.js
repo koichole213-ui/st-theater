@@ -1,4 +1,5 @@
 import { LONG_DREAM_SCHEMA_VERSION, normalizeLongDreamRecord } from './long-dream.js';
+import { normalizeLongDreamMemoryV2 } from './long-dream-memory-model.js';
 
 export const LONG_DREAM_BACKUP_FORMAT = 'st-theater-long-dream';
 export const LONG_DREAM_BACKUP_VERSION = 1;
@@ -124,8 +125,8 @@ function safeDraft(draft = null, fallbackDate, nextNumber, { includeReviewDraft 
     };
 }
 
-function safeMemory(memory = {}, fallbackDate) {
-    const cards = (Array.isArray(memory?.cards) ? memory.cards : []).map((card, index) => {
+function safeMemoryCards(values = [], fallbackDate) {
+    return (Array.isArray(values) ? values : []).map((card, index) => {
         if (typeof card === 'string') {
             const content = cleanText(card, 2000);
             return content ? { id: `legacy-memory-${index + 1}`, type: 'note', title: '', content, quote: '', status: 'confirmed', tags: [], chapterId: '', chapterNumber: null, createdAt: fallbackDate, updatedAt: fallbackDate } : null;
@@ -150,9 +151,22 @@ function safeMemory(memory = {}, fallbackDate) {
             updatedAt: safeDate(card?.updatedAt, fallbackDate),
         };
     }).filter(Boolean);
+}
+
+function safeMemory(memory = {}, fallbackDate) {
+    const v2 = normalizeLongDreamMemoryV2(memory, fallbackDate);
     return {
+        schemaVersion: v2.schemaVersion,
         status: cleanText(memory?.status, 40) || 'not-started',
-        cards,
+        cards: safeMemoryCards(memory?.cards, fallbackDate),
+        legacyCards: safeMemoryCards(memory?.legacyCards, fallbackDate),
+        states: v2.states,
+        transitions: v2.transitions,
+        threads: v2.threads,
+        deviations: v2.deviations,
+        rejections: v2.rejections,
+        pendingConflicts: v2.pendingConflicts,
+        lastBatchChanges: v2.lastBatchChanges,
         currentState: cleanText(memory?.currentState, 5000),
         processedThroughChapter: Math.max(0, Math.floor(Number(memory?.processedThroughChapter) || 0)),
         pendingChapterNumbers: (Array.isArray(memory?.pendingChapterNumbers) ? memory.pendingChapterNumbers : [])

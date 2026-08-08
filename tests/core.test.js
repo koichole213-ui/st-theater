@@ -25,13 +25,14 @@ import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from '../plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from '../history-backup.js';
-import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, appendLongDreamChapter, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamBranch, createLongDreamRecord, createLongDreamWorldBookSnapshot, deleteLongDreamFrom, discardLongDreamWritingAttempt, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, recoverInterruptedLongDreamMemory, saveLongDreamDraft, selectLongDreamDraftCandidate, setLongDreamMemoryCardStatus, setLongDreamMemoryStatus, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition, updateLongDreamMemoryCard } from '../long-dream.js';
-import { buildLongDreamChapterMessages, buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBookContext, longDreamWorldBookEntries, selectRelevantLongDreamMemoryCards } from '../long-dream-payload.js';
+import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, appendLongDreamChapter, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamBranch, createLongDreamRecord, createLongDreamWorldBookSnapshot, deleteLongDreamFrom, discardLongDreamWritingAttempt, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, recoverInterruptedLongDreamMemory, rejectLongDreamMemoryV2RecordItem, resolveLongDreamMemoryV2RecordConflict, saveLongDreamDraft, selectLongDreamDraftCandidate, setLongDreamMemoryCardStatus, setLongDreamMemoryStatus, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition, updateLongDreamMemoryCard, updateLongDreamMemoryV2RecordItem } from '../long-dream.js';
+import { buildLongDreamChapterMessages, buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBookContext, longDreamWorldBookEntries, selectRelevantLongDreamMemoryCards, selectRelevantLongDreamMemoryItems } from '../long-dream-payload.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from '../long-dream-generation.js';
 import { LONG_DREAM_BACKUP_FORMAT, LONG_DREAM_BACKUP_VERSION, createLongDreamBackup, parseLongDreamBackup } from '../long-dream-backup.js';
 import { LONG_DREAM_ARCHIVE_FORMAT, LONG_DREAM_ARCHIVE_MANIFEST, createLongDreamArchive, parseLongDreamArchive } from '../long-dream-archive.js';
 import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, buildLongDreamCanonSuggestionPayload, composeLongDreamCanon, parseLongDreamCanonSuggestions } from '../long-dream-canon-suggestions.js';
 import { buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, pendingLongDreamChapters, shouldWeaveLongDreamMemory } from '../long-dream-memory.js';
+import { LONG_DREAM_MEMORY_OUTPUT_CONTRACT, exportLongDreamMemoryPreset, parseLongDreamMemoryPreset } from '../long-dream-memory-presets.js';
 import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing, composePresetMessages, normalizeRequestMessages, normalizeWorldInfoEntry, squashAdjacentSystemMessages } from '../request-layout.js';
 import { createRequestTrace, formatRequestTrace } from '../request-trace.js';
 
@@ -826,7 +827,8 @@ test('梦脉织录按三章批量、只读已确认章节，并以补丁追加�
     record.memory.cards = [{ type: '伏笔', content: '旧钥匙尚未使用。', chapterNumber: 1, status: 'active' }];
     const request = buildLongDreamMemoryPayload({ record });
     assert.deepEqual(request.pendingChapterNumbers, [1, 2, 3]);
-    assert.match(request.systemPrompt, /原线事实 → 本梦改变 → 直接结果/);
+    assert.match(request.systemPrompt, /梦脉增量织录/);
+    assert.match(request.userPrompt, /固定 JSON 输出合同/);
     assert.match(request.userPrompt, /第一章正文/);
     assert.match(request.userPrompt, /第三章正文/);
     assert.match(request.userPrompt, /旧钥匙尚未使用/);
@@ -869,6 +871,165 @@ test('梦脉用 type + key 原位更新有效状态，并保留人工修改的�
     assert.equal(selectRelevantLongDreamMemoryCards(record, { instruction: '寻找林岚' }).length, 0);
     record = setLongDreamMemoryCardStatus(record, record.memory.cards[0].id, 'active');
     assert.equal(selectRelevantLongDreamMemoryCards(record, { instruction: '寻找林岚' }).length, 1);
+});
+
+test('梦脉 v2 按章节顺序应用状态增量，旧值进入历史且新值不继承旧来源', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章。', html: '<main>第一章。</main>' } });
+    record = appendLongDreamChapter(record, { text: '第二章。', html: '<main>第二章。</main>' });
+    record = appendLongDreamChapter(record, { text: '第三章。', html: '<main>第三章。</main>' });
+    const patch = parseLongDreamMemoryResponse(JSON.stringify({
+        currentState: '林岚已经进入钟楼顶层。',
+        operations: [
+            { op: 'set_state', subjects: ['林岚'], attribute: 'location', value: '旧港入口', chapterNumber: 1 },
+            { op: 'set_state', subjects: ['林岚'], attribute: 'location', value: '钟楼顶层', chapterNumber: 3 },
+        ],
+    }), { pendingChapterNumbers: [1, 2, 3] });
+    record = applyLongDreamMemoryPatch(record, patch, 3);
+    assert.equal(record.memory.schemaVersion, 2);
+    assert.equal(record.memory.states.length, 1);
+    assert.equal(record.memory.states[0].value, '钟楼顶层');
+    assert.equal(record.memory.states[0].validFromChapter, 3);
+    assert.deepEqual(record.memory.states[0].sourceChapterNumbers, [3]);
+    assert.deepEqual(record.memory.states[0].history.map(item => item.value), ['旧港入口']);
+    assert.deepEqual(record.memory.states[0].history[0].sourceChapterNumbers, [1]);
+    assert.equal(record.memory.currentState, '林岚已经进入钟楼顶层。');
+});
+
+test('梦脉 v2 未完事项保存推进历史、解决结果，并阻止已关闭事项静默重开', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章。', html: '<main>第一章。</main>' } });
+    for (let number = 2; number <= 4; number++) record = appendLongDreamChapter(record, { text: `第${number}章。`, html: `<main>第${number}章。</main>` });
+    record = applyLongDreamMemoryPatch(record, {
+        currentState: '两人仍在调查。',
+        operations: [
+            { op: 'open_thread', threadKey: '失踪列车记录', kind: 'mystery', content: '寻找失踪列车记录', chapterNumber: 1 },
+            { op: 'advance_thread', threadKey: '失踪列车记录', progress: '发现列车编号', chapterNumber: 2 },
+            { op: 'resolve_thread', threadKey: '失踪列车记录', resolution: '在钟楼暗门后找到完整记录', chapterNumber: 3 },
+        ],
+    }, 3);
+    assert.equal(record.memory.threads.length, 1);
+    assert.equal(record.memory.threads[0].status, 'resolved');
+    assert.equal(record.memory.threads[0].resolution, '在钟楼暗门后找到完整记录');
+    assert.deepEqual(record.memory.threads[0].progressHistory.map(item => item.content), ['发现列车编号']);
+    record = applyLongDreamMemoryPatch(record, {
+        currentState: '这段摘要不应覆盖。',
+        operations: [{ op: 'open_thread', threadKey: '失踪列车记录', kind: 'mystery', content: '重新寻找记录', chapterNumber: 4 }],
+    }, 4);
+    assert.equal(record.memory.threads.length, 1);
+    assert.equal(record.memory.pendingConflicts.length, 1);
+    assert.equal(record.memory.currentState, '两人仍在调查。');
+});
+
+test('用户锁定状态产生持久冲突，用户可选择采用新变化或保留原记忆', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章。', html: '<main>第一章。</main>' } });
+    record = appendLongDreamChapter(record, { text: '第二章。', html: '<main>第二章。</main>' });
+    record = applyLongDreamMemoryPatch(record, {
+        operations: [{ op: 'set_state', subjects: ['林岚'], attribute: 'location', value: '旧港入口', chapterNumber: 1 }],
+    }, 1);
+    record = updateLongDreamMemoryV2RecordItem(record, 'state', record.memory.states[0].id, { value: '旧港钟楼入口' });
+    record = applyLongDreamMemoryPatch(record, {
+        operations: [{ op: 'set_state', targetId: record.memory.states[0].id, subjects: ['林岚'], attribute: 'location', value: '钟楼顶层', chapterNumber: 2 }],
+    }, 2);
+    assert.equal(record.memory.states[0].value, '旧港钟楼入口');
+    assert.equal(record.memory.pendingConflicts[0].reason, 'locked-by-user');
+
+    const accepted = resolveLongDreamMemoryV2RecordConflict(record, record.memory.pendingConflicts[0].id, 'accept');
+    assert.equal(accepted.memory.states[0].value, '钟楼顶层');
+    assert.equal(accepted.memory.pendingConflicts.length, 0);
+
+    const conflictAgain = applyLongDreamMemoryPatch(record, {
+        operations: [{ op: 'set_state', targetId: record.memory.states[0].id, subjects: ['林岚'], attribute: 'location', value: '钟楼顶层', chapterNumber: 2 }],
+    }, 2);
+    const kept = resolveLongDreamMemoryV2RecordConflict(conflictAgain, conflictAgain.memory.pendingConflicts[0].id, 'keep');
+    assert.equal(kept.memory.states[0].value, '旧港钟楼入口');
+    assert.equal(kept.memory.rejections.length, 1);
+});
+
+test('用户否定的错误梦脉不会被同一增量直接复活', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章。', html: '<main>第一章。</main>' } });
+    record = applyLongDreamMemoryPatch(record, {
+        operations: [{ op: 'set_state', subjects: ['林岚'], attribute: 'location', value: '旧港入口', chapterNumber: 1 }],
+    }, 1);
+    record = rejectLongDreamMemoryV2RecordItem(record, 'state', record.memory.states[0].id, '章节没有写过这件事');
+    assert.equal(record.memory.states.length, 0);
+    assert.equal(record.memory.rejections.length, 1);
+    record = applyLongDreamMemoryPatch(record, {
+        operations: [{ op: 'set_state', subjects: ['林岚'], attribute: 'location', value: '旧港入口', chapterNumber: 1 }],
+    }, 1);
+    assert.equal(record.memory.states.length, 0);
+    assert.equal(record.memory.pendingConflicts[0].reason, 'rejected-by-user');
+});
+
+test('完全隔离的长梦拒绝世界线偏离操作，但仍应用同批合法状态', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章。', html: '<main>第一章。</main>' } });
+    record = applyLongDreamMemoryPatch(record, {
+        operations: [
+            { op: 'upsert_deviation', deviationKey: '人物关系', dreamChange: '两人不是兄妹', chapterNumber: 1 },
+            { op: 'set_state', subjects: ['林岚'], attribute: 'location', value: '旧港', chapterNumber: 1 },
+        ],
+    }, 1);
+    assert.equal(record.memory.deviations.length, 0);
+    assert.equal(record.memory.states.length, 1);
+});
+
+test('梦脉 v2 主 API 检索按层选择，不让所有记忆继续争同一类卡片排名', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章。', html: '<main>第一章。</main>' } });
+    record = applyLongDreamMemoryPatch(record, {
+        currentState: '林岚在旧港等待退潮。',
+        operations: [
+            { op: 'set_state', subjects: ['林岚'], attribute: 'location', value: '旧港钟楼', chapterNumber: 1, tags: ['林岚', '旧港'] },
+            { op: 'append_transition', domain: 'relationship', subjects: ['林岚', '周砚'], from: '互相试探', to: '共同承担风险', cause: '周砚坦白身份', chapterNumber: 1 },
+            { op: 'open_thread', threadKey: '退潮暗门', kind: 'mystery', content: '等待退潮后开启暗门', chapterNumber: 1, tags: ['暗门'] },
+        ],
+    }, 1);
+    record = updateLongDreamDefinition(record, {
+        worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED,
+        worldLineRelation: LONG_DREAM_WORLD_LINE_RELATION.PARALLEL,
+    });
+    record = applyLongDreamMemoryPatch(record, {
+        operations: [{ op: 'upsert_deviation', deviationKey: '林岚与周砚/关系', subjects: ['林岚', '周砚'], originalCanon: '原线是兄妹', dreamChange: '本梦没有血缘关系', chapterNumber: 1 }],
+    }, 1);
+    const selected = selectRelevantLongDreamMemoryItems(record, { instruction: '林岚和周砚去打开退潮暗门。' });
+    assert.deepEqual(new Set(selected.map(item => item.kind)), new Set(['state', 'thread', 'deviation', 'transition']));
+    const context = longDreamChapterContext(record, { instruction: '林岚和周砚去打开退潮暗门。' });
+    assert.match(context.memory, /当前脉象：林岚在旧港等待退潮/);
+    assert.match(context.memory, /当前状态|关键变化|事项|世界线偏离/);
+});
+
+test('旧版梦脉保守迁移稳定状态，原卡片和 v2 备份字段都不会丢失', () => {
+    const record = normalizeLongDreamRecord({
+        title: '旧卷',
+        chapters: [{ text: '第一章。', html: '<main>第一章。</main>' }],
+        memory: {
+            cards: [{ id: 'old-state', type: '人物状态', key: '林岚/所在地点', content: '林岚位于旧港。', chapterNumber: 1, editedByUser: true }],
+            currentState: '旧版人工脉象。',
+        },
+    });
+    assert.equal(record.memory.cards.length, 1);
+    assert.equal(record.memory.states.length, 1);
+    assert.equal(record.memory.states[0].attribute, 'location');
+    assert.equal(record.memory.states[0].lockedByUser, true);
+    const imported = parseLongDreamBackup(createLongDreamBackup([record]));
+    assert.equal(imported[0].memory.cards[0].content, '林岚位于旧港。');
+    assert.equal(imported[0].memory.states[0].value, '林岚位于旧港。');
+    assert.equal(imported[0].memory.currentState, '旧版人工脉象。');
+});
+
+test('梦脉二创 JSON 只能携带分析侧重点，输出合同固定且未知配置被忽略', () => {
+    const preset = parseLongDreamMemoryPreset(JSON.stringify({
+        format: 'st-theater-long-dream-memory-preset',
+        version: 2,
+        name: '人物弧光版',
+        author: '小澄',
+        focusPrompt: '优先识别人物长期变化。',
+        outputContract: LONG_DREAM_MEMORY_OUTPUT_CONTRACT,
+        apiKey: '不应保留',
+        executable: '<script>bad()</script>',
+    }));
+    const exported = exportLongDreamMemoryPreset(preset);
+    assert.equal(exported.focusPrompt, '优先识别人物长期变化。');
+    assert.equal(exported.outputContract, 'long-dream-memory-v2');
+    assert.equal('apiKey' in exported, false);
+    assert.equal('executable' in exported, false);
 });
 
 test('长卷续章只带最近四章全文，并从旧章梦脉中检索本章相关事实', () => {
@@ -1337,7 +1498,11 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /data-dream-chapter-action="delete-from"/);
     assert.match(source, /data-dream-memory-action="save"/);
     assert.match(source, /data-dream-memory-action="\$\{dismissed \? 'restore' : 'dismiss'\}"/);
-    assert.match(source, /id="theater-dream-save-memory-state"/);
+    assert.match(source, /theater-dream-memory-current-state-readonly/);
+    assert.match(source, /data-dream-memory-v2-action="save"/);
+    assert.match(source, /data-dream-memory-conflict-action="accept"/);
+    assert.match(source, /id="theater-dream-memory-analysis-preset"/);
+    assert.match(source, /id="theater-import-dream-memory-preset"/);
     assert.match(source, /id="theater-dream-memory-selection"/);
     assert.match(source, /refreshLongDreamMemorySelection/);
     assert.match(source, /请只导入可信来源/);
