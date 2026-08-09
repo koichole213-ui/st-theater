@@ -711,7 +711,7 @@ test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => 
     assert.match(source, /class="theater-dream-next-options"/);
     assert.match(source, /id="theater-dream-token-summary-value"/);
     assert.match(source, /id="theater-dream-refresh-world-book"/);
-    assert.match(source, /class="theater-dream-settings is-workspace"/);
+    assert.match(source, /class="[^"]*theater-dream-settings is-workspace/);
     assert.match(source, /旧记录中有一份指令，请核对/);
     assert.match(styles, /梦中页只保留一条主线：续写/);
     assert.match(styles, /\.theater-dream-candidate-switcher/);
@@ -1699,7 +1699,7 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /id="theater-dream-export-current"/);
     assert.match(source, /'theater-dream-complete'/);
     assert.match(source, /'theater-dream-reopen'/);
-    assert.match(source, /class="theater-dream-chapter-directory is-workspace"/);
+    assert.match(source, /class="[^"]*theater-dream-chapter-directory is-workspace/);
     assert.match(source, /data-dream-read-chapter/);
     assert.match(source, /createLongDreamBackup/);
     assert.match(source, /parseLongDreamBackup/);
@@ -1721,7 +1721,7 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /refreshLongDreamMemorySelection/);
     assert.match(source, /class="theater-dream-memory-selection-chip"/);
     assert.match(source, /class="theater-dream-memory-chip-text"/);
-    assert.match(source, /class="theater-dream-memory-v2-card"/);
+    assert.match(source, /class="[^"]*theater-dream-memory-v2-card/);
     assert.match(source, /class="theater-dream-memory-card-more"/);
     assert.match(source, /placeholder: '例如：泄密调查、银钥匙'/);
     assert.match(source, /field\('status', '事项状态'/);
@@ -1759,16 +1759,41 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(continuation, /最近两章全文、旧章索引/);
     assert.match(workDetail, /data-dream-work-back/);
     assert.match(source, /data-dream-open-chapter/);
-    assert.match(workDetail, /class="theater-dream-work-menu"/);
+    assert.match(workDetail, /class="[^"]*theater-dream-work-menu/);
     assert.match(chapterDetail, /data-dream-chapter-back/);
     assert.match(chapterDetail, /id="theater-dream-export-chapter"/);
-    assert.match(chapterDetail, /class="theater-dream-chapter-operations"/);
+    assert.match(chapterDetail, /class="[^"]*theater-dream-chapter-operations/);
     assert.match(source, /function exportLongDreamChapter\(dream, chapter\)/);
     assert.match(source, /downloadFile\(longDreamChapterFileName\(dream, chapter, 'html'\), chapter\.html/);
     assert.match(source, /renderLongDreamChapter\(\{[\s\S]*?text,[\s\S]*?apiRoute: captureGenerationApiRoute/);
     assert.match(styles, /\.theater-dream-workspace-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\][\s\S]*?--dream-gemini-bg:\s*#FAF7F2/);
     assert.match(styles, /@media \(max-width: 520px\)[\s\S]*?\.theater-dream-workspace-tab[^}]*min-height:\s*44px/);
+});
+
+test('长梦真实 DOM 和样式直接移植 Gemini 核心组件，而非只覆写近似色值', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const requiredDomClasses = [
+        'dream-scroll-container', 'ui-card', 'dream-hero-container', 'dream-hero-stars',
+        'dream-hero-nebula-1', 'dream-hero-nebula-2', 'dream-hero-moon', 'glass-overlay',
+        'ui-title', 'ui-btn', 'ui-input', 'ui-textarea', 'memory-v2-card', 'memory-v2-summary',
+    ];
+    for (const className of requiredDomClasses) assert.match(source, new RegExp(`class="[^"\\n]*${className}`));
+    const requiredSelectors = [
+        '.dream-scroll-container', '.ui-card', '.dream-hero-container', '.dream-hero-stars',
+        '.dream-hero-nebula-1', '.dream-hero-nebula-2', '.dream-hero-moon', '.glass-overlay',
+        '.ui-btn', '.memory-v2-card',
+    ];
+    for (const selector of requiredSelectors) assert.ok(styles.includes(selector), `missing migrated selector ${selector}`);
+    for (const declaration of [
+        '--t-bg: #FAF7F2', '--t-surface-1: #FFFFFF', '--t-accent: #B07A4A',
+        'background: #090e17', 'radial-gradient(circle at 30% 30%, #fffde4, #fde08b)',
+        'filter: blur(35px)', 'backdrop-filter: blur(14px)', 'border-radius: 16px',
+        'box-shadow: 0 12px 36px rgba(0, 0, 0, .25)',
+    ]) assert.ok(styles.includes(declaration), `missing Gemini declaration ${declaration}`);
+    assert.doesNotMatch(styles, /Long Dream final IA — Gemini visual language/);
+    assert.match(styles, /Exact-port precedence: old semantic hook classes remain for events only/);
 });
 
 test('长梦章节阅读走独立沉浸阅读器，不覆写普通生成结果', () => {

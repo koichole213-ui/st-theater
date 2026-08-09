@@ -2296,7 +2296,7 @@ function longDreamListHTML() {
         const chapterCount = dream.chapters?.length || 0;
         const memoryCount = longDreamActiveMemoryCount(dream);
         const canon = longDreamExcerpt(dream.canon, 110) || '尚未填写此梦设定';
-        return `<button type="button" class="theater-dream-card" data-id="${esc(dream.id)}" aria-label="打开长卷《${esc(dream.title)}》">
+        return `<button type="button" class="ui-card theater-dream-card" data-id="${esc(dream.id)}" aria-label="打开长卷《${esc(dream.title)}》">
             <div class="theater-dream-thread" aria-hidden="true"><span></span></div>
             <div class="theater-dream-card-main">
                 <div class="theater-dream-card-topline">
@@ -2317,20 +2317,18 @@ function longDreamListHTML() {
         </button>`;
     }).join('');
     return `<div class="theater-dream-home">
-        <section class="theater-dream-hero">
-            <div class="theater-dream-moon" aria-hidden="true"><span></span></div>
-            <div class="theater-dream-hero-copy">
-                <span class="theater-dream-kicker">LONG DREAM ARCHIVE</span>
-                <h2>长梦续章</h2>
-                <p>让同一场梦记住来路，沿着自己的世界线续成一卷。</p>
+        <section class="dream-hero-container theater-dream-hero">
+            <div class="dream-hero-stars" aria-hidden="true"></div><div class="dream-hero-nebula-1" aria-hidden="true"></div><div class="dream-hero-nebula-2" aria-hidden="true"></div><div class="dream-hero-moon" aria-hidden="true"></div>
+            <div class="glass-overlay theater-dream-hero-copy">
+                <span class="kicker theater-dream-kicker">LONG DREAM ARCHIVE</span><h2>长梦续章</h2><p>让同一场梦记住来路，沿着自己的世界线续成一卷。</p>
             </div>
             <div class="theater-dream-hero-actions">
-                <button type="button" id="theater-dream-new" class="theater-dream-primary">
+            <button type="button" id="theater-dream-new" class="ui-btn ui-btn-primary theater-dream-primary">
                     <i class="fa-solid fa-feather-pointed"></i><span>开启一场长梦</span>
                 </button>
                 <div class="theater-dream-archive-actions">
-                    <button type="button" id="theater-dream-import-backup" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入备份</span></button>
-                    <button type="button" id="theater-dream-export-all" class="theater-btn" ${dreams.length ? '' : 'disabled'}><i class="fa-solid fa-file-export"></i><span>导出全部</span></button>
+                    <button type="button" id="theater-dream-import-backup" class="ui-btn theater-btn"><i class="fa-solid fa-file-import"></i><span>导入备份</span></button>
+                    <button type="button" id="theater-dream-export-all" class="ui-btn theater-btn" ${dreams.length ? '' : 'disabled'}><i class="fa-solid fa-file-export"></i><span>导出全部</span></button>
                 </div>
                 <small class="theater-dream-archive-note">备份会保留章节原始 HTML，请只导入可信来源。</small>
             </div>
@@ -2500,9 +2498,9 @@ function longDreamMemoryCardsHTML(dream) {
     if (!cards.length && !legacyCards.length && !v2Count && !currentState && !conflicts.length) return '';
 
     const field = (name, label, value, { rows = 0, placeholder = '', list = null } = {}) => {
-        if (list) return `<label><span>${label}</span><select class="theater-select" data-dream-memory-v2-field="${name}" ${memoryLocked ? 'disabled' : ''}>${list.map(([option, text]) => `<option value="${esc(option)}" ${option === value ? 'selected' : ''}>${esc(text)}</option>`).join('')}</select></label>`;
-        if (rows) return `<label><span>${label}</span><textarea class="theater-textarea" rows="${rows}" data-dream-memory-v2-field="${name}" placeholder="${esc(placeholder)}" ${memoryLocked ? 'disabled' : ''}>${esc(value || '')}</textarea></label>`;
-        return `<label><span>${label}</span><input class="theater-input" data-dream-memory-v2-field="${name}" value="${esc(value || '')}" placeholder="${esc(placeholder)}" ${memoryLocked ? 'disabled' : ''}></label>`;
+        if (list) return `<label><span>${label}</span><select class="ui-select theater-select" data-dream-memory-v2-field="${name}" ${memoryLocked ? 'disabled' : ''}>${list.map(([option, text]) => `<option value="${esc(option)}" ${option === value ? 'selected' : ''}>${esc(text)}</option>`).join('')}</select></label>`;
+        if (rows) return `<label><span>${label}</span><textarea class="ui-textarea theater-textarea" rows="${rows}" data-dream-memory-v2-field="${name}" placeholder="${esc(placeholder)}" ${memoryLocked ? 'disabled' : ''}>${esc(value || '')}</textarea></label>`;
+        return `<label><span>${label}</span><input class="ui-input theater-input ${placeholder ? 'placeholder-field' : ''}" data-dream-memory-v2-field="${name}" value="${esc(value || '')}" placeholder="${esc(placeholder)}" ${memoryLocked ? 'disabled' : ''}></label>`;
     };
     const v2Card = (kind, item) => {
         const sources = (item.sourceChapterNumbers || [item.chapterNumber || item.validFromChapter || item.introducedAt]).filter(Boolean);
@@ -2520,26 +2518,26 @@ function longDreamMemoryCardsHTML(dream) {
         } else {
             body = `${field('deviationKey', '偏离名称', item.deviationKey)}${common}${field('originalCanon', '原线事实', item.originalCanon, { rows: 2 })}${field('dreamChange', '本梦改变', item.dreamChange, { rows: 3 })}${field('directConsequences', '直接后果', (item.directConsequences || []).join('\n'), { rows: 3, placeholder: '每行一项' })}${field('invalidatedAssumptions', '失效默认', (item.invalidatedAssumptions || []).join('\n'), { rows: 3, placeholder: '每行一项' })}`;
         }
-        return `<article class="${item.hiddenFromPrompt ? 'is-dismissed' : ''}" data-dream-memory-v2-kind="${kind}" data-dream-memory-v2-id="${esc(item.id)}"><details class="theater-dream-memory-v2-card">
-            <summary><span class="theater-dream-memory-card-summary-type">${esc(typeLabels[kind] || '梦脉')}</span><span class="theater-dream-memory-card-summary-main"><b title="${esc(compactName)}">${esc(compactName)}</b><small title="${esc(compactValue)}">${esc(compactValue)}</small></span><small>第 ${sources.length ? sources.join('、') : '?'} 章</small></summary>
+        return `<article class="${item.hiddenFromPrompt ? 'is-dismissed' : ''}" data-dream-memory-v2-kind="${kind}" data-dream-memory-v2-id="${esc(item.id)}"><details class="memory-v2-card theater-dream-memory-v2-card">
+            <summary class="memory-v2-summary"><span class="memory-v2-tag theater-dream-memory-card-summary-type">${esc(typeLabels[kind] || '梦脉')}</span><span class="theater-dream-memory-card-summary-main"><b title="${esc(compactName)}">${esc(compactName)}</b><small title="${esc(compactValue)}">${esc(compactValue)}</small></span><small>第 ${sources.length ? sources.join('、') : '?'} 章</small></summary>
             <div class="theater-dream-memory-card-body"><div class="theater-dream-memory-card-head"><span>${item.lockedByUser ? '已保存修改' : (item.editedByUser ? '人工校正' : '自动织录')}${item.hiddenFromPrompt ? ' · 暂不参与续写' : ''}</span><small>来源第 ${sources.length ? sources.join('、') : '?'} 章</small></div>
             <div class="theater-dream-memory-card-grid">${body}</div>
             ${field('tags', '检索标签', (item.tags || []).join('、'), { placeholder: '用顿号或逗号分隔' })}
             ${item.quote ? `<blockquote>${esc(item.quote)}</blockquote>` : ''}
             <div class="theater-dream-memory-card-actions">
-                <button type="button" class="theater-btn" data-dream-memory-v2-action="save" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid fa-check"></i><span>保存修改</span></button>
+                <button type="button" class="ui-btn ui-btn-primary theater-btn" data-dream-memory-v2-action="save" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid fa-check"></i><span>保存修改</span></button>
                 <details class="theater-dream-memory-card-more"><summary>更多</summary><div>${item.lockedByUser ? `<button type="button" class="theater-btn" data-dream-memory-v2-action="unlock" ${memoryLocked ? 'disabled' : ''}>交还自动更新</button>` : ''}<button type="button" class="theater-btn" data-dream-memory-v2-action="${item.hiddenFromPrompt ? 'show' : 'hide'}" ${memoryLocked ? 'disabled' : ''}>${item.hiddenFromPrompt ? '恢复参与续写' : '暂不参与续写'}</button><button type="button" class="theater-btn danger" data-dream-memory-v2-action="reject" ${memoryLocked ? 'disabled' : ''}>标记为错误</button></div></details>
             </div></div>
         </details></article>`;
     };
-    return `<details class="theater-dream-memory-details">
-        <summary><span><i class="fa-solid fa-route"></i> 梦脉 v2</span><small>${v2Count} 条结构化记忆${conflicts.length ? ` · ${conflicts.length} 项待确认` : ''}${cards.length || legacyCards.length ? ` · ${activeCount + legacyCards.length} 条旧版兼容` : ''}</small></summary>
+    return `<details class="ui-card theater-dream-memory-details">
+        <summary class="memory-v2-summary"><span><i class="fa-solid fa-route"></i> 梦脉 v2</span><small>${v2Count} 条结构化记忆${conflicts.length ? ` · ${conflicts.length} 项待确认` : ''}${cards.length || legacyCards.length ? ` · ${activeCount + legacyCards.length} 条旧版兼容` : ''}</small></summary>
         <div class="theater-dream-memory-state-editor">
             <label><span>当前脉象</span><small>这是副 API 生成的只读阅读摘要；如有错误，请校正下方对应梦脉。</small></label>
             <div class="theater-dream-memory-current-state-readonly">${currentState ? esc(currentState) : '尚未形成当前状态摘要。'}</div>
         </div>
         ${conflicts.length ? `<section class="theater-dream-memory-conflicts"><h4>有 ${conflicts.length} 处需要你决定</h4>${conflicts.map(conflict => `<article data-dream-memory-conflict="${esc(conflict.id)}"><p>${esc(conflictLabels[conflict.reason] || '新章节提出了不能静默覆盖的变化')}。</p><small>来自第 ${conflict.chapterNumber} 章 · 原记忆暂时保持不变</small><div class="theater-dream-memory-card-actions"><button type="button" class="theater-btn" data-dream-memory-conflict-action="accept">以新章节为准</button><button type="button" class="theater-btn danger" data-dream-memory-conflict-action="keep">保留我的版本</button></div></article>`).join('')}</section>` : ''}
-        ${groups.map(([kind, title, help, items]) => items.length ? `<details class="theater-dream-memory-v2-group"><summary><span>${title}</span><small>${items.length} 条 · ${help}</small></summary><div class="theater-dream-memory-list">${items.map(item => v2Card(kind, item)).join('')}</div></details>` : '').join('')}
+        ${groups.map(([kind, title, help, items]) => items.length ? `<details class="ui-card theater-dream-memory-v2-group"><summary class="memory-v2-summary"><span>${title}</span><small>${items.length} 条 · ${help}</small></summary><div class="theater-dream-memory-list">${items.map(item => v2Card(kind, item)).join('')}</div></details>` : '').join('')}
         ${(cards.length || legacyCards.length) ? `<details class="theater-dream-memory-v2-group"><summary><span>旧版兼容梦脉</span><small>迁移期间保留，不会无声丢失</small></summary><div class="theater-dream-memory-list">${[...cards, ...legacyCards].map(card => {
             const dismissed = card?.status === 'dismissed';
             const sources = (Array.isArray(card?.sourceChapterNumbers) ? card.sourceChapterNumbers : [card?.chapterNumber])
@@ -2570,8 +2568,8 @@ function longDreamMemorySelectionHTML(dream, instruction = '') {
     if (!activeCards) return '<details id="theater-dream-memory-selection" class="theater-dream-memory-selection" hidden></details>';
     const selected = selectedItems.length ? selectedItems : selectRelevantLongDreamMemoryCards(dream, { instruction, maxCards: 30, recentChapterCount: LONG_DREAM_RECENT_CHAPTER_COUNT }).map(item => ({ kind: 'legacy', item }));
     const visible = selected.slice(0, 8);
-    return `<details id="theater-dream-memory-selection" class="theater-dream-memory-selection">
-        <summary><span><i class="fa-solid fa-filter"></i> 本章梦脉命中</span><small>${selected.length}/${activeCards} 条会进入续章请求</small></summary>
+    return `<details id="theater-dream-memory-selection" class="ui-card theater-dream-memory-selection">
+        <summary class="memory-v2-summary"><span><i class="fa-solid fa-filter"></i> 本章梦脉命中</span><small>${selected.length}/${activeCards} 条会进入续章请求</small></summary>
         <div class="theater-dream-memory-selection-chips">${visible.map(entry => {
             const card = entry.item || entry;
             const label = card.threadKey || card.deviationKey || card.topic || card.key || longDreamExcerpt(card.value || card.content || card.to || card.dreamChange, 36) || '梦脉事实';
@@ -2705,11 +2703,11 @@ function longDreamWorkspaceHTML(content, activeSection = longDreamWorkspaceSecti
         ['continue', '续写'],
         ['works', '作品'],
     ];
-    return `<div class="theater-dream-workspace" data-dream-workspace-section="${esc(activeSection)}">
-        <nav class="theater-dream-workspace-tabs" aria-label="长梦分类">
-            ${sections.map(([section, label]) => `<button type="button" class="theater-dream-workspace-tab ${activeSection === section ? 'active' : ''}" data-dream-section="${section}" aria-current="${activeSection === section ? 'page' : 'false'}">${label}</button>`).join('')}
+    return `<div class="dream-scroll-container theater-dream-workspace" data-dream-workspace-section="${esc(activeSection)}">
+        <nav class="theater-dream-workspace-tabs dream-secondary-nav" aria-label="长梦分类">
+            ${sections.map(([section, label]) => `<button type="button" class="ui-btn theater-dream-workspace-tab ${activeSection === section ? 'active' : ''}" data-dream-section="${section}" aria-current="${activeSection === section ? 'page' : 'false'}">${label}</button>`).join('')}
         </nav>
-        <div class="theater-dream-workspace-body">${content}</div>
+        <div class="theater-dream-workspace-body view-panel active">${content}</div>
     </div>`;
 }
 
@@ -2770,31 +2768,36 @@ function longDreamDetailState(dream) {
 }
 
 function longDreamDetailHeaderHTML(dream, { compact = false } = {}) {
-    return `<header class="theater-dream-detail-head ${compact ? 'is-compact' : ''}">
-        <div>
-            <span class="theater-dream-step">${dream.status === 'complete' ? '已完卷' : '仍在梦中'} · ${dream.chapters.length} 章</span>
+    if (compact) {
+        return `<header class="ui-card compact-detail-head theater-dream-detail-head is-compact">
+            <div class="compact-detail-head-main"><span class="step theater-dream-step">${dream.status === 'complete' ? '已完卷' : '仍在梦中'} · ${dream.chapters.length} 章</span><h2>${esc(dream.title)}</h2><small>始于 ${esc(longDreamDate(dream.createdAt))} · 在当前分类继续管理</small></div>
+            <div class="compact-seal" aria-hidden="true">梦</div>
+        </header>`;
+    }
+    return `<header class="dream-hero-container theater-dream-detail-head ${compact ? 'is-compact' : ''}">
+        <div class="dream-hero-stars" aria-hidden="true"></div><div class="dream-hero-nebula-1" aria-hidden="true"></div><div class="dream-hero-nebula-2" aria-hidden="true"></div><div class="dream-hero-moon" aria-hidden="true"></div>
+        <div class="glass-overlay">
+            <span class="kicker theater-dream-step">${dream.status === 'complete' ? '已完卷' : '仍在梦中'} · ${dream.chapters.length} 章</span>
             <h2>${esc(dream.title)}</h2>
             <p>始于 ${esc(longDreamDate(dream.createdAt))} · ${compact ? '在作品中管理章节与整卷资料' : '定梦、续写与作品各自归位'}</p>
         </div>
-        <div class="theater-dream-seal" aria-hidden="true">梦</div>
     </header>`;
 }
 
 function longDreamDefinitionHTML(dream) {
     const state = longDreamDetailState(dream);
     return `<div class="theater-dream-detail theater-dream-definition" data-id="${esc(dream.id)}">
-        ${longDreamDetailHeaderHTML(dream)}
-        <section class="theater-dream-definition-hero">
-            <span class="theater-dream-kicker">DREAM CANON</span>
-            <h3>定下这场梦不可动摇的来路</h3>
-            <p>正典、初始设定、世界线和冻结世界书只由你确认；续写只能在此基础上前进。</p>
+        ${longDreamDetailHeaderHTML(dream, { compact: true })}
+        <section class="dream-hero-container theater-dream-definition-hero">
+            <div class="dream-hero-stars" aria-hidden="true"></div><div class="dream-hero-nebula-1" aria-hidden="true"></div><div class="dream-hero-nebula-2" aria-hidden="true"></div><div class="dream-hero-moon" aria-hidden="true"></div>
+            <div class="glass-overlay"><span class="kicker theater-dream-kicker">DREAM CANON</span><h2>定下这场梦不可动摇的来路</h2><p>正典、初始设定、世界线和冻结世界书只由你确认；续写只能在此基础上前进。</p></div>
         </section>
-        <section class="theater-dream-settings is-workspace">
+        <section class="theater-dream-settings is-workspace ui-card">
             <div class="theater-dream-settings-body">
                 <label for="theater-dream-edit-title">长卷名字</label>
-                <input id="theater-dream-edit-title" class="theater-input" maxlength="80" value="${esc(dream.title)}" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}>
+                <input id="theater-dream-edit-title" class="ui-input theater-input" maxlength="80" value="${esc(dream.title)}" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}>
                 <label for="theater-dream-edit-canon">此梦正典与初始设定</label>
-                <textarea id="theater-dream-edit-canon" class="theater-textarea" rows="7" placeholder="写下这条世界线必须遵守的事实。" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}>${esc(dream.canon)}</textarea>
+                <textarea id="theater-dream-edit-canon" class="ui-textarea theater-textarea" rows="7" placeholder="写下这条世界线必须遵守的事实。" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}>${esc(dream.canon)}</textarea>
                 <div class="theater-dream-card-label">与原世界线的关系</div>
                 <div class="theater-dream-relation-list">
                     ${longDreamRelationChoicesHTML({ name: 'theater-dream-edit-relation', selected: state.worldLineRelation, hasBooks: !!(state.selectedBooks.length || state.availableBooks.length), disabled: state.isGeneratingThisDream || state.hasReviewDraft })}
@@ -2802,10 +2805,10 @@ function longDreamDefinitionHTML(dream) {
                 <div class="theater-dream-world-book-freeze">
                     <div class="theater-dream-world-book-title"><i class="fa-solid fa-snowflake"></i><b>冻结世界书</b><span>${state.snapshotEntries} 条</span></div>
                     <p class="theater-hint">${state.selectedPolicy ? `当前冻结资料库：${esc(state.bookText)}；原书变化不会自动进入长梦。` : '当前完全隔离；不会读取或猜测原世界书。'}</p>
-                    ${state.selectedPolicy ? `<button type="button" id="theater-dream-refresh-world-book" class="theater-btn" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-snowflake"></i><span>用素材页当前勾选更新冻结资料${state.currentCheckedEntries ? `（${state.currentCheckedEntries} 条）` : ''}</span></button>` : ''}
+                    ${state.selectedPolicy ? `<button type="button" id="theater-dream-refresh-world-book" class="ui-btn theater-btn" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-snowflake"></i><span>用素材页当前勾选更新冻结资料${state.currentCheckedEntries ? `（${state.currentCheckedEntries} 条）` : ''}</span></button>` : ''}
                 </div>
                 <div class="theater-dream-settings-actions">
-                    <button type="button" id="theater-dream-save-definition" class="theater-btn primary" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-floppy-disk"></i><span>保存定梦设置</span></button>
+                    <button type="button" id="theater-dream-save-definition" class="ui-btn ui-btn-primary theater-btn primary" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-floppy-disk"></i><span>保存定梦设置</span></button>
                 </div>
             </div>
         </section>
@@ -2815,11 +2818,11 @@ function longDreamDefinitionHTML(dream) {
 function longDreamDetailHTML(dream) {
     const state = longDreamDetailState(dream);
     return `<div class="theater-dream-detail theater-dream-continuation" data-id="${esc(dream.id)}">
-        ${longDreamDetailHeaderHTML(dream)}
-        <section class="theater-dream-next">
+        ${longDreamDetailHeaderHTML(dream, { compact: true })}
+        <section class="ui-card theater-dream-next">
             <div class="theater-dream-next-head">
-                <div><span>现在要做的事</span><b>续写第 ${state.nextNumber} 章</b><p>最近两章全文、旧章索引、定梦和冻结资料会自动准备好</p></div>
-                <div class="theater-dream-next-mark" aria-hidden="true">${String(state.nextNumber).padStart(2, '0')}</div>
+                <div><span>现在要做的事</span><b class="ui-title">续写第 ${state.nextNumber} 章</b><p>最近两章全文、旧章索引、定梦和冻结资料会自动准备好</p></div>
+                <div class="theater-dream-next-mark memory-v2-tag" aria-hidden="true">${String(state.nextNumber).padStart(2, '0')}</div>
             </div>
             <label class="theater-dream-next-direction"><span>这一章想发生什么？</span><textarea id="theater-dream-next-instruction" class="theater-textarea" rows="5" placeholder="可以留空，让故事自然继续；也可以写下想发生的事件、情绪走向或不能触碰的内容。" ${state.controlsDisabled ? 'disabled' : ''}>${esc(state.nextInstruction)}</textarea></label>
             ${longDreamMemorySelectionHTML(dream, state.nextInstruction)}
@@ -2830,8 +2833,8 @@ function longDreamDetailHTML(dream) {
             <details class="theater-dream-next-options">
                 <summary><span><i class="fa-solid fa-sliders"></i> 续写选项与上下文</span><small>章名、目标字数与两章全文</small></summary>
                 <div class="theater-dream-next-grid">
-                    <label><span>可选章名</span><input id="theater-dream-next-title" class="theater-input" maxlength="80" value="${esc(state.nextTitle)}" ${state.controlsDisabled ? 'disabled' : ''}></label>
-                    <label><span>目标字数</span><input id="theater-dream-next-target" class="theater-input" type="number" min="500" max="8000" step="500" value="${state.nextTarget}" ${state.controlsDisabled ? 'disabled' : ''}></label>
+                    <label><span>可选章名</span><input id="theater-dream-next-title" class="ui-input theater-input" maxlength="80" value="${esc(state.nextTitle)}" ${state.controlsDisabled ? 'disabled' : ''}></label>
+                    <label><span>目标字数</span><input id="theater-dream-next-target" class="ui-input theater-input" type="number" min="500" max="8000" step="500" value="${state.nextTarget}" ${state.controlsDisabled ? 'disabled' : ''}></label>
                 </div>
                 <div class="theater-dream-context-window">
                     ${dream.chapters.slice(-LONG_DREAM_RECENT_CHAPTER_COUNT).reverse().map(chapter => `<div><b>第 ${chapter.number} 章 · ${esc(chapter.title)}</b><span>完整正文 · 约 ${readableCharCount(chapter.text || htmlToPlainText(chapter.html || ''))} 字</span></div>`).join('')}
@@ -2846,38 +2849,38 @@ function longDreamDetailHTML(dream) {
                 <span>${esc(state.generationHint)}</span>
                 ${state.hasWritingDraft && !state.isGeneratingThisDream ? `<button type="button" id="theater-dream-discard-draft" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>${state.draftCandidates.length ? '放弃本轮生成' : '放弃草稿'}</span></button>` : ''}
                 ${state.isGeneratingThisDream
-                    ? '<button type="button" id="theater-dream-stop-generation" class="theater-btn danger"><i class="fa-solid fa-stop"></i><span>停止</span></button>'
-                    : `<button type="button" id="theater-dream-generate-next" class="theater-dream-primary" ${state.controlsDisabled ? 'disabled' : ''}><i class="fa-solid fa-feather-pointed"></i><span>${state.hasReviewDraft ? '等待确认' : (state.hasRenderPendingDraft ? '重新生成最终排版' : (state.hasWritingDraft ? '继续完整草稿' : '续写下一章'))}</span></button>`}
+                    ? '<button type="button" id="theater-dream-stop-generation" class="ui-btn ui-btn-danger theater-btn danger"><i class="fa-solid fa-stop"></i><span>停止</span></button>'
+                    : `<button type="button" id="theater-dream-generate-next" class="ui-btn ui-btn-primary theater-dream-primary" ${state.controlsDisabled ? 'disabled' : ''}><i class="fa-solid fa-feather-pointed"></i><span>${state.hasReviewDraft ? '等待确认' : (state.hasRenderPendingDraft ? '重新生成最终排版' : (state.hasWritingDraft ? '继续完整草稿' : '续写下一章'))}</span></button>`}
             </div>
         </section>
 
-        ${state.hasReviewDraft ? `<section class="theater-dream-review" data-dream-continuation-stage="review">
+        ${state.hasReviewDraft ? `<section class="ui-card theater-dream-review review-wrapper" data-dream-continuation-stage="review">
             <div class="theater-dream-review-head">
                 <div class="theater-dream-review-copy"><span>续写流程 · 三候选审阅 · 第 ${state.selectedCandidateIndex + 1} 版</span><b>${esc(state.draft.title || `第 ${state.nextNumber} 章`)}</b><p>正文约 ${readableCharCount(state.draft.text || '')} 字；采用或放弃后回到续写输入。</p></div>
-                <div class="theater-dream-candidate-switcher" aria-label="切换待确认候选版本">
+                <div class="theater-dream-candidate-switcher candidate-switcher" aria-label="切换待确认候选版本">
                     <button type="button" data-dream-candidate-step="-1" title="上一版" aria-label="上一版" ${state.selectedCandidateIndex <= 0 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i></button>
                     <strong aria-live="polite">${state.selectedCandidateIndex + 1}/${state.draftCandidates.length}</strong>
                     <button type="button" data-dream-candidate-step="1" title="下一版" aria-label="下一版" ${state.selectedCandidateIndex >= state.draftCandidates.length - 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-right"></i></button>
                 </div>
                 <button type="button" id="theater-dream-review-fullscreen" class="theater-dream-review-fullscreen" title="全屏阅读当前候选" aria-label="全屏阅读当前候选"><i class="fa-solid fa-expand"></i></button>
             </div>
-            <div class="theater-dream-review-canvas">
+            <div class="theater-dream-review-canvas review-canvas">
                 <iframe id="theater-dream-review-frame" sandbox="" title="待确认长梦章节"></iframe>
                 <div id="theater-dream-review-fallback" class="theater-dream-review-fallback" hidden></div>
             </div>
             <div class="theater-dream-review-actions">
-                <button type="button" id="theater-dream-discard-draft" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>放弃本章并返回续写</span></button>
-                <button type="button" id="theater-dream-regenerate-draft" class="theater-btn" ${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? 'disabled' : ''}><i class="fa-solid fa-rotate-left"></i><span>${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? '已保留三版' : '按原要求再生成一版'}</span></button>
-                <button type="button" id="theater-dream-confirm-chapter" class="theater-dream-primary"><i class="fa-solid fa-bookmark"></i><span>采用并保存为第 ${state.nextNumber} 章</span></button>
+                <button type="button" id="theater-dream-discard-draft" class="ui-btn theater-btn"><i class="fa-solid fa-xmark"></i><span>放弃本章并返回续写</span></button>
+                <button type="button" id="theater-dream-regenerate-draft" class="ui-btn theater-btn" ${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? 'disabled' : ''}><i class="fa-solid fa-rotate-left"></i><span>${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? '已保留三版' : '按原要求再生成一版'}</span></button>
+                <button type="button" id="theater-dream-confirm-chapter" class="ui-btn ui-btn-primary theater-dream-primary"><i class="fa-solid fa-bookmark"></i><span>采用并保存为第 ${state.nextNumber} 章</span></button>
             </div>
         </section>` : ''}
 
-        <section class="theater-dream-latest">
+        <section class="ui-card theater-dream-latest">
             <div class="theater-dream-latest-copy">
                 <span>上次写到 · ${esc(state.latest?.title || '第一章')}</span>
                 <p>${esc(longDreamExcerpt(state.chapterText, 230))}</p>
             </div>
-            <button type="button" id="theater-dream-read-latest" class="theater-btn" data-dream-read-chapter data-chapter-id="${esc(state.latest?.id || '')}"><i class="fa-solid fa-book-open"></i><span>阅读本章</span></button>
+            <button type="button" id="theater-dream-read-latest" class="ui-btn theater-btn" data-dream-read-chapter data-chapter-id="${esc(state.latest?.id || '')}"><i class="fa-solid fa-book-open"></i><span>阅读本章</span></button>
             <div class="theater-dream-context-strip">
                 <span><i class="fa-regular fa-file-lines"></i> 已保存 ${dream.chapters.length} 章</span>
                 <span><i class="fa-solid fa-route"></i> 梦脉${state.activeMemoryCount ? ` ${state.activeMemoryCount} 条有效` : '暂未启用'}</span>
@@ -2886,8 +2889,8 @@ function longDreamDetailHTML(dream) {
         </section>
 
         <section class="theater-dream-memory-workspace" data-dream-continuation-bottom="memory">
-            <details class="theater-dream-memory-workspace-details">
-                <summary>
+            <details class="ui-card theater-dream-memory-workspace-details">
+                <summary class="memory-v2-summary">
                     <span><i class="fa-solid fa-route"></i><b>完整梦脉</b><small>本章命中摘要、四类织录与旧卡兼容</small></span>
                     <i class="fa-solid fa-chevron-down"></i>
                 </summary>
@@ -2924,12 +2927,12 @@ function longDreamWorkDetailHTML(dream) {
     return `<div class="theater-dream-detail theater-dream-work-detail" data-id="${esc(dream.id)}">
         <button type="button" class="theater-dream-back" data-dream-work-back><i class="fa-solid fa-arrow-left"></i><span>返回作品</span></button>
         ${longDreamDetailHeaderHTML(dream, { compact: true })}
-        <section class="theater-dream-chapter-directory is-workspace">
+        <section class="theater-dream-chapter-directory is-workspace ui-card">
             <div class="theater-dream-work-heading"><div><span>章节目录</span><b>${dream.chapters.length} 章</b></div><small>打开章节后阅读、编辑或单章导出</small></div>
             <div class="theater-dream-chapter-list">${longDreamChapterDirectoryHTML(dream)}</div>
         </section>
-        <details class="theater-dream-work-menu">
-            <summary><span><b>作品菜单</b><small>整本导出、恢复、完结与删除</small></span><i class="fa-solid fa-chevron-down"></i></summary>
+        <details class="theater-dream-work-menu ui-card">
+            <summary class="memory-v2-summary"><span><b>作品菜单</b><small>整本导出、恢复、完结与删除</small></span><i class="fa-solid fa-chevron-down"></i></summary>
             <div class="theater-dream-work-menu-actions">
                 <button type="button" id="theater-dream-export-current" class="theater-btn"><i class="fa-solid fa-file-export"></i><span>导出本卷</span></button>
                 <button type="button" id="theater-dream-import-backup" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入 / 恢复</span></button>
@@ -2946,13 +2949,13 @@ function longDreamChapterDetailHTML(dream, chapter) {
     const laterCount = Math.max(0, dream.chapters.length - chapter.number);
     return `<div class="theater-dream-detail theater-dream-chapter-detail" data-id="${esc(dream.id)}" data-chapter-id="${esc(chapter.id)}">
         <button type="button" class="theater-dream-back" data-dream-chapter-back><i class="fa-solid fa-arrow-left"></i><span>返回章节目录</span></button>
-        <section class="theater-dream-chapter-editor">
+        <section class="ui-card theater-dream-chapter-editor">
             <div class="theater-dream-review-head">
                 <div class="theater-dream-review-copy"><span>第 ${chapter.number} 章 · ${esc(longDreamDate(chapter.createdAt))}</span><b>阅读与编辑</b><p>修改正文后会走现有最终排版链路重建富 HTML；不会静默降级。</p></div>
                 <div class="theater-dream-seal" aria-hidden="true">章</div>
             </div>
-            <label><span>章节标题</span><input id="theater-dream-chapter-edit-title" class="theater-input" maxlength="80" value="${esc(chapter.title)}" ${locked ? 'disabled' : ''}></label>
-            <label><span>章节正文</span><textarea id="theater-dream-chapter-edit-text" class="theater-textarea" rows="16" ${locked ? 'disabled' : ''}>${esc(text)}</textarea></label>
+            <label><span>章节标题</span><input id="theater-dream-chapter-edit-title" class="ui-input theater-input" maxlength="80" value="${esc(chapter.title)}" ${locked ? 'disabled' : ''}></label>
+            <label><span>章节正文</span><textarea id="theater-dream-chapter-edit-text" class="ui-textarea theater-textarea" rows="16" ${locked ? 'disabled' : ''}>${esc(text)}</textarea></label>
             <div id="theater-dream-chapter-edit-status" class="theater-hint">${locked ? '请先处理当前生成或草稿，再编辑正式章节。' : '仅改标题会保留原始 HTML；修改正文时会重新生成阅读排版。'}</div>
             <div class="theater-dream-chapter-editor-actions">
                 <button type="button" id="theater-dream-read-chapter-fullscreen" class="theater-btn"><i class="fa-solid fa-book-open"></i><span>阅读原排版</span></button>
@@ -2960,8 +2963,8 @@ function longDreamChapterDetailHTML(dream, chapter) {
                 <button type="button" id="theater-dream-save-chapter" class="theater-btn primary" ${locked ? 'disabled' : ''}><i class="fa-solid fa-floppy-disk"></i><span>保存章节</span></button>
             </div>
         </section>
-        <details class="theater-dream-chapter-operations">
-            <summary><span><b>更多 / 章节操作</b><small>重写、分支、回滚与删除</small></span><i class="fa-solid fa-chevron-down"></i></summary>
+        <details class="theater-dream-chapter-operations ui-card">
+            <summary class="memory-v2-summary"><span><b>更多 / 章节操作</b><small>重写、分支、回滚与删除</small></span><i class="fa-solid fa-chevron-down"></i></summary>
             <div class="theater-dream-chapter-actions" aria-label="第 ${chapter.number} 章管理">
                 <button type="button" data-dream-chapter-action="branch" data-chapter-id="${esc(chapter.id)}"><i class="fa-solid fa-code-branch"></i><span>另开支线</span></button>
                 ${chapter.number > 1 ? `<button type="button" data-dream-chapter-action="rewrite" data-chapter-id="${esc(chapter.id)}"><i class="fa-solid fa-pen-to-square"></i><span>重写本章</span></button>` : ''}
