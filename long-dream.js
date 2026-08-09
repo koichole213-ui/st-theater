@@ -594,7 +594,21 @@ export function updateLongDreamChapter(record, chapterId, changes = {}, now = ne
         html,
         mode: cleanText(changes.mode ?? previous.mode, 40) || previous.mode,
     };
-    return { ...normalized, chapters, updatedAt: normalizeIsoDate(now, new Date().toISOString()) };
+    const updatedAt = normalizeIsoDate(now, new Date().toISOString());
+    const contentChanged = text !== previous.text || html !== previous.html;
+    const replayFrom = Math.max(0, previous.number - 1);
+    const processedThroughChapter = Math.min(normalized.memory.processedThroughChapter, replayFrom);
+    const memory = contentChanged
+        ? normalizeMemory({
+            ...normalized.memory,
+            processedThroughChapter,
+            pendingChapterNumbers: chapters.map(chapter => chapter.number).filter(number => number > processedThroughChapter),
+            status: LONG_DREAM_MEMORY_STATUS.PENDING,
+            lastErrorSignal: '',
+            updatedAt,
+        }, chapters.length)
+        : normalized.memory;
+    return { ...normalized, chapters, memory, updatedAt };
 }
 
 export function truncateLongDreamAfter(record, chapterId, now = new Date()) {

@@ -711,7 +711,7 @@ test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => 
     assert.match(source, /class="theater-dream-next-options"/);
     assert.match(source, /id="theater-dream-token-summary-value"/);
     assert.match(source, /id="theater-dream-refresh-world-book"/);
-    assert.match(source, /<details class="theater-dream-settings">/);
+    assert.match(source, /class="theater-dream-settings is-workspace"/);
     assert.match(source, /旧记录中有一份指令，请核对/);
     assert.match(styles, /梦中页只保留一条主线：续写/);
     assert.match(styles, /\.theater-dream-candidate-switcher/);
@@ -1368,6 +1368,39 @@ test('章节更新和截断只影响明确范围，并清理失效草稿', () =>
     assert.deepEqual(truncated.memory.pendingChapterNumbers, [1, 2]);
 });
 
+test('编辑正式章节会保留既有梦脉并从修改章起重新织录，仅改标题不触发重算', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章', html: '<main>第一章</main>' } });
+    record = appendLongDreamChapter(record, { text: '第二章', html: '<main>第二章</main>' });
+    record = appendLongDreamChapter(record, { text: '第三章', html: '<main>第三章</main>' });
+    record.memory = {
+        ...record.memory,
+        cards: [{ id: 'kept-memory', type: '事实', content: '保留的用户梦脉', status: 'active', sourceChapterNumbers: [1] }],
+        processedThroughChapter: 3,
+        pendingChapterNumbers: [],
+        status: LONG_DREAM_MEMORY_STATUS.READY,
+    };
+
+    const renamed = updateLongDreamChapter(record, 'chapter-2', { title: '只改标题' });
+    assert.equal(renamed.memory.processedThroughChapter, 3);
+    assert.deepEqual(renamed.memory.pendingChapterNumbers, []);
+
+    const rewritten = updateLongDreamChapter(renamed, 'chapter-2', {
+        text: '修改后的第二章',
+        html: '<main>修改后的第二章</main>',
+    });
+    assert.equal(rewritten.memory.cards[0].id, 'kept-memory');
+    assert.equal(rewritten.memory.processedThroughChapter, 1);
+    assert.deepEqual(rewritten.memory.pendingChapterNumbers, [2, 3]);
+    assert.equal(rewritten.memory.status, LONG_DREAM_MEMORY_STATUS.PENDING);
+
+    let notYetWoven = createLongDreamRecord({ source: { text: '首章', html: '<main>首章</main>' } });
+    notYetWoven = appendLongDreamChapter(notYetWoven, { text: '次章', html: '<main>次章</main>' });
+    const editedBeforeFirstWeave = updateLongDreamChapter(notYetWoven, 'chapter-2', {
+        text: '编辑后的次章', html: '<main>编辑后的次章</main>',
+    });
+    assert.deepEqual(editedBeforeFirstWeave.memory.pendingChapterNumbers, [1, 2]);
+});
+
 test('旧章分支、重写与删除都保留原卷，并让新时间线重新织录梦脉', () => {
     let original = createLongDreamRecord({
         title: '原卷',
@@ -1666,7 +1699,7 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /id="theater-dream-export-current"/);
     assert.match(source, /'theater-dream-complete'/);
     assert.match(source, /'theater-dream-reopen'/);
-    assert.match(source, /class="theater-dream-chapter-directory"/);
+    assert.match(source, /class="theater-dream-chapter-directory is-workspace"/);
     assert.match(source, /data-dream-read-chapter/);
     assert.match(source, /createLongDreamBackup/);
     assert.match(source, /parseLongDreamBackup/);
@@ -1704,6 +1737,38 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(styles, /\.theater-dream-memory-chip-text\s*\{[\s\S]*?min-width:\s*0/);
     assert.match(styles, /\.theater-dream-memory-v2-card > summary\s*\{[\s\S]*?min-height:\s*44px/);
     assert.match(styles, /\.theater-dream-memory-list article \.theater-input::placeholder/);
+});
+
+test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦脉和章节操作归入正确层级', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const workspace = source.match(/function longDreamWorkspaceHTML\([\s\S]*?\n\}/)?.[0] || '';
+    const continuation = source.match(/function longDreamDetailHTML\(dream\) \{[\s\S]*?function longDreamChapterDirectoryHTML/)?.[0] || '';
+    const workDetail = source.match(/function longDreamWorkDetailHTML\(dream\) \{[\s\S]*?function longDreamChapterDetailHTML/)?.[0] || '';
+    const chapterDetail = source.match(/function longDreamChapterDetailHTML\(dream, chapter\) \{[\s\S]*?function longDreamUnavailableHTML/)?.[0] || '';
+
+    assert.match(workspace, /\['definition', '定梦'\]/);
+    assert.match(workspace, /\['continue', '续写'\]/);
+    assert.match(workspace, /\['works', '作品'\]/);
+    assert.doesNotMatch(workspace, /审阅|章节|梦脉|备份/);
+    assert.match(continuation, /data-dream-continuation-stage="review"/);
+    assert.match(continuation, /放弃本章并返回续写/);
+    assert.match(continuation, /采用并保存为第/);
+    assert.match(continuation, /data-dream-continuation-bottom="memory"/);
+    assert.ok(continuation.indexOf('data-dream-continuation-bottom="memory"') > continuation.indexOf('data-dream-continuation-stage="review"'));
+    assert.match(continuation, /最近两章全文、旧章索引/);
+    assert.match(workDetail, /data-dream-work-back/);
+    assert.match(source, /data-dream-open-chapter/);
+    assert.match(workDetail, /class="theater-dream-work-menu"/);
+    assert.match(chapterDetail, /data-dream-chapter-back/);
+    assert.match(chapterDetail, /id="theater-dream-export-chapter"/);
+    assert.match(chapterDetail, /class="theater-dream-chapter-operations"/);
+    assert.match(source, /function exportLongDreamChapter\(dream, chapter\)/);
+    assert.match(source, /downloadFile\(longDreamChapterFileName\(dream, chapter, 'html'\), chapter\.html/);
+    assert.match(source, /renderLongDreamChapter\(\{[\s\S]*?text,[\s\S]*?apiRoute: captureGenerationApiRoute/);
+    assert.match(styles, /\.theater-dream-workspace-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\][\s\S]*?--dream-gemini-bg:\s*#FAF7F2/);
+    assert.match(styles, /@media \(max-width: 520px\)[\s\S]*?\.theater-dream-workspace-tab[^}]*min-height:\s*44px/);
 });
 
 test('长梦章节阅读走独立沉浸阅读器，不覆写普通生成结果', () => {
