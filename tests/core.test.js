@@ -1766,9 +1766,11 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(source, /function exportLongDreamChapter\(dream, chapter\)/);
     assert.match(source, /downloadFile\(longDreamChapterFileName\(dream, chapter, 'html'\), chapter\.html/);
     assert.match(source, /renderLongDreamChapter\(\{[\s\S]*?text,[\s\S]*?apiRoute: captureGenerationApiRoute/);
-    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subnav\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0,\s*1fr\)\)/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subnav\s*\{[\s\S]*?display:\s*flex;[\s\S]*?justify-content:\s*center/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\][\s\S]*?--dream-gemini-bg:\s*#FAF7F2/);
-    assert.match(styles, /@media \(max-width:520px\)[\s\S]*?\.theater-panel\[data-panel="long-dream"\] \.ia-subtab[^}]*min-height:\s*44px/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subtab \{[^}]*width:auto !important[^}]*min-height:36px !important[^}]*max-height:38px !important/);
+    assert.match(styles, /#theater-dream-generate-next,[\s\S]*?flex:0 0 auto !important;[\s\S]*?width:auto !important;[\s\S]*?max-height:42px !important/);
+    assert.doesNotMatch(styles, /\.theater-dream-next-actions \.ui-btn-primary \{ flex:1 1 180px; \}/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.compact-detail-head \{[^}]*flex-direction:row/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.theater-dream-definition > \* \{ order:0; \}/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-column \{[^}]*max-width:\s*none/);
