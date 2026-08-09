@@ -1756,6 +1756,11 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(continuation, /data-dream-continuation-bottom="memory"/);
     assert.ok(continuation.indexOf('data-dream-continuation-bottom="memory"') > continuation.indexOf('data-dream-continuation-stage="review"'));
     assert.match(continuation, /最近两章全文、旧章索引/);
+    assert.doesNotMatch(continuation, /theater-dream-flow-label|续写 · 本章输入|同一流程/);
+    assert.doesNotMatch(continuation, /longDreamMemorySelectionHTML/);
+    assert.doesNotMatch(continuation, /新章节只会进入这部长卷/);
+    assert.match(continuation, /fa-sliders/);
+    assert.match(continuation, /id="theater-dream-token-summary"[\s\S]*?明细 ▾[\s\S]*?id="theater-dream-token-details"/);
     assert.match(workDetail, /data-dream-work-back/);
     assert.ok(shelf.indexOf('ia-shelf theater-dream-list') < shelf.indexOf('备份与恢复'));
     assert.match(source, /data-dream-open-chapter/);
@@ -1766,9 +1771,10 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(source, /function exportLongDreamChapter\(dream, chapter\)/);
     assert.match(source, /downloadFile\(longDreamChapterFileName\(dream, chapter, 'html'\), chapter\.html/);
     assert.match(source, /renderLongDreamChapter\(\{[\s\S]*?text,[\s\S]*?apiRoute: captureGenerationApiRoute/);
-    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subnav\s*\{[\s\S]*?display:\s*flex;[\s\S]*?justify-content:\s*center/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subnav\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\][\s\S]*?--dream-gemini-bg:\s*#FAF7F2/);
-    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subtab \{[^}]*width:auto !important[^}]*min-height:36px !important[^}]*max-height:38px !important/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subtab \{[^}]*width:100% !important[^}]*min-height:40px !important[^}]*max-height:none !important/);
+    assert.match(styles, /\.ia-subtab \+ \.ia-subtab::before/);
     assert.match(styles, /#theater-dream-generate-next,[\s\S]*?flex:0 0 auto !important;[\s\S]*?width:auto !important;[\s\S]*?max-height:42px !important/);
     assert.doesNotMatch(styles, /\.theater-dream-next-actions \.ui-btn-primary \{ flex:1 1 180px; \}/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.compact-detail-head \{[^}]*flex-direction:row/);
@@ -1781,6 +1787,8 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.relation-card b \{[^}]*word-break:keep-all !important[^}]*writing-mode:horizontal-tb !important/);
     assert.match(styles, /@media \(max-width:520px\)[\s\S]*?\.theater-panel\[data-panel="long-dream"\] \.relation-cards \{ grid-template-columns:1fr; \}/);
     assert.match(styles, /text-align:justify; text-justify:inter-ideograph/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.theater-dream-latest \{ display:block; margin-top:0; \}/);
+    assert.match(styles, /:where\(\.theater-dream-home, \.theater-dream-work-detail, \.theater-dream-chapter-detail\) \.ui-btn:not\(\.ui-btn-danger\)/);
     assert.doesNotMatch(styles, /dialog\.popup:has\(\.theater-panel\[data-panel="long-dream"\]\.active\)/);
 });
 
@@ -1797,7 +1805,7 @@ test('长梦参考稿样式只作用于长梦面板，不改坏其他页面按�
     assert.doesNotMatch(parity, /dialog\.popup:has\(\.theater-panel\[data-panel="long-dream"\]\.active\)/);
     assert.match(parity, /\.theater-panel\[data-panel="long-dream"\] \.ui-btn/);
     assert.match(parity, /\.theater-panel\[data-panel="long-dream"\] \.ui-btn-primary \{[\s\S]*?linear-gradient\(135deg, var\(--t-accent\) 0%, var\(--t-accent-deep\) 100%\)/);
-    assert.match(parity, /\.theater-panel\[data-panel="long-dream"\] \.ia-subtab\.active \{[\s\S]*?linear-gradient\(135deg, var\(--t-accent\) 0%, var\(--t-accent-deep\) 100%\)/);
+    assert.match(parity, /\.theater-panel\[data-panel="long-dream"\] \.ia-subtab\.active \{[^}]*background:\s*transparent;[^}]*box-shadow:\s*none/);
 });
 
 test('长梦章节阅读走独立沉浸阅读器，不覆写普通生成结果', () => {

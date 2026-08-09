@@ -5300,11 +5300,10 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     position: sticky;
     top: -14px;
     z-index: 12;
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     align-items: center;
-    justify-content: center;
-    gap: 6px;
+    gap: 0;
     width: 100%;
     max-width: none;
     margin: 0 0 12px;
@@ -5312,38 +5311,42 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     background: linear-gradient(var(--t-bg) 78%, transparent);
 }
 .theater-panel[data-panel="long-dream"] .ia-subtab {
-    display: inline-flex;
-    flex: 0 1 112px;
+    position: relative;
+    display: flex;
     align-items: center;
     justify-content: center;
-    gap: var(--t-space-2);
-    width: auto;
-    min-width: 84px;
-    max-width: 132px;
-    min-height: 36px;
-    max-height: 38px;
-    padding: 6px 14px;
-    border: 1px solid var(--t-border);
-    border-radius: var(--t-radius-pill);
-    background: var(--t-surface-1);
-    color: var(--t-fg);
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    min-height: 40px;
+    max-height: none;
+    padding: 7px 10px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--t-fg-soft);
     font: inherit;
     font-size: var(--t-text-sm);
     font-weight: 500;
     cursor: pointer;
-    transition: transform var(--t-dur-fast) var(--t-ease),
-                background var(--t-dur-fast) var(--t-ease),
-                border-color var(--t-dur-fast) var(--t-ease),
-                box-shadow var(--t-dur-fast) var(--t-ease),
-                color var(--t-dur-fast) var(--t-ease);
+    transition: color var(--t-dur-fast) var(--t-ease), opacity var(--t-dur-fast) var(--t-ease);
 }
-.theater-panel[data-panel="long-dream"] .ia-subtab:hover:not(:disabled) { background: var(--t-surface-2); border-color: var(--t-border-strong); }
+.theater-panel[data-panel="long-dream"] .ia-subtab + .ia-subtab::before {
+    content: "";
+    position: absolute;
+    top: 9px;
+    bottom: 9px;
+    left: 0;
+    width: 1px;
+    background: var(--t-border-bold);
+}
+.theater-panel[data-panel="long-dream"] .ia-subtab:hover:not(:disabled) { color: var(--t-accent-deep); background: transparent; }
 .theater-panel[data-panel="long-dream"] .ia-subtab.active {
-    color: var(--t-on-accent);
+    color: var(--t-accent-deep);
     border-color: transparent;
-    background: linear-gradient(135deg, var(--t-accent) 0%, var(--t-accent-deep) 100%);
-    box-shadow: var(--t-elev-1), inset 0 1px 0 rgba(255,255,255,.15);
-    font-weight: 600;
+    background: transparent;
+    box-shadow: none;
+    font-weight: 800;
 }
 .theater-panel[data-panel="long-dream"] .ia-category,
 .theater-panel[data-panel="long-dream"] .theater-dream-workspace-body { width: 100%; max-width: none; margin: 0; min-width: 0; }
@@ -5463,7 +5466,40 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-panel[data-panel="long-dream"] .memory-chip-tag { display:inline-flex; align-items:center; gap:4px; max-width:100%; min-width:0; padding:3px 8px; overflow:hidden; border:1px solid var(--t-border); border-radius:999px; background:var(--t-surface-1); color:var(--t-fg-soft); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
 .theater-panel[data-panel="long-dream"] .memory-chip-tag b { color:var(--t-accent-deep); }
 .theater-panel[data-panel="long-dream"] .token-line-hint { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:8px; padding:6px 4px; border-bottom:1px dashed var(--t-border-bold); color:var(--t-fg-soft); font-size:10px; }
-.theater-panel[data-panel="long-dream"] .theater-dream-options-trigger { padding:0; border:0; background:transparent; color:var(--t-accent-deep); font-size:11px; text-decoration:underline; cursor:pointer; }
+.theater-panel[data-panel="long-dream"] .theater-dream-token-summary {
+    display:flex;
+    justify-content:space-between;
+    gap:8px;
+    margin:5px 1px 7px;
+    overflow:hidden;
+    color:var(--t-fg-soft);
+    font-size:.78em;
+    white-space:nowrap;
+    cursor:pointer;
+    opacity:.68;
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-token-summary > span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.theater-panel[data-panel="long-dream"] .theater-dream-token-summary > span:last-child { flex:0 0 auto; }
+.theater-panel[data-panel="long-dream"] .theater-dream-token-summary:focus-visible { outline:2px solid var(--t-accent); outline-offset:3px; border-radius:3px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-token-details { margin:-2px 1px 8px; color:var(--t-fg-mute); line-height:1.6; }
+.theater-panel[data-panel="long-dream"] .theater-dream-options-trigger {
+    display:grid;
+    flex:0 0 auto;
+    place-items:center;
+    width:34px;
+    height:34px;
+    padding:0;
+    border:1px solid color-mix(in srgb,var(--t-accent) 42%,var(--t-border));
+    border-radius:10px;
+    background:color-mix(in srgb,var(--t-accent) 10%,var(--t-surface-1));
+    color:var(--t-accent-deep);
+    box-shadow:0 2px 7px color-mix(in srgb,var(--t-accent) 14%,transparent);
+    cursor:pointer;
+    transition:background var(--t-dur-fast) var(--t-ease), color var(--t-dur-fast) var(--t-ease), transform var(--t-dur-fast) var(--t-ease);
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-options-trigger i { margin:0; color:inherit; font-size:14px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-options-trigger:hover,
+.theater-panel[data-panel="long-dream"] .theater-dream-options-trigger.is-open { color:var(--t-on-accent); background:var(--t-accent); transform:translateY(-1px); }
 .theater-panel[data-panel="long-dream"] .ia-options-card { display:none; }
 .theater-panel[data-panel="long-dream"] .ia-options-card.open { display:block; animation:long-dream-parity-fade .25s ease; }
 .theater-panel[data-panel="long-dream"] .ia-grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
@@ -5484,9 +5520,9 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-panel[data-panel="long-dream"] .theater-dream-next-actions { justify-content:center; }
 .theater-panel[data-panel="long-dream"] .theater-dream-next-actions .ui-btn-primary { flex:0 0 auto; }
 .theater-panel[data-panel="long-dream"] .theater-dream-generation-hint { margin:8px 0 0; color:var(--t-fg-mute); font-size:10px; line-height:1.5; }
-.theater-panel[data-panel="long-dream"] .theater-dream-flow-label { padding:9px 12px; }
-.theater-panel[data-panel="long-dream"] .theater-dream-flow-label .ui-title { margin:0; }
-.theater-panel[data-panel="long-dream"] .theater-dream-latest p { margin:0; color:var(--t-fg-soft); font-family:var(--t-font-serif); font-size:12px; line-height:1.7; }
+.theater-panel[data-panel="long-dream"] .theater-dream-latest { display:block; margin-top:0; }
+.theater-panel[data-panel="long-dream"] .theater-dream-latest .ui-title > span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.theater-panel[data-panel="long-dream"] .theater-dream-latest p { width:100%; margin:0; color:var(--t-fg-soft); font-family:var(--t-font-serif); font-size:12px; line-height:1.7; }
 .theater-panel[data-panel="long-dream"] .theater-dream-icon-button,
 .theater-panel[data-panel="long-dream"] .theater-dream-review-fullscreen { width:32px; height:32px; padding:0; border:0; background:transparent; color:var(--t-fg-soft); cursor:pointer; }
 
@@ -5570,6 +5606,17 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 ) { text-align:justify; text-justify:inter-ideograph; overflow-wrap:anywhere; }
 .theater-panel[data-panel="long-dream"] .theater-dream-library-tools { margin-top:8px; }
 .theater-panel[data-panel="long-dream"] .theater-dream-library-tools .theater-dream-archive-note { flex:1 1 100%; color:var(--t-fg-mute); font-size:10px; }
+.theater-panel[data-panel="long-dream"] :where(.theater-dream-home, .theater-dream-work-detail, .theater-dream-chapter-detail) .ui-btn:not(.ui-btn-danger) {
+    color:var(--t-on-accent);
+    border-color:transparent;
+    background:linear-gradient(135deg,var(--t-accent) 0%,var(--t-accent-deep) 100%);
+    box-shadow:var(--t-elev-1), inset 0 1px 0 rgba(255,255,255,.15);
+}
+.theater-panel[data-panel="long-dream"] :where(.theater-dream-home, .theater-dream-work-detail, .theater-dream-chapter-detail) .ui-btn:not(.ui-btn-danger):hover:not(:disabled) {
+    color:var(--t-on-accent);
+    border-color:transparent;
+    background:linear-gradient(135deg,var(--t-accent-soft) 0%,var(--t-accent) 100%);
+}
 
 @media (max-width:520px) {
     .theater-panel[data-panel="long-dream"] .ui-btn { min-height:44px; }
@@ -5582,12 +5629,17 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     .theater-panel[data-panel="long-dream"] .theater-dream-memory-status { align-items:flex-start; flex-direction:column; }
 }
 
-/* Keep the primary long-dream navigation and actions compact even when legacy
- * mobile rules or the host page try to stretch buttons to the full row. */
+/* Keep the text navigation evenly divided and the primary actions compact when
+ * legacy mobile rules or the host page try to stretch controls. */
 .theater-panel[data-panel="long-dream"] .ia-subtab {
-    width:auto !important;
-    min-height:36px !important;
-    max-height:38px !important;
+    width:100% !important;
+    min-height:40px !important;
+    max-height:none !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:transparent !important;
+    box-shadow:none !important;
+    appearance:none;
 }
 .theater-panel[data-panel="long-dream"] :is(
     #theater-dream-new,

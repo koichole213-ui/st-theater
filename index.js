@@ -2717,7 +2717,7 @@ function longDreamDetailState(dream) {
                 : (draftCandidates.length
                     ? `正在准备第 ${draftCandidates.length + 1} 版；此前 ${draftCandidates.length} 版候选仍安全保留。`
                     : '检测到可恢复草稿；继续时重新注入完整基础包和当前全文，只从草稿结尾承接。'))
-            : '新章节只会进入这部长卷，不会自动写入普通历史或最近生成。');
+            : '');
     return {
         latest, chapterText, selectedPolicy, worldLineRelation, selectedBooks, snapshotEntries,
         availableBooks, currentCheckedEntries, bookText, nextNumber, activeMemoryCount,
@@ -2770,19 +2770,18 @@ function longDreamDefinitionHTML(dream) {
 
 function longDreamDetailHTML(dream) {
     const state = longDreamDetailState(dream);
-    const flowLabel = state.hasReviewDraft ? '续写 · 三候选审阅' : '续写 · 本章输入';
     const writeFlow = state.hasReviewDraft ? '' : `<div class="ia-flow-state active theater-dream-write-state">
         ${longDreamDetailHeaderHTML(dream, { showTools: true, statusControlDisabled: state.statusControlDisabled })}
         <section class="ui-card theater-dream-next">
-            <div class="ui-title"><span><i class="fa-solid fa-feather-pointed"></i> 续写第 ${state.nextNumber} 章</span><button type="button" class="theater-dream-options-trigger" data-dream-options-toggle aria-expanded="false">选项</button></div>
+            <div class="ui-title"><span><i class="fa-solid fa-feather-pointed"></i> 续写第 ${state.nextNumber} 章</span><button type="button" class="theater-dream-options-trigger" data-dream-options-toggle aria-expanded="false" aria-controls="theater-dream-continuation-options" aria-label="打开本章选项与上下文" title="本章选项与上下文"><i class="fa-solid fa-sliders" aria-hidden="true"></i></button></div>
             <textarea id="theater-dream-next-instruction" class="ui-textarea theater-textarea" rows="5" placeholder="这一章想发生什么？（可留空自然续写）" ${state.controlsDisabled ? 'disabled' : ''}>${esc(state.nextInstruction)}</textarea>
-            ${longDreamMemorySelectionHTML(dream, state.nextInstruction)}
-            <div id="theater-dream-token-summary" class="token-line-hint theater-dream-token-summary" aria-live="polite"><span><i class="fa-solid fa-bolt"></i> <span id="theater-dream-token-summary-value">正在估算输入 Token…</span></span><small id="theater-dream-token-details">按真实上下文计算</small></div>
+            <div id="theater-dream-token-summary" class="theater-dream-token-summary" role="button" tabindex="0" aria-expanded="false" aria-controls="theater-dream-token-details"><span id="theater-dream-token-summary-value" aria-live="polite">正在估算…</span><span>明细 ▾</span></div>
+            <div id="theater-dream-token-details" class="theater-hint-inline theater-dream-token-details" style="display:none;"></div>
             <div class="theater-dream-next-actions ia-action-row">
                 ${state.hasWritingDraft && !state.isGeneratingThisDream ? `<button type="button" id="theater-dream-discard-draft" class="ui-btn ui-btn-sm"><i class="fa-solid fa-xmark"></i><span>${state.draftCandidates.length ? '放弃本轮生成' : '放弃草稿'}</span></button>` : ''}
                 ${state.isGeneratingThisDream ? '<button type="button" id="theater-dream-stop-generation" class="ui-btn ui-btn-danger ia-danger"><i class="fa-solid fa-stop"></i><span>停止</span></button>' : `<button type="button" id="theater-dream-generate-next" class="ui-btn ui-btn-primary theater-dream-primary" ${state.controlsDisabled ? 'disabled' : ''}><i class="fa-solid fa-feather-pointed"></i><span>${state.hasRenderPendingDraft ? '重新生成最终排版' : (state.hasWritingDraft ? '继续完整草稿' : '续写下一章')}</span></button>`}
             </div>
-            <p class="theater-dream-generation-hint">${esc(state.generationHint)}</p>
+            ${state.generationHint ? `<p class="theater-dream-generation-hint">${esc(state.generationHint)}</p>` : ''}
         </section>
         <section id="theater-dream-continuation-options" class="ui-card ia-options-card theater-dream-next-options">
             <div class="ui-title"><span><i class="fa-solid fa-pen"></i> 本章选项与上下文</span></div>
@@ -2813,9 +2812,8 @@ function longDreamDetailHTML(dream) {
         <button type="button" id="theater-dream-regenerate-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" ${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? 'disabled' : ''}><i class="fa-solid fa-plus"></i><span>${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? '已保留三版' : '按原要求再生成一版'}</span></button>
     </section></div>` : '';
     return `<div class="theater-dream-detail theater-dream-continuation" data-id="${esc(dream.id)}">
-        <div class="ui-card theater-dream-flow-label"><div class="ui-title"><span>${flowLabel}</span><span class="memory-v2-tag">同一流程</span></div></div>
         ${writeFlow}${reviewFlow}
-        <section class="theater-dream-memory-workspace" data-dream-continuation-bottom="memory"><details class="ui-card ia-memory-dock theater-dream-memory-workspace-details"><summary class="ia-memory-summary"><div class="ia-memory-summary-copy"><div class="ia-memory-summary-title">完整梦脉 · ${state.activeMemoryCount} 条</div><div class="ia-memory-summary-sub">本章命中摘要、四类织录与旧卡兼容</div></div><i class="fa-solid fa-chevron-down"></i></summary><div class="ia-memory-body theater-dream-memory-workspace-body"><section class="theater-dream-memory-status ${dream.memory?.status === LONG_DREAM_MEMORY_STATUS.FAILED ? 'is-failed' : ''}"><div class="theater-dream-memory-status-copy"><span><i class="fa-solid fa-route"></i> 梦脉织录</span><b>${esc(longDreamMemoryStatusText(dream))}</b><small>只处理已确认章节；使用独立副 API，不影响正文线路。</small></div><button type="button" id="theater-dream-weave-now" class="ui-btn ui-btn-sm" ${dream.memory?.status === LONG_DREAM_MEMORY_STATUS.WEAVING || !(dream.memory?.pendingChapterNumbers?.length) ? 'disabled' : ''}><i class="fa-solid fa-wand-magic-sparkles"></i><span>立即织录</span></button></section>${longDreamMemoryCardsHTML(dream)}</div></details></section>
+        <section class="theater-dream-memory-workspace" data-dream-continuation-bottom="memory"><details class="ui-card ia-memory-dock theater-dream-memory-workspace-details"><summary class="ia-memory-summary"><div class="ia-memory-summary-copy"><div class="ia-memory-summary-title">完整梦脉 · ${state.activeMemoryCount} 条</div><div class="ia-memory-summary-sub">四类织录与旧卡兼容</div></div><i class="fa-solid fa-chevron-down"></i></summary><div class="ia-memory-body theater-dream-memory-workspace-body"><section class="theater-dream-memory-status ${dream.memory?.status === LONG_DREAM_MEMORY_STATUS.FAILED ? 'is-failed' : ''}"><div class="theater-dream-memory-status-copy"><span><i class="fa-solid fa-route"></i> 梦脉织录</span><b>${esc(longDreamMemoryStatusText(dream))}</b><small>只处理已确认章节；使用独立副 API，不影响正文线路。</small></div><button type="button" id="theater-dream-weave-now" class="ui-btn ui-btn-sm" ${dream.memory?.status === LONG_DREAM_MEMORY_STATUS.WEAVING || !(dream.memory?.pendingChapterNumbers?.length) ? 'disabled' : ''}><i class="fa-solid fa-wand-magic-sparkles"></i><span>立即织录</span></button></section>${longDreamMemoryCardsHTML(dream)}</div></details></section>
     </div>`;
 }
 
@@ -3616,6 +3614,14 @@ function bindEvents() {
         const panel = document.getElementById('theater-dream-continuation-options');
         if (!panel) return;
         const open = panel.classList.toggle('open');
+        $(this).attr('aria-expanded', String(open)).toggleClass('is-open', open);
+    });
+    $d.off('click.tdtokens keydown.tdtokens').on('click.tdtokens keydown.tdtokens', '#theater-dream-token-summary', function (event) {
+        if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+        if (event.type === 'keydown') event.preventDefault();
+        const details = $('#theater-dream-token-details');
+        const open = !details.is(':visible');
+        details.toggle(open);
         $(this).attr('aria-expanded', String(open));
     });
     $d.off('click.tdnew').on('click.tdnew', '#theater-dream-new,[data-dream-new]', function () {
