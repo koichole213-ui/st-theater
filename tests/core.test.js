@@ -708,7 +708,7 @@ test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => 
     assert.match(source, /requestFinalRenderedHtml/);
     assert.match(source, /autoContinue: settings\.autoContinue !== false/);
     assert.match(source, /maxRounds: Math\.min\(10, Math\.max\(1, Number\(settings\.maxAutoRounds\) \|\| 3\)\)/);
-    assert.match(source, /class="theater-dream-next-options"/);
+    assert.match(source, /class="[^"]*theater-dream-next-options/);
     assert.match(source, /id="theater-dream-token-summary-value"/);
     assert.match(source, /id="theater-dream-refresh-world-book"/);
     assert.match(source, /class="[^"]*theater-dream-settings is-workspace/);
@@ -1719,7 +1719,7 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /id="theater-import-dream-memory-preset"/);
     assert.match(source, /id="theater-dream-memory-selection"/);
     assert.match(source, /refreshLongDreamMemorySelection/);
-    assert.match(source, /class="theater-dream-memory-selection-chip"/);
+    assert.match(source, /class="[^"]*theater-dream-memory-selection-chip/);
     assert.match(source, /class="theater-dream-memory-chip-text"/);
     assert.match(source, /class="[^"]*theater-dream-memory-v2-card/);
     assert.match(source, /class="theater-dream-memory-card-more"/);
@@ -1744,6 +1744,7 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const workspace = source.match(/function longDreamWorkspaceHTML\([\s\S]*?\n\}/)?.[0] || '';
     const continuation = source.match(/function longDreamDetailHTML\(dream\) \{[\s\S]*?function longDreamChapterDirectoryHTML/)?.[0] || '';
+    const shelf = source.match(/function longDreamListHTML\(\) \{[\s\S]*?const LONG_DREAM_RELATION_OPTIONS/)?.[0] || '';
     const workDetail = source.match(/function longDreamWorkDetailHTML\(dream\) \{[\s\S]*?function longDreamChapterDetailHTML/)?.[0] || '';
     const chapterDetail = source.match(/function longDreamChapterDetailHTML\(dream, chapter\) \{[\s\S]*?function longDreamUnavailableHTML/)?.[0] || '';
 
@@ -1752,12 +1753,13 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(workspace, /\['works', '作品'\]/);
     assert.doesNotMatch(workspace, /审阅|章节|梦脉|备份/);
     assert.match(continuation, /data-dream-continuation-stage="review"/);
-    assert.match(continuation, /放弃本章并返回续写/);
-    assert.match(continuation, /采用并保存为第/);
+    assert.match(continuation, /放弃重写/);
+    assert.match(continuation, /确认保存/);
     assert.match(continuation, /data-dream-continuation-bottom="memory"/);
     assert.ok(continuation.indexOf('data-dream-continuation-bottom="memory"') > continuation.indexOf('data-dream-continuation-stage="review"'));
     assert.match(continuation, /最近两章全文、旧章索引/);
     assert.match(workDetail, /data-dream-work-back/);
+    assert.ok(shelf.indexOf('ia-shelf theater-dream-list') < shelf.indexOf('备份与恢复'));
     assert.match(source, /data-dream-open-chapter/);
     assert.match(workDetail, /class="[^"]*theater-dream-work-menu/);
     assert.match(chapterDetail, /data-dream-chapter-back/);
@@ -1766,34 +1768,23 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(source, /function exportLongDreamChapter\(dream, chapter\)/);
     assert.match(source, /downloadFile\(longDreamChapterFileName\(dream, chapter, 'html'\), chapter\.html/);
     assert.match(source, /renderLongDreamChapter\(\{[\s\S]*?text,[\s\S]*?apiRoute: captureGenerationApiRoute/);
-    assert.match(styles, /\.theater-dream-workspace-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subnav\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0,\s*1fr\)\)/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\][\s\S]*?--dream-gemini-bg:\s*#FAF7F2/);
-    assert.match(styles, /@media \(max-width: 520px\)[\s\S]*?\.theater-dream-workspace-tab[^}]*min-height:\s*44px/);
+    assert.match(styles, /@media \(max-width:520px\)[\s\S]*?\.theater-panel\[data-panel="long-dream"\] \.ia-subtab[^}]*min-height:\s*44px/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.compact-detail-head \{[^}]*flex-direction:row/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.theater-dream-definition > \* \{ order:0; \}/);
 });
 
-test('长梦真实 DOM 和样式直接移植 Gemini 核心组件，而非只覆写近似色值', () => {
+test('长梦参考稿样式只作用于长梦面板，不改坏其他页面按钮与插件外壳', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
-    const requiredDomClasses = [
-        'dream-scroll-container', 'ui-card', 'dream-hero-container', 'dream-hero-stars',
-        'dream-hero-nebula-1', 'dream-hero-nebula-2', 'dream-hero-moon', 'glass-overlay',
-        'ui-title', 'ui-btn', 'ui-input', 'ui-textarea', 'memory-v2-card', 'memory-v2-summary',
-    ];
-    for (const className of requiredDomClasses) assert.match(source, new RegExp(`class="[^"\\n]*${className}`));
-    const requiredSelectors = [
-        '.dream-scroll-container', '.ui-card', '.dream-hero-container', '.dream-hero-stars',
-        '.dream-hero-nebula-1', '.dream-hero-nebula-2', '.dream-hero-moon', '.glass-overlay',
-        '.ui-btn', '.memory-v2-card',
-    ];
-    for (const selector of requiredSelectors) assert.ok(styles.includes(selector), `missing migrated selector ${selector}`);
-    for (const declaration of [
-        '--t-bg: #FAF7F2', '--t-surface-1: #FFFFFF', '--t-accent: #B07A4A',
-        'background: #090e17', 'radial-gradient(circle at 30% 30%, #fffde4, #fde08b)',
-        'filter: blur(35px)', 'backdrop-filter: blur(14px)', 'border-radius: 16px',
-        'box-shadow: 0 12px 36px rgba(0, 0, 0, .25)',
-    ]) assert.ok(styles.includes(declaration), `missing Gemini declaration ${declaration}`);
-    assert.doesNotMatch(styles, /Long Dream final IA — Gemini visual language/);
-    assert.match(styles, /Exact-port precedence: old semantic hook classes remain for events only/);
+    const parity = styles.split('Long Dream HTML parity')[1] || '';
+    assert.doesNotMatch(source, /theater-popup-header ia-header/);
+    assert.doesNotMatch(source, /theater-tabs ia-main-tabs/);
+    assert.doesNotMatch(source, /theater-panels-wrapper ia-content/);
+    assert.doesNotMatch(parity, /\.theater-popup\s*\{/);
+    assert.doesNotMatch(parity, /\.popup-button-close/);
+    assert.match(parity, /\.theater-panel\[data-panel="long-dream"\] \.ui-btn/);
 });
 
 test('长梦章节阅读走独立沉浸阅读器，不覆写普通生成结果', () => {
