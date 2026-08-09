@@ -719,18 +719,12 @@ test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => 
     assert.match(styles, /\.theater-dream-memory-current-state-readonly \{[^}]*text-align:\s*justify/);
 });
 
-test('定梦页把 AI 建议保留为可编辑临时草稿，显式采纳后才参与开卷', () => {
+test('定梦页只保留手写 canon，不再显示 AI 整理建议入口', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
-    assert.match(source, /id="theater-dream-canon-suggest"/);
-    assert.match(source, /data-dream-canon-suggestion-content/);
-    assert.match(source, /data-dream-canon-suggestion-action="toggle"/);
-    assert.match(source, /data-dream-canon-suggestion-action="delete"/);
+    const creation = source.match(/function longDreamCreateHTML\(\) \{[\s\S]*?function longDreamGenerationStageText/)?.[0] || '';
+    assert.match(creation, /id="theater-dream-canon"/);
+    assert.doesNotMatch(creation, /longDreamCanonSuggestionHTML|theater-dream-canon-assist|AI 帮我整理/);
     assert.match(source, /composeLongDreamCanon\(/);
-    assert.match(source, /activeLongDreamCanonSuggestions\(source\.key\)/);
-    assert.match(source, /只会看到所选第一章正文，不会读取聊天前文或世界书/);
-    assert.match(styles, /\.theater-dream-canon-suggestion\.is-accepted/);
-    assert.match(styles, /\.theater-dream-canon-uncertain/);
 });
 
 test('下一章请求读取整部长卷正文和梦脉，但不携带旧 HTML', () => {
@@ -1779,12 +1773,13 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.theater-dream-definition > \* \{ order:0; \}/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-column \{[^}]*max-width:\s*none/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-category,[\s\S]*?max-width:\s*none/);
-    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.relation-card \{[^}]*align-items:stretch[^}]*width:100%/);
-    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.relation-card div \{[^}]*width:100%/);
+    assert.match(source, /<span class="relation-card-copy"><b>/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.relation-card \{[^}]*display:block !important[^}]*height:auto !important/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.relation-card-copy \{[^}]*width:100% !important[^}]*writing-mode:horizontal-tb !important/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.relation-card b \{[^}]*word-break:keep-all !important[^}]*writing-mode:horizontal-tb !important/);
     assert.match(styles, /@media \(max-width:520px\)[\s\S]*?\.theater-panel\[data-panel="long-dream"\] \.relation-cards \{ grid-template-columns:1fr; \}/);
     assert.match(styles, /text-align:justify; text-justify:inter-ideograph/);
-    assert.match(styles, /body dialog\.popup:has\(\.theater-panel\[data-panel="long-dream"\]\.active\) \{[\s\S]*?width:100vw !important;[\s\S]*?height:100dvh !important;/);
-    assert.match(styles, /dialog\.popup:has\(\.theater-panel\[data-panel="long-dream"\]\.active\) \.theater-panels-wrapper \{[\s\S]*?max-height:none;[\s\S]*?overflow-y:auto;/);
+    assert.doesNotMatch(styles, /dialog\.popup:has\(\.theater-panel\[data-panel="long-dream"\]\.active\)/);
 });
 
 test('长梦参考稿样式只作用于长梦面板，不改坏其他页面按钮与插件外壳', () => {
@@ -1797,7 +1792,7 @@ test('长梦参考稿样式只作用于长梦面板，不改坏其他页面按�
     assert.doesNotMatch(parity, /^\.theater-popup\s*\{/m);
     assert.doesNotMatch(parity, /\.popup-button-close/);
     assert.doesNotMatch(parity, /body dialog\.popup:has\(\.theater-popup\) \{/);
-    assert.match(parity, /dialog\.popup:has\(\.theater-panel\[data-panel="long-dream"\]\.active\)/);
+    assert.doesNotMatch(parity, /dialog\.popup:has\(\.theater-panel\[data-panel="long-dream"\]\.active\)/);
     assert.match(parity, /\.theater-panel\[data-panel="long-dream"\] \.ui-btn/);
     assert.match(parity, /\.theater-panel\[data-panel="long-dream"\] \.ui-btn-primary \{[\s\S]*?linear-gradient\(135deg, var\(--t-accent\) 0%, var\(--t-accent-deep\) 100%\)/);
     assert.match(parity, /\.theater-panel\[data-panel="long-dream"\] \.ia-subtab\.active \{[\s\S]*?linear-gradient\(135deg, var\(--t-accent\) 0%, var\(--t-accent-deep\) 100%\)/);

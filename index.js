@@ -2337,7 +2337,7 @@ function longDreamRelationChoicesHTML({ name, selected, hasBooks, disabled = fal
         const isDisabled = disabled || (needsBooks && !hasBooks);
         return `<label class="theater-dream-choice relation-card ${selected === option.value ? 'selected' : ''} ${isDisabled ? 'is-disabled' : ''}">
             <input type="radio" name="${esc(name)}" value="${esc(option.value)}" ${selected === option.value ? 'checked' : ''} ${isDisabled ? 'disabled' : ''}>
-            <div><b>${esc(option.label)}${option.value === LONG_DREAM_WORLD_LINE_RELATION.ISOLATED ? '（推荐）' : ''}</b><small>${esc(option.description)}</small></div>
+            <span class="relation-card-copy"><b>${esc(option.label)}${option.value === LONG_DREAM_WORLD_LINE_RELATION.ISOLATED ? '（推荐）' : ''}</b><small>${esc(option.description)}</small></span>
         </label>`;
     }).join('');
 }
@@ -2360,7 +2360,6 @@ function longDreamCreateHTML() {
                 <label class="ia-field" for="theater-dream-title"><span>长卷名字</span><input id="theater-dream-title" class="ui-input theater-input" maxlength="80" value="${esc(first?.title || '未命名长梦')}"></label>
                 <label class="ia-field" for="theater-dream-canon"><span>必须遵守的硬设定</span><textarea id="theater-dream-canon" class="ui-textarea theater-textarea" rows="7" placeholder="填写这场梦必须遵守的硬设定...">${esc(first?.instruction || '')}</textarea></label>
                 <p id="theater-dream-source-hint" class="theater-hint ${longDreamSourceInstructionState(first).className}">${esc(longDreamSourceInstructionState(first).hint)}</p>
-                ${longDreamCanonSuggestionHTML(first?.key)}
             </section>
             <section class="ui-card theater-dream-form-card theater-dream-inheritance">
                 <div class="ui-title"><span><i class="fa-solid fa-code-branch"></i> 世界线继承关系</span></div>

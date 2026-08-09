@@ -5431,16 +5431,16 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-panel[data-panel="long-dream"] .canon-suggest-list { display:flex; flex-direction:column; gap:6px; }
 .theater-panel[data-panel="long-dream"] .canon-suggest-item { padding:8px 10px; border-radius:8px; background:var(--t-surface-2); font-size:11px; }
 .theater-panel[data-panel="long-dream"] .canon-suggest-item.accepted { border:1px solid var(--t-success); background:color-mix(in srgb,var(--t-success) 10%,var(--t-surface-1)); }
-.theater-panel[data-panel="long-dream"] .relation-cards { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.theater-panel[data-panel="long-dream"] .relation-card { display:flex; flex-direction:column; align-items:stretch; gap:6px; width:100%; min-width:0; min-height:0; padding:10px; border:1px solid var(--t-border); border-radius:12px; background:var(--t-surface-2); cursor:pointer; }
+.theater-panel[data-panel="long-dream"] .relation-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; gap:8px; }
+.theater-panel[data-panel="long-dream"] .relation-card { display:block !important; width:100% !important; min-width:0 !important; min-height:0 !important; height:auto !important; padding:10px; border:1px solid var(--t-border); border-radius:12px; background:var(--t-surface-2); cursor:pointer; writing-mode:horizontal-tb !important; }
 .theater-panel[data-panel="long-dream"] .relation-card.selected,
 .theater-panel[data-panel="long-dream"] .relation-card:has(input:checked) { border-color:var(--t-accent); background:color-mix(in srgb,var(--t-accent) 10%,var(--t-surface-1)); }
 .theater-panel[data-panel="long-dream"] .relation-card input { display:none; }
-.theater-panel[data-panel="long-dream"] .relation-card div { width:100%; min-width:0; }
-.theater-panel[data-panel="long-dream"] .relation-card b { display:flex; align-items:center; gap:4px; width:100%; min-width:0; color:var(--t-fg); font-size:11px; overflow-wrap:anywhere; }
+.theater-panel[data-panel="long-dream"] .relation-card-copy { display:block !important; width:100% !important; min-width:0 !important; max-width:100% !important; writing-mode:horizontal-tb !important; }
+.theater-panel[data-panel="long-dream"] .relation-card b { display:flex !important; align-items:center; gap:4px; width:100% !important; min-width:0 !important; color:var(--t-fg); font-size:11px; white-space:normal !important; word-break:keep-all !important; overflow-wrap:normal !important; writing-mode:horizontal-tb !important; }
 .theater-panel[data-panel="long-dream"] .relation-card b::before { content:""; flex:0 0 auto; width:12px; height:12px; border:1.5px solid var(--t-border-bold); border-radius:50%; }
 .theater-panel[data-panel="long-dream"] .relation-card:has(input:checked) b::before { border-color:var(--t-accent); background:var(--t-accent); box-shadow:inset 0 0 0 2px var(--t-surface-1); }
-.theater-panel[data-panel="long-dream"] .relation-card small { display:block; width:100%; min-width:0; margin-top:5px; color:var(--t-fg-mute); font-size:10px; line-height:1.45; overflow-wrap:anywhere; }
+.theater-panel[data-panel="long-dream"] .relation-card small { display:block !important; width:100% !important; min-width:0 !important; max-width:100% !important; margin-top:5px; color:var(--t-fg-mute); font-size:10px; line-height:1.45; white-space:normal !important; word-break:normal !important; overflow-wrap:anywhere !important; writing-mode:horizontal-tb !important; }
 .theater-panel[data-panel="long-dream"] .relation-card.is-disabled { opacity:.45; cursor:not-allowed; }
 
 .theater-panel[data-panel="long-dream"] .compact-detail-head { position:relative; display:flex; flex-direction:row; flex-wrap:nowrap; align-items:center; justify-content:space-between; gap:10px; min-width:0; padding:12px 14px; overflow:hidden; border:1px solid var(--t-border); border-left:4px solid var(--t-accent); border-radius:12px; background:var(--t-surface-1); box-shadow:0 2px 8px rgba(0,0,0,.03); }
@@ -5572,55 +5572,4 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     .theater-panel[data-panel="long-dream"] .relation-cards { grid-template-columns:1fr; }
     .theater-panel[data-panel="long-dream"] .theater-dream-review-actions { grid-template-columns:1fr 1fr; }
     .theater-panel[data-panel="long-dream"] .theater-dream-memory-status { align-items:flex-start; flex-direction:column; }
-}
-
-/* 长梦工作区激活时直接使用完整视口；切回其他主标签后不影响插件原弹窗。 */
-body .popup:has(.theater-panel[data-panel="long-dream"].active),
-body dialog.popup:has(.theater-panel[data-panel="long-dream"].active) {
-    position:fixed !important;
-    inset:0 !important;
-    width:100vw !important;
-    max-width:none !important;
-    height:100vh !important;
-    height:100dvh !important;
-    max-height:none !important;
-    margin:0 !important;
-    padding:0 !important;
-    border:0 !important;
-    border-radius:0 !important;
-    overflow:hidden !important;
-}
-body .popup:has(.theater-panel[data-panel="long-dream"].active) .popup-content,
-body dialog.popup:has(.theater-panel[data-panel="long-dream"].active) .popup-content {
-    display:flex;
-    flex-direction:column;
-    width:100%;
-    height:100%;
-    min-height:0;
-    padding:0 !important;
-}
-body .popup:has(.theater-panel[data-panel="long-dream"].active) .popup-body,
-body dialog.popup:has(.theater-panel[data-panel="long-dream"].active) .popup-body {
-    flex:1 1 auto;
-    min-height:0;
-    overflow:hidden !important;
-}
-body .popup:has(.theater-panel[data-panel="long-dream"].active) .theater-popup,
-body dialog.popup:has(.theater-panel[data-panel="long-dream"].active) .theater-popup {
-    display:flex;
-    flex-direction:column;
-    width:100%;
-    height:100%;
-    min-height:0;
-    padding:0;
-    border-radius:0;
-}
-body .popup:has(.theater-panel[data-panel="long-dream"].active) .theater-panels-wrapper,
-body dialog.popup:has(.theater-panel[data-panel="long-dream"].active) .theater-panels-wrapper {
-    flex:1 1 auto;
-    width:100%;
-    height:auto;
-    min-height:0;
-    max-height:none;
-    overflow-y:auto;
 }
