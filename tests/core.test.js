@@ -1743,6 +1743,8 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const workspace = source.match(/function longDreamWorkspaceHTML\([\s\S]*?\n\}/)?.[0] || '';
+    const creation = source.match(/function longDreamCreateHTML\(\) \{[\s\S]*?function longDreamGenerationStageText/)?.[0] || '';
+    const definition = source.match(/function longDreamDefinitionHTML\(dream\) \{[\s\S]*?function longDreamDetailHTML/)?.[0] || '';
     const continuation = source.match(/function longDreamDetailHTML\(dream\) \{[\s\S]*?function longDreamChapterDirectoryHTML/)?.[0] || '';
     const shelf = source.match(/function longDreamListHTML\(\) \{[\s\S]*?const LONG_DREAM_RELATION_OPTIONS/)?.[0] || '';
     const workDetail = source.match(/function longDreamWorkDetailHTML\(dream\) \{[\s\S]*?function longDreamChapterDetailHTML/)?.[0] || '';
@@ -1752,6 +1754,8 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(workspace, /\['continue', '续写'\]/);
     assert.match(workspace, /\['works', '作品'\]/);
     assert.doesNotMatch(workspace, /审阅|章节|梦脉|备份/);
+    assert.doesNotMatch(creation, /dream-hero-container|data-dream-back|返回作品/);
+    assert.doesNotMatch(definition, /dream-hero-container|DREAM CANON/);
     assert.match(continuation, /data-dream-continuation-stage="review"/);
     assert.match(continuation, /放弃重写/);
     assert.match(continuation, /确认保存/);
@@ -1773,6 +1777,14 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(styles, /@media \(max-width:520px\)[\s\S]*?\.theater-panel\[data-panel="long-dream"\] \.ia-subtab[^}]*min-height:\s*44px/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.compact-detail-head \{[^}]*flex-direction:row/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.theater-dream-definition > \* \{ order:0; \}/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-column \{[^}]*max-width:\s*none/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-category,[\s\S]*?max-width:\s*none/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.relation-card \{[^}]*align-items:stretch[^}]*width:100%/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.relation-card div \{[^}]*width:100%/);
+    assert.match(styles, /@media \(max-width:520px\)[\s\S]*?\.theater-panel\[data-panel="long-dream"\] \.relation-cards \{ grid-template-columns:1fr; \}/);
+    assert.match(styles, /text-align:justify; text-justify:inter-ideograph/);
+    assert.match(styles, /body dialog\.popup:has\(\.theater-panel\[data-panel="long-dream"\]\.active\) \{[\s\S]*?width:100vw !important;[\s\S]*?height:100dvh !important;/);
+    assert.match(styles, /dialog\.popup:has\(\.theater-panel\[data-panel="long-dream"\]\.active\) \.theater-panels-wrapper \{[\s\S]*?max-height:none;[\s\S]*?overflow-y:auto;/);
 });
 
 test('长梦参考稿样式只作用于长梦面板，不改坏其他页面按钮与插件外壳', () => {
@@ -1782,9 +1794,13 @@ test('长梦参考稿样式只作用于长梦面板，不改坏其他页面按�
     assert.doesNotMatch(source, /theater-popup-header ia-header/);
     assert.doesNotMatch(source, /theater-tabs ia-main-tabs/);
     assert.doesNotMatch(source, /theater-panels-wrapper ia-content/);
-    assert.doesNotMatch(parity, /\.theater-popup\s*\{/);
+    assert.doesNotMatch(parity, /^\.theater-popup\s*\{/m);
     assert.doesNotMatch(parity, /\.popup-button-close/);
+    assert.doesNotMatch(parity, /body dialog\.popup:has\(\.theater-popup\) \{/);
+    assert.match(parity, /dialog\.popup:has\(\.theater-panel\[data-panel="long-dream"\]\.active\)/);
     assert.match(parity, /\.theater-panel\[data-panel="long-dream"\] \.ui-btn/);
+    assert.match(parity, /\.theater-panel\[data-panel="long-dream"\] \.ui-btn-primary \{[\s\S]*?linear-gradient\(135deg, var\(--t-accent\) 0%, var\(--t-accent-deep\) 100%\)/);
+    assert.match(parity, /\.theater-panel\[data-panel="long-dream"\] \.ia-subtab\.active \{[\s\S]*?linear-gradient\(135deg, var\(--t-accent\) 0%, var\(--t-accent-deep\) 100%\)/);
 });
 
 test('长梦章节阅读走独立沉浸阅读器，不覆写普通生成结果', () => {

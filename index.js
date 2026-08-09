@@ -2349,11 +2349,6 @@ function longDreamCreateHTML() {
     const selectedBooks = (settings.selectedWorldBooks || []).filter(Boolean);
     const bookText = selectedBooks.length ? selectedBooks.join('、') : '当前没有选中的世界书';
     return `<div class="theater-dream-create">
-        <button type="button" class="ia-back theater-dream-back" data-dream-back><i class="fa-solid fa-arrow-left"></i><span>返回作品</span></button>
-        <section class="dream-hero-container">
-            <div class="dream-hero-stars" aria-hidden="true"></div><div class="dream-hero-nebula-1" aria-hidden="true"></div><div class="dream-hero-nebula-2" aria-hidden="true"></div><div class="dream-hero-moon" aria-hidden="true"></div>
-            <div class="glass-overlay"><span class="kicker">LONG DREAM ARCHIVE</span><h2>长梦续章</h2><p>让同一场梦记住来路，沿着自己的世界线续成一卷。</p></div>
-        </section>
         ${sources.length ? `<div class="theater-dream-form-grid">
             <section class="ui-card theater-dream-form-card">
                 <div class="ui-title"><span><i class="fa-solid fa-book-bookmark"></i> 第一章来源</span></div>
@@ -2751,10 +2746,6 @@ function longDreamDetailHeaderHTML(dream, { showTools = false, statusControlDisa
 function longDreamDefinitionHTML(dream) {
     const state = longDreamDetailState(dream);
     return `<div class="theater-dream-detail theater-dream-definition" data-id="${esc(dream.id)}">
-        <section class="dream-hero-container theater-dream-definition-hero">
-            <div class="dream-hero-stars" aria-hidden="true"></div><div class="dream-hero-nebula-1" aria-hidden="true"></div><div class="dream-hero-nebula-2" aria-hidden="true"></div><div class="dream-hero-moon" aria-hidden="true"></div>
-            <div class="glass-overlay"><span class="kicker">DREAM CANON</span><h2>定下这场梦不可动摇的来路</h2><p>正典、初始设定、世界线和冻结世界书只由你确认；续写只能在此基础上前进。</p></div>
-        </section>
         <section class="ui-card theater-dream-settings is-workspace">
             <div class="ui-title"><span><i class="fa-solid fa-pen-nib"></i> 此梦设定 (Canon)</span></div>
             <div class="theater-dream-settings-body">
