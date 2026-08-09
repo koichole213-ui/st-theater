@@ -1691,6 +1691,9 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /id="theater-dream-import-backup"/);
     assert.match(source, /id="theater-dream-export-all"/);
     assert.match(source, /id="theater-dream-export-current"/);
+    assert.match(source, /data-dream-export-one/);
+    assert.match(source, /data-dream-open-work/);
+    assert.match(source, /exportLongDreamBackup\(\[dream\], 'single'\)/);
     assert.match(source, /'theater-dream-complete'/);
     assert.match(source, /'theater-dream-reopen'/);
     assert.match(source, /class="[^"]*theater-dream-chapter-directory is-workspace/);
@@ -1731,6 +1734,9 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(styles, /\.theater-dream-memory-chip-text\s*\{[\s\S]*?min-width:\s*0/);
     assert.match(styles, /\.theater-dream-memory-v2-card > summary\s*\{[\s\S]*?min-height:\s*44px/);
     assert.match(styles, /\.theater-dream-memory-list article \.theater-input::placeholder/);
+    assert.match(styles, /\.theater-dream-library-card-header,[\s\S]*?justify-content:space-between/);
+    assert.match(styles, /\.theater-dream-library-card-footer[\s\S]*?justify-content:space-between/);
+    assert.match(styles, /\.theater-dream-library-export\s*\{/);
 });
 
 test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦脉和章节操作归入正确层级', () => {
@@ -1762,7 +1768,8 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(continuation, /fa-sliders/);
     assert.match(continuation, /id="theater-dream-token-summary"[\s\S]*?明细 ▾[\s\S]*?id="theater-dream-token-details"/);
     assert.match(workDetail, /data-dream-work-back/);
-    assert.ok(shelf.indexOf('ia-shelf theater-dream-list') < shelf.indexOf('备份与恢复'));
+    assert.ok(shelf.indexOf('class="theater-dream-list"') < shelf.indexOf('备份与恢复'));
+    assert.doesNotMatch(shelf, /ia-book-cover|打开作品/);
     assert.match(source, /data-dream-open-chapter/);
     assert.match(workDetail, /class="[^"]*theater-dream-work-menu/);
     assert.match(chapterDetail, /data-dream-chapter-back/);

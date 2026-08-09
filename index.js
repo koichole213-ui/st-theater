@@ -2294,20 +2294,35 @@ function longDreamListHTML() {
     const cards = dreams.map(dream => {
         const latest = latestLongDreamChapter(dream);
         const chapterCount = dream.chapters?.length || 0;
-        const status = dream.status === 'complete' ? '已完结' : '连载中';
-        return `<article class="ia-book">
-            <div class="ia-book-cover"><h3>${esc(dream.title)}</h3><p>${dream.status === 'complete' ? '已完结' : '仍在梦中'} · 共 ${chapterCount} 章</p></div>
-            <div class="ia-line-title">《${esc(dream.title)}》</div>
-            <div class="ia-line-sub">${status} · ${esc(longDreamDate(dream.updatedAt))}${latest ? ` · ${esc(latest.title)}` : ''}</div>
-            <button type="button" class="ui-btn ui-btn-sm ${dream.status === 'complete' ? '' : 'ui-btn-primary'} theater-dream-card" data-id="${esc(dream.id)}" aria-label="打开长卷《${esc(dream.title)}》">打开作品</button>
+        const complete = dream.status === 'complete';
+        const memoryCount = longDreamActiveMemoryCount(dream);
+        const latestText = latest?.text || htmlToPlainText(latest?.html || '');
+        const progress = chapterCount ? (complete ? `共 ${chapterCount} 章` : `写至第 ${chapterCount} 章`) : '尚未开篇';
+        const excerpt = longDreamExcerpt(latestText, 96) || '这部长梦还没有可显示的章节摘要。';
+        return `<article class="theater-dream-library-card ${complete ? 'is-completed' : ''}" data-dream-open-work data-id="${esc(dream.id)}" role="button" tabindex="0" aria-label="打开长卷《${esc(dream.title)}》的章节目录">
+            <div class="theater-dream-library-card-header">
+                <h3>《${esc(dream.title)}》</h3>
+                <span class="theater-dream-library-status">${complete ? '已完卷' : '仍在梦中'}</span>
+            </div>
+            <p class="theater-dream-library-excerpt"><b>${progress}</b><span>${esc(excerpt)}</span></p>
+            <div class="theater-dream-library-card-footer">
+                <div class="theater-dream-library-meta">
+                    <span><i class="fa-regular fa-clock"></i>${esc(longDreamDate(dream.updatedAt))}</span>
+                    <span><i class="fa-solid fa-layer-group"></i>${memoryCount ? `${memoryCount} 条梦脉` : '暂无梦脉'}</span>
+                </div>
+                <div class="theater-dream-library-card-actions">
+                    <button type="button" class="theater-dream-library-export" data-dream-export-one data-id="${esc(dream.id)}" title="导出本卷" aria-label="导出长卷《${esc(dream.title)}》"><i class="fa-solid fa-file-export"></i></button>
+                    <i class="fa-solid fa-chevron-right theater-dream-library-arrow" aria-hidden="true"></i>
+                </div>
+            </div>
         </article>`;
     }).join('');
     return `<div class="ia-works-level active theater-dream-home" data-works-level="shelf">
-        <section class="ui-card">
-            <div class="ui-title"><span><i class="fa-solid fa-book"></i> 我的长梦</span><button type="button" id="theater-dream-new" class="ui-btn ui-btn-sm ui-btn-primary"><i class="fa-solid fa-plus"></i> 新建</button></div>
-            <p class="ia-card-note">先选择一本作品，再进入它的章节目录。</p>
-        </section>
-        ${cards ? `<div class="ia-shelf theater-dream-list">${cards}</div>` : `<section class="ui-card theater-dream-empty"><div class="theater-dream-empty-icon">☾</div><b>还没有长梦</b><span>从定梦开始建立第一本作品。</span><button type="button" data-dream-new class="ui-btn ui-btn-primary">创建第一部长梦</button></section>`}
+        <header class="theater-dream-library-header">
+            <div class="theater-dream-library-title"><h2><i class="fa-solid fa-book-journal-whills"></i><span>我的长梦</span></h2><p>点击作品卡片进入章节目录</p></div>
+            <button type="button" id="theater-dream-new" class="ui-btn ui-btn-sm ui-btn-primary"><i class="fa-solid fa-plus"></i><span>新建</span></button>
+        </header>
+        ${cards ? `<div class="theater-dream-list">${cards}</div>` : `<section class="ui-card theater-dream-empty"><div class="theater-dream-empty-icon">☾</div><b>还没有长梦</b><span>从定梦开始建立第一本作品。</span><button type="button" data-dream-new class="ui-btn ui-btn-primary">创建第一部长梦</button></section>`}
         <details class="ui-card ia-book-menu theater-dream-library-tools">
             <summary class="ia-memory-summary"><div class="ia-memory-summary-copy"><div class="ia-memory-summary-title">备份与恢复</div><div class="ia-memory-summary-sub">导入可信备份，或导出全部长梦</div></div><i class="fa-solid fa-chevron-right"></i></summary>
             <div class="ia-memory-body ia-action-row">
@@ -3752,7 +3767,16 @@ function bindEvents() {
         toastr.success(`《${created.title}》已开卷`);
         resetLongDreamCanonSuggestions({ abort: false });
     });
-    $d.off('click.tdopen').on('click.tdopen', '.theater-dream-card', function () {
+    $d.off('click.tdexportone').on('click.tdexportone', '[data-dream-export-one]', function (event) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const dream = longDreamCache.find(item => String(item.id) === String($(this).data('id')));
+        if (dream) exportLongDreamBackup([dream], 'single');
+    });
+    $d.off('click.tdopen keydown.tdopen').on('click.tdopen keydown.tdopen', '[data-dream-open-work]', function (event) {
+        if ($(event.target).closest('[data-dream-export-one]').length) return;
+        if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+        if (event.type === 'keydown') event.preventDefault();
         activeLongDreamId = $(this).data('id');
         longDreamView = 'detail';
         longDreamWorkspaceSection = 'works';
