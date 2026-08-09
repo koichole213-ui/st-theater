@@ -26,7 +26,7 @@ import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from 
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from '../plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from '../history-backup.js';
 import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, appendLongDreamChapter, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamBranch, createLongDreamRecord, createLongDreamWorldBookSnapshot, deleteLongDreamFrom, discardLongDreamWritingAttempt, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, recoverInterruptedLongDreamMemory, rejectLongDreamMemoryV2RecordItem, resolveLongDreamMemoryV2RecordConflict, saveLongDreamDraft, selectLongDreamDraftCandidate, setLongDreamMemoryCardStatus, setLongDreamMemoryStatus, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition, updateLongDreamMemoryCard, updateLongDreamMemoryV2RecordItem } from '../long-dream.js';
-import { buildLongDreamChapterMessages, buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBookContext, longDreamWorldBookEntries, selectRelevantLongDreamMemoryCards, selectRelevantLongDreamMemoryItems } from '../long-dream-payload.js';
+import { LONG_DREAM_RECENT_CHAPTER_COUNT, buildLongDreamChapterMessages, buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBookContext, longDreamWorldBookEntries, selectRelevantLongDreamMemoryCards, selectRelevantLongDreamMemoryItems } from '../long-dream-payload.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from '../long-dream-generation.js';
 import { LONG_DREAM_BACKUP_FORMAT, LONG_DREAM_BACKUP_VERSION, createLongDreamBackup, parseLongDreamBackup } from '../long-dream-backup.js';
 import { LONG_DREAM_ARCHIVE_FORMAT, LONG_DREAM_ARCHIVE_MANIFEST, createLongDreamArchive, parseLongDreamArchive } from '../long-dream-archive.js';
@@ -864,7 +864,7 @@ test('长梦与普通生成共用 Char 和 User 身份插槽，定梦冲突时�
     assert.match(text, /中心人物固定为 User「禾禾」与 Char「麓」/);
 });
 
-test('长梦同章第二轮保留身份与冻结条目，但不重复发送整部长卷前情', async () => {
+test('长梦同章第二轮保留首轮完整基础包，并附带当前章草稿续写', async () => {
     const snapshot = createLongDreamWorldBookSnapshot({
         bookNames: ['人物'],
         entries: [{ book: '人物', enabled: true, content: '麓不喜欢别人触碰旧怀表。' }],
@@ -898,8 +898,8 @@ test('长梦同章第二轮保留身份与冻结条目，但不重复发送整�
     const first = requests[0].messages.map(message => message.content).join('\n');
     const second = requests[1].messages.map(message => message.content).join('\n');
     assert.match(first, /第一章里两人在码头重逢/);
-    assert.doesNotMatch(second, /第一章里两人在码头重逢/);
-    assert.match(second, /同章补写/);
+    assert.match(second, /第一章里两人在码头重逢/);
+    assert.match(second, /短开头/);
     assert.match(second, /沉静但护短/);
     assert.match(second, /敏锐而直接/);
     assert.match(second, /麓不喜欢别人触碰旧怀表/);
@@ -1175,7 +1175,7 @@ test('梦脉二创 JSON 只能携带分析侧重点，输出合同固定且未�
     assert.equal('executable' in exported, false);
 });
 
-test('长卷续章只带最近四章全文，并从旧章梦脉中检索本章相关事实', () => {
+test('长卷续章只带最近两章全文，并从旧章梦脉中检索本章相关事实', () => {
     let record = createLongDreamRecord({ source: { text: '第1章完整正文。', html: '<main>第1章完整正文。</main>' } });
     for (let number = 2; number <= 10; number++) {
         record = appendLongDreamChapter(record, {
@@ -1195,17 +1195,18 @@ test('长卷续章只带最近四章全文，并从旧章梦脉中检索本章�
         tags: index === 0 ? ['银钥匙'] : [`标签${index + 1}`],
     }));
     const context = longDreamChapterContext(record, { instruction: '让林岚取出银钥匙。' });
-    assert.equal(context.recentChapterCount, 4);
-    assert.equal(context.olderChapterCount, 6);
-    assert.match(context.chapters, /第 7 章/);
+    assert.equal(LONG_DREAM_RECENT_CHAPTER_COUNT, 2);
+    assert.equal(context.recentChapterCount, 2);
+    assert.equal(context.olderChapterCount, 8);
+    assert.match(context.chapters, /第 9 章/);
     assert.match(context.chapters, /第 10 章/);
-    assert.doesNotMatch(context.chapters, /第 6 章/);
+    assert.doesNotMatch(context.chapters, /第 8 章/);
     assert.match(context.olderOutline, /第 1 章/);
     assert.match(context.memory, /银钥匙藏在第一章的旧车票里/);
     assert.ok(context.selectedMemoryCount <= 30);
     const payload = buildLongDreamChapterPayload({ record, instruction: '让林岚取出银钥匙。' });
-    assert.match(payload.userPrompt, /近期已保存章节｜最近 4 章全文/);
-    assert.match(payload.userPrompt, /较早章节压缩索引｜6 章/);
+    assert.match(payload.userPrompt, /近期已保存章节｜最近 2 章全文/);
+    assert.match(payload.userPrompt, /较早章节压缩索引｜8 章/);
 });
 
 test('超长连载的旧章索引有固定上限，同时保留第一章和最近旧章', () => {
@@ -1222,7 +1223,7 @@ test('超长连载的旧章索引有固定上限，同时保留第一章和最�
     assert.match(context.olderOutline, /第 1 章/);
     assert.match(context.olderOutline, /索引已压缩/);
     assert.match(context.olderOutline, /第 76 章/);
-    assert.match(context.chapters, /第 77 章/);
+    assert.match(context.chapters, /第 79 章/);
     assert.match(context.chapters, /第 80 章/);
 });
 
@@ -1235,7 +1236,7 @@ test('刷新或关页打断梦脉请求后会恢复为待织录，不会永久�
     assert.deepEqual(recovered.memory.pendingChapterNumbers, [1]);
 });
 
-test('长梦上下文预算先裁剪低优先级信息，定梦和本章方向始终完整', () => {
+test('长梦上下文参考线只提示风险，不会静默裁剪基础资料', () => {
     const canon = '不可删减的定梦：两人没有血缘关系。';
     const snapshot = createLongDreamWorldBookSnapshot({
         bookNames: ['原作'], entries: [{ book: '原作', content: '低优先级世界书内容。' }],
@@ -1254,11 +1255,11 @@ test('长梦上下文预算先裁剪低优先级信息，定梦和本章方向�
     });
     assert.match(payload.userPrompt, new RegExp(canon));
     assert.match(payload.userPrompt, /不可删减的本章方向：在雨里坦白/);
-    assert.deepEqual(payload.budget.truncated, ['chapters']);
-    assert.equal(payload.budget.omitted.includes('worldBookSnapshot'), true);
-    assert.equal(payload.budget.omitted.includes('style'), true);
-    assert.doesNotMatch(payload.userPrompt, /低优先级世界书内容/);
-    assert.doesNotMatch(payload.systemPrompt, /低优先级风格规则/);
+    assert.deepEqual(payload.budget.truncated, []);
+    assert.deepEqual(payload.budget.omitted, []);
+    assert.equal(payload.budget.level, 'over');
+    assert.match(payload.userPrompt, /低优先级世界书内容/);
+    assert.match(payload.systemPrompt, /低优先级风格规则/);
 });
 
 test('长梦请求只注入已确认梦脉', () => {
@@ -1281,6 +1282,43 @@ test('下一章请求可以从仅有 HTML 的旧章节恢复可读前情', () =>
     const payload = buildLongDreamChapterPayload({ record, instruction: '继续' });
     assert.match(payload.userPrompt, /灯火 未眠/);
     assert.doesNotMatch(payload.userPrompt, /color:red|<article>/);
+});
+
+test('long dream prose cleans unexpected HTML from text and retains both ends of a long recovery draft', () => {
+    let record = createLongDreamRecord({
+        source: { text: '<style>.bad{}</style><p>first <b>prose</b></p><script>bad()</script>', html: '<main>fallback prose</main>' },
+    });
+    record = appendLongDreamChapter(record, { title: 'chapter two', text: 'second chapter prose', html: '<main>second chapter prose</main>' });
+    const draft = `<p>DRAFT-HEAD-${'middle '.repeat(3000)}-DRAFT-TAIL</p><style>.draft{}</style>`;
+    const payload = buildLongDreamChapterPayload({ record, currentDraft: draft, continuationRound: true, maxOptionalContextChars: 100 });
+    assert.match(payload.userPrompt, /first prose/);
+    assert.doesNotMatch(payload.userPrompt, /<style>|<script>|\.bad/);
+    assert.match(payload.userPrompt, /DRAFT-HEAD-/);
+    assert.match(payload.userPrompt, /-DRAFT-TAIL/);
+    assert.doesNotMatch(payload.userPrompt, /<p>|\.draft/);
+    assert.match(payload.userPrompt, /second chapter prose/);
+    assert.equal(payload.budget.level, 'over');
+});
+
+test('continuation payload retains two recent chapters, older index, memory, world book, and identity structure', () => {
+    const snapshot = createLongDreamWorldBookSnapshot({ bookNames: ['archive'], entries: [{ book: 'archive', content: 'frozen world fact' }] });
+    let record = createLongDreamRecord({
+        canon: 'dream canon fact', worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED, worldBookNames: ['archive'], worldBookSnapshot: snapshot,
+        source: { text: 'chapter one older fact', html: '<main>chapter one older fact</main>' },
+    });
+    record = appendLongDreamChapter(record, { title: 'two', text: 'chapter two full text', html: '<main>chapter two full text</main>' });
+    record = appendLongDreamChapter(record, { title: 'three', text: 'chapter three full text', html: '<main>chapter three full text</main>' });
+    record.memory.cards = [{ status: 'confirmed', type: 'fact', content: 'memory fact', sourceChapterNumbers: [1] }];
+    const payload = buildLongDreamChapterPayload({ record, instruction: 'continue safely', currentDraft: 'RECOVERY-DRAFT', continuationRound: true, structuredPreset: true });
+    const messages = buildLongDreamChapterMessages({
+        payload,
+        presetEntries: [{ id: 'charDescription', role: 'system', content: '' }, { id: 'personaDescription', role: 'system', content: '' }],
+        slots: { charDescription: 'char description', personaDescription: 'user persona' },
+    });
+    const text = messages.map(message => message.content).join('\n');
+    for (const expected of ['chapter one older fact', 'chapter two full text', 'chapter three full text', 'memory fact', 'frozen world fact', 'RECOVERY-DRAFT', 'dream canon fact', 'char description', 'user persona']) assert.match(text, new RegExp(expected));
+    assert.equal(payload.context.recentChapterCount, 2);
+    assert.equal(payload.context.olderChapterCount, 1);
 });
 
 test('追加下一章保留旧章并生成稳定的章号', () => {
@@ -1648,6 +1686,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /id="theater-import-dream-memory-preset"/);
     assert.match(source, /id="theater-dream-memory-selection"/);
     assert.match(source, /refreshLongDreamMemorySelection/);
+    assert.match(source, /class="theater-dream-memory-selection-chip"/);
+    assert.match(source, /class="theater-dream-memory-chip-text"/);
+    assert.match(source, /class="theater-dream-memory-v2-card"/);
+    assert.match(source, /class="theater-dream-memory-card-more"/);
+    assert.match(source, /placeholder: '例如：泄密调查、银钥匙'/);
+    assert.match(source, /field\('status', '事项状态'/);
+    assert.doesNotMatch(source, /kind === 'state' \|\| kind === 'thread' \? 'open' : ''/);
     assert.match(source, /请只导入可信来源/);
     assert.match(source, /已导入 \$\{added\}\/\$\{total\} 卷长梦/);
     assert.match(source, /setTimeout\(\(\) => URL\.revokeObjectURL\(url\), 1000\)/);
@@ -1656,6 +1701,9 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(styles, /\.theater-dream-chapter-actions\s*\{/);
     assert.match(styles, /\.theater-dream-memory-state-editor\s*\{/);
     assert.match(styles, /\.theater-dream-memory-selection\s*\{/);
+    assert.match(styles, /\.theater-dream-memory-chip-text\s*\{[\s\S]*?min-width:\s*0/);
+    assert.match(styles, /\.theater-dream-memory-v2-card > summary\s*\{[\s\S]*?min-height:\s*44px/);
+    assert.match(styles, /\.theater-dream-memory-list article \.theater-input::placeholder/);
 });
 
 test('长梦章节阅读走独立沉浸阅读器，不覆写普通生成结果', () => {

@@ -6,10 +6,16 @@ function cleanText(value) {
     return String(value || '').trim();
 }
 
-function chapterText(chapter = {}) {
-    const text = cleanText(chapter.text);
-    if (text) return text;
-    return cleanText(chapter.html)
+// One source of truth for the payload, relevance scoring, and UI preview.
+export const LONG_DREAM_RECENT_CHAPTER_COUNT = 2;
+
+function plainStoryText(value = '') {
+    const source = String(value || '').trim();
+    if (!source) return '';
+    // `text` is normally plain prose, but a malformed legacy record must never
+    // inject markup, styles, or scripts into a writing request.
+    if (!/<\/?[a-z][\w:-]*(?:\s[^>]*)?>/i.test(source)) return source;
+    return source
         .replace(/<(script|style|svg|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
         .replace(/<br\s*\/?>/gi, '\n')
         .replace(/<\/p>|<\/div>|<\/section>|<\/article>|<\/li>|<\/h[1-6]>/gi, '\n')
@@ -23,6 +29,12 @@ function chapterText(chapter = {}) {
         .replace(/[ \t]+/g, ' ')
         .replace(/\n\s*\n\s*\n+/g, '\n\n')
         .trim();
+}
+
+function chapterText(chapter = {}) {
+    const text = plainStoryText(chapter.text);
+    if (text) return text;
+    return plainStoryText(chapter.html);
 }
 
 function memoryText(cards = []) {
@@ -55,7 +67,7 @@ function relevanceTerms(value = '') {
 
 export function selectRelevantLongDreamMemoryCards(record = {}, {
     instruction = '',
-    recentChapterCount = 4,
+    recentChapterCount = LONG_DREAM_RECENT_CHAPTER_COUNT,
     maxCards = 30,
 } = {}) {
     const cards = (Array.isArray(record?.memory?.cards) ? record.memory.cards : [])
@@ -164,7 +176,7 @@ function scoreV2Item(kind, item, query, terms, recentStart, chapterCount) {
 
 export function selectRelevantLongDreamMemoryItems(record = {}, {
     instruction = '',
-    recentChapterCount = 4,
+    recentChapterCount = LONG_DREAM_RECENT_CHAPTER_COUNT,
     maxItems = 30,
     quotas = { state: 12, thread: 8, deviation: 5, transition: 5 },
 } = {}) {
@@ -262,12 +274,12 @@ export function longDreamWorldBookEntries(record = {}) {
 
 export function longDreamChapterContext(record = {}, {
     instruction = '',
-    recentChapterCount = 4,
+    recentChapterCount = LONG_DREAM_RECENT_CHAPTER_COUNT,
     maxMemoryCards = 30,
     maxOlderOutlineChars = 12000,
 } = {}) {
     const allChapters = Array.isArray(record.chapters) ? record.chapters : [];
-    const keepRecent = Math.max(1, Math.floor(Number(recentChapterCount) || 4));
+    const keepRecent = Math.max(1, Math.floor(Number(recentChapterCount) || LONG_DREAM_RECENT_CHAPTER_COUNT));
     const recentChapters = allChapters.slice(-keepRecent);
     const olderChapters = allChapters.slice(0, Math.max(0, allChapters.length - recentChapters.length));
     const chapters = recentChapters
@@ -341,36 +353,6 @@ function worldLineRelationInstruction(relation) {
     return '本梦与原世界书完全隔离；不得猜测、恢复或注入原世界线。';
 }
 
-function takeBudgeted(value, state, key, { keepTail = false } = {}) {
-    const text = cleanText(value);
-    if (!text) return '';
-    if (!Number.isFinite(state.remaining)) {
-        state.included.push(key);
-        return text;
-    }
-    if (state.remaining <= 0) {
-        state.omitted.push(key);
-        return '';
-    }
-    if (text.length <= state.remaining) {
-        state.remaining -= text.length;
-        state.included.push(key);
-        return text;
-    }
-    const marker = keepTail ? '……（较早内容已按上下文预算截断）\n' : '\n……（已按上下文预算截断）';
-    const keep = Math.max(0, state.remaining - marker.length);
-    state.remaining = 0;
-    state.truncated.push(key);
-    return keepTail ? `${marker}${keep ? text.slice(-keep) : ''}` : `${text.slice(0, keep)}${marker}`;
-}
-
-function continuationTail(value, maxChars = 4000) {
-    const text = cleanText(value);
-    const limit = Math.max(1000, Math.floor(Number(maxChars) || 4000));
-    if (text.length <= limit) return text;
-    return `……（同章较早正文已省略，只保留结尾继续）\n${text.slice(-limit)}`;
-}
-
 export function buildLongDreamChapterPayload({
     record = {},
     preset = '',
@@ -383,7 +365,6 @@ export function buildLongDreamChapterPayload({
     maxOptionalContextChars = Infinity,
     structuredPreset = false,
     continuationRound = false,
-    continuationTailChars = 4000,
     hasIdentityContext = false,
     protagonistAnchor = '',
 } = {}) {
@@ -391,30 +372,40 @@ export function buildLongDreamChapterPayload({
     const context = longDreamChapterContext(record, { instruction: direction });
     if (!context.chapters) throw new Error('长梦缺少可续写的已保存章节');
     const target = Math.max(500, Math.min(8000, Math.round(Number(targetChars) || 3000)));
-    const draft = cleanText(currentDraft);
+    const draft = plainStoryText(currentDraft);
     const draftChars = readableCharCount(draft);
     const remainingChars = Math.max(0, target - draftChars);
     const title = cleanText(chapterTitle) || `第 ${context.chapterCount + 1} 章`;
     const requestedBudget = Number(maxOptionalContextChars);
     const budget = Number.isFinite(requestedBudget) && requestedBudget >= 0 ? Math.floor(requestedBudget) : Infinity;
-    const budgetState = { remaining: budget, included: [], truncated: [], omitted: [] };
-
-    // 预算只裁剪可替代上下文。用户本章方向、定梦和输出协议永远完整保留。
-    const draftForPrompt = continuationRound ? continuationTail(draft, continuationTailChars) : draft;
-    const current = takeBudgeted(draftForPrompt, budgetState, 'currentDraft', { keepTail: true });
-    const chapters = continuationRound ? '' : takeBudgeted(context.chapters, budgetState, 'chapters', { keepTail: true });
-    const memory = takeBudgeted(context.memory, budgetState, 'memory');
-    const olderOutline = continuationRound ? '' : takeBudgeted(context.olderOutline, budgetState, 'olderChapterOutline');
-    // 用户明确勾选并冻结的条目属于基础资料，不再由程序二次触发或按可选预算裁掉。
+    // This is a visible warning reference, never a pruning budget: continuation
+    // and recovery rounds must retain exactly the same foundation as round one.
+    const current = draft;
+    const chapters = context.chapters;
+    const memory = context.memory;
+    const olderOutline = context.olderOutline;
     const worldInfoEntries = structuredPreset ? longDreamWorldBookEntries(record) : [];
-    if (worldInfoEntries.length) budgetState.included.push('worldBookSnapshot');
     const worldBook = structuredPreset
         ? worldInfoEntries.map(entry => entry.content).join('\n\n')
-        : takeBudgeted(context.worldBook, budgetState, 'worldBookSnapshot');
-    const style = takeBudgeted([
+        : context.worldBook;
+    const style = [
         structuredPreset ? '' : cleanText(preset),
         cleanText(addons),
-    ].filter(Boolean).join('\n\n'), budgetState, 'style');
+    ].filter(Boolean).join('\n\n');
+    const referenceChars = [current, chapters, memory, olderOutline, worldBook, style]
+        .reduce((total, value) => total + String(value || '').length, 0);
+    const budgetState = {
+        maxOptionalContextChars: Number.isFinite(budget) ? budget : null,
+        referenceChars,
+        remaining: Number.isFinite(budget) ? Math.max(0, budget - referenceChars) : null,
+        included: [
+            current && 'currentDraft', chapters && 'chapters', memory && 'memory',
+            olderOutline && 'olderChapterOutline', worldBook && 'worldBookSnapshot', style && 'style',
+        ].filter(Boolean),
+        truncated: [],
+        omitted: [],
+        level: !Number.isFinite(budget) ? 'unknown' : (referenceChars > budget ? 'over' : (referenceChars >= budget * 0.75 ? 'high' : 'normal')),
+    };
 
     const systemPrompt = [
         '你正在续写一部长篇支线故事。你只能依据用户已经确认的此梦世界线、这部长卷自身的章节与已确认梦脉继续创作；不得读取、猜测或恢复原聊天前文、普通续写缓存及未提供的世界书设定。此梦设定是不可静默推翻的硬事实；若本章方向与它冲突，应停止创作并明确指出冲突。',
@@ -431,10 +422,10 @@ export function buildLongDreamChapterPayload({
         chapters
             ? `【近期已保存章节｜最近 ${context.recentChapterCount} 章全文，只作前情不得复述】\n${chapters}`
             : (continuationRound
-                ? '【同章补写】\n本轮承接下方本章已有正文继续创作；不再重复发送整部长卷前情。人物身份、此梦设定、梦脉和冻结资料仍然有效。'
+                ? '【同章补写】\n本轮承接下方本章已有正文继续创作；首轮同等的基础资料仍会完整保留。'
                 : '【近期已保存章节】\n受本次上下文预算限制，未附带章节原文；不得自行补入其他世界线。'),
         olderOutline ? `【较早章节压缩索引｜${context.olderChapterCount} 章】\n${olderOutline}` : '',
-        current ? `【本章可恢复草稿｜只承接结尾，不得重复】\n${current}` : '',
+        current ? `【本章可恢复草稿｜完整正文；从末尾继续，不得重复】\n${current}` : '',
         memory ? `【已确认梦脉｜辅助核对，不得覆盖原章节】\n${memory}` : '',
         worldBook
             ? (structuredPreset
@@ -452,11 +443,13 @@ export function buildLongDreamChapterPayload({
         context,
         targetChars: target,
         budget: {
-            maxOptionalContextChars: budget,
+            maxOptionalContextChars: budgetState.maxOptionalContextChars,
+            referenceChars: budgetState.referenceChars,
             remaining: budgetState.remaining,
             included: budgetState.included,
             truncated: budgetState.truncated,
             omitted: budgetState.omitted,
+            level: budgetState.level,
         },
         continuationRound,
     };
