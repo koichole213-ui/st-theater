@@ -2818,11 +2818,7 @@ function longDreamDefinitionHTML(dream) {
 function longDreamDetailHTML(dream) {
     const state = longDreamDetailState(dream);
     return `<div class="theater-dream-detail theater-dream-continuation" data-id="${esc(dream.id)}">
-        <section class="ui-card theater-dream-flow-heading"><div class="ui-title"><span>续写 · 本章输入</span><span class="memory-v2-tag">同一流程</span></div></section>
-        <header class="ui-card compact-detail-head theater-dream-detail-head theater-dream-continuation-status">
-            <div class="compact-detail-head-main"><span class="step theater-dream-step">${dream.status === 'complete' ? '已完卷' : '仍在梦中'} · 共 ${dream.chapters.length} 章</span><h2>《${esc(dream.title)}》</h2></div>
-            <div class="compact-seal" aria-hidden="true">梦</div>
-        </header>
+        ${longDreamDetailHeaderHTML(dream, { compact: true })}
         <section class="ui-card theater-dream-next">
             <div class="theater-dream-next-head">
                 <div><span>现在要做的事</span><b class="ui-title">续写第 ${state.nextNumber} 章</b><p>最近两章全文、旧章索引、定梦和冻结资料会自动准备好</p></div>
