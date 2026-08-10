@@ -5846,17 +5846,27 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     .theater-panel[data-panel="long-dream"] .theater-dream-memory-inline-actions { flex-wrap:wrap; }
 }
 
-/* v3.6.4 responsive dream-memory directory: full-width reading, one-record editing. */
+/* v3.6.4 responsive dream-memory directory: safe-gutter reading, one-record editing. */
 .theater-panel[data-panel="long-dream"] .theater-dream-memory-workspace {
-    margin-top:4px;
+    --theater-dream-memory-gutter:clamp(24px,4.8vw,40px);
+    box-sizing:border-box;
+    width:min(840px,calc(100% - var(--theater-dream-memory-gutter)));
+    min-width:0;
+    max-width:calc(100% - var(--theater-dream-memory-gutter));
+    margin:4px auto 0;
     padding:0;
+    overflow-x:clip;
     border:0;
     border-top:1px solid var(--t-line);
     background:transparent;
 }
 .theater-panel[data-panel="long-dream"] .theater-dream-memory-workspace-body {
     display:block;
+    width:100%;
+    min-width:0;
+    max-width:100%;
     padding:0;
+    overflow-x:clip;
     border:0;
     background:transparent;
 }
@@ -6017,7 +6027,6 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 @media (max-width:700px) {
     .theater-panel[data-panel="long-dream"] :is(
         .theater-dream-continuation,
-        .theater-dream-memory-workspace,
         .theater-dream-memory-workspace-body,
         .theater-dream-memory-flow,
         .theater-dream-memory-flow-list,
@@ -6027,6 +6036,12 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
         width:100%;
         min-width:0;
         max-width:100%;
+    }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-workspace {
+        --theater-dream-memory-gutter:24px;
+        width:calc(100% - var(--theater-dream-memory-gutter));
+        max-width:calc(100% - var(--theater-dream-memory-gutter));
+        margin-inline:auto;
     }
     .theater-panel[data-panel="long-dream"] .theater-dream-memory-workspace,
     .theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-list { overflow-x:hidden; }
