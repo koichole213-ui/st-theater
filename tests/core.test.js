@@ -1722,7 +1722,11 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /class="theater-dream-memory-flow"/);
     assert.match(source, /data-dream-memory-filter="all"/);
     assert.match(source, /data-dream-memory-flow-kind="\$\{kind\}"/);
-    assert.match(source, /class="theater-dream-memory-inline-actions"/);
+    assert.match(source, /class="theater-dream-memory-row"/);
+    assert.match(source, /data-dream-memory-open-editor/);
+    assert.match(source, /data-dream-memory-editor-template/);
+    assert.match(source, /dialog class="theater-dream-memory-editor"/);
+    assert.match(source, /dialog\.showModal\(\)/);
     assert.doesNotMatch(source, /class="theater-dream-memory-card-more"/);
     assert.match(source, /placeholder: '例如：泄密调查、银钥匙'/);
     assert.match(source, /field\('status', '事项状态'/);
@@ -1743,6 +1747,8 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(styles, /\.theater-dream-library-export\s*\{/);
     assert.match(styles, /\.theater-dream-memory-flow-filters\s*\{/);
     assert.match(styles, /\.theater-dream-fat-btn\.is-primary\s*\{/);
+    assert.match(styles, /dialog\.theater-dream-memory-editor\s*\{[\s\S]*?inset:0 0 0 auto/);
+    assert.match(styles, /@media \(max-width:700px\)[\s\S]*?dialog\.theater-dream-memory-editor\s*\{[\s\S]*?inset:auto 0 0/);
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
@@ -1771,6 +1777,7 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(continuation, /最近两章全文、旧章索引/);
     assert.doesNotMatch(continuation, /theater-dream-flow-label|续写 · 本章输入|同一流程/);
     assert.doesNotMatch(continuation, /longDreamMemorySelectionHTML/);
+    assert.doesNotMatch(continuation, /<details class="ui-card ia-memory-dock theater-dream-memory-workspace-details"/);
     assert.doesNotMatch(continuation, /新章节只会进入这部长卷/);
     assert.match(continuation, /fa-sliders/);
     assert.match(continuation, /id="theater-dream-token-summary"[\s\S]*?明细 ▾[\s\S]*?id="theater-dream-token-details"/);
