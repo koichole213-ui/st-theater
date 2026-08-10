@@ -6007,3 +6007,71 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     .theater-dream-memory-editor-record :is(.theater-dream-memory-flow-field,.theater-dream-memory-content) { grid-template-columns:64px minmax(0,1fr); gap:9px; }
     @keyframes theater-dream-memory-sheet-in { from { opacity:.55; transform:translateY(36px); } to { opacity:1; transform:none; } }
 }
+
+/* Mobile containment and readable editor type. */
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-header small,
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-note { font-size:10px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-record :is(.theater-dream-memory-flow-field,.theater-dream-memory-content) > span { font-size:11px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-record :is(input,textarea,select) { font-size:14px; line-height:1.8; }
+
+@media (max-width:700px) {
+    .theater-panel[data-panel="long-dream"] :is(
+        .theater-dream-continuation,
+        .theater-dream-memory-workspace,
+        .theater-dream-memory-workspace-body,
+        .theater-dream-memory-flow,
+        .theater-dream-memory-flow-list,
+        .theater-dream-memory-flow-entry
+    ) {
+        box-sizing:border-box;
+        width:100%;
+        min-width:0;
+        max-width:100%;
+    }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-workspace,
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-list { overflow-x:hidden; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-filters {
+        box-sizing:border-box;
+        width:100%;
+        min-width:0;
+        max-width:100%;
+        overflow-x:auto;
+        overscroll-behavior-x:contain;
+    }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-row {
+        box-sizing:border-box;
+        grid-template-columns:44px minmax(0,1fr) 8px;
+        width:100%;
+        min-width:0;
+        max-width:100%;
+        overflow:hidden;
+        gap:9px;
+        padding-inline:0;
+    }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-row > *,
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-row-main { min-width:0; max-width:100%; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-row:hover,
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-row:focus-visible { padding-inline:4px; }
+    .theater-panel[data-panel="long-dream"] dialog.theater-dream-memory-editor {
+        box-sizing:border-box;
+        width:min(100%,100vw);
+        min-width:0;
+        max-width:100vw;
+        overflow-x:hidden;
+    }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-header { padding-inline:20px; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-header small { font-size:11px; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-header b { font-size:23px; line-height:1.35; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-record { padding-inline:20px; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-note { font-size:11px; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-record :is(.theater-dream-memory-flow-field,.theater-dream-memory-content) {
+        grid-template-columns:72px minmax(0,1fr);
+        gap:12px;
+        padding-block:13px;
+    }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-record :is(.theater-dream-memory-flow-field,.theater-dream-memory-content) > span { padding-top:7px; font-size:12px; line-height:1.5; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-record :is(input,textarea,select) { min-width:0; max-width:100%; font-size:16px; line-height:1.75; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-secondary,
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-more > summary { font-size:12px; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-save { min-height:44px; padding-inline:20px; font-size:14px; }
+}

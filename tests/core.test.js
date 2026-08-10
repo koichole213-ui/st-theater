@@ -1749,6 +1749,9 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(styles, /\.theater-dream-fat-btn\.is-primary\s*\{/);
     assert.match(styles, /dialog\.theater-dream-memory-editor\s*\{[\s\S]*?inset:0 0 0 auto/);
     assert.match(styles, /@media \(max-width:700px\)[\s\S]*?dialog\.theater-dream-memory-editor\s*\{[\s\S]*?inset:auto 0 0/);
+    assert.match(styles, /\.theater-dream-memory-row\s*\{[\s\S]*?grid-template-columns:44px minmax\(0,1fr\) 8px;[\s\S]*?max-width:100%/);
+    assert.match(styles, /dialog\.theater-dream-memory-editor\s*\{[\s\S]*?width:min\(100%,100vw\);[\s\S]*?max-width:100vw/);
+    assert.match(styles, /\.theater-dream-memory-editor-record :is\(input,textarea,select\)\s*\{[\s\S]*?font-size:16px/);
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
