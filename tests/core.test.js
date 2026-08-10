@@ -19,7 +19,7 @@ import { splitInstructionTextFile } from '../instruction-import.js';
 import { LENGTH_TIERS, LONG_FORM_SPLIT_THRESHOLD, STAGED_RENDER_THRESHOLD, classifyLengthTier, firstRoundGuidance, isLongFormTarget, isStagedRenderTarget, longFormFirstRoundGuidance, longFormFirstRoundTarget, parseTargetWordCount, resolveTargetWordCount, stripTargetWordCountRequirement } from '../length-policy.js';
 import { AUTO_CONTINUE_SCHEMA, migrateAutoContinueDefault } from '../settings-migration.js';
 import { createInstructionBackup, parseInstructionBackup } from '../instruction-backup.js';
-import { WORLD_BOOK_STRATEGIES, shouldReadWorldBookEntry, syncFollowedWorldBooks, worldBookEntryStrategy } from '../world-book-policy.js';
+import { WORLD_BOOK_STRATEGIES, rememberWorldBookEntryStates, shouldReadWorldBookEntry, syncFollowedWorldBooks, worldBookEntryStrategy } from '../world-book-policy.js';
 import { buildProtagonistAnchor } from '../protagonist-anchor.js';
 import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
@@ -2999,6 +2999,27 @@ test('关闭角色卡跟随后会撤下自动组但保留手选世界书', () =>
         syncFollowedWorldBooks(['手选设定', '角色绑定'], ['角色绑定'], []),
         { selectedBooks: ['手选设定'], followedBooks: [] },
     );
+});
+
+test('世界书新增条目在反复切换角色卡后仍保持未勾选', () => {
+    const firstLoad = rememberWorldBookEntryStates(['原条目'], undefined, {});
+    assert.deepEqual(firstLoad, { knownKeys: ['原条目'], savedStates: {} });
+
+    const afterScriptAppend = rememberWorldBookEntryStates(
+        ['原条目', '新增记忆'],
+        firstLoad.knownKeys,
+        firstLoad.savedStates,
+    );
+    assert.equal(afterScriptAppend.savedStates['原条目'], undefined);
+    assert.equal(afterScriptAppend.savedStates['新增记忆'], false);
+
+    const afterSwitchingBack = rememberWorldBookEntryStates(
+        ['原条目', '新增记忆'],
+        afterScriptAppend.knownKeys,
+        afterScriptAppend.savedStates,
+    );
+    assert.equal(afterSwitchingBack.savedStates['新增记忆'], false);
+    assert.deepEqual(afterSwitchingBack.knownKeys, ['原条目', '新增记忆']);
 });
 
 test('普通小剧场主角锚定当前 User 与 Char，避免示例姓名抢占主角', () => {

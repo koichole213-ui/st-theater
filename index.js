@@ -21,7 +21,7 @@ import { MAX_API_PRESETS, apiPresetSecretValues, createApiPresetFromConfig, norm
 import { splitInstructionTextFile } from './instruction-import.js';
 import { AUTO_CONTINUE_SCHEMA, migrateAutoContinueDefault } from './settings-migration.js';
 import { createInstructionBackup, parseInstructionBackup } from './instruction-backup.js';
-import { shouldReadWorldBookEntry, syncFollowedWorldBooks, worldBookEntryStrategy } from './world-book-policy.js';
+import { rememberWorldBookEntryStates, shouldReadWorldBookEntry, syncFollowedWorldBooks, worldBookEntryStrategy } from './world-book-policy.js';
 import { buildProtagonistAnchor } from './protagonist-anchor.js';
 import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
@@ -5558,19 +5558,19 @@ async function reloadWorldBooks({ silent = false } = {}) {
                     .filter(({ source }) => shouldReadWorldBookEntry(source, settings.worldBookReadMode))
                     .map(({ normalized }) => normalized);
 
-                const savedStates = settings.worldBookStatesByBook[name] || {};
-                const knownKeys = settings.worldBookKnownEntriesByBook[name];
-                const hasMemory = Array.isArray(knownKeys);
-                const knownSet = hasMemory ? new Set(knownKeys) : null;
+                const remembered = rememberWorldBookEntryStates(
+                    sourceEntries.map(({ normalized }) => entryKey(normalized)),
+                    settings.worldBookKnownEntriesByBook[name],
+                    settings.worldBookStatesByBook[name],
+                );
+                settings.worldBookStatesByBook[name] = remembered.savedStates;
+                settings.worldBookKnownEntriesByBook[name] = remembered.knownKeys;
 
                 entries.forEach(e => {
                     const k = entryKey(e);
-                    // 没见过的新条目默认不勾选，避免悄悄混进 prompt
-                    allStates.push(hasMemory && !knownSet.has(k) ? false : savedStates[k] !== false);
+                    allStates.push(remembered.savedStates[k] !== false);
                     all.push(e);
                 });
-                // 把当前所有 key 写回 known 列表，新条目下次就不再被当成"新"
-                settings.worldBookKnownEntriesByBook[name] = sourceEntries.map(({ normalized }) => entryKey(normalized));
                 loadedBooks++;
             } catch (e) {
                 console.error('[Theater] WB load error:', name, e);

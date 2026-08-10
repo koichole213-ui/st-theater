@@ -39,3 +39,21 @@ export function syncFollowedWorldBooks(selectedBooks = [], previousFollowedBooks
         followedBooks,
     };
 }
+
+export function rememberWorldBookEntryStates(entryKeys = [], knownKeys, savedStates = {}) {
+    const keys = [...new Set((Array.isArray(entryKeys) ? entryKeys : []).map(key => String(key)))];
+    const hasMemory = Array.isArray(knownKeys);
+    const remembered = new Set(hasMemory ? knownKeys.map(key => String(key)) : []);
+    const states = { ...(savedStates && typeof savedStates === 'object' ? savedStates : {}) };
+
+    if (hasMemory) {
+        keys.forEach(key => {
+            if (!remembered.has(key)) states[key] = false;
+        });
+    }
+
+    return {
+        knownKeys: [...new Set([...remembered, ...keys])],
+        savedStates: states,
+    };
+}
