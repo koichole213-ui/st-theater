@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v3.6.4
+/* 千夜浮梦 · 小剧场生成器 v4.0.0
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -5781,7 +5781,7 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-panel[data-panel="long-dream"] #theater-dream-generate-next { min-width:132px; }
 .theater-panel[data-panel="long-dream"] .theater-dream-workspace-empty > button[data-dream-section="works"] { min-width:96px; }
 
-/* v3.6.4 long-dream action surfaces: tactile controls without folded menus. */
+/* v4.0.0 long-dream action surfaces: tactile controls without folded menus. */
 .theater-panel[data-panel="long-dream"] .theater-dream-action-card { display:grid; gap:14px; padding:16px; overflow:visible; }
 .theater-panel[data-panel="long-dream"] .theater-dream-action-heading { display:flex; align-items:center; justify-content:flex-start; gap:10px; min-width:0; text-align:left; }
 .theater-panel[data-panel="long-dream"] .theater-dream-action-heading > span:last-child { display:grid; min-width:0; gap:2px; }
@@ -5846,7 +5846,7 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     .theater-panel[data-panel="long-dream"] .theater-dream-memory-inline-actions { flex-wrap:wrap; }
 }
 
-/* v3.6.4 responsive dream-memory directory: safe-gutter reading, one-record editing. */
+/* v4.0.0 responsive dream-memory directory: safe-gutter reading, one-record editing. */
 .theater-panel[data-panel="long-dream"] .theater-dream-memory-workspace {
     --theater-dream-memory-gutter:clamp(24px,4.8vw,40px);
     box-sizing:border-box;

@@ -40,7 +40,7 @@ import { applyPromptPostProcessing, composePresetMessages, noToolsPostProcessing
 import { createRequestTrace, formatRequestTrace, requestTraceMessageLabel } from './request-trace.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '3.6.4';
+const VERSION = '4.0.0';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let updateReadyToReload = false;
