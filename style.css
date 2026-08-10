@@ -5780,3 +5780,68 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-panel[data-panel="long-dream"] #theater-dream-save-definition { margin:10px auto 0; }
 .theater-panel[data-panel="long-dream"] #theater-dream-generate-next { min-width:132px; }
 .theater-panel[data-panel="long-dream"] .theater-dream-workspace-empty > button[data-dream-section="works"] { min-width:96px; }
+
+/* v3.6.4 long-dream action surfaces: tactile controls without folded menus. */
+.theater-panel[data-panel="long-dream"] .theater-dream-action-card { display:grid; gap:14px; padding:16px; overflow:visible; }
+.theater-panel[data-panel="long-dream"] .theater-dream-action-heading { display:flex; align-items:center; justify-content:flex-start; gap:10px; min-width:0; text-align:left; }
+.theater-panel[data-panel="long-dream"] .theater-dream-action-heading > span:last-child { display:grid; min-width:0; gap:2px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-action-heading b { color:var(--t-fg); font-size:13px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-action-heading small { color:var(--t-fg-mute); font-size:10px; line-height:1.5; }
+.theater-panel[data-panel="long-dream"] .theater-dream-action-icon { display:grid; flex:0 0 32px; width:32px; height:32px; place-items:center; color:var(--t-accent-deep); border-radius:10px; background:color-mix(in srgb,var(--t-accent) 14%,transparent); }
+.theater-panel[data-panel="long-dream"] :is(.theater-dream-library-action-grid,.theater-dream-work-menu-actions,.theater-dream-chapter-actions) { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; padding:0; }
+.theater-panel[data-panel="long-dream"] .theater-dream-fat-btn { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; min-height:44px; padding:0 14px; color:var(--t-fg); border:1px solid transparent; border-radius:12px; background:var(--t-surface-2); box-shadow:inset 0 1px 0 rgba(255,255,255,.5); font:inherit; font-size:11px; font-weight:750; cursor:pointer; transition:transform .16s ease,filter .16s ease,border-color .16s ease; }
+.theater-panel[data-panel="long-dream"] .theater-dream-fat-btn > i { opacity:.82; }
+.theater-panel[data-panel="long-dream"] .theater-dream-fat-btn:hover:not(:disabled) { transform:translateY(-1px); filter:brightness(1.03); }
+.theater-panel[data-panel="long-dream"] .theater-dream-fat-btn:disabled { cursor:not-allowed; opacity:.45; }
+.theater-panel[data-panel="long-dream"] .theater-dream-fat-btn.is-primary { color:var(--t-on-accent); background:linear-gradient(135deg,var(--t-accent) 0%,var(--t-accent-deep) 100%); box-shadow:var(--t-elev-1),inset 0 1px 0 rgba(255,255,255,.2); }
+.theater-panel[data-panel="long-dream"] .theater-dream-fat-btn.is-secondary { border-color:var(--t-line); background:var(--t-surface-2); }
+.theater-panel[data-panel="long-dream"] .theater-dream-fat-btn.is-outline { border-color:var(--t-line); background:transparent; }
+.theater-panel[data-panel="long-dream"] .theater-dream-fat-btn.is-danger { color:#9b3f37; border-color:rgba(155,63,55,.16); background:rgba(155,63,55,.08); }
+.theater-panel[data-panel="long-dream"] .theater-dream-fat-btn.is-outline-danger { color:#9b3f37; border-color:rgba(155,63,55,.22); background:transparent; }
+.theater-panel[data-panel="long-dream"] .theater-dream-fat-btn.is-wide { grid-column:1 / -1; }
+.theater-panel[data-panel="long-dream"] .theater-dream-library-tools .theater-dream-archive-note { display:block; color:var(--t-fg-mute); font-size:10px; text-align:left; }
+.theater-panel[data-panel="long-dream"] .theater-dream-chapter-actions [data-dream-chapter-action="branch"] { order:-1; }
+
+@media (max-width:520px) {
+    .theater-panel[data-panel="long-dream"] :is(.theater-dream-library-action-grid,.theater-dream-work-menu-actions,.theater-dream-chapter-actions) { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .theater-panel[data-panel="long-dream"] .theater-dream-fat-btn { min-height:44px; padding:0 11px; }
+}
+
+/* Minimal flowing dream-memory editor based on the supplied continuation reference. */
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow { display:grid; gap:0; min-width:0; padding:6px 16px 2px; text-align:left; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:14px 0 12px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-header > span { display:grid; gap:3px; min-width:0; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-header b { color:var(--t-fg); font-family:Georgia,"Noto Serif SC",serif; font-size:19px; letter-spacing:.08em; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-header small { color:var(--t-fg-mute); font-size:10px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-header > i { margin-top:4px; color:var(--t-accent); opacity:.72; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-filters { display:flex; gap:20px; padding:0 0 9px; overflow-x:auto; border-bottom:1px solid var(--t-line); scrollbar-width:none; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-filters::-webkit-scrollbar { display:none; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-filters button { flex:0 0 auto; padding:5px 0; color:var(--t-fg-mute); border:0; border-bottom:1px solid transparent; background:transparent; font:inherit; font-size:10px; cursor:pointer; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-filters button.active { color:var(--t-accent-deep); border-bottom-color:currentColor; font-weight:750; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-state-editor { margin:0; padding:14px 0; border:0; border-bottom:1px solid var(--t-line); border-radius:0; background:transparent; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-current-state-readonly { padding:8px 0 0; border:0; background:transparent; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-list { min-width:0; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry { min-width:0; border-bottom:1px solid var(--t-line); background:transparent; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry[hidden] { display:none !important; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry > details { margin:0; border:0; border-radius:0; background:transparent; box-shadow:none; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry > details > summary { grid-template-columns:auto minmax(0,1fr) auto; min-height:0; padding:15px 0 9px; border:0; background:transparent; pointer-events:none; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry .theater-dream-memory-card-body { padding:0 0 14px; border:0; background:transparent; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry .theater-dream-memory-card-head { padding:0 0 8px; color:var(--t-fg-mute); }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry .theater-dream-memory-card-grid { grid-template-columns:1fr; gap:5px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry :is(.theater-dream-memory-flow-field,.theater-dream-memory-card-grid > label,.theater-dream-memory-content,.theater-dream-memory-card-body > label) { display:grid; grid-template-columns:76px minmax(0,1fr); align-items:start; gap:8px; padding:3px 0; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry :is(.theater-dream-memory-flow-field,.theater-dream-memory-card-grid > label,.theater-dream-memory-content,.theater-dream-memory-card-body > label) > span { padding-top:6px; color:var(--t-fg-mute); font-size:9px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry :is(input,textarea,select) { width:100%; min-height:30px; padding:4px 0 !important; color:var(--t-fg) !important; border:0 !important; border-bottom:1px dashed transparent !important; border-radius:0 !important; background:transparent !important; box-shadow:none !important; font-family:Georgia,"Noto Serif SC",serif; font-size:11px; line-height:1.7; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry :is(input,textarea,select):focus { border-bottom-color:var(--t-accent) !important; outline:0; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-card-actions { align-items:center; justify-content:flex-end; gap:14px; padding-top:9px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-inline-actions { display:flex; align-items:center; justify-content:flex-end; gap:14px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry .theater-dream-memory-card-actions button { width:auto !important; min-height:28px !important; padding:2px 0 !important; color:var(--t-fg-mute) !important; border:0 !important; background:transparent !important; box-shadow:none !important; font-size:10px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry .theater-dream-memory-card-actions button:is([data-dream-memory-v2-action="save"],[data-dream-memory-action="save"]) { color:var(--t-accent-deep) !important; font-weight:750; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry .theater-dream-memory-card-actions button:is(.is-danger,[data-dream-memory-v2-action="reject"],[data-dream-memory-action="dismiss"]) { color:#9b3f37 !important; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry.is-dismissed { opacity:.56; }
+
+@media (max-width:520px) {
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-flow { padding-inline:12px; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry :is(.theater-dream-memory-flow-field,.theater-dream-memory-card-grid > label,.theater-dream-memory-content,.theater-dream-memory-card-body > label) { grid-template-columns:62px minmax(0,1fr); }
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-card-actions,
+    .theater-panel[data-panel="long-dream"] .theater-dream-memory-inline-actions { flex-wrap:wrap; }
+}

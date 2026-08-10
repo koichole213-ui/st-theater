@@ -1719,7 +1719,11 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /class="[^"]*theater-dream-memory-selection-chip/);
     assert.match(source, /class="theater-dream-memory-chip-text"/);
     assert.match(source, /class="[^"]*theater-dream-memory-v2-card/);
-    assert.match(source, /class="theater-dream-memory-card-more"/);
+    assert.match(source, /class="theater-dream-memory-flow"/);
+    assert.match(source, /data-dream-memory-filter="all"/);
+    assert.match(source, /data-dream-memory-flow-kind="\$\{kind\}"/);
+    assert.match(source, /class="theater-dream-memory-inline-actions"/);
+    assert.doesNotMatch(source, /class="theater-dream-memory-card-more"/);
     assert.match(source, /placeholder: '例如：泄密调查、银钥匙'/);
     assert.match(source, /field\('status', '事项状态'/);
     assert.doesNotMatch(source, /kind === 'state' \|\| kind === 'thread' \? 'open' : ''/);
@@ -1737,6 +1741,9 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(styles, /\.theater-dream-library-card-header,[\s\S]*?justify-content:space-between/);
     assert.match(styles, /\.theater-dream-library-card-footer[\s\S]*?justify-content:space-between/);
     assert.match(styles, /\.theater-dream-library-export\s*\{/);
+    assert.match(styles, /\.theater-dream-memory-flow-filters\s*\{/);
+    assert.match(styles, /\.theater-dream-fat-btn\.is-primary\s*\{/);
+    assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
 test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦脉和章节操作归入正确层级', () => {
@@ -1772,9 +1779,12 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.doesNotMatch(shelf, /ia-book-cover|打开作品/);
     assert.match(source, /data-dream-open-chapter/);
     assert.match(workDetail, /class="[^"]*theater-dream-work-menu/);
+    assert.doesNotMatch(workDetail, /<details class="[^"]*theater-dream-work-menu/);
     assert.match(chapterDetail, /data-dream-chapter-back/);
     assert.match(chapterDetail, /id="theater-dream-export-chapter"/);
     assert.match(chapterDetail, /class="[^"]*theater-dream-chapter-operations/);
+    assert.doesNotMatch(chapterDetail, /<details class="[^"]*theater-dream-chapter-operations/);
+    assert.doesNotMatch(shelf, /<details class="[^"]*theater-dream-library-tools/);
     assert.match(source, /function exportLongDreamChapter\(dream, chapter\)/);
     assert.match(source, /downloadFile\(longDreamChapterFileName\(dream, chapter, 'html'\), chapter\.html/);
     assert.match(source, /renderLongDreamChapter\(\{[\s\S]*?text,[\s\S]*?apiRoute: captureGenerationApiRoute/);
