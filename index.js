@@ -40,7 +40,7 @@ import { applyPromptPostProcessing, composePresetMessages, noToolsPostProcessing
 import { createRequestTrace, formatRequestTrace, requestTraceMessageLabel } from './request-trace.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.0.0';
+const VERSION = '4.0.1';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let updateReadyToReload = false;
@@ -2964,19 +2964,16 @@ function longDreamChapterDetailHTML(dream, chapter) {
     const text = chapter?.text || htmlToPlainText(chapter?.html || '');
     const locked = !!longDreamGenerationController?.active || !!longDreamChapterEditController || !!dream.draft;
     const laterCount = Math.max(0, dream.chapters.length - chapter.number);
-    const toolsOpen = window.matchMedia?.('(max-width: 520px)').matches ? '' : ' open';
+    const toolsHidden = window.matchMedia?.('(max-width: 520px)').matches ? ' hidden' : '';
     return `<div class="ia-works-level active theater-dream-detail theater-dream-chapter-detail" data-id="${esc(dream.id)}" data-chapter-id="${esc(chapter.id)}" data-works-level="chapter">
         <button type="button" class="ia-back theater-dream-back" data-dream-chapter-back><i class="fa-solid fa-arrow-left"></i><span>返回章节目录</span></button>
         <section class="ui-card theater-dream-chapter-editor">
-            <div class="ui-title"><span>第 ${chapter.number} 章 · ${esc(chapter.title)}</span><span class="memory-v2-tag">已保存</span></div>
-            <details class="theater-dream-chapter-editor-tools"${toolsOpen}>
-                <summary><span><i class="fa-solid fa-ellipsis"></i> 章节工具</span><i class="fa-solid fa-chevron-down"></i></summary>
-                <div class="ia-action-row theater-dream-chapter-editor-actions">
-                    <button type="button" id="theater-dream-save-chapter" class="ui-btn ui-btn-sm ui-btn-primary" ${locked ? 'disabled' : ''}><i class="fa-solid fa-check"></i><span>保存编辑</span></button>
-                    <button type="button" id="theater-dream-export-chapter" class="ui-btn ui-btn-sm"><i class="fa-solid fa-file-export"></i><span>单章导出</span></button>
-                    <button type="button" id="theater-dream-read-chapter-fullscreen" class="ui-btn ui-btn-sm"><i class="fa-solid fa-book-open"></i><span>阅读原排版</span></button>
-                </div>
-            </details>
+            <div class="ui-title theater-dream-chapter-heading"><span>第 ${chapter.number} 章 · ${esc(chapter.title)}</span><span class="theater-dream-chapter-heading-tools"><span class="memory-v2-tag">已保存</span><button type="button" id="theater-dream-chapter-tools-toggle" class="theater-dream-chapter-tools-toggle" aria-expanded="${toolsHidden ? 'false' : 'true'}" aria-controls="theater-dream-chapter-tools-panel" aria-label="展开章节工具" title="章节工具"><i class="fa-solid fa-sliders"></i></button></span></div>
+            <div id="theater-dream-chapter-tools-panel" class="ia-action-row theater-dream-chapter-editor-actions" role="menu" aria-label="章节工具"${toolsHidden}>
+                <button type="button" id="theater-dream-save-chapter" class="ui-btn ui-btn-sm ui-btn-primary" role="menuitem" ${locked ? 'disabled' : ''}><i class="fa-solid fa-check"></i><span>保存编辑</span></button>
+                <button type="button" id="theater-dream-export-chapter" class="ui-btn ui-btn-sm" role="menuitem"><i class="fa-solid fa-file-export"></i><span>单章导出</span></button>
+                <button type="button" id="theater-dream-read-chapter-fullscreen" class="ui-btn ui-btn-sm" role="menuitem"><i class="fa-solid fa-book-open"></i><span>阅读原排版</span></button>
+            </div>
             <label class="ia-field"><span>章节标题</span><input id="theater-dream-chapter-edit-title" class="ui-input theater-input" maxlength="80" value="${esc(chapter.title)}" ${locked ? 'disabled' : ''}></label>
             <label class="ia-field"><span>章节正文</span><textarea id="theater-dream-chapter-edit-text" class="ui-textarea ia-reader theater-textarea" rows="16" ${locked ? 'disabled' : ''}>${esc(text)}</textarea></label>
             <div id="theater-dream-chapter-edit-status" class="theater-hint">${locked ? '请先处理当前生成或草稿，再编辑正式章节。' : '仅改标题会保留原始 HTML；修改正文时会重新生成阅读排版。'}</div>
@@ -3936,6 +3933,27 @@ function bindEvents() {
         rememberLongDreamNavigation();
         renderLongDreamPanel();
         $('.theater-panels-wrapper').scrollTop(0);
+    });
+    const closeLongDreamChapterTools = () => {
+        $('#theater-dream-chapter-tools-panel').prop('hidden', true);
+        $('#theater-dream-chapter-tools-toggle').attr('aria-expanded', 'false');
+    };
+    $d.off('click.tdchaptertooltoggle').on('click.tdchaptertooltoggle', '#theater-dream-chapter-tools-toggle', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        const panel = document.getElementById('theater-dream-chapter-tools-panel');
+        if (!panel) return;
+        const open = panel.hasAttribute('hidden');
+        panel.toggleAttribute('hidden', !open);
+        $(this).attr('aria-expanded', String(open));
+    });
+    $d.off('click.tdchaptertoolaction').on('click.tdchaptertoolaction', '#theater-dream-chapter-tools-panel button', closeLongDreamChapterTools);
+    $d.off('click.tdchaptertooloutside').on('click.tdchaptertooloutside', function (event) {
+        if ($(event.target).closest('#theater-dream-chapter-tools-toggle,#theater-dream-chapter-tools-panel').length) return;
+        closeLongDreamChapterTools();
+    });
+    $d.off('keydown.tdchaptertoolescape').on('keydown.tdchaptertoolescape', function (event) {
+        if (event.key === 'Escape') closeLongDreamChapterTools();
     });
     $d.off('click.tdchapterread').on('click.tdchapterread', '#theater-dream-read-chapter-fullscreen', function () {
         const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));

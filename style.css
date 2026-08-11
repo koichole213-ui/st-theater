@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.0.0
+/* 千夜浮梦 · 小剧场生成器 v4.0.1
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -5769,7 +5769,7 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-panel[data-panel="long-dream"] #theater-dream-generate-next { min-width:132px; }
 .theater-panel[data-panel="long-dream"] .theater-dream-workspace-empty > button[data-dream-section="works"] { min-width:96px; }
 
-/* v4.0.0 long-dream action surfaces: tactile controls without folded menus. */
+/* v4.0.1 long-dream action surfaces: tactile controls without folded menus. */
 .theater-panel[data-panel="long-dream"] .theater-dream-action-card { display:grid; gap:14px; padding:16px; overflow:visible; }
 .theater-panel[data-panel="long-dream"] .theater-dream-action-heading { display:flex; align-items:center; justify-content:flex-start; gap:10px; min-width:0; text-align:left; }
 .theater-panel[data-panel="long-dream"] .theater-dream-action-heading > span:last-child { display:grid; min-width:0; gap:2px; }
@@ -5834,7 +5834,7 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     .theater-panel[data-panel="long-dream"] .theater-dream-memory-inline-actions { flex-wrap:wrap; }
 }
 
-/* v4.0.0 responsive dream-memory directory: safe-gutter reading, one-record editing. */
+/* v4.0.1 responsive dream-memory directory: safe-gutter reading, one-record editing. */
 .theater-panel[data-panel="long-dream"] .theater-dream-memory-workspace {
     --theater-dream-memory-gutter:clamp(20px,3.4vw,32px);
     box-sizing:border-box;
@@ -6079,7 +6079,7 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     .theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-save { min-height:44px; padding-inline:20px; font-size:14px; }
 }
 
-/* v4.0.0 theme and typography parity for the complete long-dream workspace. */
+/* v4.0.1 theme and typography parity for the complete long-dream workspace. */
 .theater-popup:is([data-skin="theater"],[data-skin="custom"]) .theater-result-toolbox.is-bookmark .theater-result-actions-toggle {
     color:var(--t-fg);
     border-color:var(--t-border-strong);
@@ -6159,26 +6159,9 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     border-radius:10px;
     background:var(--t-surface-2);
 }
-.theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-tools { min-width:0; }
-.theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-tools > summary {
-    display:none;
-    align-items:center;
-    justify-content:space-between;
-    min-height:44px;
-    padding:0 10px;
-    color:var(--t-fg-soft);
-    border:1px solid var(--t-border);
-    border-radius:11px;
-    background:var(--t-surface-2);
-    font-size:var(--t-text-sm);
-    font-weight:700;
-    cursor:pointer;
-    list-style:none;
-}
-.theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-tools > summary::-webkit-details-marker { display:none; }
-.theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-tools > summary > span { display:flex; align-items:center; gap:8px; }
-.theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-tools > summary > i { transition:transform var(--t-dur-base) var(--t-ease); }
-.theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-tools[open] > summary > i { transform:rotate(180deg); }
+.theater-panel[data-panel="long-dream"] .theater-dream-chapter-heading { position:relative; }
+.theater-panel[data-panel="long-dream"] .theater-dream-chapter-heading-tools { display:flex; flex:0 0 auto; align-items:center; gap:8px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-chapter-tools-toggle { display:none; }
 .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; padding:2px 0 0; }
 .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions .ui-btn { justify-content:center; min-width:0; }
 
@@ -6217,14 +6200,77 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 
 @media (max-width:520px) {
     .theater-panel[data-panel="long-dream"] .theater-dream-chapter-open > span { display:none; }
-    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-tools > summary { display:flex; }
-    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-tools:not([open]) .theater-dream-chapter-editor-actions { display:none; }
-    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions { grid-template-columns:repeat(3,minmax(0,1fr)); padding-top:8px; }
-    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions .ui-btn { min-height:42px; padding-inline:6px; font-size:var(--t-text-xs); }
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor { position:relative; overflow:visible; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-heading { min-height:44px; margin-bottom:8px; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-heading > span:first-child { padding-right:4px; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-heading-tools > .memory-v2-tag { display:none; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-tools-toggle {
+        display:grid;
+        width:44px;
+        height:44px;
+        padding:0;
+        place-items:center;
+        color:var(--t-accent-deep);
+        border:1px solid var(--t-border-strong);
+        border-radius:13px;
+        background:var(--t-surface-2);
+        box-shadow:var(--t-elev-1);
+        font:inherit;
+        font-size:var(--t-text-lg);
+        cursor:pointer;
+        touch-action:manipulation;
+        transition:background var(--t-dur-fast) var(--t-ease),transform var(--t-dur-fast) var(--t-ease),box-shadow var(--t-dur-fast) var(--t-ease);
+    }
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-tools-toggle:active { transform:scale(.96); }
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-tools-toggle:focus-visible { outline:2px solid var(--t-accent); outline-offset:2px; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-tools-toggle[aria-expanded="true"] { background:color-mix(in srgb,var(--t-accent) 14%,var(--t-surface-2)); box-shadow:var(--t-elev-2); }
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions {
+        position:absolute;
+        z-index:20;
+        top:66px;
+        right:13px;
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:7px;
+        width:min(320px,calc(100% - 26px));
+        padding:10px;
+        border:1px solid var(--t-border-strong);
+        border-radius:16px;
+        background:color-mix(in srgb,var(--t-surface-1) 97%,transparent);
+        box-shadow:var(--t-elev-3);
+        backdrop-filter:blur(12px);
+        -webkit-backdrop-filter:blur(12px);
+        transform-origin:top right;
+        animation:theater-dream-chapter-tools-in 170ms var(--t-ease);
+    }
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions[hidden] { display:none; }
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions .ui-btn {
+        min-height:52px;
+        padding:8px 7px;
+        justify-content:center;
+        color:var(--t-fg) !important;
+        border:1px solid var(--t-border) !important;
+        border-radius:11px !important;
+        background:var(--t-surface-1) !important;
+        box-shadow:var(--t-elev-1) !important;
+        font-size:var(--t-text-sm);
+    }
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions .ui-btn:hover:not(:disabled),
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions .ui-btn:focus-visible { border-color:var(--t-accent) !important; background:color-mix(in srgb,var(--t-accent) 8%,var(--t-surface-1)) !important; }
+    .theater-panel[data-panel="long-dream"] #theater-dream-read-chapter-fullscreen { grid-column:1 / -1; }
+    @keyframes theater-dream-chapter-tools-in { from { opacity:0; transform:translateY(-5px) scale(.98); } to { opacity:1; transform:none; } }
     .theater-panel[data-panel="long-dream"] :is(.ui-input,.ui-textarea,.ui-select,.theater-input,.theater-textarea,.theater-select),
     .theater-panel[data-panel="long-dream"] .theater-dream-memory-flow-entry :is(input,textarea,select),
     .theater-panel[data-panel="long-dream"] .theater-dream-memory-editor-record :is(input,textarea,select) { font-size:max(16px,var(--t-text-base)) !important; }
     .theater-popup dialog.theater-export-format-dialog { inset:auto 0 0; width:100vw; max-width:100vw; margin:auto 0 0; border-width:1px 0 0; border-radius:22px 22px 0 0; }
     .theater-export-format-sheet { padding:10px 16px calc(18px + env(safe-area-inset-bottom)); }
     .theater-export-format-handle { display:block; width:38px; height:4px; margin:0 auto 3px; border-radius:99px; background:var(--t-border-strong); }
+}
+
+@media (min-width:521px) {
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions[hidden] { display:grid; }
+}
+
+@media (prefers-reduced-motion:reduce) {
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions { animation:none; }
 }

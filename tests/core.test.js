@@ -1759,15 +1759,32 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(styles, /\.theater-dream-memory-row\s*\{[\s\S]*?grid-template-columns:44px minmax\(0,1fr\) 8px;[\s\S]*?max-width:100%/);
     assert.match(styles, /dialog\.theater-dream-memory-editor\s*\{[\s\S]*?width:min\(100%,100vw\);[\s\S]*?max-width:100vw/);
     assert.match(styles, /\.theater-dream-memory-editor-record :is\(input,textarea,select\)\s*\{[\s\S]*?font-size:16px/);
-    assert.match(source, /class="theater-dream-chapter-editor-tools"/);
+    assert.match(source, /id="theater-dream-chapter-tools-toggle"/);
+    assert.match(source, /id="theater-dream-chapter-tools-panel"/);
+    assert.match(source, /aria-controls="theater-dream-chapter-tools-panel"/);
+    assert.match(source, /closeLongDreamChapterTools/);
+    assert.doesNotMatch(source, /class="theater-dream-chapter-editor-tools"/);
     assert.match(source, /class="ui-btn ui-btn-sm theater-dream-chapter-open/);
-    assert.match(styles, /\.theater-dream-chapter-editor-tools > summary\s*\{[\s\S]*?min-height:44px/);
+    assert.match(styles, /\.theater-dream-chapter-tools-toggle\s*\{[\s\S]*?width:44px;[\s\S]*?height:44px/);
     assert.match(styles, /\.theater-dream-chapter-editor-actions\s*\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+    assert.match(styles, /@media \(max-width:520px\)[\s\S]*?\.theater-dream-chapter-editor-actions\s*\{[\s\S]*?grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+    assert.match(styles, /#theater-dream-read-chapter-fullscreen\s*\{\s*grid-column:1 \/ -1/);
+    assert.match(styles, /@media \(min-width:521px\)[\s\S]*?\.theater-dream-chapter-editor-actions\[hidden\]\s*\{\s*display:grid/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\]\s*\{\s*font-size:var\(--t-text-base\)/);
     assert.match(styles, /dialog\.theater-export-format-dialog/);
     assert.match(styles, /--t-bg: var\(--SmartThemeBlurTintColor/);
     assert.doesNotMatch(styles, /\.theater-panel\[data-panel="long-dream"\]\s*\{\s*--t-bg:\s*#FAF7F2/);
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
+});
+
+test('v4.0.1 版本号在代码、清单、样式头和设置页保持一致', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
+    assert.match(source, /const VERSION = '4\.0\.1'/);
+    assert.equal(manifest.version, '4.0.1');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.0\.1/);
+    assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
 test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦脉和章节操作归入正确层级', () => {
