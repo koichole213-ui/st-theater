@@ -1693,7 +1693,12 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /id="theater-dream-export-current"/);
     assert.match(source, /data-dream-export-one/);
     assert.match(source, /data-dream-open-work/);
-    assert.match(source, /exportLongDreamBackup\(\[dream\], 'single'\)/);
+    assert.match(source, /requestLongDreamExport\(\[dream\], 'single'\)/);
+    assert.match(source, /function chooseExportFormat/);
+    assert.match(source, /ZIP 可读归档/);
+    assert.match(source, /JSON 完整备份/);
+    assert.match(source, /requestHistoryExport/);
+    assert.doesNotMatch(source, /ZIP 生成失败，已回退为 JSON 备份/);
     assert.match(source, /'theater-dream-complete'/);
     assert.match(source, /'theater-dream-reopen'/);
     assert.match(source, /class="[^"]*theater-dream-chapter-directory is-workspace/);
@@ -1749,11 +1754,19 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(styles, /\.theater-dream-fat-btn\.is-primary\s*\{/);
     assert.match(styles, /dialog\.theater-dream-memory-editor\s*\{[\s\S]*?inset:0 0 0 auto/);
     assert.match(styles, /@media \(max-width:700px\)[\s\S]*?dialog\.theater-dream-memory-editor\s*\{[\s\S]*?inset:auto 0 0/);
-    assert.match(styles, /\.theater-dream-memory-workspace\s*\{[\s\S]*?--theater-dream-memory-gutter:clamp\(24px,4\.8vw,40px\);[\s\S]*?width:min\(840px,calc\(100% - var\(--theater-dream-memory-gutter\)\)\);[\s\S]*?margin:4px auto 0/);
-    assert.match(styles, /@media \(max-width:700px\)[\s\S]*?\.theater-dream-memory-workspace\s*\{[\s\S]*?--theater-dream-memory-gutter:24px;[\s\S]*?width:calc\(100% - var\(--theater-dream-memory-gutter\)\);[\s\S]*?margin-inline:auto/);
+    assert.match(styles, /\.theater-dream-memory-workspace\s*\{[\s\S]*?--theater-dream-memory-gutter:clamp\(20px,3\.4vw,32px\);[\s\S]*?width:min\(840px,calc\(100% - \(var\(--theater-dream-memory-gutter\) \* 2\)\)\);[\s\S]*?margin:4px auto 0/);
+    assert.match(styles, /@media \(max-width:700px\)[\s\S]*?\.theater-dream-memory-workspace\s*\{[\s\S]*?--theater-dream-memory-gutter:16px;[\s\S]*?width:calc\(100% - \(var\(--theater-dream-memory-gutter\) \* 2\)\);[\s\S]*?margin-inline:auto/);
     assert.match(styles, /\.theater-dream-memory-row\s*\{[\s\S]*?grid-template-columns:44px minmax\(0,1fr\) 8px;[\s\S]*?max-width:100%/);
     assert.match(styles, /dialog\.theater-dream-memory-editor\s*\{[\s\S]*?width:min\(100%,100vw\);[\s\S]*?max-width:100vw/);
     assert.match(styles, /\.theater-dream-memory-editor-record :is\(input,textarea,select\)\s*\{[\s\S]*?font-size:16px/);
+    assert.match(source, /class="theater-dream-chapter-editor-tools"/);
+    assert.match(source, /class="ui-btn ui-btn-sm theater-dream-chapter-open/);
+    assert.match(styles, /\.theater-dream-chapter-editor-tools > summary\s*\{[\s\S]*?min-height:44px/);
+    assert.match(styles, /\.theater-dream-chapter-editor-actions\s*\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\]\s*\{\s*font-size:var\(--t-text-base\)/);
+    assert.match(styles, /dialog\.theater-export-format-dialog/);
+    assert.match(styles, /--t-bg: var\(--SmartThemeBlurTintColor/);
+    assert.doesNotMatch(styles, /\.theater-panel\[data-panel="long-dream"\]\s*\{\s*--t-bg:\s*#FAF7F2/);
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
@@ -1801,7 +1814,7 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(source, /downloadFile\(longDreamChapterFileName\(dream, chapter, 'html'\), chapter\.html/);
     assert.match(source, /renderLongDreamChapter\(\{[\s\S]*?text,[\s\S]*?apiRoute: captureGenerationApiRoute/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subnav\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/);
-    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\][\s\S]*?--dream-gemini-bg:\s*#FAF7F2/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\][\s\S]*?--dream-gemini-bg:\s*var\(--t-bg\)/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subtab \{[^}]*width:100% !important[^}]*min-height:40px !important[^}]*max-height:none !important/);
     assert.match(styles, /\.ia-subtab \+ \.ia-subtab::before/);
     assert.match(styles, /#theater-dream-generate-next,[\s\S]*?flex:0 0 auto !important;[\s\S]*?width:auto !important;[\s\S]*?max-height:42px !important/);

@@ -1816,7 +1816,7 @@ function historyItemHTML(h) {
         <div class="theater-history-actions">
             <span class="theater-history-view" data-id="${h.id}"><i class="fa-solid fa-eye"></i> 查看</span>
             <span class="theater-history-continue" data-id="${h.id}"><i class="fa-solid fa-forward"></i> 续写</span>
-            <span class="theater-history-export" data-id="${h.id}"><i class="fa-solid fa-download"></i> 导出</span>
+            <span class="theater-history-export" data-id="${h.id}"><i class="fa-solid fa-download"></i> 导出 HTML</span>
             <span class="theater-history-delete" data-id="${h.id}"><i class="fa-solid fa-trash"></i> 删除</span>
         </div>
     </div>`;
@@ -2047,7 +2047,59 @@ async function exportLongDreamZip(records, scope) {
     return archive.manifest.dreams.length;
 }
 
-async function exportLongDreamBackup(records = longDreamCache, scope = 'archive') {
+function chooseExportFormat({ title, count, jsonBytes = 0, maxJsonBytes = Infinity }) {
+    const previous = document.querySelector('[data-theater-export-format]');
+    if (previous?.open) previous.close('cancel');
+    else previous?.remove();
+    const host = document.querySelector('.theater-popup');
+    if (!host) return Promise.resolve(null);
+    const jsonUnavailable = jsonBytes > maxJsonBytes;
+    const dialog = document.createElement('dialog');
+    dialog.className = 'theater-export-format-dialog';
+    dialog.dataset.theaterExportFormat = '';
+    dialog.setAttribute('aria-labelledby', 'theater-export-format-title');
+    dialog.innerHTML = `<form method="dialog" class="theater-export-format-sheet">
+        <div class="theater-export-format-handle" aria-hidden="true"></div>
+        <header>
+            <span><small>导出格式</small><b id="theater-export-format-title">${esc(title)}</b></span>
+            <button type="submit" value="cancel" aria-label="关闭导出格式选择"><i class="fa-solid fa-xmark"></i></button>
+        </header>
+        <p>共 ${count} 项。按这次用途选择，不会自动替你更换格式。</p>
+        <div class="theater-export-format-options">
+            <button type="submit" value="zip" class="theater-export-format-option">
+                <i class="fa-solid fa-file-zipper"></i><span><b>ZIP 可读归档</b><small>包含清单和分项文件，适合打开查看，也可重新导入。</small></span><i class="fa-solid fa-chevron-right"></i>
+            </button>
+            <button type="submit" value="json" class="theater-export-format-option" ${jsonUnavailable ? 'disabled' : ''}>
+                <i class="fa-solid fa-database"></i><span><b>JSON 完整备份</b><small>${jsonUnavailable ? '内容超过单个 JSON 的安全上限，请改用 ZIP。' : '单文件保留完整数据，适合备份和迁移。'}</small></span><i class="fa-solid fa-chevron-right"></i>
+            </button>
+        </div>
+    </form>`;
+    host.appendChild(dialog);
+    return new Promise(resolve => {
+        let settled = false;
+        const finish = value => {
+            if (settled) return;
+            settled = true;
+            dialog.remove();
+            resolve(value === 'zip' || value === 'json' ? value : null);
+        };
+        dialog.addEventListener('close', () => finish(dialog.returnValue));
+        dialog.addEventListener('cancel', event => {
+            event.preventDefault();
+            dialog.close('cancel');
+        });
+        dialog.addEventListener('click', event => {
+            if (event.target === dialog) dialog.close('cancel');
+        });
+        try {
+            dialog.showModal();
+        } catch {
+            dialog.setAttribute('open', '');
+        }
+    });
+}
+
+async function exportLongDreamBackup(records = longDreamCache, scope = 'archive', format = 'json') {
     const backup = createLongDreamBackup(records);
     if (!backup.dreams.length) {
         toastr.warning('没有可导出的长梦');
@@ -2055,22 +2107,39 @@ async function exportLongDreamBackup(records = longDreamCache, scope = 'archive'
     }
     const serialized = JSON.stringify(backup, null, 2);
     const jsonBytes = new Blob([serialized]).size;
-    if (scope === 'all' || jsonBytes > MAX_LONG_DREAM_BACKUP_BYTES) {
+    if (format === 'zip') {
         try {
             const count = await exportLongDreamZip(records, scope);
-            toastr.success(`已导出 ${count} 卷长梦 ZIP 备份`);
+            toastr.success(`已导出 ${count} 卷长梦 ZIP 可读归档`);
             return;
         } catch (error) {
             console.error('[Theater] Long dream ZIP export failed:', error);
-            if (jsonBytes > MAX_LONG_DREAM_BACKUP_BYTES) {
-                toastr.error('长梦体积较大且 ZIP 生成失败，请检查酒馆 ZIP 组件后重试');
-                return;
-            }
-            toastr.info('ZIP 生成失败，已回退为 JSON 备份');
+            toastr.error('ZIP 生成失败，请检查酒馆 ZIP 组件后重试');
+            return;
         }
     }
+    if (jsonBytes > MAX_LONG_DREAM_BACKUP_BYTES) {
+        toastr.warning('内容超过单个 JSON 的安全上限，请选择 ZIP 导出');
+        return;
+    }
     downloadFile(longDreamBackupFileName(scope, 'json'), serialized, 'application/json');
-    toastr.success(`已导出 ${backup.dreams.length} 卷长梦备份`);
+    toastr.success(`已导出 ${backup.dreams.length} 卷长梦 JSON 备份`);
+}
+
+async function requestLongDreamExport(records = longDreamCache, scope = 'archive') {
+    const backup = createLongDreamBackup(records);
+    if (!backup.dreams.length) {
+        toastr.warning('没有可导出的长梦');
+        return;
+    }
+    const jsonBytes = new Blob([JSON.stringify(backup, null, 2)]).size;
+    const format = await chooseExportFormat({
+        title: scope === 'all' ? '导出全部长梦' : '导出这部长梦',
+        count: backup.dreams.length,
+        jsonBytes,
+        maxJsonBytes: MAX_LONG_DREAM_BACKUP_BYTES,
+    });
+    if (format) await exportLongDreamBackup(records, scope, format);
 }
 
 async function readLongDreamZip(file) {
@@ -2867,7 +2936,7 @@ function longDreamDetailHTML(dream) {
 function longDreamChapterDirectoryHTML(dream) {
     return dream.chapters.map(chapter => {
         const text = chapter.text || htmlToPlainText(chapter.html || '');
-        return `<div class="ia-chapter-row theater-dream-chapter-row"><div class="ia-chapter-copy"><div class="ia-line-title">第 ${chapter.number} 章 · ${esc(chapter.title || `第 ${chapter.number} 章`)}</div><div class="ia-line-sub">${readableCharCount(text)} 字 · ${esc(longDreamDate(chapter.createdAt))}</div></div><button type="button" class="ui-btn ui-btn-sm ${chapter.number === dream.chapters.length ? 'ui-btn-primary' : ''}" data-dream-open-chapter data-chapter-id="${esc(chapter.id)}">查看</button></div>`;
+        return `<div class="ia-chapter-row theater-dream-chapter-row"><div class="ia-chapter-copy"><div class="ia-line-title">第 ${chapter.number} 章 · ${esc(chapter.title || `第 ${chapter.number} 章`)}</div><div class="ia-line-sub">${readableCharCount(text)} 字 · ${esc(longDreamDate(chapter.createdAt))}</div></div><button type="button" class="ui-btn ui-btn-sm theater-dream-chapter-open ${chapter.number === dream.chapters.length ? 'ui-btn-primary' : ''}" data-dream-open-chapter data-chapter-id="${esc(chapter.id)}" aria-label="查看第 ${chapter.number} 章"><i class="fa-solid fa-book-open" aria-hidden="true"></i><span>查看</span></button></div>`;
     }).join('');
 }
 
@@ -2895,18 +2964,22 @@ function longDreamChapterDetailHTML(dream, chapter) {
     const text = chapter?.text || htmlToPlainText(chapter?.html || '');
     const locked = !!longDreamGenerationController?.active || !!longDreamChapterEditController || !!dream.draft;
     const laterCount = Math.max(0, dream.chapters.length - chapter.number);
+    const toolsOpen = window.matchMedia?.('(max-width: 520px)').matches ? '' : ' open';
     return `<div class="ia-works-level active theater-dream-detail theater-dream-chapter-detail" data-id="${esc(dream.id)}" data-chapter-id="${esc(chapter.id)}" data-works-level="chapter">
         <button type="button" class="ia-back theater-dream-back" data-dream-chapter-back><i class="fa-solid fa-arrow-left"></i><span>返回章节目录</span></button>
         <section class="ui-card theater-dream-chapter-editor">
             <div class="ui-title"><span>第 ${chapter.number} 章 · ${esc(chapter.title)}</span><span class="memory-v2-tag">已保存</span></div>
+            <details class="theater-dream-chapter-editor-tools"${toolsOpen}>
+                <summary><span><i class="fa-solid fa-ellipsis"></i> 章节工具</span><i class="fa-solid fa-chevron-down"></i></summary>
+                <div class="ia-action-row theater-dream-chapter-editor-actions">
+                    <button type="button" id="theater-dream-save-chapter" class="ui-btn ui-btn-sm ui-btn-primary" ${locked ? 'disabled' : ''}><i class="fa-solid fa-check"></i><span>保存编辑</span></button>
+                    <button type="button" id="theater-dream-export-chapter" class="ui-btn ui-btn-sm"><i class="fa-solid fa-file-export"></i><span>单章导出</span></button>
+                    <button type="button" id="theater-dream-read-chapter-fullscreen" class="ui-btn ui-btn-sm"><i class="fa-solid fa-book-open"></i><span>阅读原排版</span></button>
+                </div>
+            </details>
             <label class="ia-field"><span>章节标题</span><input id="theater-dream-chapter-edit-title" class="ui-input theater-input" maxlength="80" value="${esc(chapter.title)}" ${locked ? 'disabled' : ''}></label>
             <label class="ia-field"><span>章节正文</span><textarea id="theater-dream-chapter-edit-text" class="ui-textarea ia-reader theater-textarea" rows="16" ${locked ? 'disabled' : ''}>${esc(text)}</textarea></label>
             <div id="theater-dream-chapter-edit-status" class="theater-hint">${locked ? '请先处理当前生成或草稿，再编辑正式章节。' : '仅改标题会保留原始 HTML；修改正文时会重新生成阅读排版。'}</div>
-            <div class="ia-action-row theater-dream-chapter-editor-actions">
-                <button type="button" id="theater-dream-save-chapter" class="ui-btn ui-btn-sm ui-btn-primary" ${locked ? 'disabled' : ''}><i class="fa-solid fa-check"></i><span>保存编辑</span></button>
-                <button type="button" id="theater-dream-export-chapter" class="ui-btn ui-btn-sm"><i class="fa-solid fa-file-export"></i><span>单章导出</span></button>
-                <button type="button" id="theater-dream-read-chapter-fullscreen" class="ui-btn ui-btn-sm"><i class="fa-solid fa-book-open"></i><span>阅读原排版</span></button>
-            </div>
         </section>
         <section class="ui-card theater-dream-action-card theater-dream-chapter-operations">
             <div class="theater-dream-action-heading"><span class="theater-dream-action-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></span><span><b>章节操作</b><small>从当前章节创建支线，或管理这一章之后的内容</small></span></div>
@@ -3683,7 +3756,7 @@ function bindEvents() {
     });
     $d.off('click.tdimport').on('click.tdimport', '#theater-dream-import-backup', importLongDreamBackup);
     $d.off('click.tdexportall').on('click.tdexportall', '#theater-dream-export-all', function () {
-        exportLongDreamBackup(longDreamCache, 'all');
+        requestLongDreamExport(longDreamCache, 'all');
     });
     $d.off('click.tdback').on('click.tdback', '[data-dream-back]', function () {
         resetLongDreamCanonSuggestions();
@@ -3803,7 +3876,7 @@ function bindEvents() {
         event.preventDefault();
         event.stopImmediatePropagation();
         const dream = longDreamCache.find(item => String(item.id) === String($(this).data('id')));
-        if (dream) exportLongDreamBackup([dream], 'single');
+        if (dream) requestLongDreamExport([dream], 'single');
     });
     $d.off('click.tdopen keydown.tdopen').on('click.tdopen keydown.tdopen', '[data-dream-open-work]', function (event) {
         if ($(event.target).closest('[data-dream-export-one]').length) return;
@@ -3820,7 +3893,7 @@ function bindEvents() {
     });
     $d.off('click.tdexport').on('click.tdexport', '#theater-dream-export-current', function () {
         const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
-        if (dream) exportLongDreamBackup([dream], 'single');
+        if (dream) requestLongDreamExport([dream], 'single');
     });
     $d.off('click.tdcomplete').on('click.tdcomplete', '#theater-dream-complete', function () {
         setCurrentLongDreamStatus(LONG_DREAM_STATUS.COMPLETE);
@@ -4640,7 +4713,7 @@ function bindEvents() {
         if (!ok) return;
         if (await histDelete([id])) refreshHistList();
     });
-    $d.off('click.teah').on('click.teah', '#theater-export-all-history', exportAllHistory);
+    $d.off('click.teah').on('click.teah', '#theater-export-all-history', requestHistoryExport);
     $d.off('click.tih').on('click.tih', '#theater-import-history-btn', importHistoryBackup);
     $d.off('click.thbe').on('click.thbe', '#theater-hist-batch-enter', function () {
         histBatchMode = true;
@@ -6166,9 +6239,15 @@ function downloadTextContent(text, fileName) {
     toastr.success('TXT 已下载');
 }
 
-async function exportAllHistory() {
+async function exportAllHistory(format = 'zip') {
     const hist = historyCache;
     if (!hist.length) return;
+    if (format === 'json') {
+        const data = createHistoryJsonBackup(hist);
+        downloadFile(`theater-history-${Date.now()}.json`, JSON.stringify(data, null, 2), 'application/json');
+        toastr.success(`已导出 ${hist.length} 个小剧场 JSON 备份`);
+        return;
+    }
     try {
         const JSZipCtor = await loadJSZip();
         const zip = new JSZipCtor();
@@ -6186,14 +6265,25 @@ async function exportAllHistory() {
         a.download = `theater-history-${Date.now()}.zip`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
-        toastr.success(`已导出 ${hist.length} 个小剧场`);
+        toastr.success(`已导出 ${hist.length} 个小剧场 ZIP 可读归档`);
     } catch (e) {
         console.error('[Theater] Export zip error:', e);
-        // JSZip 不可用时回退为 JSON
-        const data = createHistoryJsonBackup(hist);
-        downloadFile(`theater-history-${Date.now()}.json`, JSON.stringify(data, null, 2), 'application/json');
-        toastr.info('压缩包生成失败，已导出为 JSON 文件');
+        toastr.error('ZIP 生成失败，请检查酒馆 ZIP 组件后重试');
     }
+}
+
+async function requestHistoryExport() {
+    if (!historyCache.length) {
+        toastr.warning('没有可导出的历史记录');
+        return;
+    }
+    const data = createHistoryJsonBackup(historyCache);
+    const format = await chooseExportFormat({
+        title: '导出全部历史记录',
+        count: historyCache.length,
+        jsonBytes: new Blob([JSON.stringify(data, null, 2)]).size,
+    });
+    if (format) await exportAllHistory(format);
 }
 
 async function addHistoryItems(items) {
