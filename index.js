@@ -27,7 +27,7 @@ import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from './plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from './history-backup.js';
-import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_MEMORY_TYPES, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamBranch, createLongDreamRecord, createLongDreamWorldBookSnapshot, deleteLongDreamFrom, discardLongDreamWritingAttempt, latestLongDreamChapter, normalizeLongDreamRecord, recoverInterruptedLongDreamMemory, rejectLongDreamMemoryV2RecordItem, resolveLongDreamMemoryV2RecordConflict, selectLongDreamDraftCandidate, setLongDreamMemoryCardStatus, setLongDreamMemoryStatus, setLongDreamMemoryV2RecordItemHidden, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition, updateLongDreamMemoryCard, updateLongDreamMemoryV2RecordItem } from './long-dream.js';
+import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_MEMORY_TYPES, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamBranch, createLongDreamRecord, createLongDreamWorldBookSnapshot, deleteLongDreamFrom, discardLongDreamWritingAttempt, latestLongDreamChapter, normalizeLongDreamRecord, prepareLongDreamMemoryRegeneration, recoverInterruptedLongDreamMemory, rejectLongDreamMemoryV2RecordItem, resolveLongDreamMemoryV2RecordConflict, selectLongDreamDraftCandidate, setLongDreamMemoryCardStatus, setLongDreamMemoryStatus, setLongDreamMemoryV2RecordItemHidden, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition, updateLongDreamMemoryCard, updateLongDreamMemoryV2RecordItem } from './long-dream.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from './long-dream-generation.js';
 import { MAX_LONG_DREAM_BACKUP_BYTES, createLongDreamBackup, parseLongDreamBackup } from './long-dream-backup.js';
 import { LONG_DREAM_ARCHIVE_MANIFEST, MAX_LONG_DREAM_ARCHIVE_BYTES, MAX_LONG_DREAM_ARCHIVE_FILES, createLongDreamArchive, parseLongDreamArchive } from './long-dream-archive.js';
@@ -40,7 +40,7 @@ import { applyPromptPostProcessing, composePresetMessages, noToolsPostProcessing
 import { createRequestTrace, formatRequestTrace, requestTraceMessageLabel } from './request-trace.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.0.1';
+const VERSION = '4.0.2';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let updateReadyToReload = false;
@@ -2585,7 +2585,7 @@ function longDreamMemoryCardsHTML(dream) {
         </article>`;
     };
     return `<section class="theater-dream-memory-flow">
-        <header class="theater-dream-memory-flow-header"><span><b>梦脉</b><small>${v2Count + activeCount + legacyCards.length} 项已确立的设定与因果${conflicts.length ? ` · ${conflicts.length} 项待确认` : ''}</small></span><i class="fa-solid fa-wave-square" aria-hidden="true"></i></header>
+        <header class="theater-dream-memory-flow-header"><span><b>梦脉</b><small>${v2Count + activeCount + legacyCards.length} 项已确立的设定与因果${conflicts.length ? ` · ${conflicts.length} 项待确认` : ''}</small></span><button type="button" class="theater-dream-memory-regenerate" data-dream-memory-regenerate ${memoryLocked ? 'disabled' : ''}><i class="fa-solid fa-rotate" aria-hidden="true"></i><span>重新生成</span></button></header>
         <nav class="theater-dream-memory-flow-filters" aria-label="梦脉分类">
             <button type="button" class="active" data-dream-memory-filter="all" aria-pressed="true">全部 ${v2Count + cards.length + legacyCards.length}</button>
             ${groups.map(([kind, title, , items]) => items.length ? `<button type="button" data-dream-memory-filter="${kind}" aria-pressed="false">${title} ${items.length}</button>` : '').join('')}
@@ -2968,7 +2968,7 @@ function longDreamChapterDetailHTML(dream, chapter) {
     return `<div class="ia-works-level active theater-dream-detail theater-dream-chapter-detail" data-id="${esc(dream.id)}" data-chapter-id="${esc(chapter.id)}" data-works-level="chapter">
         <button type="button" class="ia-back theater-dream-back" data-dream-chapter-back><i class="fa-solid fa-arrow-left"></i><span>返回章节目录</span></button>
         <section class="ui-card theater-dream-chapter-editor">
-            <div class="ui-title theater-dream-chapter-heading"><span>第 ${chapter.number} 章 · ${esc(chapter.title)}</span><span class="theater-dream-chapter-heading-tools"><span class="memory-v2-tag">已保存</span><button type="button" id="theater-dream-chapter-tools-toggle" class="theater-dream-chapter-tools-toggle" aria-expanded="${toolsHidden ? 'false' : 'true'}" aria-controls="theater-dream-chapter-tools-panel" aria-label="展开章节工具" title="章节工具"><i class="fa-solid fa-sliders"></i></button></span></div>
+            <div class="ui-title theater-dream-chapter-heading"><span>第 ${chapter.number} 章 · ${esc(chapter.title)}</span><span class="theater-dream-chapter-heading-tools"><span class="memory-v2-tag">已保存</span><button type="button" id="theater-dream-chapter-tools-toggle" class="theater-dream-options-trigger theater-dream-chapter-tools-toggle" aria-expanded="${toolsHidden ? 'false' : 'true'}" aria-controls="theater-dream-chapter-tools-panel" aria-label="展开章节工具" title="章节工具"><i class="fa-solid fa-sliders"></i></button></span></div>
             <div id="theater-dream-chapter-tools-panel" class="ia-action-row theater-dream-chapter-editor-actions" role="menu" aria-label="章节工具"${toolsHidden}>
                 <button type="button" id="theater-dream-save-chapter" class="ui-btn ui-btn-sm ui-btn-primary" role="menuitem" ${locked ? 'disabled' : ''}><i class="fa-solid fa-check"></i><span>保存编辑</span></button>
                 <button type="button" id="theater-dream-export-chapter" class="ui-btn ui-btn-sm" role="menuitem"><i class="fa-solid fa-file-export"></i><span>单章导出</span></button>
@@ -3989,6 +3989,28 @@ function bindEvents() {
     });
     $d.off('click.tdweave').on('click.tdweave', '#theater-dream-weave-now', function () {
         queueLongDreamMemoryWeave(activeLongDreamId, { force: true, announce: true });
+    });
+    $d.off('click.tdmemoryregenerate').on('click.tdmemoryregenerate', '[data-dream-memory-regenerate]', async function () {
+        const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+        if (!dream?.chapters?.length) return;
+        if (dream.memory?.status === LONG_DREAM_MEMORY_STATUS.WEAVING) {
+            toastr.warning('梦脉正在织录，请完成后再重新生成');
+            return;
+        }
+        if (!selectedLongDreamMemoryApiPreset()) {
+            toastr.warning('请先在【设置 → API 与输出 → 梦脉织录】绑定一个副 API 预设');
+            return;
+        }
+        const confirmed = await SillyTavern.getContext().Popup.show.confirm(
+            '重新生成整部梦脉？',
+            `将重新读取全部 ${dream.chapters.length} 章已确认正文，清理自动织录结果并从第一章重新生成。你手动保存、隐藏或否定过的内容会保留。`,
+        );
+        if (!confirmed) return;
+        const saved = await longDreamPut(prepareLongDreamMemoryRegeneration(dream));
+        if (!saved) return;
+        renderLongDreamPanel();
+        toastr.info('已准备重新生成整部梦脉');
+        queueLongDreamMemoryWeave(saved.id, { force: true, announce: true });
     });
     $d.off('click.tdmemoryopen').on('click.tdmemoryopen', '[data-dream-memory-open-editor]', function () {
         const root = $(this).closest('.theater-dream-memory-flow');

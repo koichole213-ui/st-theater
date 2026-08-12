@@ -178,6 +178,31 @@ function resetMemoryForChapters(chapters = []) {
     }, numbers.length);
 }
 
+export function prepareLongDreamMemoryRegeneration(record, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) throw new Error('长梦记录无效');
+    const chapterNumbers = normalized.chapters.map(chapter => chapter.number);
+    const preserveV2 = items => items.filter(item => item?.lockedByUser || item?.editedByUser || item?.hiddenFromPrompt);
+    const preserveLegacy = items => items.filter(item => item?.editedByUser || item?.status === 'dismissed');
+    const updatedAt = normalizeIsoDate(now, new Date().toISOString());
+    const memory = normalizeMemory({
+        ...resetMemoryForChapters(normalized.chapters),
+        states: preserveV2(normalized.memory.states || []),
+        transitions: preserveV2(normalized.memory.transitions || []),
+        threads: preserveV2(normalized.memory.threads || []),
+        deviations: preserveV2(normalized.memory.deviations || []),
+        cards: preserveLegacy(normalized.memory.cards || []),
+        legacyCards: preserveLegacy(normalized.memory.legacyCards || []),
+        rejections: normalized.memory.rejections || [],
+        processedThroughChapter: 0,
+        pendingChapterNumbers: chapterNumbers,
+        status: chapterNumbers.length ? LONG_DREAM_MEMORY_STATUS.PENDING : LONG_DREAM_MEMORY_STATUS.NOT_STARTED,
+        updatedAt,
+        lastErrorSignal: '',
+    }, normalized.chapters.length);
+    return { ...normalized, memory, updatedAt };
+}
+
 function conservativeLegacyState(card, index = 0) {
     const normalized = normalizeMemoryCard(card, index);
     if (!normalized || !['人物状态', '关系', '地点/物品'].includes(normalized.type) || !normalized.key.includes('/')) return null;

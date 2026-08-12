@@ -25,7 +25,7 @@ import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from '../plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from '../history-backup.js';
-import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, appendLongDreamChapter, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamBranch, createLongDreamRecord, createLongDreamWorldBookSnapshot, deleteLongDreamFrom, discardLongDreamWritingAttempt, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, promoteLongDreamDraft, recoverInterruptedLongDreamMemory, rejectLongDreamMemoryV2RecordItem, resolveLongDreamMemoryV2RecordConflict, saveLongDreamDraft, selectLongDreamDraftCandidate, setLongDreamMemoryCardStatus, setLongDreamMemoryStatus, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition, updateLongDreamMemoryCard, updateLongDreamMemoryV2RecordItem } from '../long-dream.js';
+import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, appendLongDreamChapter, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamBranch, createLongDreamRecord, createLongDreamWorldBookSnapshot, deleteLongDreamFrom, discardLongDreamWritingAttempt, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, prepareLongDreamMemoryRegeneration, promoteLongDreamDraft, recoverInterruptedLongDreamMemory, rejectLongDreamMemoryV2RecordItem, resolveLongDreamMemoryV2RecordConflict, saveLongDreamDraft, selectLongDreamDraftCandidate, setLongDreamMemoryCardStatus, setLongDreamMemoryStatus, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition, updateLongDreamMemoryCard, updateLongDreamMemoryV2RecordItem } from '../long-dream.js';
 import { LONG_DREAM_RECENT_CHAPTER_COUNT, buildLongDreamChapterMessages, buildLongDreamChapterPayload, longDreamChapterContext, longDreamWorldBookContext, longDreamWorldBookEntries, selectRelevantLongDreamMemoryCards, selectRelevantLongDreamMemoryItems } from '../long-dream-payload.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from '../long-dream-generation.js';
 import { LONG_DREAM_BACKUP_FORMAT, LONG_DREAM_BACKUP_VERSION, createLongDreamBackup, parseLongDreamBackup } from '../long-dream-backup.js';
@@ -1395,6 +1395,39 @@ test('编辑正式章节会保留既有梦脉并从修改章起重新织录，�
     assert.deepEqual(editedBeforeFirstWeave.memory.pendingChapterNumbers, [1, 2]);
 });
 
+test('重新生成整部梦脉会清理自动结果并保留人工校正、隐藏与否定记录', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章', html: '<main>第一章</main>' } });
+    record = appendLongDreamChapter(record, { text: '第二章', html: '<main>第二章</main>' });
+    record.memory = {
+        ...record.memory,
+        schemaVersion: LONG_DREAM_SCHEMA_VERSION,
+        processedThroughChapter: 2,
+        pendingChapterNumbers: [],
+        status: LONG_DREAM_MEMORY_STATUS.READY,
+        currentState: '旧的自动摘要',
+        states: [
+            { id: 'auto-state', subjects: ['林岚'], attribute: 'location', value: '旧站', validFromChapter: 1 },
+            { id: 'locked-state', subjects: ['林岚'], attribute: 'location', value: '港口', validFromChapter: 2, lockedByUser: true, editedByUser: true },
+            { id: 'hidden-state', subjects: ['周遥'], attribute: 'goal', value: '离开', validFromChapter: 2, hiddenFromPrompt: true },
+        ],
+        cards: [
+            { id: 'auto-card', type: '事实', content: '自动旧记录', chapterNumber: 1, status: 'active' },
+            { id: 'edited-card', type: '事实', content: '手动修正记录', chapterNumber: 2, status: 'active', editedByUser: true },
+            { id: 'dismissed-card', type: '事实', content: '已经否定的记录', chapterNumber: 1, status: 'dismissed' },
+        ],
+        rejections: [{ id: 'rejection-1', kind: 'state', signature: '错误地点', reason: '用户否定' }],
+    };
+
+    const regenerated = prepareLongDreamMemoryRegeneration(record, new Date('2026-08-12T08:00:00.000Z'));
+    assert.equal(regenerated.memory.currentState, '');
+    assert.equal(regenerated.memory.processedThroughChapter, 0);
+    assert.deepEqual(regenerated.memory.pendingChapterNumbers, [1, 2]);
+    assert.equal(regenerated.memory.status, LONG_DREAM_MEMORY_STATUS.PENDING);
+    assert.deepEqual(regenerated.memory.states.map(item => item.id).sort(), ['hidden-state', 'locked-state']);
+    assert.deepEqual(regenerated.memory.cards.map(item => item.id).sort(), ['dismissed-card', 'edited-card']);
+    assert.equal(regenerated.memory.rejections[0].signature, '错误地点');
+});
+
 test('旧章分支、重写与删除都保留原卷，并让新时间线重新织录梦脉', () => {
     let original = createLongDreamRecord({
         title: '原卷',
@@ -1777,13 +1810,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.0.1 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.0.2 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.0\.1'/);
-    assert.equal(manifest.version, '4.0.1');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.0\.1/);
+    assert.match(source, /const VERSION = '4\.0\.2'/);
+    assert.equal(manifest.version, '4.0.2');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.0\.2/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
