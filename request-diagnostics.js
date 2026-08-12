@@ -7,6 +7,7 @@ export const REQUEST_DIAGNOSTIC_SIGNAL = Object.freeze({
     HTTP_SERVER: 'T-HTTP-5XX',
     HTTP_CLIENT: 'T-HTTP-4XX',
     TIMEOUT: 'T-NET-TIMEOUT',
+    NETWORK: 'T-NET-FAILED',
     TOKEN_LIMIT: 'T-API-TOKEN-LIMIT',
     INVALID_RESPONSE: 'T-API-INVALID-RESPONSE',
     RENDER_INVALID: 'T-RENDER-INVALID',
@@ -65,6 +66,12 @@ const CATALOG = Object.freeze({
         title: '请求等待超时',
         detail: '在等待首字、流式续传或完整响应时超过了可等待时间。',
         action: '检查线路繁忙程度、网络和模型响应时间；已收到的正文会优先保留。',
+    },
+    [REQUEST_DIAGNOSTIC_SIGNAL.NETWORK]: {
+        status: 'bad',
+        title: '网络连接没有完成',
+        detail: '浏览器没有取得可读取的接口响应，常见于网络中断、跨域限制、代理断开或上游连接被重置。',
+        action: '先确认同一地址在当前网络可用；若酒馆正文正常而独立 API 持续失败，请复制脱敏日志中的时间与信号给线路提供者。',
     },
     [REQUEST_DIAGNOSTIC_SIGNAL.TOKEN_LIMIT]: {
         status: 'bad',
@@ -164,6 +171,8 @@ export function classifyRequestFailure(error, { stage = '正文生成' } = {}) {
             signal = REQUEST_DIAGNOSTIC_SIGNAL.RATE_LIMIT;
         } else if (/TIMEOUT|超时|gateway|\b(?:502|503|504|524|529)\b/i.test(`${code} ${message}`)) {
             signal = REQUEST_DIAGNOSTIC_SIGNAL.TIMEOUT;
+        } else if (code === 'THEATER_NETWORK_FAILED' || /failed to fetch|network(?:error| error)|load failed|connection reset|econnreset|socket hang up/i.test(message)) {
+            signal = REQUEST_DIAGNOSTIC_SIGNAL.NETWORK;
         } else if (code === 'THEATER_OUTPUT_LIMIT' || /max[_\s-]?tokens|max(?:imum)?\s+(?:output|context)|输出上限|上下文上限|上下文(?:窗口|长度)?(?:已满|超出)|减少对话历史/i.test(message)) {
             signal = REQUEST_DIAGNOSTIC_SIGNAL.TOKEN_LIMIT;
         } else if (['THEATER_STREAM_EMPTY', 'THEATER_RESPONSE_EMPTY'].includes(code) || /返回空内容|没有可识别的正文|没有返回内容/i.test(message)) {

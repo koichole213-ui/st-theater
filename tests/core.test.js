@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
-import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
+import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractPresetGenerationOptions, extractResponseMeta, extractStreamText, hasReasoningContent, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { readNonStreamingResponse, readSSEStream, requestCustomApi, requestMainApi } from '../api-runtime.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
 import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, normalizeContinuationText, readableCharCount } from '../text-counter.js';
@@ -2239,6 +2239,37 @@ test('流式解析兼容 OpenAI、Gemini 原生与 Responses API 正文格式', 
     assert.equal(extractStreamText({ candidates: [{ content: { parts: [{ text: 'Gemini 正文' }] } }] }), 'Gemini 正文');
     assert.equal(extractStreamText({ type: 'response.output_text.delta', delta: 'Responses 正文' }), 'Responses 正文');
     assert.equal(extractStreamText({ output: [{ content: [{ type: 'output_text', text: '完整响应正文' }] }] }), '完整响应正文');
+    assert.equal(extractStreamText({ candidates: [{ content: { parts: [{ thought: true, text: '内部思考' }, { text: '可见正文' }] } }] }), '可见正文');
+    assert.equal(extractStreamText({ candidates: [{ content: { parts: [{ thought: true, text: '只有思考' }] } }] }), '');
+});
+
+test('独立 API 只继承预设的安全采样参数，不继承连接、工具与响应格式', () => {
+    const options = extractPresetGenerationOptions({
+        temperature: 0.8,
+        top_p: 0.92,
+        top_k: 40,
+        min_p: 0.1,
+        reasoning_effort: 'auto',
+        custom_url: 'https://不应继承.example',
+        api_key: '不应继承',
+        tools: [{ type: 'function' }],
+        response_format: { type: 'json_object' },
+    });
+    assert.deepEqual(options, { temperature: 0.8, top_p: 0.92, top_k: 40, min_p: 0.1 });
+    const request = buildApiRequest({
+        url: 'https://example.com/v1',
+        protocol: API_PROTOCOLS.OPENAI,
+        model: 'model',
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        generationOptions: options,
+    });
+    assert.equal(request.body.temperature, 0.8);
+    assert.equal(request.body.top_p, 0.92);
+    assert.equal(request.body.reasoning_effort, undefined);
+    assert.equal('tools' in request.body, false);
+    assert.equal('response_format' in request.body, false);
+    assert.equal(request.headers.Accept, 'text/event-stream');
 });
 
 test('思考标签在流式未闭合时不会闪出，并在闭合后只保留正文', () => {
@@ -2289,6 +2320,57 @@ test('独立 API 会在交付前隐藏 thinking，只有思考内容时给出稳
         }), { status: 200, headers: { 'content-type': 'application/json' } }),
     }), error => error?.diagnosticSignal === REQUEST_DIAGNOSTIC_SIGNAL.REASONING_ONLY
         && error?.code === 'THEATER_REASONING_ONLY');
+});
+
+test('OpenAI 兼容线路识别独立思考字段和思考 Token', () => {
+    assert.equal(hasReasoningContent({ choices: [{ message: { reasoning_content: '内部思考' } }] }), true);
+    assert.equal(hasReasoningContent({ usage: { completion_tokens_details: { reasoning_tokens: 1024 } } }), true);
+    assert.equal(hasReasoningContent({ candidates: [{ content: { parts: [{ thought: true, text: '摘要' }] } }] }), true);
+    assert.equal(hasReasoningContent({ choices: [{ message: { content: '只有正文' } }] }), false);
+});
+
+test('独立 API 的独立思考字段不会被当成空流后再次请求', async () => {
+    let calls = 0;
+    await assert.rejects(() => requestCustomApi({
+        config: {
+            apiUrl: 'https://api.example.com/v1',
+            apiProtocol: API_PROTOCOLS.OPENAI,
+            apiModel: 'gemini-3.1-pro-preview',
+            maxOutputTokens: 16384,
+        },
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        fetchImpl: async () => {
+            calls += 1;
+            return new Response('data: {"choices":[{"delta":{"reasoning_content":"内部思考"},"finish_reason":"length"}]}\n\ndata: [DONE]\n', {
+                headers: { 'content-type': 'text/event-stream' },
+            });
+        },
+    }), error => error?.diagnosticSignal === REQUEST_DIAGNOSTIC_SIGNAL.REASONING_ONLY
+        && error?.code === 'THEATER_REASONING_ONLY');
+    assert.equal(calls, 1);
+});
+
+test('独立 API 收到合法结束事件但没有正文时不会重复生成', async () => {
+    let calls = 0;
+    await assert.rejects(() => requestCustomApi({
+        config: {
+            apiUrl: 'https://api.example.com/v1',
+            apiProtocol: API_PROTOCOLS.OPENAI,
+            apiModel: 'model-name',
+            maxOutputTokens: 1024,
+        },
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        fetchImpl: async () => {
+            calls += 1;
+            return new Response('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n', {
+                headers: { 'content-type': 'text/event-stream' },
+            });
+        },
+    }), error => error?.diagnosticSignal === REQUEST_DIAGNOSTIC_SIGNAL.EMPTY
+        && error?.code === 'THEATER_RESPONSE_EMPTY');
+    assert.equal(calls, 1);
 });
 
 test('流式解析能取出状态为 200 的错误事件，而不是只报告空流', () => {
@@ -2525,10 +2607,68 @@ test('酒馆主 API 运行层优先使用 ChatCompletionService', async () => {
     assert.equal(requests.length, 1);
     assert.equal(requests[0].model, 'main-model');
     assert.equal(requests[0].max_tokens, 4096);
-    assert.equal('tools' in requests[0], false);
-    assert.equal('tool_choice' in requests[0], false);
+    assert.equal(requests[0].tools, undefined);
+    assert.equal(requests[0].tool_choice, undefined);
     assert.deepEqual(chunks, ['主 API 正文']);
     assert.equal(result.text, '主 API 正文');
+});
+
+test('酒馆主 API 按官方形态传递预设并读取累计流式正文', async () => {
+    const chunks = [];
+    let capturedOptions;
+    let capturedExtractData;
+    const ctx = {
+        oai_settings: {
+            chat_completion_source: 'custom',
+            openai_model: 'main-model',
+            openai_max_tokens: 0,
+        },
+    };
+    const result = await requestMainApi({
+        ctx,
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        presetName: '众生相',
+        shouldStream: true,
+        onChunk: text => chunks.push(text),
+        chatCompletionService: {
+            processRequest: async (_request, options, extractData) => {
+                capturedOptions = options;
+                capturedExtractData = extractData;
+                return async function* () {
+                    yield { text: '第一段', state: { reasoning: '思考中' } };
+                    yield { text: '第一段第二段', state: { reasoning: '思考完成' } };
+                };
+            },
+        },
+        getContext: () => ctx,
+    });
+    assert.deepEqual(capturedOptions, { presetName: '众生相' });
+    assert.equal(capturedExtractData, true);
+    assert.deepEqual(chunks, ['第一段', '第一段第二段']);
+    assert.equal(result.text, '第一段第二段');
+});
+
+test('酒馆主 API 已发出的空请求不会再降级重复生成', async () => {
+    let helperCalls = 0;
+    const ctx = { oai_settings: { chat_completion_source: 'custom', openai_model: 'main-model' } };
+    await assert.rejects(() => requestMainApi({
+        ctx,
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        shouldStream: true,
+        chatCompletionService: {
+            processRequest: async () => async function* () {},
+        },
+        tavernHelper: {
+            generateRaw: async () => {
+                helperCalls += 1;
+                return '不应重复生成';
+            },
+        },
+        getContext: () => ctx,
+    }), error => error?.diagnosticSignal === REQUEST_DIAGNOSTIC_SIGNAL.EMPTY);
+    assert.equal(helperCalls, 0);
 });
 
 test('酒馆主 API 没有 ChatCompletionService 时复用 TavernHelper 路径', async () => {
@@ -2622,6 +2762,41 @@ test('酒馆主 API 无法识别 ChatCompletionService 字段时安全降级到 
     assert.equal(helperCalls, 1);
     assert.deepEqual(fallbacks, ['main:ChatCompletionService']);
     assert.equal(result.text, '兼容路径正文');
+});
+
+test('酒馆上下文缺少线路字段时会读取全局主 API 设置，不瞬间降级', async () => {
+    const originalSettings = globalThis.oai_settings;
+    globalThis.oai_settings = { chat_completion_source: 'custom', custom_model: 'global-model' };
+    let serviceCalls = 0;
+    let helperCalls = 0;
+    try {
+        const result = await requestMainApi({
+            ctx: { oai_settings: { openai_max_tokens: 0 } },
+            systemPrompt: '系统',
+            userPrompt: '用户',
+            shouldStream: false,
+            chatCompletionService: {
+                processRequest: async request => {
+                    serviceCalls += 1;
+                    assert.equal(request.chat_completion_source, 'custom');
+                    assert.equal(request.model, 'global-model');
+                    return { content: '首选线路正文' };
+                },
+            },
+            tavernHelper: {
+                generateRaw: async () => {
+                    helperCalls += 1;
+                    return '不应降级';
+                },
+            },
+            getContext: () => ({ oai_settings: { openai_max_tokens: 0 } }),
+        });
+        assert.equal(result.text, '首选线路正文');
+        assert.equal(serviceCalls, 1);
+        assert.equal(helperCalls, 0);
+    } finally {
+        globalThis.oai_settings = originalSettings;
+    }
 });
 
 test('酒馆主 API 的内容策略错误不会降级重发到 TavernHelper', async () => {

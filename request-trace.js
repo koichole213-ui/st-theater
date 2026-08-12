@@ -24,7 +24,9 @@ export function createRequestTrace({
         postProcessing: String(postProcessing || 'none'),
         purpose: String(purpose || 'creative'),
         toolsDisabled: true,
-        maxTokens: Number.isFinite(Number(maxTokens)) ? Number(maxTokens) : null,
+        maxTokens: maxTokens !== null && maxTokens !== undefined && Number.isFinite(Number(maxTokens))
+            ? Number(maxTokens)
+            : null,
         messages: (Array.isArray(messages) ? messages : []).map((message, index) => {
             const content = String(message?.content || '');
             return {

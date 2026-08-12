@@ -1,10 +1,10 @@
 import {
     API_PROTOCOLS,
-    DEFAULT_MAX_OUTPUT_TOKENS,
     buildApiRequest,
     extractApiErrorMessage,
     extractResponseMeta,
     extractStreamText,
+    hasReasoningContent,
     isContentBlockedErrorMessage,
     isContentBlockedStopReason,
     isHtmlErrorResponse,
@@ -21,6 +21,9 @@ import { applyPromptPostProcessing } from './request-layout.js';
 export const RATE_LIMIT_DEFAULT_WAIT_MS = 3000;
 export const RATE_LIMIT_MAX_AUTO_WAIT_MS = 15000;
 export const CUSTOM_STREAM_IDLE_TIMEOUT_MS = 60000;
+export const MAIN_FIRST_TOKEN_TIMEOUT_MS = 180000;
+export const MAIN_STREAM_IDLE_TIMEOUT_MS = 120000;
+export const MAIN_RESPONSE_TIMEOUT_MS = 300000;
 
 const noop = () => {};
 
@@ -71,6 +74,58 @@ function streamEmptyError({ phase = 'body', transport = 'stream' } = {}) {
     });
 }
 
+function safeUsageSummary(usage = {}) {
+    const number = (...values) => {
+        const value = values.find(item => Number.isFinite(Number(item)));
+        return value === undefined ? null : Number(value);
+    };
+    return {
+        inputTokens: number(usage.prompt_tokens, usage.input_tokens, usage.promptTokenCount),
+        outputTokens: number(usage.completion_tokens, usage.output_tokens, usage.candidatesTokenCount),
+        reasoningTokens: number(
+            usage?.completion_tokens_details?.reasoning_tokens,
+            usage?.output_tokens_details?.reasoning_tokens,
+            usage.thoughtsTokenCount,
+        ),
+        totalTokens: number(usage.total_tokens, usage.totalTokenCount),
+    };
+}
+
+function responseFormat(json = {}) {
+    if (Array.isArray(json.choices)) return 'choices';
+    if (Array.isArray(json.candidates)) return 'candidates';
+    if (Array.isArray(json.output) || /response\./i.test(String(json.type || ''))) return 'responses';
+    if (/content_block|message_/i.test(String(json.type || '')) || json.stop_reason) return 'anthropic';
+    return 'json';
+}
+
+function createResponseSummary({ response, transport, protocol, events = 0, json = null, meta = null, hasText = false, hasReasoning = false } = {}) {
+    const usage = safeUsageSummary(meta?.usage || json?.usage || json?.usageMetadata || {});
+    return {
+        transport: String(transport || 'unknown'),
+        protocol: String(protocol || 'unknown'),
+        httpStatus: Number(response?.status) || null,
+        contentType: String(response?.headers?.get?.('content-type') || '').split(';')[0].trim().toLowerCase() || 'unknown',
+        format: json ? responseFormat(json) : 'unknown',
+        events: Math.max(0, Number(events) || 0),
+        hasText: !!hasText,
+        hasReasoning: !!hasReasoning,
+        rawStopReason: meta?.rawStopReason || null,
+        usage,
+    };
+}
+
+function publicResult(result = {}) {
+    if (!result || typeof result !== 'object' || !('responseSummary' in result)) return result;
+    const { responseSummary: _responseSummary, ...publicFields } = result;
+    return publicFields;
+}
+
+function attachResponseSummary(error, summary) {
+    if (error && typeof error === 'object') error.apiResponseSummary = summary;
+    return error;
+}
+
 function statusError(status, body = '', { phase = 'body', transport = '' } = {}) {
     const numericStatus = Number(status) || null;
     if (numericStatus === 429) {
@@ -91,8 +146,31 @@ function statusError(status, body = '', { phase = 'body', transport = '' } = {})
     });
 }
 
+function normalizeFetchError(error, { phase = 'body', transport = '' } = {}) {
+    if (error?.name === 'AbortError' || error?.diagnosticSignal) return error;
+    if (error instanceof TypeError
+        || /failed to fetch|network(?:error| error)|load failed|connection reset|econnreset|socket hang up/i.test(String(error?.message || error || ''))) {
+        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.NETWORK, {
+            code: 'THEATER_NETWORK_FAILED', phase, transport,
+        });
+    }
+    return error;
+}
+
+async function performCustomFetch(fetchRequest, { phase = 'body', transport = '' } = {}) {
+    try {
+        return await fetchRequest();
+    } catch (error) {
+        throw normalizeFetchError(error, { phase, transport });
+    }
+}
+
 function shouldNotFallbackMainApi(error) {
-    return ['THEATER_CONTENT_FILTER', 'THEATER_RATE_LIMIT', 'THEATER_OUTPUT_LIMIT', 'THEATER_CONFIG', 'THEATER_REASONING_ONLY'].includes(error?.code);
+    return [
+        'THEATER_CONTENT_FILTER', 'THEATER_RATE_LIMIT', 'THEATER_OUTPUT_LIMIT', 'THEATER_CONFIG',
+        'THEATER_REASONING_ONLY', 'THEATER_RESPONSE_EMPTY', 'THEATER_STREAM_EMPTY',
+        'MAIN_FIRST_TOKEN_TIMEOUT', 'MAIN_STREAM_IDLE_TIMEOUT', 'MAIN_RESPONSE_TIMEOUT',
+    ].includes(error?.code);
 }
 
 function normalizeMainApiFallbackError(error) {
@@ -130,6 +208,7 @@ export async function requestMainApi({
     log = noop,
     onFallback = noop,
     onPath = noop,
+    onResponse = noop,
     tavernHelper = globalThis.window?.TavernHelper,
     getContext = () => globalThis.SillyTavern?.getContext?.(),
     chatCompletionService,
@@ -142,7 +221,11 @@ export async function requestMainApi({
         postProcessing,
     );
     const oai = ctx?.oai_settings || globalThis.oai_settings;
-    const maxTokens = oai?.openai_max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+    const configuredMaxTokens = Number(oai?.openai_max_tokens);
+    // 0 在酒馆设置里表示交给当前预设/线路决定，不能把 max_tokens: 0 强行覆盖到请求中。
+    const maxTokens = Number.isFinite(configuredMaxTokens) && configuredMaxTokens > 0
+        ? Math.floor(configuredMaxTokens)
+        : undefined;
     const model = resolveMainApiModel(ctx, oai) || '未识别';
     const CCS = chatCompletionService || ctx?.ChatCompletionService || getContext?.()?.ChatCompletionService;
 
@@ -150,7 +233,7 @@ export async function requestMainApi({
         mode: 'main',
         channel: CCS && typeof CCS.processRequest === 'function' ? 'ChatCompletionService' : 'TavernHelper',
         model,
-        max_tokens: maxTokens,
+        max_tokens: maxTokens ?? 'preset',
     });
 
     if (CCS && typeof CCS.processRequest === 'function') {
@@ -173,14 +256,17 @@ export async function requestMainApi({
         };
         const firstAwareChunk = text => {
             if (String(text || '').trim() && shouldStream) {
-                armTimeout(45000, 'MAIN_STREAM_IDLE_TIMEOUT');
+                armTimeout(MAIN_STREAM_IDLE_TIMEOUT_MS, 'MAIN_STREAM_IDLE_TIMEOUT');
             }
             emitReasoningSafeChunk(onChunk, text);
         };
         try {
             const timeout = new Promise((_, reject) => {
                 rejectTimeout = reject;
-                armTimeout(shouldStream ? 10000 : 45000, shouldStream ? 'MAIN_FIRST_TOKEN_TIMEOUT' : 'MAIN_RESPONSE_TIMEOUT');
+                armTimeout(
+                    shouldStream ? MAIN_FIRST_TOKEN_TIMEOUT_MS : MAIN_RESPONSE_TIMEOUT_MS,
+                    shouldStream ? 'MAIN_FIRST_TOKEN_TIMEOUT' : 'MAIN_RESPONSE_TIMEOUT',
+                );
             });
             const result = await Promise.race([
                 callViaChatCompletionService({
@@ -198,7 +284,15 @@ export async function requestMainApi({
                 }),
                 timeout,
             ]);
-            return reasoningSafeResult(result, { phase: 'main', transport: 'ChatCompletionService' });
+            const finalized = reasoningSafeResult(result, { phase: 'main', transport: 'ChatCompletionService' });
+            onResponse({
+                transport: 'ChatCompletionService', protocol: API_PROTOCOLS.OPENAI,
+                httpStatus: null, contentType: 'sillytavern', format: 'sillytavern', events: null,
+                hasText: true, hasReasoning: !!String(result?.reasoning || result?.state?.reasoning || '').trim(),
+                rawStopReason: finalized.rawStopReason || null,
+                usage: safeUsageSummary(finalized.usage || {}),
+            });
+            return finalized;
         } catch (error) {
             clearTimeout(timeoutId);
             if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -219,7 +313,15 @@ export async function requestMainApi({
                     presetName,
                     postProcessing,
                 });
-                return reasoningSafeResult(result, { phase: 'main', transport: 'TavernHelper' });
+                const finalized = reasoningSafeResult(result, { phase: 'main', transport: 'TavernHelper' });
+                onResponse({
+                    transport: 'TavernHelper', protocol: API_PROTOCOLS.OPENAI,
+                    httpStatus: null, contentType: 'sillytavern', format: 'sillytavern', events: null,
+                    hasText: true, hasReasoning: !!String(result?.reasoning || result?.state?.reasoning || '').trim(),
+                    rawStopReason: finalized.rawStopReason || null,
+                    usage: safeUsageSummary(finalized.usage || {}),
+                });
+                return finalized;
             }
             throwFriendlyMainApi(safeError, onChunk);
         } finally {
@@ -243,7 +345,15 @@ export async function requestMainApi({
         presetName,
         postProcessing,
     });
-    return reasoningSafeResult(result, { phase: 'main', transport: 'TavernHelper' });
+    const finalized = reasoningSafeResult(result, { phase: 'main', transport: 'TavernHelper' });
+    onResponse({
+        transport: 'TavernHelper', protocol: API_PROTOCOLS.OPENAI,
+        httpStatus: null, contentType: 'sillytavern', format: 'sillytavern', events: null,
+        hasText: true, hasReasoning: !!String(result?.reasoning || result?.state?.reasoning || '').trim(),
+        rawStopReason: finalized.rawStopReason || null,
+        usage: safeUsageSummary(finalized.usage || {}),
+    });
+    return finalized;
 }
 
 export async function callViaChatCompletionService({
@@ -260,9 +370,16 @@ export async function callViaChatCompletionService({
     postProcessing = '',
 } = {}) {
     const currentContext = getContext?.() || ctx;
-    const oai = currentContext?.oai_settings || ctx?.oai_settings || globalThis.oai_settings;
-    const source = oai?.chat_completion_source;
-    const model = resolveMainApiModel(currentContext, oai) || resolveMainApiModel(ctx, oai);
+    const currentOai = currentContext?.oai_settings;
+    const ctxOai = ctx?.oai_settings;
+    const globalOai = globalThis.oai_settings;
+    const oai = currentOai || ctxOai || globalOai;
+    const source = currentOai?.chat_completion_source
+        || ctxOai?.chat_completion_source
+        || globalOai?.chat_completion_source;
+    const model = resolveMainApiModel(currentContext, currentOai)
+        || resolveMainApiModel(ctx, ctxOai)
+        || resolveMainApiModel({}, globalOai);
     if (!source || !model) {
         throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONFIG, {
             // 这里只能说明当前版本的 ChatCompletionService 字段没有被识别；
@@ -276,9 +393,24 @@ export async function callViaChatCompletionService({
         model, presetName, postProcessing, maxTokens, messages,
     });
     const result = await CCS.processRequest(
-        { messages: messages.map(message => ({ role: message.role, content: message.content })), model, chat_completion_source: source, max_tokens: maxTokens, stream: shouldStream },
-        { signal },
-        false,
+        {
+            messages: messages.map(message => ({ role: message.role, content: message.content })),
+            model,
+            chat_completion_source: source,
+            ...(Number(maxTokens) > 0 ? { max_tokens: maxTokens } : {}),
+            stream: shouldStream,
+            // 消息角色与后处理已由插件按所选预设完成；显式覆盖这些字段，
+            // 只让酒馆补齐连接与采样器，不把工具或结构化输出带回创作请求。
+            custom_prompt_post_processing: '',
+            tools: undefined,
+            tool_choice: undefined,
+            functions: undefined,
+            function_call: undefined,
+            json_schema: undefined,
+            response_format: undefined,
+        },
+        { presetName },
+        true,
         signal,
     );
 
@@ -290,6 +422,9 @@ export async function callViaChatCompletionService({
     const text = typeof result === 'string'
         ? result
         : (result?.text || result?.content || result?.choices?.[0]?.message?.content || '');
+    if (!text && String(result?.reasoning || result?.state?.reasoning || '').trim()) {
+        throw reasoningOnlyError({ phase: 'main', transport: 'ChatCompletionService' });
+    }
     if (!text) throw noTextResponseError(meta, { phase: 'main', transport: 'ChatCompletionService' });
     onChunk(text);
     return { text, ...meta };
@@ -298,20 +433,29 @@ export async function callViaChatCompletionService({
 export async function consumeStreamThunk(streamThunk, onChunk = noop) {
     let full = '';
     let meta = { stopReason: 'unknown', rawStopReason: null, usage: null };
+    let hadReasoning = false;
     for await (const chunk of streamThunk()) {
-        const delta = typeof chunk === 'string'
-            ? chunk
-            : extractStreamText(chunk, API_PROTOCOLS.OPENAI);
+        const cumulativeText = typeof chunk === 'object' && typeof chunk?.text === 'string'
+            ? chunk.text
+            : null;
+        const delta = cumulativeText === null
+            ? (typeof chunk === 'string' ? chunk : extractStreamText(chunk, API_PROTOCOLS.OPENAI))
+            : '';
         if (typeof chunk === 'object') {
             const nextMeta = extractResponseMeta(chunk, API_PROTOCOLS.OPENAI);
             if (nextMeta.rawStopReason) meta = nextMeta;
             else if (nextMeta.usage) meta.usage = nextMeta.usage;
+            hadReasoning ||= hasReasoningContent(chunk) || !!String(chunk?.state?.reasoning || '').trim();
         }
-        if (delta) {
+        if (cumulativeText !== null && cumulativeText !== full) {
+            full = cumulativeText;
+            onChunk(full);
+        } else if (delta) {
             full += delta;
             onChunk(full);
         }
     }
+    if (!full && hadReasoning) throw reasoningOnlyError({ phase: 'main', transport: 'stream' });
     if (!full) throw noTextResponseError(meta, { phase: 'main', transport: 'stream' });
     return { text: full, ...meta };
 }
@@ -406,6 +550,9 @@ export async function callViaGenerateRaw({
         if (!result) throw noTextResponseError({}, { phase: 'main', transport: 'TavernHelper' });
         const text = typeof result === 'string' ? result : (result?.text || result?.content || '');
         const meta = extractResponseMeta(typeof result === 'object' ? result : {}, API_PROTOCOLS.OPENAI);
+        if (!text && String(result?.reasoning || result?.state?.reasoning || '').trim()) {
+            throw reasoningOnlyError({ phase: 'main', transport: 'TavernHelper' });
+        }
         if (!text) throw noTextResponseError(meta, { phase: 'main', transport: 'TavernHelper' });
         onChunk(text);
         return { text, ...meta };
@@ -470,12 +617,21 @@ export async function requestCustomApi({
     signal,
     log = noop,
     onFallback = noop,
+    onResponse = noop,
     fetchImpl = (...args) => globalThis.fetch(...args),
 } = {}) {
     const url = String(config.apiUrl || '').replace(/\/+$/, '');
     const candidates = maxTokenFallbackSequence(config.maxOutputTokens);
     const safeChunk = text => emitReasoningSafeChunk(onChunk, text);
-    const finalize = (result, transport) => reasoningSafeResult(result, { phase: 'body', transport });
+    const reportResponse = (summary = {}) => {
+        const safeSummary = { ...summary };
+        onResponse(safeSummary);
+        log(safeSummary.hasText ? 'info' : 'warn', '接口响应摘要', safeSummary);
+    };
+    const finalize = (result, transport) => {
+        reportResponse(result?.responseSummary || {});
+        return publicResult(reasoningSafeResult(result, { phase: 'body', transport }));
+    };
     for (let index = 0; index < candidates.length; index++) {
         const maxTokens = candidates[index];
         const request = buildApiRequest({
@@ -487,6 +643,7 @@ export async function requestCustomApi({
             userPrompt,
             messages,
             postProcessing,
+            generationOptions: config.generationOptions,
             maxTokens,
             stream: shouldStream,
         });
@@ -506,9 +663,19 @@ export async function requestCustomApi({
             body: JSON.stringify(body),
             signal,
         });
-        let response = await performRequest(request.body);
+        let response;
+        try {
+            response = await performCustomFetch(() => performRequest(request.body), {
+                phase: 'body', transport: request.protocol,
+            });
+        } catch (error) {
+            throw normalizeFetchError(error, { phase: 'body', transport: request.protocol });
+        }
         let rateLimitRetried = false;
-        const rateLimitResult = await retryRateLimitedResponse(response, () => performRequest(request.body), {
+        const rateLimitResult = await retryRateLimitedResponse(response, () => performCustomFetch(
+            () => performRequest(request.body),
+            { phase: 'body', transport: request.protocol },
+        ), {
             protocol: request.protocol,
             max_tokens: maxTokens,
         }, { signal, log });
@@ -529,6 +696,7 @@ export async function requestCustomApi({
                 try {
                     return finalize(await readSSEStream(response, safeChunk, request.protocol), request.protocol);
                 } catch (streamError) {
+                    if (streamError?.apiResponseSummary) reportResponse(streamError.apiResponseSummary);
                     if (streamError?.code === 'THEATER_RATE_LIMIT' && !rateLimitRetried) {
                         rateLimitRetried = true;
                         log('warn', '接口在流内报告限流，当前轮等待后重试一次', {
@@ -537,7 +705,9 @@ export async function requestCustomApi({
                             retry_after_ms: RATE_LIMIT_DEFAULT_WAIT_MS,
                         });
                         await waitForApiRetry(RATE_LIMIT_DEFAULT_WAIT_MS, signal);
-                        response = await performRequest(request.body);
+                        response = await performCustomFetch(() => performRequest(request.body), {
+                            phase: 'body', transport: request.protocol,
+                        });
                         if (!response.ok) throw await customApiStatusError(response);
                         continue;
                     }
@@ -560,9 +730,14 @@ export async function requestCustomApi({
                         model: config.apiModel, presetName, postProcessing, maxTokens, messages: request.messages,
                     });
                     const fallbackBody = { ...request.body, stream: false };
-                    let fallbackResponse = await performRequest(fallbackBody);
+                    let fallbackResponse = await performCustomFetch(() => performRequest(fallbackBody), {
+                        phase: 'body', transport: 'non_stream_fallback',
+                    });
                     if (!rateLimitRetried) {
-                        const fallbackRateLimit = await retryRateLimitedResponse(fallbackResponse, () => performRequest(fallbackBody), {
+                        const fallbackRateLimit = await retryRateLimitedResponse(fallbackResponse, () => performCustomFetch(
+                            () => performRequest(fallbackBody),
+                            { phase: 'body', transport: 'non_stream_fallback' },
+                        ), {
                             protocol: request.protocol,
                             max_tokens: maxTokens,
                             transport: 'non_stream_fallback',
@@ -614,19 +789,28 @@ export async function readNonStreamingResponse(response, onChunk = noop, protoco
 
     let text = trimmed;
     let meta = { stopReason: 'unknown', rawStopReason: null, usage: null };
+    let responseSummary = createResponseSummary({ response, transport: 'non_stream', protocol });
     try {
         const json = JSON.parse(trimmed);
         const apiError = extractApiErrorMessage(json);
         if (apiError) throw streamPayloadError(apiError);
         text = extractStreamText(json, protocol);
         meta = extractResponseMeta(json, protocol);
-        if (!text) throw noTextResponseError(meta, { phase: 'body', transport: 'non_stream' });
+        responseSummary = createResponseSummary({
+            response, transport: 'non_stream', protocol, events: 1, json, meta,
+            hasText: !!text, hasReasoning: hasReasoningContent(json),
+        });
+        if (!text && responseSummary.hasReasoning) {
+            throw attachResponseSummary(reasoningOnlyError({ phase: 'body', transport: 'non_stream' }), responseSummary);
+        }
+        if (!text) throw attachResponseSummary(noTextResponseError(meta, { phase: 'body', transport: 'non_stream' }), responseSummary);
     } catch (error) {
         if (error instanceof SyntaxError) text = trimmed;
         else throw error;
     }
     onChunk(text);
-    return { text, ...meta };
+    responseSummary.hasText = !!text;
+    return { text, ...meta, responseSummary };
 }
 
 function streamIdleTimeoutError() {
@@ -670,15 +854,22 @@ export async function readSSEStream(
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let full = '', buffer = '', rawText = '';
+    let eventData = [];
     let meta = { stopReason: 'unknown', rawStopReason: null, usage: null };
     let providerError = '';
+    let hadReasoning = false;
+    let eventCount = 0;
+    let lastJson = null;
 
     const consumePayload = (payload) => {
         const text = String(payload || '').trim();
         if (!text || text === '[DONE]') return;
         let json;
         try { json = JSON.parse(text); } catch { return; }
+        eventCount += 1;
+        lastJson = json;
         providerError ||= extractApiErrorMessage(json);
+        hadReasoning ||= hasReasoningContent(json);
         const nextMeta = extractResponseMeta(json, protocol);
         if (nextMeta.rawStopReason) meta = nextMeta;
         else if (nextMeta.usage) meta.usage = nextMeta.usage;
@@ -687,6 +878,26 @@ export async function readSSEStream(
             full += delta;
             onChunk(full);
         }
+    };
+
+    const dispatchEvent = () => {
+        if (!eventData.length) return;
+        consumePayload(eventData.join('\n'));
+        eventData = [];
+    };
+
+    const consumeLine = (line) => {
+        if (line === '') {
+            dispatchEvent();
+            return;
+        }
+        if (line.startsWith(':') || line.startsWith('event:') || line.startsWith('id:') || line.startsWith('retry:')) return;
+        if (line.startsWith('data:')) {
+            eventData.push(line.slice(5).replace(/^ /, ''));
+            return;
+        }
+        const text = line.trim();
+        if (text.startsWith('{') || text.startsWith('[')) consumePayload(text);
     };
 
     while (true) {
@@ -698,31 +909,34 @@ export async function readSSEStream(
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || '';
 
-        for (const line of lines) {
-            const text = line.trim();
-            if (!text || text.startsWith('event:') || text === 'data: [DONE]') continue;
-            if (text.startsWith('data:')) consumePayload(text.slice(5));
-            else if (text.startsWith('{') || text.startsWith('[')) consumePayload(text);
-        }
+        for (const line of lines) consumeLine(line.replace(/\r$/, ''));
     }
     const finalChunk = decoder.decode();
     rawText += finalChunk;
     buffer += finalChunk;
-    if (buffer.trim()) {
-        const text = buffer.trim();
-        if (text.startsWith('data:')) consumePayload(text.slice(5));
-        else if (text.startsWith('{') || text.startsWith('[')) consumePayload(text);
-    }
+    if (buffer) consumeLine(buffer.replace(/\r$/, ''));
+    dispatchEvent();
 
     if (!full && rawText.trim()) {
         try {
             const json = JSON.parse(rawText.trim());
             const apiError = extractApiErrorMessage(json);
             if (apiError) throw streamPayloadError(apiError);
+            hadReasoning ||= hasReasoningContent(json);
+            lastJson = json;
+            eventCount = Math.max(1, eventCount);
             full = extractStreamText(json, protocol);
             if (full) {
                 onChunk(full);
-                return { text: full, ...extractResponseMeta(json, protocol) };
+                const rawMeta = extractResponseMeta(json, protocol);
+                return {
+                    text: full,
+                    ...rawMeta,
+                    responseSummary: createResponseSummary({
+                        response, transport: 'stream', protocol, events: eventCount, json, meta: rawMeta,
+                        hasText: true, hasReasoning: hadReasoning,
+                    }),
+                };
             }
             const rawMeta = extractResponseMeta(json, protocol);
             if (rawMeta.rawStopReason || rawMeta.blockReason) meta = rawMeta;
@@ -737,10 +951,22 @@ export async function readSSEStream(
         }
     }
 
-    if (!full && providerError) throw streamPayloadError(providerError);
-    if (!full && (meta.blockReason || isContentBlockedStopReason(meta.rawStopReason))) {
-        throw noTextResponseError(meta, { phase: 'body', transport: 'stream' });
+    const responseSummary = createResponseSummary({
+        response, transport: 'stream', protocol, events: eventCount, json: lastJson, meta,
+        hasText: !!full, hasReasoning: hadReasoning,
+    });
+    if (!full && providerError) throw attachResponseSummary(streamPayloadError(providerError), responseSummary);
+    if (!full && hadReasoning) {
+        throw attachResponseSummary(reasoningOnlyError({ phase: 'body', transport: 'stream' }), responseSummary);
     }
-    if (!full) throw streamEmptyError();
-    return { text: full, ...meta };
+    if (!full && (meta.blockReason || isContentBlockedStopReason(meta.rawStopReason))) {
+        throw attachResponseSummary(noTextResponseError(meta, { phase: 'body', transport: 'stream' }), responseSummary);
+    }
+    // 已收到合法事件（尤其是 finish_reason），说明流式传输本身并不为空；
+    // 此时再次完整生成只会重复消耗上游推理，直接报告无正文。
+    if (!full && eventCount > 0) {
+        throw attachResponseSummary(noTextResponseError(meta, { phase: 'body', transport: 'stream' }), responseSummary);
+    }
+    if (!full) throw attachResponseSummary(streamEmptyError(), responseSummary);
+    return { text: full, ...meta, responseSummary };
 }

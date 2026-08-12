@@ -6,7 +6,7 @@ import { playSoundFile } from './notification-sound.js';
 import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follow.js';
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
-import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
+import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, extractPresetGenerationOptions, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml } from './generation-payload.js';
 import { debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
@@ -49,6 +49,7 @@ const requestMetricsLog = [];
 let lastRequestIssue = null;
 let lastRequestContext = null;
 let lastRequestTrace = null;
+let lastApiResponseSummary = null;
 let lastAutoIssue = null;
 let lastAutoIssueFingerprint = '';
 let currentGenerationJob = null;
@@ -4307,6 +4308,7 @@ function bindEvents() {
             cachedPresetEntries = [];
             cachedPresetPostProcessing = '';
             cachedPresetSquashSystemMessages = false;
+            cachedPresetGenerationOptions = {};
             $('#theater-preset-entries').html('<p class="theater-empty">请选择预设</p>');
         }
     });
@@ -5243,6 +5245,7 @@ function loadPersona(options = {}) {
 let cachedPresetEntries = [];
 let cachedPresetPostProcessing = '';
 let cachedPresetSquashSystemMessages = false;
+let cachedPresetGenerationOptions = {};
 let presetNamesCache = [];
 let presetSearch = '';
 
@@ -5487,6 +5490,7 @@ async function loadPresetEntries() {
     cachedPresetEntries = [];
     cachedPresetPostProcessing = '';
     cachedPresetSquashSystemMessages = false;
+    cachedPresetGenerationOptions = {};
     const sel = settings.selectedPresetName;
 
     if (!sel) {
@@ -5506,6 +5510,7 @@ async function loadPresetEntries() {
             ?? '',
         );
         cachedPresetSquashSystemMessages = !!data.squash_system_messages;
+        cachedPresetGenerationOptions = extractPresetGenerationOptions(data);
         console.log(`[Theater] Extracted ${cachedPresetEntries.length} entries from preset "${sel}"`);
     }
 
@@ -7963,6 +7968,7 @@ function captureGenerationApiRoute(ctx = SillyTavern.getContext()) {
         apiKey: settings.apiKey || '',
         apiModel: settings.apiModel || '',
         maxOutputTokens: normalizeMaxTokens(settings.maxOutputTokens),
+        generationOptions: Object.freeze({ ...cachedPresetGenerationOptions }),
     });
     return Object.freeze({
         mode,
@@ -7984,6 +7990,7 @@ async function requestConfiguredGenerationApi({
     requestOptions = {},
     metricScope = '',
 } = {}) {
+    lastApiResponseSummary = null;
     const scope = metricScope ? `:${metricScope}` : '';
     if (apiRoute.mode === 'main') {
         lastRequestMetrics = createRequestMetrics(`main:ChatCompletionService${scope}`);
@@ -8026,6 +8033,7 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
         log: runtimeLog,
         onFallback: path => markFallback(lastRequestMetrics, path),
         onPath: path => { if (lastRequestMetrics) lastRequestMetrics.path = path; },
+        onResponse: summary => { lastApiResponseSummary = summary; },
         tavernHelper: window.TavernHelper,
         getContext: () => SillyTavern.getContext(),
     });
@@ -8038,6 +8046,7 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
         apiKey: settings.apiKey,
         apiModel: settings.apiModel,
         maxOutputTokens: settings.maxOutputTokens,
+        generationOptions: { ...cachedPresetGenerationOptions },
     };
     return requestCustomApi({
         config: apiConfig,
@@ -8052,6 +8061,7 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
         signal,
         log: runtimeLog,
         onFallback: path => markFallback(lastRequestMetrics, path),
+        onResponse: summary => { lastApiResponseSummary = summary; },
     });
 }
 // ============================================================
@@ -8060,6 +8070,18 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
 function diagnosticLine(status, name, detail) {
     const icon = status === 'ok' ? 'OK' : (status === 'warn' ? '注意' : '异常');
     return { status, name, detail, text: `[${icon}] ${name}: ${detail}` };
+}
+
+function formatApiResponseSummary(summary) {
+    if (!summary) return '暂无；完成一次独立 API 请求后会显示脱敏后的响应类型和 Token 计数，不记录正文。';
+    const usage = summary.usage || {};
+    const tokenParts = [
+        usage.inputTokens != null ? `输入 ${usage.inputTokens}` : '',
+        usage.outputTokens != null ? `输出 ${usage.outputTokens}` : '',
+        usage.reasoningTokens != null ? `思考 ${usage.reasoningTokens}` : '',
+        usage.totalTokens != null ? `合计 ${usage.totalTokens}` : '',
+    ].filter(Boolean);
+    return `${summary.transport || 'unknown'} · HTTP ${summary.httpStatus || '未知'} · ${summary.contentType || 'unknown'} · 格式 ${summary.format || 'unknown'} · 事件 ${summary.events || 0} · 正文 ${summary.hasText ? '有' : '无'} · 思考 ${summary.hasReasoning ? '有' : '无'} · 结束 ${summary.rawStopReason || '未报告'}${tokenParts.length ? ` · Token ${tokenParts.join('/')}` : ''}`;
 }
 
 function buildAutoModeDiagnostic() {
@@ -8136,6 +8158,7 @@ function buildDiagnostics() {
         diagnosticLine(lastRequestTrace ? 'ok' : 'warn', '创作请求结构', lastRequestTrace
             ? `${lastRequestTrace.route}/${lastRequestTrace.transport} · ${lastRequestTrace.messages.length} 条消息 · 工具已强制禁用`
             : '暂无；完成一次插件正文请求后会在此显示发送前的角色、来源和长度，不包含消息正文'),
+        diagnosticLine(lastApiResponseSummary?.hasText ? 'ok' : 'warn', '最近响应结构', formatApiResponseSummary(lastApiResponseSummary)),
         buildAutoModeDiagnostic(),
         diagnosticLine('ok', '数据数量', `历史 ${historyCache.length} 条，最近生成 ${recentCache.length} 条，指令模板 ${(settings.instructionTemplates || []).length} 个`),
         diagnosticLine(recentContentOk ? 'ok' : 'warn', '最近生成正文', recentContentDetail),
