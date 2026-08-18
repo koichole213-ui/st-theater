@@ -308,3 +308,45 @@ export function composePresetMessages({
     const presetProcessed = squashSystemMessages ? squashAdjacentSystemMessages(messages) : messages;
     return applyPromptPostProcessing(presetProcessed, postProcessing);
 }
+
+export function composeGenerationContinuationMessages({
+    presetEntries = [],
+    slots = {},
+    worldInfoEntries = [],
+    chatMessages = [],
+    foundationTailMessages = [],
+    originalInstruction = '',
+    continuationSystemPrompt = '',
+    continuationUserPrompt = '',
+    squashSystemMessages = false,
+} = {}) {
+    const tailMessages = [
+        ...normalizeRequestMessages(foundationTailMessages),
+        String(originalInstruction || '').trim() ? {
+            role: 'user',
+            content: `【本篇最初要求｜只用于保持方向，不要重新开头】\n${String(originalInstruction).trim()}`,
+            source: 'theater-original-instruction',
+            sourceId: 'original-instruction',
+        } : null,
+        String(continuationUserPrompt || '').trim() ? {
+            role: 'user',
+            content: String(continuationUserPrompt).trim(),
+            source: 'theater-continuation',
+            sourceId: 'continuation-round',
+        } : null,
+        String(continuationSystemPrompt || '').trim() ? {
+            role: 'system',
+            content: String(continuationSystemPrompt).trim(),
+            source: 'theater-rules',
+            sourceId: 'continuation-rules',
+        } : null,
+    ].filter(Boolean);
+    return composePresetMessages({
+        presetEntries,
+        slots,
+        worldInfoEntries,
+        chatMessages,
+        tailMessages,
+        squashSystemMessages,
+    });
+}

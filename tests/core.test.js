@@ -33,7 +33,7 @@ import { LONG_DREAM_ARCHIVE_FORMAT, LONG_DREAM_ARCHIVE_MANIFEST, createLongDream
 import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, buildLongDreamCanonSuggestionPayload, composeLongDreamCanon, parseLongDreamCanonSuggestions } from '../long-dream-canon-suggestions.js';
 import { buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, pendingLongDreamChapters, shouldWeaveLongDreamMemory } from '../long-dream-memory.js';
 import { LONG_DREAM_MEMORY_OUTPUT_CONTRACT, exportLongDreamMemoryPreset, parseLongDreamMemoryPreset } from '../long-dream-memory-presets.js';
-import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing, composePresetMessages, normalizeRequestMessages, normalizeWorldInfoEntry, squashAdjacentSystemMessages } from '../request-layout.js';
+import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing, composeGenerationContinuationMessages, composePresetMessages, normalizeRequestMessages, normalizeWorldInfoEntry, squashAdjacentSystemMessages } from '../request-layout.js';
 import { createRequestTrace, formatRequestTrace } from '../request-trace.js';
 
 test('AI 定梦建议只读取第一章正文，并明确输出待确认草稿', () => {
@@ -423,6 +423,12 @@ test('生成下一版中途停止时保留旧候选，放弃本轮后可回到�
     const first = await controller.run({ record });
     const running = controller.run({ record: first.record, appendCandidate: true });
     await started;
+    assert.equal(controller.active.candidateNumber, 2);
+    assert.equal(controller.active.retainedCandidateCount, 1);
+    assert.equal(controller.active.currentChars, readableCharCount('第二版只写到一半。'));
+    assert.equal(controller.active.targetChars, 3000);
+    assert.ok(Number.isFinite(controller.active.startedAt));
+    assert.ok(Number.isFinite(controller.active.firstChunkAt));
     controller.abort();
     await assert.rejects(running, error => {
         assert.equal(error.longDreamRecord.draft.status, LONG_DREAM_DRAFT_STATUS.WRITING);
@@ -527,6 +533,12 @@ test('长梦在第二轮补写中停止时保留首轮和当前流式草稿', as
         aborted: false,
         round: 2,
         maxRounds: 3,
+        startedAt: controller.active.startedAt,
+        firstChunkAt: controller.active.firstChunkAt,
+        currentChars: 250,
+        targetChars: 500,
+        candidateNumber: 1,
+        retainedCandidateCount: 0,
     });
     assert.equal(controller.abort(), true);
     await assert.rejects(running, error => {
@@ -1393,6 +1405,22 @@ test('编辑正式章节会保留既有梦脉并从修改章起重新织录，�
         text: '编辑后的次章', html: '<main>编辑后的次章</main>',
     });
     assert.deepEqual(editedBeforeFirstWeave.memory.pendingChapterNumbers, [1, 2]);
+});
+
+test('长梦再生成会显示真实版本、等待时间、字数、轮次与旧候选切换', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    assert.match(source, /第 \$\{state\.activeProgress\?\.candidateNumber/);
+    assert.match(source, /正在等待接口返回首字/);
+    assert.match(source, /id="theater-dream-progress-elapsed"/);
+    assert.match(source, /id="theater-dream-progress-chars"/);
+    assert.match(source, /id="theater-dream-progress-round"/);
+    assert.match(source, /data-dream-progress-view="candidate"/);
+    assert.match(source, /data-dream-progress-view="live"/);
+    assert.match(source, /id="theater-dream-progress-candidate-fullscreen"/);
+    assert.match(source, /renderLongDreamProgressCandidate/);
+    assert.match(styles, /\.theater-dream-progress-meta/);
+    assert.match(styles, /\.theater-dream-progress-switch/);
 });
 
 test('重新生成整部梦脉会清理自动结果并保留人工校正、隐藏与否定记录', () => {
@@ -3365,6 +3393,48 @@ test('续写提示携带当前、目标和本轮篇幅，但不携带原始指�
     assert.match(longFinalRound, /仍差约 4400 字/);
     assert.match(longFinalRound, /本轮请新增约 5300 字/);
     assert.match(longFinalRound, /可以.*自然收束结局/);
+});
+
+test('普通生成后续每轮重新带齐冻结的预设、人物、人设、世界书与聊天前文', () => {
+    const messages = composeGenerationContinuationMessages({
+        presetEntries: [
+            { id: 'main', role: 'system', content: '冻结预设' },
+            { id: 'charDescription', role: 'system', content: '' },
+            { id: 'personaDescription', role: 'system', content: '' },
+            { id: 'worldInfoBefore', role: 'system', content: '' },
+            { id: 'chatHistory', role: 'system', content: '' },
+        ],
+        slots: {
+            charDescription: '冻结角色：NPC 是女性',
+            personaDescription: '冻结 User 人设',
+        },
+        worldInfoEntries: [{ content: '冻结世界书：NPC 名叫林秋', position: WORLD_INFO_POSITION.BEFORE_CHARACTER }],
+        chatMessages: [{ role: 'assistant', content: '冻结聊天前文', source: 'chat-history', sourceId: 'chat-1' }],
+        foundationTailMessages: [{ role: 'system', content: '冻结文风补充', source: 'theater-addon', sourceId: 'addons' }],
+        originalInstruction: '让林秋陪主角调查旧站',
+        continuationSystemPrompt: '只续写新增正文',
+        continuationUserPrompt: '从当前结尾继续第二轮',
+    });
+    const text = messages.map(message => message.content).join('\n');
+    for (const expected of [
+        '冻结预设', 'NPC 是女性', '冻结 User 人设', 'NPC 名叫林秋',
+        '冻结聊天前文', '冻结文风补充', '让林秋陪主角调查旧站',
+        '从当前结尾继续第二轮', '只续写新增正文',
+    ]) assert.match(text, new RegExp(expected));
+    assert.equal(messages.filter(message => message.sourceId === 'original-instruction').length, 1);
+    assert.equal(messages.filter(message => message.sourceId === 'continuation-round').length, 1);
+    assert.equal(messages.filter(message => message.sourceId === 'continuation-rules').length, 1);
+});
+
+test('普通生成多轮复用首轮资料包而不是退回简化续写请求', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const ordinaryGeneration = source.slice(
+        source.indexOf('async function runGeneration'),
+        source.indexOf('function currentAutoInstruction'),
+    );
+    assert.match(source, /generationFoundation: Object\.freeze/);
+    assert.match(ordinaryGeneration, /buildGenerationContinuationRoundPayload/);
+    assert.doesNotMatch(ordinaryGeneration, /\.\.\.buildContinuationPayload/);
 });
 
 test('四档分诊边界保留，首轮明确告诉模型目标正文字数', () => {

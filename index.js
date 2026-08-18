@@ -36,7 +36,7 @@ import { DEFAULT_LONG_DREAM_MEMORY_PRESET, LEGACY_DEFAULT_LONG_DREAM_MEMORY_PRES
 import { LONG_DREAM_MEMORY_BUILTIN_PRESET_ID, MAX_LONG_DREAM_MEMORY_PRESET_BYTES, createLongDreamMemoryPreset, exportLongDreamMemoryPreset, normalizeLongDreamMemoryPresetList, parseLongDreamMemoryPreset } from './long-dream-memory-presets.js';
 import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, buildLongDreamCanonSuggestionPayload, composeLongDreamCanon, parseLongDreamCanonSuggestions } from './long-dream-canon-suggestions.js';
 import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkSide, normalizeBookmarkYRatio } from './result-bookmark.js';
-import { applyPromptPostProcessing, composePresetMessages, noToolsPostProcessingMode, normalizePromptRole } from './request-layout.js';
+import { applyPromptPostProcessing, composeGenerationContinuationMessages, composePresetMessages, noToolsPostProcessingMode, normalizePromptRole } from './request-layout.js';
 import { createRequestTrace, formatRequestTrace, requestTraceMessageLabel } from './request-trace.js';
 
 const MODULE_NAME = 'theater_generator';
@@ -55,6 +55,8 @@ let lastAutoIssueFingerprint = '';
 let currentGenerationJob = null;
 let longDreamGenerationController = null;
 let activeLongDreamGenerationId = null;
+let longDreamProgressTicker = null;
+let longDreamLiveDraftText = '';
 installSafeResizeListener();
 
 function recordRequestMetrics(metrics) {
@@ -2469,6 +2471,33 @@ function longDreamGenerationStageText(stage) {
     return '正在续写这场梦……';
 }
 
+function formatLongDreamElapsed(startedAt) {
+    const seconds = Math.max(0, Math.floor((Date.now() - Number(startedAt || Date.now())) / 1000));
+    const minutes = Math.floor(seconds / 60);
+    const remainder = seconds % 60;
+    return minutes ? `${minutes} 分 ${String(remainder).padStart(2, '0')} 秒` : `${remainder} 秒`;
+}
+
+function longDreamProgressStageText(progress) {
+    if (progress?.stage === LONG_DREAM_GENERATION_STAGE.RENDERING) return '正文已经完成，正在生成最终 HTML 排版';
+    if (progress?.stage === LONG_DREAM_GENERATION_STAGE.REVIEW) return '新版本已经完成，正在准备预览';
+    if (!progress?.firstChunkAt) return '正在等待接口返回首字';
+    if (Number(progress?.round) > 1) return `正在自动续写第 ${progress.round} 轮`;
+    return '正在写正文';
+}
+
+function longDreamProgressMetaHTML(progress, fallbackChars = 0, fallbackTarget = 3000) {
+    const currentChars = Math.max(0, Number(progress?.currentChars) || readableCharCount(fallbackChars));
+    const targetChars = Math.max(500, Number(progress?.targetChars) || Number(fallbackTarget) || 3000);
+    const round = Math.max(0, Number(progress?.round) || 0);
+    const maxRounds = Math.max(1, Number(progress?.maxRounds) || 1);
+    return `<div class="theater-dream-progress-meta" aria-live="polite">
+        <span><i class="fa-regular fa-clock" aria-hidden="true"></i><b id="theater-dream-progress-elapsed">${esc(formatLongDreamElapsed(progress?.startedAt))}</b></span>
+        <span><i class="fa-solid fa-align-left" aria-hidden="true"></i><b id="theater-dream-progress-chars">约 ${currentChars.toLocaleString()} / ${targetChars.toLocaleString()} 字</b><small>目标参考</small></span>
+        <span><i class="fa-solid fa-layer-group" aria-hidden="true"></i><b id="theater-dream-progress-round">${progress?.stage === LONG_DREAM_GENERATION_STAGE.RENDERING ? '最终排版' : (maxRounds > 1 ? `第 ${Math.max(1, round)} / ${maxRounds} 轮` : '正文生成')}</b></span>
+    </div>`;
+}
+
 function selectedLongDreamMemoryApiPreset() {
     const presetId = String(settings.longDreamMemoryApiPresetId || '');
     return normalizeApiPresetList(settings.apiPresets).find(preset => String(preset.id) === presetId) || null;
@@ -2813,10 +2842,11 @@ function longDreamDetailState(dream) {
         : 0;
     const isGeneratingThisDream = String(activeLongDreamGenerationId) === String(dream.id)
         && !!longDreamGenerationController?.active;
-    const activeStage = isGeneratingThisDream ? longDreamGenerationController.active.stage : null;
-    const draftText = draft?.text || '';
+    const activeProgress = isGeneratingThisDream ? longDreamGenerationController.active : null;
+    const activeStage = activeProgress?.stage || null;
+    const draftText = isGeneratingThisDream ? longDreamLiveDraftText : (draft?.text || '');
     const hasWritingDraft = draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING;
-    const hasReviewDraft = draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW;
+    const hasReviewDraft = draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW && !isGeneratingThisDream;
     const hasRenderPendingDraft = hasWritingDraft
         && draft?.resumeStage === LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING
         && !!draftText.trim();
@@ -2839,7 +2869,7 @@ function longDreamDetailState(dream) {
         latest, chapterText, selectedPolicy, worldLineRelation, selectedBooks, snapshotEntries,
         availableBooks, currentCheckedEntries, bookText, nextNumber, activeMemoryCount,
         inheritanceSummary, draft, draftCandidates, selectedCandidateIndex,
-        isGeneratingThisDream, activeStage, draftText, hasWritingDraft, hasReviewDraft,
+        isGeneratingThisDream, activeProgress, activeStage, draftText, hasWritingDraft, hasReviewDraft,
         hasRenderPendingDraft, controlsDisabled, statusControlDisabled, nextTitle,
         nextInstruction, nextTarget, generationHint,
     };
@@ -2909,10 +2939,18 @@ function longDreamDetailHTML(dream) {
             <div class="theater-dream-context-window">${dream.chapters.slice(-LONG_DREAM_RECENT_CHAPTER_COUNT).reverse().map(chapter => `<div class="ia-context-row"><div class="ia-context-copy"><div class="ia-line-title">第 ${chapter.number} 章 · ${esc(chapter.title)}</div><div class="ia-line-sub">最近完整章节 · ${readableCharCount(chapter.text || htmlToPlainText(chapter.html || ''))} 字 · 已注入全文</div></div><span class="memory-v2-tag">近期</span></div>`).join('')}${dream.chapters.length > LONG_DREAM_RECENT_CHAPTER_COUNT ? `<div class="ia-context-row"><div class="ia-context-copy"><div class="ia-line-title">更早章节索引</div><div class="ia-line-sub">第 1–${dream.chapters.length - LONG_DREAM_RECENT_CHAPTER_COUNT} 章旧章索引继续参与检索</div></div><span class="memory-v2-tag">索引</span></div>` : ''}</div>
         </section>
         <section id="theater-dream-generation-status" class="ui-card ia-generation-status theater-dream-generation-status ${state.isGeneratingThisDream || state.hasWritingDraft ? 'open' : ''}" ${state.isGeneratingThisDream || state.hasWritingDraft ? '' : 'hidden'}>
-            <div class="ui-title"><span id="theater-dream-generation-label">${esc(state.isGeneratingThisDream ? longDreamGenerationStageText(state.activeStage) : (state.hasRenderPendingDraft ? '正文已完成，等待重新排版' : '发现一份未完成草稿'))}</span><span class="memory-v2-tag">${state.isGeneratingThisDream ? '生成中' : '可恢复'}</span></div>
-            <p class="theater-dream-generation-context">已注入定梦基础包、最近两章全文、旧章索引与当前完整草稿。</p>
-            <pre id="theater-dream-generation-text">${esc(state.draftText || (state.isGeneratingThisDream ? '正在准备请求……' : '已保存本章方向，尚未生成正文。'))}</pre>
-            ${state.isGeneratingThisDream ? '<div class="ia-status-track"><span></span></div>' : ''}
+            <div class="ui-title"><span><b id="theater-dream-generation-version">${state.isGeneratingThisDream ? `第 ${state.activeProgress?.candidateNumber || state.draftCandidates.length + 1} 版生成中` : '未完成草稿'}</b><small id="theater-dream-generation-label">${esc(state.isGeneratingThisDream ? longDreamProgressStageText(state.activeProgress) : (state.hasRenderPendingDraft ? '正文已完成，等待重新排版' : '发现一份未完成草稿'))}</small></span><span class="memory-v2-tag">${state.isGeneratingThisDream ? '实时进度' : '可恢复'}</span></div>
+            ${state.isGeneratingThisDream ? longDreamProgressMetaHTML(state.activeProgress, state.draftText, state.nextTarget) : ''}
+            ${state.isGeneratingThisDream && state.draftCandidates.length ? `<div class="theater-dream-progress-switch" role="tablist" aria-label="切换已有版本与实时草稿">
+                <button type="button" data-dream-progress-view="candidate" role="tab" aria-selected="false"><i class="fa-solid fa-book-open" aria-hidden="true"></i>查看第 ${state.selectedCandidateIndex + 1} 版</button>
+                <button type="button" data-dream-progress-view="live" role="tab" aria-selected="true" class="active"><i class="fa-solid fa-pen-nib" aria-hidden="true"></i>查看实时草稿</button>
+            </div>` : ''}
+            ${state.isGeneratingThisDream && state.draftCandidates.length ? `<div class="theater-dream-progress-pane" data-dream-progress-pane="candidate" hidden><div class="theater-dream-progress-candidate"><iframe id="theater-dream-progress-candidate-frame" sandbox="" title="已保留的第 ${state.selectedCandidateIndex + 1} 版"></iframe><div id="theater-dream-progress-candidate-fallback" hidden></div></div><div class="theater-dream-progress-candidate-note"><p>已有版本安全保留，当前生成不会覆盖它。</p><button type="button" id="theater-dream-progress-candidate-fullscreen" class="theater-dream-icon-button"><i class="fa-solid fa-expand" aria-hidden="true"></i><span>全屏阅读</span></button></div></div>` : ''}
+            <div class="theater-dream-progress-pane active" data-dream-progress-pane="live">
+                <p class="theater-dream-generation-context">${state.isGeneratingThisDream ? '这里显示当前版本的实时正文；目标字数只是参考，不代表模型的精确完成百分比。' : '已注入定梦基础包、最近两章全文、旧章索引与当前完整草稿。'}</p>
+                <pre id="theater-dream-generation-text">${esc(state.draftText || (state.isGeneratingThisDream ? '请求正在准备中，首字返回后会在这里出现……' : '已保存本章方向，尚未生成正文。'))}</pre>
+            </div>
+            ${state.isGeneratingThisDream ? '<div class="ia-status-track" aria-hidden="true"><span></span></div>' : ''}
         </section>
         <section class="ui-card theater-dream-latest">
             <div class="ui-title"><span><i class="fa-solid fa-clock-rotate-left"></i> 上次写到 · ${esc(state.latest?.title || '第一章')}</span><button type="button" id="theater-dream-read-latest" class="theater-dream-icon-button" data-dream-read-chapter data-chapter-id="${esc(state.latest?.id || '')}" aria-label="阅读本章"><i class="fa-solid fa-book-open"></i></button></div>
@@ -3046,7 +3084,57 @@ function renderLongDreamPanel() {
     $root.html(longDreamWorkspaceHTML(content, longDreamWorkspaceSection));
     if (longDreamWorkspaceSection === 'continue' && dream) {
         renderLongDreamReviewDraft(dream);
+        renderLongDreamProgressCandidate(dream);
+        syncLongDreamProgressDisplay();
         scheduleLongDreamTokenEstimate();
+    }
+}
+
+function renderLongDreamProgressCandidate(dream) {
+    const frame = document.getElementById('theater-dream-progress-candidate-frame');
+    if (!frame) return;
+    const candidates = Array.isArray(dream?.draft?.candidates) ? dream.draft.candidates : [];
+    const index = Math.min(candidates.length - 1, Math.max(0, Math.floor(Number(dream?.draft?.selectedCandidateIndex) || 0)));
+    const candidate = candidates[index];
+    if (!candidate) return;
+    const fallback = document.getElementById('theater-dream-progress-candidate-fallback');
+    renderSafeIframe(frame, candidate.html, {
+        sourceHasText: !!candidate.text,
+        fallbackOnNoReport: false,
+        onBlank: candidate.text ? () => {
+            $(frame).hide();
+            $(fallback).text(candidate.text).prop('hidden', false);
+        } : null,
+    });
+}
+
+function stopLongDreamProgressTicker() {
+    if (longDreamProgressTicker) clearInterval(longDreamProgressTicker);
+    longDreamProgressTicker = null;
+}
+
+function syncLongDreamProgressDisplay() {
+    const progress = longDreamGenerationController?.active;
+    const status = document.getElementById('theater-dream-generation-status');
+    if (!progress || !status || String(activeLongDreamGenerationId) !== String(activeLongDreamId)) {
+        stopLongDreamProgressTicker();
+        return;
+    }
+    $('#theater-dream-generation-version').text(`第 ${progress.candidateNumber || 1} 版生成中`);
+    $('#theater-dream-generation-label').text(longDreamProgressStageText(progress));
+    $('#theater-dream-progress-elapsed').text(formatLongDreamElapsed(progress.startedAt));
+    $('#theater-dream-progress-chars').text(`约 ${Math.max(0, Number(progress.currentChars) || readableCharCount(longDreamLiveDraftText)).toLocaleString()} / ${Math.max(500, Number(progress.targetChars) || 3000).toLocaleString()} 字`);
+    $('#theater-dream-progress-round').text(progress.stage === LONG_DREAM_GENERATION_STAGE.RENDERING
+        ? '最终排版'
+        : (Number(progress.maxRounds) > 1 ? `第 ${Math.max(1, Number(progress.round) || 1)} / ${progress.maxRounds} 轮` : '正文生成'));
+    if (!longDreamProgressTicker) {
+        longDreamProgressTicker = setInterval(() => {
+            if (!document.getElementById('theater-dream-generation-status')) {
+                stopLongDreamProgressTicker();
+                return;
+            }
+            syncLongDreamProgressDisplay();
+        }, 1000);
     }
 }
 
@@ -3981,6 +4069,26 @@ function bindEvents() {
             $('#theater-dream-generation-label').text('正在停止并保存当前草稿……');
             $(this).prop('disabled', true);
         }
+    });
+    $d.off('click.tdprogressview').on('click.tdprogressview', '[data-dream-progress-view]', function () {
+        const view = String($(this).attr('data-dream-progress-view') || 'live');
+        $('[data-dream-progress-view]').removeClass('active').attr('aria-selected', 'false');
+        $(this).addClass('active').attr('aria-selected', 'true');
+        $('[data-dream-progress-pane]').removeClass('active').prop('hidden', true);
+        $(`[data-dream-progress-pane="${view}"]`).addClass('active').prop('hidden', false);
+    });
+    $d.off('click.tdprogressfullscreen').on('click.tdprogressfullscreen', '#theater-dream-progress-candidate-fullscreen', function () {
+        const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+        const candidates = Array.isArray(dream?.draft?.candidates) ? dream.draft.candidates : [];
+        const index = Math.min(candidates.length - 1, Math.max(0, Math.floor(Number(dream?.draft?.selectedCandidateIndex) || 0)));
+        const candidate = candidates[index];
+        if (!candidate) return;
+        openFullscreenReader({
+            title: `${dream.title} · ${dream.draft.title} · 第 ${index + 1} 版`,
+            html: candidate.html,
+            mode: candidate.mode || 'html',
+            text: candidate.text,
+        });
     });
     $d.off('click.tdconfirm').on('click.tdconfirm', '#theater-dream-confirm-chapter', confirmLongDreamChapter);
     $d.off('click.tddiscard').on('click.tddiscard', '#theater-dream-discard-draft', discardLongDreamDraft);
@@ -6506,6 +6614,32 @@ function generationIdentitySlots(identity = {}, { includeScenario = true } = {})
     };
 }
 
+function freezeGenerationFoundationList(items = []) {
+    return Object.freeze((Array.isArray(items) ? items : []).map(item => Object.freeze({ ...item })));
+}
+
+function buildGenerationContinuationRoundPayload({ foundation, instruction, ctx }) {
+    const continuationPayload = buildContinuationPayload({ instruction });
+    return {
+        ...continuationPayload,
+        messages: composeGenerationContinuationMessages({
+            presetEntries: foundation.presetEntries,
+            slots: foundation.identitySlots,
+            worldInfoEntries: foundation.worldInfoEntries,
+            chatMessages: foundation.chatMessages,
+            foundationTailMessages: foundation.tailMessages,
+            originalInstruction: foundation.originalInstruction,
+            continuationSystemPrompt: continuationPayload.systemPrompt,
+            continuationUserPrompt: continuationPayload.userPrompt,
+            squashSystemMessages: foundation.squashSystemMessages,
+        }),
+        postProcessing: foundation.postProcessing,
+        presetName: foundation.presetName,
+        ctx,
+        isPlainTextRender: true,
+    };
+}
+
 async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, longFormPlan = false, loadPreset = true, evaluateWorldBook = true } = {}) {
     const ctx = SillyTavern.getContext();
     const { chat = [] } = ctx;
@@ -6619,20 +6753,25 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     const presetEntriesForLayout = selectedPresetEntries.length
         ? selectedPresetEntries
         : [{ id: 'main', role: 'system', content: DEFAULT_SYSTEM_PROMPT }];
-    const tailMessages = [
+    const foundationTailMessages = [
         addons ? { role: 'system', content: addons, source: 'theater-addon', sourceId: 'addons' } : null,
         (!structuredChatMessages.length && context)
             ? { role: 'system', content: context, source: 'theater-context', sourceId: 'context-policy' }
             : null,
+    ].filter(Boolean);
+    const tailMessages = [
+        ...foundationTailMessages,
         continuation
             ? { role: 'user', content: continuation, source: 'theater-continuation', sourceId: 'continuation' }
             : null,
         { role: 'user', content: `用户指令：${cleanInstruction}`, source: 'theater-instruction', sourceId: 'instruction' },
         { role: 'system', content: [rules, fixed].filter(Boolean).join('\n\n'), source: 'theater-rules', sourceId: 'final-rules' },
     ].filter(Boolean);
+    const identitySlots = generationIdentitySlots(identity);
+    const presetName = settings.selectedPresetName || '内置默认预设';
     const messages = composePresetMessages({
         presetEntries: presetEntriesForLayout,
-        slots: generationIdentitySlots(identity),
+        slots: identitySlots,
         worldInfoEntries: activeWorldInfoEntries,
         chatMessages: structuredChatMessages,
         tailMessages,
@@ -6642,11 +6781,22 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         ...payload,
         messages,
         postProcessing: cachedPresetPostProcessing,
-        presetName: settings.selectedPresetName || '内置默认预设',
+        presetName,
         isPlainTextRender,
         textTheme,
         targetWordCount,
         ctx,
+        generationFoundation: Object.freeze({
+            presetEntries: freezeGenerationFoundationList(presetEntriesForLayout),
+            identitySlots: Object.freeze({ ...identitySlots }),
+            worldInfoEntries: freezeGenerationFoundationList(activeWorldInfoEntries),
+            chatMessages: freezeGenerationFoundationList(structuredChatMessages),
+            tailMessages: freezeGenerationFoundationList(foundationTailMessages),
+            originalInstruction: cleanInstruction,
+            squashSystemMessages: cachedPresetSquashSystemMessages,
+            postProcessing: cachedPresetPostProcessing,
+            presetName,
+        }),
         diagnosticContext: {
             kind: '普通小剧场',
             presetSource: selectedPresetPrompt ? '已选酒馆预设' : '内置默认预设',
@@ -7071,12 +7221,15 @@ function getLongDreamStreamRenderer() {
 function resetLongDreamStreamRenderer({ flushPending = false } = {}) {
     getLongDreamStreamRenderer().reset({ flushPending });
     longDreamStreamFirstChunk = true;
+    if (!flushPending) longDreamLiveDraftText = '';
 }
 
 function updateLongDreamStream({ draftText }) {
+    longDreamLiveDraftText = String(draftText || '');
     const immediate = longDreamStreamFirstChunk && !!String(draftText || '').trim();
     if (immediate) longDreamStreamFirstChunk = false;
     getLongDreamStreamRenderer().update(draftText, { immediate });
+    syncLongDreamProgressDisplay();
 }
 
 function handleLongDreamGenerationState({ stage, record }) {
@@ -7087,6 +7240,7 @@ function handleLongDreamGenerationState({ stage, record }) {
             $('#theater-dream-generation-status').prop('hidden', false);
             $('#theater-dream-generation-label').text(longDreamGenerationStageText(stage));
         }
+        syncLongDreamProgressDisplay();
     }
 }
 
@@ -7222,9 +7376,14 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
         toastr.info(`同一章最多保留 ${LONG_DREAM_MAX_CANDIDATES} 版候选`);
         return;
     }
-    const chapterTitle = ($('#theater-dream-next-title').val() || `第 ${dream.chapters.length + 1} 章`).trim();
-    const instruction = String($('#theater-dream-next-instruction').val() || '');
-    const targetChars = Math.max(500, Math.min(8000, Math.round(Number($('#theater-dream-next-target').val()) || 3000)));
+    const composerDraft = getLongDreamComposerDraft(dream.id);
+    const $titleInput = $('#theater-dream-next-title');
+    const $instructionInput = $('#theater-dream-next-instruction');
+    const $targetInput = $('#theater-dream-next-target');
+    const chapterTitle = String(($titleInput.length ? $titleInput.val() : composerDraft.title)
+        || `第 ${dream.chapters.length + 1} 章`).trim();
+    const instruction = String($instructionInput.length ? ($instructionInput.val() || '') : (composerDraft.instruction || ''));
+    const targetChars = Math.max(500, Math.min(8000, Math.round(Number($targetInput.length ? $targetInput.val() : composerDraft.targetChars) || 3000)));
     setLongDreamComposerDraft(dream.id, { chapterTitle, title: chapterTitle, instruction, targetChars });
     const foundation = await resolveLongDreamRequestFoundation(dream);
     const selectedMemoryCount = selectRelevantLongDreamMemoryItems(dream, { instruction, maxItems: 30 }).length;
@@ -7311,6 +7470,8 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
         }
     } finally {
         resetLongDreamStreamRenderer({ flushPending: true });
+        stopLongDreamProgressTicker();
+        longDreamLiveDraftText = '';
         activeLongDreamGenerationId = null;
         renderLongDreamPanel();
     }
@@ -7441,6 +7602,8 @@ async function regenerateLongDreamDraft() {
         targetChars: draft.targetChars,
     });
     toastr.info(`正在按原要求生成第 ${candidateCount + 1} 版，已有候选不会被覆盖`);
+    longDreamWorkspaceSection = 'continue';
+    longDreamView = 'detail';
     await generateNextLongDreamChapter({ appendCandidate: true });
 }
 
@@ -7683,11 +7846,11 @@ async function runGeneration(instruction, isAuto) {
                 targetChars: currentGenerationJob.targetChars,
                 roundsRemaining: currentGenerationJob.maxRounds - currentGenerationJob.round + 1,
             });
-            roundPayload = {
-                ...buildContinuationPayload({ instruction: continuationInstruction }),
+            roundPayload = buildGenerationContinuationRoundPayload({
+                foundation: payload.generationFoundation,
+                instruction: continuationInstruction,
                 ctx,
-                isPlainTextRender: true,
-            };
+            });
             firstChunkShown = false;
             bgStreamText = '';
             streamRenderer.reset();

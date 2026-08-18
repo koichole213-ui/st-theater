@@ -212,6 +212,12 @@ export function createLongDreamGenerationController({
                 : LONG_DREAM_GENERATION_STAGE.WRITING,
             round: resumeRendering ? 0 : 1,
             maxRounds: allowedRounds,
+            startedAt: Number(clock()),
+            firstChunkAt: cleanText(existingDraftText) ? Number(clock()) : null,
+            currentChars: readableCharCount(existingDraftText),
+            targetChars: target,
+            candidateNumber: retainedCandidates.length + 1,
+            retainedCandidateCount: retainedCandidates.length,
         };
 
         try {
@@ -268,6 +274,10 @@ export function createLongDreamGenerationController({
                         onChunk: cumulativeText => {
                             streamedText = String(cumulativeText || '');
                             const draftText = composeDraftText(roundBaseText, streamedText);
+                            if (active && cleanText(streamedText)) {
+                                if (!active.firstChunkAt) active.firstChunkAt = Number(clock());
+                                active.currentChars = readableCharCount(draftText);
+                            }
                             onStream({
                                 generatedText: streamedText,
                                 draftText,
@@ -280,6 +290,10 @@ export function createLongDreamGenerationController({
                     streamedText = String(requestResult?.text ?? requestResult ?? streamedText);
                     if (!cleanText(streamedText)) throw new Error('长梦正文请求没有返回有效内容');
                     accumulatedText = composeDraftText(roundBaseText, streamedText);
+                    if (active) {
+                        if (!active.firstChunkAt) active.firstChunkAt = Number(clock());
+                        active.currentChars = readableCharCount(accumulatedText);
+                    }
                     completedRounds = round;
                     await checkpointWritingDraft(true);
                     currentRecord = await persistence;
@@ -296,6 +310,7 @@ export function createLongDreamGenerationController({
                 resumeStage: LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING,
                 text: finalText,
             });
+            if (active) active.currentChars = readableCharCount(finalText);
 
             emitState(LONG_DREAM_GENERATION_STAGE.RENDERING, {
                 record: currentRecord,
@@ -386,6 +401,12 @@ export function createLongDreamGenerationController({
                 aborted: active.controller.signal.aborted,
                 round: active.round,
                 maxRounds: active.maxRounds,
+                startedAt: active.startedAt,
+                firstChunkAt: active.firstChunkAt,
+                currentChars: active.currentChars,
+                targetChars: active.targetChars,
+                candidateNumber: active.candidateNumber,
+                retainedCandidateCount: active.retainedCandidateCount,
             } : null;
         },
     };
