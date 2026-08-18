@@ -1410,6 +1410,7 @@ test('编辑正式章节会保留既有梦脉并从修改章起重新织录，�
 test('长梦再生成会显示真实版本、等待时间、字数、轮次与旧候选切换', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const progress = source.match(/<section id="theater-dream-generation-status"[\s\S]*?<section class="ui-card theater-dream-latest">/)?.[0] || '';
     assert.match(source, /第 \$\{state\.activeProgress\?\.candidateNumber/);
     assert.match(source, /正在等待接口返回首字/);
     assert.match(source, /id="theater-dream-progress-elapsed"/);
@@ -1419,8 +1420,23 @@ test('长梦再生成会显示真实版本、等待时间、字数、轮次与�
     assert.match(source, /data-dream-progress-view="live"/);
     assert.match(source, /id="theater-dream-progress-candidate-fullscreen"/);
     assert.match(source, /renderLongDreamProgressCandidate/);
+    assert.match(progress, /theater-dream-progress-pulse/);
+    assert.match(progress, /theater-dream-progress-footer/);
+    assert.match(progress, /id="theater-dream-stop-generation"/);
+    assert.ok(progress.indexOf('ia-status-track') < progress.indexOf('data-dream-progress-pane="live"'));
     assert.match(styles, /\.theater-dream-progress-meta/);
     assert.match(styles, /\.theater-dream-progress-switch/);
+    assert.match(styles, /\.theater-dream-progress-meta \{ display:flex; flex-wrap:wrap/);
+    assert.doesNotMatch(styles, /\.theater-dream-progress-meta > span \{[^}]*border:/);
+});
+
+test('长梦候选切换与全屏阅读在同一行且切换器位于左侧', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const reviewFlow = source.match(/const reviewFlow = state\.hasReviewDraft[\s\S]*?return `<div class="theater-dream-detail/)?.[0] || '';
+    assert.ok(reviewFlow.indexOf('theater-dream-candidate-switcher') >= 0);
+    assert.ok(reviewFlow.indexOf('theater-dream-candidate-switcher') < reviewFlow.indexOf('theater-dream-review-fullscreen'));
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.theater-dream-review-tools \{[^}]*flex-direction:row;[^}]*align-items:center;[^}]*gap:12px/);
 });
 
 test('重新生成整部梦脉会清理自动结果并保留人工校正、隐藏与否定记录', () => {
@@ -1910,6 +1926,33 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.theater-dream-latest \{ display:block; margin-top:0; \}/);
     assert.match(styles, /:where\(\.theater-dream-home, \.theater-dream-work-detail, \.theater-dream-chapter-detail\) \.ui-btn:not\(\.ui-btn-danger\)/);
     assert.doesNotMatch(styles, /dialog\.popup:has\(\.theater-panel\[data-panel="long-dream"\]\.active\)/);
+});
+
+test('旧历史开卷不会因世界书尚未同步而锁死世界线选项', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const relationChoices = source.match(/function longDreamRelationChoicesHTML\([\s\S]*?function longDreamSourceWorldBooks/)?.[0] || '';
+    const restoreHandler = source.match(/click\.tdrestorebooks[\s\S]*?click\.tdopenbooks/)?.[0] || '';
+    assert.match(relationChoices, /const isDisabled = disabled/);
+    assert.doesNotMatch(relationChoices, /isDisabled = disabled \|\| \(needsBooks && !hasBooks\)/);
+    assert.match(source, /data-dream-restore-source-world-books/);
+    assert.match(source, /data-dream-open-world-books/);
+    assert.match(restoreHandler, /Popup\.show\.confirm/);
+    assert.match(restoreHandler, /settings\.selectedWorldBooks = \[\.\.\.sourceBooks\]/);
+    assert.match(restoreHandler, /await reloadWorldBooks\(\{ silent: true \}\)/);
+});
+
+test('放弃长梦草稿保留续写指令，只有独立清空按钮会确认后清除', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const discard = source.match(/async function discardLongDreamDraft\(\) \{[\s\S]*?async function regenerateLongDreamDraft/)?.[0] || '';
+    const clearHandler = source.match(/click\.tdclearinstruction[\s\S]*?click\.tdmemoryregenerate/)?.[0] || '';
+    assert.match(source, /id="theater-dream-clear-next-instruction"/);
+    assert.match(discard, /const retainedComposer =/);
+    assert.match(discard, /setLongDreamComposerDraft\(dream\.id, retainedComposer\)/);
+    assert.doesNotMatch(discard, /clearLongDreamComposerDraft/);
+    assert.match(discard, /本章指令会保留/);
+    assert.match(clearHandler, /确定清空本章续写指令/);
+    assert.match(clearHandler, /rememberLongDreamComposerDraft\(\)/);
+    assert.match(clearHandler, /refreshLongDreamMemorySelection\(\)/);
 });
 
 test('长梦参考稿样式只作用于长梦面板，不改坏其他页面按钮与插件外壳', () => {
