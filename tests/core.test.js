@@ -1439,6 +1439,23 @@ test('长梦候选切换与全屏阅读在同一行且切换器位于左侧', ()
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.theater-dream-review-tools \{[^}]*flex-direction:row;[^}]*align-items:center;[^}]*gap:12px/);
 });
 
+test('长梦待确认页的字数统计按整个标题区居中', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    assert.match(source, /<p class="theater-dream-review-count">正文约 \$\{readableCharCount/);
+    assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.theater-dream-review-count \{[^}]*grid-column:1 \/ -1;[^}]*width:100%;[^}]*text-align:center;/);
+});
+
+test('长梦最终排版进度只通过统一状态刷新，避免完成提示与字符数交替闪烁', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const renderer = source.match(/async function renderLongDreamChapter[\s\S]*?function createCumulativeStreamRenderer/)?.[0] || '';
+    const synchronizer = source.match(/function syncLongDreamProgressDisplay[\s\S]*?function renderLongDreamReviewDraft/)?.[0] || '';
+    assert.match(renderer, /updateLongDreamRenderProgress\(\{/);
+    assert.doesNotMatch(renderer, /\$\('#theater-dream-generation-label'\)\.text/);
+    assert.match(synchronizer, /longDreamProgressLabelText\(progress\)/);
+    assert.match(source, /longDreamRenderReceivedChars\.toLocaleString\(\)/);
+});
+
 test('重新生成整部梦脉会清理自动结果并保留人工校正、隐藏与否定记录', () => {
     let record = createLongDreamRecord({ source: { text: '第一章', html: '<main>第一章</main>' } });
     record = appendLongDreamChapter(record, { text: '第二章', html: '<main>第二章</main>' });

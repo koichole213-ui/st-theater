@@ -5553,6 +5553,7 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-panel[data-panel="long-dream"] .review-title-area span { color:var(--t-success); font-size:10px; font-weight:800; }
 .theater-panel[data-panel="long-dream"] .review-title-area h3 { margin:2px 0 0; overflow:hidden; color:var(--t-fg); font-family:var(--t-font-serif); font-size:15px; text-overflow:ellipsis; white-space:nowrap; }
 .theater-panel[data-panel="long-dream"] .review-title-area p { margin:4px 0 0; color:var(--t-fg-mute); font-size:10px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review-count { grid-column:1 / -1; width:100%; margin:0; color:var(--t-fg-mute); font-size:10px; text-align:center; }
 .theater-panel[data-panel="long-dream"] .theater-dream-review-tools { display:flex; flex-direction:row; align-items:center; justify-content:flex-end; gap:12px; }
 .theater-panel[data-panel="long-dream"] .candidate-switcher { display:inline-flex; align-items:center; justify-content:center; border:1px solid color-mix(in srgb,var(--t-success) 30%,var(--t-border)); border-radius:8px; background:var(--t-surface-2); }
 .theater-panel[data-panel="long-dream"] .candidate-switcher button { width:28px; height:28px; padding:0; border:0; background:transparent; color:var(--t-success); }

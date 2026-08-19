@@ -57,6 +57,8 @@ let longDreamGenerationController = null;
 let activeLongDreamGenerationId = null;
 let longDreamProgressTicker = null;
 let longDreamLiveDraftText = '';
+let longDreamRenderReceivedChars = 0;
+let longDreamRenderRepairing = false;
 installSafeResizeListener();
 
 function recordRequestMetrics(metrics) {
@@ -2522,6 +2524,14 @@ function longDreamProgressStageText(progress) {
     return '正在写正文';
 }
 
+function longDreamProgressLabelText(progress) {
+    if (progress?.stage !== LONG_DREAM_GENERATION_STAGE.RENDERING) return longDreamProgressStageText(progress);
+    if (longDreamRenderRepairing) return '排版完整性校验未通过，正在修复 HTML……';
+    return longDreamRenderReceivedChars
+        ? `正在生成最终 HTML 排版……已接收 ${longDreamRenderReceivedChars.toLocaleString()} 字符`
+        : '正文已经完成，正在生成最终 HTML 排版';
+}
+
 function longDreamProgressKickerText(progress) {
     if (progress?.stage === LONG_DREAM_GENERATION_STAGE.RENDERING) return '正文已经写完';
     if (progress?.stage === LONG_DREAM_GENERATION_STAGE.REVIEW) return '新版本已经完成';
@@ -2984,7 +2994,7 @@ function longDreamDetailHTML(dream) {
         </section>
         <section id="theater-dream-generation-status" class="ui-card ia-generation-status theater-dream-generation-status ${state.isGeneratingThisDream || state.hasWritingDraft ? 'open' : ''}" ${state.isGeneratingThisDream || state.hasWritingDraft ? '' : 'hidden'}>
             <header class="theater-dream-progress-head">
-                <div class="theater-dream-progress-copy"><span class="theater-dream-progress-kicker"><i class="theater-dream-progress-pulse" aria-hidden="true"></i><small id="theater-dream-generation-kicker">${esc(state.isGeneratingThisDream ? longDreamProgressKickerText(state.activeProgress) : '草稿仍在这里')}</small></span><b id="theater-dream-generation-label">${esc(state.isGeneratingThisDream ? longDreamProgressStageText(state.activeProgress) : (state.hasRenderPendingDraft ? '正文已完成，等待重新排版' : '发现一份未完成草稿'))}</b></div>
+                <div class="theater-dream-progress-copy"><span class="theater-dream-progress-kicker"><i class="theater-dream-progress-pulse" aria-hidden="true"></i><small id="theater-dream-generation-kicker">${esc(state.isGeneratingThisDream ? longDreamProgressKickerText(state.activeProgress) : '草稿仍在这里')}</small></span><b id="theater-dream-generation-label">${esc(state.isGeneratingThisDream ? longDreamProgressLabelText(state.activeProgress) : (state.hasRenderPendingDraft ? '正文已完成，等待重新排版' : '发现一份未完成草稿'))}</b></div>
                 <span id="theater-dream-generation-version" class="theater-dream-progress-version">${state.isGeneratingThisDream ? `第 ${state.activeProgress?.candidateNumber || state.draftCandidates.length + 1} 版` : '可恢复'}</span>
             </header>
             ${state.isGeneratingThisDream ? longDreamProgressMetaHTML(state.activeProgress, state.draftText, state.nextTarget) : ''}
@@ -3006,8 +3016,9 @@ function longDreamDetailHTML(dream) {
     </div>`;
     const reviewFlow = state.hasReviewDraft ? `<div class="ia-flow-state active theater-dream-review-state"><section class="review-wrapper theater-dream-review" data-dream-continuation-stage="review">
         <div class="review-head theater-dream-review-head">
-            <div class="review-title-area theater-dream-review-copy"><span>待确认新章</span><h3>${esc(state.draft.title || `第 ${state.nextNumber} 章`)}</h3><p>正文约 ${readableCharCount(state.draft.text || '')} 字</p></div>
+            <div class="review-title-area theater-dream-review-copy"><span>待确认新章</span><h3>${esc(state.draft.title || `第 ${state.nextNumber} 章`)}</h3></div>
             <div class="theater-dream-review-tools"><div class="candidate-switcher theater-dream-candidate-switcher" aria-label="切换待确认候选版本"><button type="button" data-dream-candidate-step="-1" aria-label="上一版" ${state.selectedCandidateIndex <= 0 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i></button><strong aria-live="polite">${state.selectedCandidateIndex + 1}/${state.draftCandidates.length}</strong><button type="button" data-dream-candidate-step="1" aria-label="下一版" ${state.selectedCandidateIndex >= state.draftCandidates.length - 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-right"></i></button></div><button type="button" id="theater-dream-review-fullscreen" class="theater-dream-review-fullscreen" title="全屏阅读当前候选" aria-label="全屏阅读当前候选"><i class="fa-solid fa-expand"></i></button></div>
+            <p class="theater-dream-review-count">正文约 ${readableCharCount(state.draft.text || '')} 字</p>
         </div>
         <div class="review-canvas theater-dream-review-canvas"><iframe id="theater-dream-review-frame" sandbox="" title="待确认长梦章节"></iframe><div id="theater-dream-review-fallback" class="theater-dream-review-fallback" hidden></div></div>
         <div class="theater-dream-review-actions"><button type="button" id="theater-dream-discard-draft" class="ui-btn ui-btn-sm"><i class="fa-solid fa-rotate-left"></i><span>放弃重写</span></button><button type="button" id="theater-dream-confirm-chapter" class="ui-btn ui-btn-sm ui-btn-primary"><i class="fa-solid fa-check"></i><span>确认保存</span></button></div>
@@ -3169,7 +3180,7 @@ function syncLongDreamProgressDisplay() {
     }
     $('#theater-dream-generation-version').text(`第 ${progress.candidateNumber || 1} 版`);
     $('#theater-dream-generation-kicker').text(longDreamProgressKickerText(progress));
-    $('#theater-dream-generation-label').text(longDreamProgressStageText(progress));
+    $('#theater-dream-generation-label').text(longDreamProgressLabelText(progress));
     $('#theater-dream-progress-elapsed').text(`已等待 ${formatLongDreamElapsed(progress.startedAt)}`);
     $('#theater-dream-progress-chars').text(`约 ${Math.max(0, Number(progress.currentChars) || readableCharCount(longDreamLiveDraftText)).toLocaleString()} / ${Math.max(500, Number(progress.targetChars) || 3000).toLocaleString()} 字`);
     $('#theater-dream-progress-round').text(progress.stage === LONG_DREAM_GENERATION_STAGE.RENDERING
@@ -7255,12 +7266,12 @@ async function renderLongDreamChapter({ text, signal, apiRoute }) {
         renderLabel: selection.label,
         metricScope: 'long-dream-final-render',
         onChunk: rendered => {
-            const count = String(rendered || '').length;
-            $('#theater-dream-generation-label').text(count
-                ? `正在生成最终 HTML 排版……已接收 ${count} 字符`
-                : '正在生成最终 HTML 排版……');
+            updateLongDreamRenderProgress({
+                receivedChars: String(rendered || '').length,
+                repairing: false,
+            });
         },
-        onRetry: () => $('#theater-dream-generation-label').text('排版完整性校验未通过，正在修复 HTML……'),
+        onRetry: () => updateLongDreamRenderProgress({ receivedChars: 0, repairing: true }),
     });
 }
 
@@ -7329,7 +7340,24 @@ function updateLongDreamStream({ draftText }) {
     syncLongDreamProgressDisplay();
 }
 
+function resetLongDreamRenderProgress() {
+    longDreamRenderReceivedChars = 0;
+    longDreamRenderRepairing = false;
+}
+
+function updateLongDreamRenderProgress({ receivedChars, repairing }) {
+    const progress = longDreamGenerationController?.active;
+    if (progress?.stage !== LONG_DREAM_GENERATION_STAGE.RENDERING
+        || String(activeLongDreamGenerationId) !== String(activeLongDreamId)) return;
+    longDreamRenderReceivedChars = Math.max(0, Number(receivedChars) || 0);
+    longDreamRenderRepairing = repairing === true;
+    syncLongDreamProgressDisplay();
+}
+
 function handleLongDreamGenerationState({ stage, record }) {
+    if (stage === LONG_DREAM_GENERATION_STAGE.RENDERING || stage === LONG_DREAM_GENERATION_STAGE.WRITING) {
+        resetLongDreamRenderProgress();
+    }
     if (record?.id !== undefined && String(record.id) === String(activeLongDreamId) && longDreamView === 'detail') {
         if ([LONG_DREAM_GENERATION_STAGE.WRITING, LONG_DREAM_GENERATION_STAGE.RENDERING, LONG_DREAM_GENERATION_STAGE.REVIEW].includes(stage)) {
             renderLongDreamPanel();
@@ -7501,6 +7529,7 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
     clearRequestIssue();
     activeLongDreamGenerationId = dream.id;
     resetLongDreamStreamRenderer();
+    resetLongDreamRenderProgress();
     const apiRoute = captureGenerationApiRoute(SillyTavern.getContext());
     runtimeLog('info', '长梦续章开始', {
         dream_id: String(dream.id),
@@ -7567,6 +7596,7 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
         }
     } finally {
         resetLongDreamStreamRenderer({ flushPending: true });
+        resetLongDreamRenderProgress();
         stopLongDreamProgressTicker();
         longDreamLiveDraftText = '';
         activeLongDreamGenerationId = null;
