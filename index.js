@@ -1126,11 +1126,15 @@ function createFloatingBall() {
             'transition:transform 0.18s cubic-bezier(.2,.8,.2,1), opacity 0.18s, box-shadow 0.18s',
             '-webkit-user-select:none !important',
             'user-select:none !important',
+            'touch-action:none !important',
             'pointer-events:auto !important',
         ].join(';'));
 
         let isDragging = false;
         let startedTucked = false;
+        let activePointerId = null;
+        let activeTouchId = null;
+        let suppressMouseUntil = 0;
         let startX, startY, startLeft, startTop;
 
         function clamp(val, min, max) { return Math.max(min, Math.min(max, val)); }
@@ -1150,6 +1154,9 @@ function createFloatingBall() {
         }
 
         function removeGestureListeners() {
+            if (activePointerId !== null && ball.hasPointerCapture?.(activePointerId)) {
+                try { ball.releasePointerCapture(activePointerId); } catch { /* 已由系统释放 */ }
+            }
             document.removeEventListener('pointermove', onPointerMove);
             document.removeEventListener('pointerup', onPointerUp);
             document.removeEventListener('pointercancel', onPointerCancel);
@@ -1158,15 +1165,40 @@ function createFloatingBall() {
             document.removeEventListener('touchmove', onTouchMove);
             document.removeEventListener('touchend', onPointerUp);
             document.removeEventListener('touchcancel', onPointerCancel);
+            activePointerId = null;
+            activeTouchId = null;
+        }
+
+        function activeChangedTouch(e) {
+            if (activeTouchId === null) return null;
+            return Array.from(e?.changedTouches || []).find(touch => touch.identifier === activeTouchId) || null;
         }
 
         function onPointerDown(e) {
+            if (e.type === 'mousedown' && Date.now() < suppressMouseUntil) return;
+            if (e.pointerId !== undefined) {
+                if (activePointerId !== null) return;
+                activePointerId = e.pointerId;
+            } else if (e.touches) {
+                if (activeTouchId !== null) return;
+                const firstTouch = e.changedTouches?.[0] || e.touches[0];
+                if (!firstTouch) return;
+                activeTouchId = firstTouch.identifier;
+                suppressMouseUntil = Date.now() + 800;
+            }
+            if (e.cancelable) e.preventDefault();
             cancelTuck();
             startedTucked = ball.dataset.tucked === 'true';
             untuck();
             ball.style.transition = BASE_TRANSITION;  // 拖动时 left 不能带动画，不然会"飘"
             isDragging = false;
-            const touch = e.touches ? e.touches[0] : e;
+            const touch = e.touches
+                ? Array.from(e.touches).find(item => item.identifier === activeTouchId)
+                : e;
+            if (!touch) return;
+            if (e.pointerId !== undefined && ball.setPointerCapture) {
+                try { ball.setPointerCapture(e.pointerId); } catch { /* 某些旧 WebView 不支持捕获 */ }
+            }
             startX = touch.clientX;
             startY = touch.clientY;
             startLeft = parseInt(ball.style.left);
@@ -1175,26 +1207,31 @@ function createFloatingBall() {
         }
 
         function onPointerMove(e) {
+            if (e.pointerId !== undefined && e.pointerId !== activePointerId) return;
             const dx = e.clientX - startX;
             const dy = e.clientY - startY;
             if (Math.abs(dx) > 5 || Math.abs(dy) > 5) isDragging = true;
             if (!isDragging) return;
+            if (e.cancelable) e.preventDefault();
             ball.style.left = clamp(startLeft + dx, 0, window.innerWidth - 46) + 'px';
             ball.style.top = clamp(startTop + dy, 0, window.innerHeight - 46) + 'px';
         }
 
         function onTouchMove(e) {
-            const touch = e.touches[0];
+            const touch = Array.from(e.touches || []).find(item => item.identifier === activeTouchId);
+            if (!touch) return;
+            if (e.cancelable) e.preventDefault();
             const dx = touch.clientX - startX;
             const dy = touch.clientY - startY;
             if (Math.abs(dx) > 5 || Math.abs(dy) > 5) isDragging = true;
             if (!isDragging) return;
-            e.preventDefault();
             ball.style.left = clamp(startLeft + dx, 0, window.innerWidth - 46) + 'px';
             ball.style.top = clamp(startTop + dy, 0, window.innerHeight - 46) + 'px';
         }
 
-        function onPointerCancel() {
+        function onPointerCancel(e) {
+            if (e?.pointerId !== undefined && e.pointerId !== activePointerId) return;
+            if (e?.changedTouches && !activeChangedTouch(e)) return;
             const wasDragging = isDragging;
             removeGestureListeners();
             isDragging = false;
@@ -1204,7 +1241,10 @@ function createFloatingBall() {
         }
 
         function onPointerUp(e) {
-            const release = e?.changedTouches?.[0] || e;
+            if (e?.pointerId !== undefined && e.pointerId !== activePointerId) return;
+            const changedTouch = e?.changedTouches ? activeChangedTouch(e) : null;
+            if (e?.changedTouches && !changedTouch) return;
+            const release = changedTouch || e;
             const releasePoint = {
                 x: Number.isFinite(Number(release?.clientX)) ? Number(release.clientX) : startX,
                 y: Number.isFinite(Number(release?.clientY)) ? Number(release.clientY) : startY,
@@ -1233,7 +1273,7 @@ function createFloatingBall() {
             ball.addEventListener('pointerdown', onPointerDown);
         } else {
             ball.addEventListener('mousedown', onPointerDown);
-            ball.addEventListener('touchstart', onPointerDown, { passive: true });
+            ball.addEventListener('touchstart', onPointerDown, { passive: false });
         }
 
         ball.addEventListener('mouseenter', () => {

@@ -1814,6 +1814,15 @@ test('悬浮球拖动被系统取消时会清理监听，旧浏览器也使用�
     assert.match(floatingBall, /document\.addEventListener\('touchcancel', onPointerCancel\)/);
     assert.match(floatingBall, /document\.addEventListener\('mousemove', onPointerMove/);
     assert.match(floatingBall, /document\.addEventListener\('mouseup', onPointerUp\)/);
+    assert.match(floatingBall, /touch-action:none !important/);
+    assert.match(floatingBall, /ball\.setPointerCapture\(e\.pointerId\)/);
+    assert.match(floatingBall, /if \(e\.cancelable\) e\.preventDefault\(\)/);
+    assert.match(floatingBall, /let activePointerId = null/);
+    assert.match(floatingBall, /let activeTouchId = null/);
+    assert.match(floatingBall, /e\.pointerId !== activePointerId/);
+    assert.match(floatingBall, /touch\.identifier === activeTouchId/);
+    assert.match(floatingBall, /e\.type === 'mousedown' && Date\.now\(\) < suppressMouseUntil/);
+    assert.match(floatingBall, /touchstart', onPointerDown, \{ passive: false \}/);
     assert.match(floatingBall, /function removeGestureListeners\(\)[\s\S]*?removeEventListener\('touchcancel', onPointerCancel\)/);
     assert.match(source, /let floatingBallCleanup = null/);
     assert.match(floatingBall, /if \(floatingBallCleanup\) floatingBallCleanup\(\)/);
