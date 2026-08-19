@@ -41,7 +41,7 @@ import { createRequestTrace, formatRequestTrace, requestTraceMessageLabel } from
 import { migrateLegacyPresetEntryStates, presetEntryStatesForPreset } from './preset-entry-states.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.0.2';
+const VERSION = '4.0.3';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let updateReadyToReload = false;
@@ -1197,7 +1197,9 @@ function createFloatingBall() {
 // ============================================================
 // Popup HTML
 // ============================================================
-function buildPopupHTML() {
+function buildPopupHTML(initialTab = settings.lastTheaterTab) {
+    initialTab = normalizeTheaterTab(initialTab);
+    const activeTabClass = tab => initialTab === tab ? ' active' : '';
     const inst = settings.instructionTemplates || [];
     const render = settings.renderTemplates || [];
     const hist = historyCache;
@@ -1216,20 +1218,20 @@ function buildPopupHTML() {
         <p class="theater-subtitle">独立生成 · 不影响正文</p>
     </div>
     <div class="theater-tabs">
-        <div class="theater-tab active" data-tab="generate">生成</div>
-        <div class="theater-tab" data-tab="long-dream">长梦</div>
-        <div class="theater-tab" data-tab="setting">设定</div>
-        <div class="theater-tab" data-tab="dialogue">对话</div>
-        <div class="theater-tab" data-tab="rules">规则</div>
-        <div class="theater-tab" data-tab="history">历史</div>
-        <div class="theater-tab" data-tab="theme">美化</div>
-        <div class="theater-tab" data-tab="diagnostics">诊断</div>
-        <div class="theater-tab" data-tab="config">设置${hasRemoteUpdate() ? updateBadgeHTML() : ''}</div>
+        <div class="theater-tab${activeTabClass('generate')}" data-tab="generate">生成</div>
+        <div class="theater-tab${activeTabClass('long-dream')}" data-tab="long-dream">长梦</div>
+        <div class="theater-tab${activeTabClass('setting')}" data-tab="setting">设定</div>
+        <div class="theater-tab${activeTabClass('dialogue')}" data-tab="dialogue">对话</div>
+        <div class="theater-tab${activeTabClass('rules')}" data-tab="rules">规则</div>
+        <div class="theater-tab${activeTabClass('history')}" data-tab="history">历史</div>
+        <div class="theater-tab${activeTabClass('theme')}" data-tab="theme">美化</div>
+        <div class="theater-tab${activeTabClass('diagnostics')}" data-tab="diagnostics">诊断</div>
+        <div class="theater-tab${activeTabClass('config')}" data-tab="config">设置${hasRemoteUpdate() ? updateBadgeHTML() : ''}</div>
     </div>
     <div class="theater-panels-wrapper">
 
     <!-- ===== 1. 生成 ===== -->
-    <div class="theater-panel active" data-panel="generate">
+    <div class="theater-panel${activeTabClass('generate')}" data-panel="generate">
         <div class="theater-section">
             <label class="theater-label">小剧场指令</label>
             <textarea id="theater-instruction" class="theater-textarea" rows="4" placeholder="例如：生成一个角色们一起吃火锅的番外小剧场">${esc(settings.lastInstruction || '')}</textarea>
@@ -1311,12 +1313,12 @@ function buildPopupHTML() {
     </div>
 
     <!-- ===== 长梦续章 ===== -->
-    <div class="theater-panel" data-panel="long-dream">
+    <div class="theater-panel${activeTabClass('long-dream')}" data-panel="long-dream">
         <div id="theater-long-dream-root">${longDreamListHTML()}</div>
     </div>
 
     <!-- ===== 2. 设定 ===== -->
-    <div class="theater-panel" data-panel="setting">
+    <div class="theater-panel${activeTabClass('setting')}" data-panel="setting">
         <!-- Preset -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-shield-halved"></i> 生成预设</label>
@@ -1378,7 +1380,7 @@ function buildPopupHTML() {
     </div>
 
     <!-- ===== 3. 对话 ===== -->
-    <div class="theater-panel" data-panel="dialogue">
+    <div class="theater-panel${activeTabClass('dialogue')}" data-panel="dialogue">
         <!-- User Persona -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-user"></i> User 人设</label>
@@ -1407,7 +1409,7 @@ function buildPopupHTML() {
     </div>
 
     <!-- ===== 3. 规则 ===== -->
-    <div class="theater-panel" data-panel="rules">
+    <div class="theater-panel${activeTabClass('rules')}" data-panel="rules">
         <!-- Instruction Templates -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-pen-fancy"></i> 指令模板库</label>
@@ -1465,7 +1467,7 @@ function buildPopupHTML() {
     </div>
 
     <!-- ===== 4. 历史 ===== -->
-    <div class="theater-panel" data-panel="history">
+    <div class="theater-panel${activeTabClass('history')}" data-panel="history">
         <div class="theater-section">
             <div class="theater-history-top-bar">
                 <label class="theater-label" style="margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> 保存的小剧场</label>
@@ -1484,7 +1486,7 @@ function buildPopupHTML() {
     </div>
 
     <!-- ===== 5. 美化 ===== -->
-    <div class="theater-panel" data-panel="theme">
+    <div class="theater-panel${activeTabClass('theme')}" data-panel="theme">
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-palette"></i> 风格</label>
             <div class="theater-drawer">
@@ -1537,7 +1539,7 @@ function buildPopupHTML() {
     </div>
 
     <!-- ===== 6. 诊断 ===== -->
-    <div class="theater-panel" data-panel="diagnostics">
+    <div class="theater-panel${activeTabClass('diagnostics')}" data-panel="diagnostics">
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-terminal"></i> 运行日志终端（<span id="theater-runtime-log-count">${runtimeEntries.length}</span>/200）</label>
             <div class="theater-btn-row">
@@ -1571,7 +1573,7 @@ function buildPopupHTML() {
     </div>
 
     <!-- ===== 7. 设置 ===== -->
-    <div class="theater-panel" data-panel="config">
+    <div class="theater-panel${activeTabClass('config')}" data-panel="config">
         <div class="theater-section" data-config-section="api">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-plug"></i> 正文线路</label>
             <div class="theater-api-mode-switch" role="group" aria-label="API 模式">
@@ -3555,7 +3557,7 @@ async function openTheaterPopup() {
         ? 'long-dream'
         : normalizeTheaterTab(settings.lastTheaterTab);
     const { Popup, POPUP_TYPE } = SillyTavern.getContext();
-    const popup = new Popup(buildPopupHTML(), POPUP_TYPE.TEXT, '', { wide: true, okButton: 'Close', allowVerticalScrolling: true });
+    const popup = new Popup(buildPopupHTML(initialTab), POPUP_TYPE.TEXT, '', { wide: true, okButton: 'Close', allowVerticalScrolling: true });
     const p = popup.show();
     await new Promise(r => setTimeout(r, 50));
     setBallDot(false);  // 看过了，红点熄灭

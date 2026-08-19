@@ -1918,13 +1918,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.0.2 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.0.3 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.0\.2'/);
-    assert.equal(manifest.version, '4.0.2');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.0\.2/);
+    assert.match(source, /const VERSION = '4\.0\.3'/);
+    assert.equal(manifest.version, '4.0.3');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.0\.3/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -2092,6 +2092,10 @@ test('手机端主弹窗铺满可用屏幕，保留底部 Close 并让内容独�
     assert.match(tabActivator, /panels\.scrollTop = 0/);
     assert.doesNotMatch(source, /target\.scrollIntoView/);
     assert.match(source, /okButton: 'Close'/);
+    assert.match(source, /new Popup\(buildPopupHTML\(initialTab\)/);
+    assert.match(source, /const activeTabClass = tab => initialTab === tab \? ' active' : ''/);
+    assert.doesNotMatch(source, /class="theater-tab active" data-tab="generate"/);
+    assert.doesNotMatch(source, /class="theater-panel active" data-panel="generate"/);
     assert.doesNotMatch(source, /theater-mobile-close/);
     assert.match(mobileShell, /width:\s*100vw !important/);
     assert.match(mobileShell, /height:\s*100dvh !important/);
@@ -2100,6 +2104,8 @@ test('手机端主弹窗铺满可用屏幕，保留底部 Close 并让内容独�
     assert.match(mobileShell, /:is\(\.popup-controls, \.popup-buttons\)[\s\S]*?flex:\s*0 0 auto !important/);
     assert.match(mobileShell, /:is\(\.popup-controls, \.popup-buttons\) \{\s*min-height:\s*0 !important;\s*margin:\s*0 !important;\s*padding:\s*4px 10px !important;/);
     assert.match(mobileShell, /:is\(\.popup-button-close, \.popup-button-ok, \.popup-button-cancel\)[\s\S]*?min-height:\s*44px !important/);
+    assert.match(mobileShell, /#theater-instruction[\s\S]*?min-height:\s*120px/);
+    assert.match(mobileShell, /#theater-dream-next-instruction[\s\S]*?min-height:\s*183px/);
     assert.doesNotMatch(styles, /max-width:\s*96vw !important/);
     assert.doesNotMatch(styles, /max-height:\s*92vh !important/);
 });
