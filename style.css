@@ -4722,6 +4722,14 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     body dialog.popup:has(.theater-popup) :is(.popup-controls, .popup-buttons) {
         flex: 0 0 auto !important;
     }
+    body .popup:has(.theater-popup) :is(.popup-controls, .popup-buttons),
+    body dialog.popup:has(.theater-popup) :is(.popup-controls, .popup-buttons),
+    body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-controls, .popup-buttons),
+    body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-controls, .popup-buttons) {
+        min-height: 0 !important;
+        margin: 0 !important;
+        padding: 4px 10px !important;
+    }
     body .popup:has(.theater-popup) .theater-panels-wrapper,
     body dialog.popup:has(.theater-popup) .theater-panels-wrapper {
         flex: 1 1 auto;

@@ -2098,6 +2098,7 @@ test('手机端主弹窗铺满可用屏幕，保留底部 Close 并让内容独�
     assert.match(mobileShell, /border-radius:\s*0 !important/);
     assert.match(mobileShell, /\.theater-panels-wrapper,[\s\S]*?flex:\s*1 1 auto;[\s\S]*?height:\s*auto;[\s\S]*?max-height:\s*none;/);
     assert.match(mobileShell, /:is\(\.popup-controls, \.popup-buttons\)[\s\S]*?flex:\s*0 0 auto !important/);
+    assert.match(mobileShell, /:is\(\.popup-controls, \.popup-buttons\) \{\s*min-height:\s*0 !important;\s*margin:\s*0 !important;\s*padding:\s*4px 10px !important;/);
     assert.match(mobileShell, /:is\(\.popup-button-close, \.popup-button-ok, \.popup-button-cancel\)[\s\S]*?min-height:\s*44px !important/);
     assert.doesNotMatch(styles, /max-width:\s*96vw !important/);
     assert.doesNotMatch(styles, /max-height:\s*92vh !important/);
