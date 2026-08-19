@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.0.3
+/* 千夜浮梦 · 小剧场生成器 v4.1.0
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -6412,4 +6412,79 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 
 @media (prefers-reduced-motion:reduce) {
     .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions { animation:none; }
+}
+
+/* v4.1.0 review controls: quiet candidate navigation and truly centered actions. */
+.theater-panel[data-panel="long-dream"] .theater-dream-review-head {
+    grid-template-columns:1fr;
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-review-copy {
+    grid-column:1;
+    text-align:center;
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-review-tools {
+    position:relative;
+    grid-column:1;
+    width:100%;
+    justify-content:center;
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-candidate-switcher,
+.theater-panel[data-panel="long-dream"] .candidate-switcher {
+    min-height:32px;
+    overflow:visible;
+    border:0;
+    border-radius:0;
+    background:transparent;
+    box-shadow:none;
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-candidate-switcher button,
+.theater-panel[data-panel="long-dream"] .candidate-switcher button {
+    width:32px;
+    height:32px;
+    padding:0;
+    place-items:center;
+    border:0;
+    border-radius:0;
+    background:transparent;
+    box-shadow:none;
+    font-size:max(9px,calc(var(--t-text-sm) - 3px));
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-candidate-switcher button:hover:not(:disabled),
+.theater-panel[data-panel="long-dream"] .candidate-switcher button:hover:not(:disabled) {
+    background:transparent;
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-candidate-switcher strong,
+.theater-panel[data-panel="long-dream"] .candidate-switcher strong {
+    min-width:30px;
+    padding:0 2px;
+    font-size:max(10px,calc(var(--t-text-sm) - 2px)) !important;
+    font-weight:600;
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-review-fullscreen {
+    position:absolute;
+    top:50%;
+    right:0;
+    transform:translateY(-50%);
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-review-fullscreen:hover {
+    transform:translateY(calc(-50% - 1px));
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-review-actions {
+    width:min(100%,560px);
+    margin-inline:auto;
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-review-actions .ui-btn {
+    width:100%;
+    min-width:0;
+    justify-content:center;
+    text-align:center;
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-regenerate {
+    justify-content:center;
+    justify-self:center;
+    align-self:center;
+    width:fit-content;
+    max-width:100%;
+    margin-inline:auto;
+    text-align:center;
 }
