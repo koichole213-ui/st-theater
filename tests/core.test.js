@@ -1924,13 +1924,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.1.0 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.1.1 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.1\.0'/);
-    assert.equal(manifest.version, '4.1.0');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.1\.0/);
+    assert.match(source, /const VERSION = '4\.1\.1'/);
+    assert.equal(manifest.version, '4.1.1');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.1\.1/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -2135,6 +2135,7 @@ test('页边书签位置会限制在可见范围并按拖动落点吸附', () =>
 test('设置页按六个清晰模块展示全部功能且字号跟随全局设置', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const popupBuilder = source.match(/function buildPopupHTML\([\s\S]*?\/\/ Rendering helpers/)?.[0] || '';
     for (const id of [
         'theater-api-mode', 'theater-api-preset-select', 'theater-api-protocol', 'theater-api-url',
         'theater-api-key', 'theater-api-model', 'theater-max-output-tokens', 'theater-stream-enabled',
@@ -2152,6 +2153,10 @@ test('设置页按六个清晰模块展示全部功能且字号跟随全局设�
         assert.match(source, new RegExp(`data-config-group="\\$\\{group.id\\}"|id: '${group}'`));
     }
     const decorator = source.match(/function decorateConfigLayout\(\)[\s\S]*?\n\}/)?.[0] || '';
+    assert.match(popupBuilder, /<div class="theater-config-layout"><div class="theater-config-groups">/);
+    assert.match(popupBuilder, /configGroupOrder = \{ api: 1, generation: 2, automation: 3, materials: 4, access: 5, extension: 6 \}/);
+    assert.ok(popupBuilder.indexOf('theater-config-layout') < popupBuilder.indexOf('data-config-section="api"'));
+    assert.match(decorator, /\$panel\.children\('\.theater-config-layout'\)\.length\) return/);
     assert.doesNotMatch(decorator, /theater-config-index/);
     assert.doesNotMatch(source, /data-config-section="logs"/);
     assert.doesNotMatch(source, /theater-api-preset-menu/);

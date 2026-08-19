@@ -41,7 +41,7 @@ import { createRequestTrace, formatRequestTrace, requestTraceMessageLabel } from
 import { migrateLegacyPresetEntryStates, presetEntryStatesForPreset } from './preset-entry-states.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.1.0';
+const VERSION = '4.1.1';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let updateReadyToReload = false;
@@ -1200,6 +1200,9 @@ function createFloatingBall() {
 function buildPopupHTML(initialTab = settings.lastTheaterTab) {
     initialTab = normalizeTheaterTab(initialTab);
     const activeTabClass = tab => initialTab === tab ? ' active' : '';
+    const configGroupOrder = { api: 1, generation: 2, automation: 3, materials: 4, access: 5, extension: 6 };
+    const configGroupStart = (id, icon, title) => `<section class="theater-config-card" data-config-group="${id}" style="order:${configGroupOrder[id]}"><div class="theater-config-card-title"><span><i class="fa-solid ${icon}"></i>${title}</span></div><div class="theater-config-card-body">`;
+    const configGroupEnd = '</div></section>';
     const inst = settings.instructionTemplates || [];
     const render = settings.renderTemplates || [];
     const hist = historyCache;
@@ -1574,6 +1577,8 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
 
     <!-- ===== 7. 设置 ===== -->
     <div class="theater-panel${activeTabClass('config')}" data-panel="config">
+        <div class="theater-config-layout"><div class="theater-config-groups">
+        ${configGroupStart('api', 'fa-server', '正文生成线路')}
         <div class="theater-section" data-config-section="api">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-plug"></i> 正文线路</label>
             <div class="theater-api-mode-switch" role="group" aria-label="API 模式">
@@ -1660,6 +1665,8 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 </div>
             </details>
         </div>
+        ${configGroupEnd}
+        ${configGroupStart('generation', 'fa-sliders', '生成控制')}
         <div class="theater-section" data-config-section="generation">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-sliders"></i> 生成策略</label>
             <div class="theater-config-setting-row">
@@ -1688,6 +1695,8 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 </div>
             </details>
         </div>
+        ${configGroupEnd}
+        ${configGroupStart('materials', 'fa-book-atlas', '素材与提示')}
         <div class="theater-section" data-config-section="worldbook">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-book-atlas"></i> 世界书读取</label>
             <div class="theater-config-choice-row">
@@ -1722,6 +1731,8 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 </div>
             </div>
         </div>
+        ${configGroupEnd}
+        ${configGroupStart('automation', 'fa-wand-magic-sparkles', '指令与自动生成')}
         <div class="theater-section" data-config-section="random">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-dice"></i> 随机抽取指令</label>
             <div class="theater-config-setting-row">
@@ -1777,6 +1788,8 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 </select>
             </div>
         </div>
+        ${configGroupEnd}
+        ${configGroupStart('access', 'fa-circle-dot', '界面与快捷入口')}
         <div class="theater-section" data-config-section="result-actions">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-bookmark"></i> 生成结果操作</label>
             <div class="theater-config-setting-row">
@@ -1797,6 +1810,8 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <label class="theater-config-switch" aria-label="悬浮球贴边收纳"><input type="checkbox" id="theater-floating-ball-tuck-toggle" ${settings.floatingBallTuck !== false ? 'checked' : ''}><span></span></label>
             </div>
         </div>
+        ${configGroupEnd}
+        ${configGroupStart('extension', 'fa-toolbox', '扩展管理')}
         <div class="theater-section" data-config-section="extension">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-arrows-rotate"></i> 扩展入口</label>
             ${hasRemoteUpdate() ? `
@@ -1813,7 +1828,9 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
             </div>
             <p id="theater-update-ready-hint" class="theater-update-ready-hint" ${updateReadyToReload ? '' : 'hidden'}><i class="fa-solid fa-circle-check"></i><span>更新文件已下载；你可以稍后刷新，不会自动打断当前操作。</span></p>
         </div>
-        <p class="theater-version">当前版本 v${VERSION}</p>
+        ${configGroupEnd}
+        <p class="theater-version" style="order:7">当前版本 v${VERSION}</p>
+        </div></div>
     </div>
 
     </div>
