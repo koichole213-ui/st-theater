@@ -35,6 +35,53 @@ import { buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, pendingLongD
 import { LONG_DREAM_MEMORY_OUTPUT_CONTRACT, exportLongDreamMemoryPreset, parseLongDreamMemoryPreset } from '../long-dream-memory-presets.js';
 import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing, composeGenerationContinuationMessages, composePresetMessages, normalizeRequestMessages, normalizeWorldInfoEntry, squashAdjacentSystemMessages } from '../request-layout.js';
 import { createRequestTrace, formatRequestTrace } from '../request-trace.js';
+import { migrateLegacyPresetEntryStates, normalizePresetEntryStatesByPreset, presetEntryStateStorageKey, presetEntryStatesForPreset } from '../preset-entry-states.js';
+
+test('每个酒馆预设会分别记住自己的条目勾选状态', () => {
+    const statesByPreset = {};
+    const presetA = presetEntryStatesForPreset(statesByPreset, '剧情预设 A', { create: true });
+    presetA.main = true;
+    presetA.jailbreak = false;
+    const presetB = presetEntryStatesForPreset(statesByPreset, '剧情预设 B', { create: true });
+    presetB.main = false;
+    presetB.jailbreak = true;
+
+    assert.deepEqual(presetEntryStatesForPreset(statesByPreset, '剧情预设 A'), {
+        main: true,
+        jailbreak: false,
+    });
+    assert.deepEqual(presetEntryStatesForPreset(statesByPreset, '剧情预设 B'), {
+        main: false,
+        jailbreak: true,
+    });
+    assert.notEqual(presetEntryStateStorageKey('剧情预设 A'), presetEntryStateStorageKey('剧情预设 B'));
+});
+
+test('旧版公共勾选记录迁移给当前预设，且不会覆盖已有的分预设记录', () => {
+    const migrated = migrateLegacyPresetEntryStates({
+        selectedPresetName: '当前预设',
+        legacyStates: { main: true, jailbreak: false, invalid: 'no' },
+        statesByPreset: {},
+    });
+    assert.deepEqual(presetEntryStatesForPreset(migrated, '当前预设'), {
+        main: true,
+        jailbreak: false,
+    });
+
+    const existing = normalizePresetEntryStatesByPreset({
+        [presetEntryStateStorageKey('当前预设')]: { main: false },
+    });
+    const preserved = migrateLegacyPresetEntryStates({
+        selectedPresetName: '当前预设',
+        legacyStates: { main: true },
+        statesByPreset: existing,
+    });
+    assert.deepEqual(presetEntryStatesForPreset(preserved, '当前预设'), { main: false });
+
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /settings\.presetEntryStates\s*=\s*\{\}/);
+    assert.match(source, /currentPresetEntryStates\(\{ create: true \}\)/);
+});
 
 test('AI 定梦建议只读取第一章正文，并明确输出待确认草稿', () => {
     const payload = buildLongDreamCanonSuggestionPayload({
@@ -2035,17 +2082,25 @@ test('生成结果使用可关闭的页边书签，并保留安全退出编辑�
     assert.match(styles, /data-skin="custom"\] \.theater-result-actions[\s\S]*?Canvas/);
 });
 
-test('手机弹窗为 Close 按钮和安全区预留滚动空间，切换标签回到顶部', () => {
+test('手机端主弹窗铺满可用屏幕，保留底部 Close 并让内容独立滚动', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const tabHandler = source.match(/\/\/ Tabs[\s\S]*?\/\/ ---- Generate ----/)?.[0] || '';
     const tabActivator = source.match(/function activateTheaterTab\([\s\S]*?\n\}/)?.[0] || '';
+    const mobileShell = styles.match(/\/\* Mobile fullscreen shell:[\s\S]*?\/\* End mobile fullscreen shell\. \*\//)?.[0] || '';
     assert.match(tabHandler, /activateTheaterTab/);
     assert.match(tabActivator, /panels\.scrollTop = 0/);
     assert.doesNotMatch(source, /target\.scrollIntoView/);
-    assert.match(styles, /height:\s*clamp\(240px, calc\(92dvh - 210px\), 620px\)/);
-    assert.match(styles, /env\(safe-area-inset-bottom\)/);
-    assert.doesNotMatch(styles, /height:\s*calc\(100dvh - 180px\)/);
+    assert.match(source, /okButton: 'Close'/);
+    assert.doesNotMatch(source, /theater-mobile-close/);
+    assert.match(mobileShell, /width:\s*100vw !important/);
+    assert.match(mobileShell, /height:\s*100dvh !important/);
+    assert.match(mobileShell, /border-radius:\s*0 !important/);
+    assert.match(mobileShell, /\.theater-panels-wrapper,[\s\S]*?flex:\s*1 1 auto;[\s\S]*?height:\s*auto;[\s\S]*?max-height:\s*none;/);
+    assert.match(mobileShell, /:is\(\.popup-controls, \.popup-buttons\)[\s\S]*?flex:\s*0 0 auto !important/);
+    assert.match(mobileShell, /:is\(\.popup-button-close, \.popup-button-ok, \.popup-button-cancel\)[\s\S]*?min-height:\s*44px !important/);
+    assert.doesNotMatch(styles, /max-width:\s*96vw !important/);
+    assert.doesNotMatch(styles, /max-height:\s*92vh !important/);
 });
 
 test('默认皮肤的长梦备份按钮保持深色底上的可读对比度', () => {

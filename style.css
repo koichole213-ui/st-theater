@@ -4548,20 +4548,6 @@ body.theater-reader-open {
     }
 }
 
-/* SillyTavern popup container 在窄屏给更多可用宽度 */
-@media (max-width: 768px) {
-    body .popup:has(.theater-popup),
-    body dialog.popup:has(.theater-popup) {
-        max-width: 96vw !important;
-        width: 96vw !important;
-        max-height: 92vh !important;
-    }
-    body .popup:has(.theater-popup) .popup-content,
-    body dialog.popup:has(.theater-popup) .popup-content {
-        padding: 8px !important;
-    }
-}
-
 /* ============================================================
  * 默认皮肤：把 SillyTavern 外层 popup 容器也染成米色
  *   仅当 .theater-popup 没切到 theater/custom 皮肤时生效
@@ -4666,6 +4652,89 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) ::-webkit-scrollbar-corner {
     background: transparent !important;
 }
+
+/* Mobile fullscreen shell: keep SillyTavern's bottom Close control, only remove the floating-card frame. */
+@media (max-width: 768px) {
+    body .popup:has(.theater-popup),
+    body dialog.popup:has(.theater-popup) {
+        position: fixed !important;
+        inset: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        box-sizing: border-box !important;
+        width: 100vw !important;
+        max-width: 100vw !important;
+        height: 100dvh !important;
+        min-height: 100dvh !important;
+        max-height: 100dvh !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        transform: none !important;
+        overflow: hidden !important;
+    }
+    body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])),
+    body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) {
+        border: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+    }
+    body .popup:has(.theater-popup) .popup-content,
+    body dialog.popup:has(.theater-popup) .popup-content {
+        display: flex !important;
+        flex: 1 1 auto !important;
+        flex-direction: column !important;
+        box-sizing: border-box !important;
+        width: 100% !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+    }
+    body .popup:has(.theater-popup) .popup-body,
+    body dialog.popup:has(.theater-popup) .popup-body {
+        display: flex !important;
+        flex: 1 1 auto !important;
+        flex-direction: column !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+    }
+    body .popup:has(.theater-popup) .theater-popup,
+    body dialog.popup:has(.theater-popup) .theater-popup {
+        display: flex;
+        flex: 1 1 auto;
+        flex-direction: column;
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        border-radius: 0;
+    }
+    body .popup:has(.theater-popup) .theater-popup-header,
+    body dialog.popup:has(.theater-popup) .theater-popup-header,
+    body .popup:has(.theater-popup) .theater-tabs,
+    body dialog.popup:has(.theater-popup) .theater-tabs,
+    body .popup:has(.theater-popup) :is(.popup-controls, .popup-buttons),
+    body dialog.popup:has(.theater-popup) :is(.popup-controls, .popup-buttons) {
+        flex: 0 0 auto !important;
+    }
+    body .popup:has(.theater-popup) .theater-panels-wrapper,
+    body dialog.popup:has(.theater-popup) .theater-panels-wrapper {
+        flex: 1 1 auto;
+        height: auto;
+        min-height: 0;
+        max-height: none;
+    }
+    body .popup:has(.theater-popup) :is(.popup-button-close, .popup-button-ok, .popup-button-cancel),
+    body dialog.popup:has(.theater-popup) :is(.popup-button-close, .popup-button-ok, .popup-button-cancel) {
+        min-height: 44px !important;
+    }
+}
+/* End mobile fullscreen shell. */
 
 /* Tabs row must NEVER show a scrollbar — touch swipe still works. Overrides the global default-skin scrollbar styling above. */
 .theater-popup .theater-tabs { scrollbar-width: none !important; }

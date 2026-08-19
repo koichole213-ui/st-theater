@@ -38,6 +38,7 @@ import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, buildLongDreamCanonSuggestionPa
 import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkSide, normalizeBookmarkYRatio } from './result-bookmark.js';
 import { applyPromptPostProcessing, composeGenerationContinuationMessages, composePresetMessages, noToolsPostProcessingMode, normalizePromptRole } from './request-layout.js';
 import { createRequestTrace, formatRequestTrace, requestTraceMessageLabel } from './request-trace.js';
+import { migrateLegacyPresetEntryStates, presetEntryStatesForPreset } from './preset-entry-states.js';
 
 const MODULE_NAME = 'theater_generator';
 const VERSION = '4.0.2';
@@ -268,7 +269,7 @@ const defaultSettings = Object.freeze({
     renderTemplates: [],
     selectedRenderIndex: '__default__',
     selectedPresetName: '',  // name of selected ST preset (empty = none)
-    presetEntryStates: {},  // { identifier: true/false }
+    presetEntryStatesByPreset: {},  // { [presetKey]: { identifier: true/false } }
     customStyleAddon: '',
     customNsfwAddon: '',
     lastInstruction: '',
@@ -734,6 +735,17 @@ async function init() {
     // Migrate: clean up legacy fields
     if (settings.selectedPresetName === '__builtin__' || settings.selectedPresetName === '__custom__' || settings.selectedPresetName === '__follow__') {
         settings.selectedPresetName = '';
+    }
+    const hadLegacyPresetEntryStates = hasOwn(settings, 'presetEntryStates');
+    settings.presetEntryStatesByPreset = migrateLegacyPresetEntryStates({
+        selectedPresetName: settings.selectedPresetName,
+        legacyStates: settings.presetEntryStates,
+        statesByPreset: settings.presetEntryStatesByPreset,
+    });
+    if (hadLegacyPresetEntryStates) {
+        delete settings.presetEntryStates;
+        runtimeLog('info', '预设条目勾选记录已升级为按预设分别保存');
+        save();
     }
     settings.uiFontSize = normalizeUIFontSize(settings.uiFontSize);
     settings.manualTargetChars = normalizeManualTarget(settings.manualTargetChars);
@@ -4514,7 +4526,6 @@ function bindEvents() {
     });
     $d.off('change.tpns').on('change.tpns', '#theater-preset-name-select', function () {
         settings.selectedPresetName = $(this).val();
-        settings.presetEntryStates = {};
         save();
         if (settings.selectedPresetName) {
             $('#theater-preset-current').show();
@@ -4537,25 +4548,25 @@ function bindEvents() {
     });
     $d.off('change.tpec').on('change.tpec', '.theater-preset-check', function () {
         const id = $(this).data('id');
-        if (!settings.presetEntryStates) settings.presetEntryStates = {};
-        settings.presetEntryStates[id] = $(this).is(':checked');
-        $(this).closest('.theater-wb-entry').toggleClass('theater-wb-entry-off', !settings.presetEntryStates[id]);
+        const states = currentPresetEntryStates({ create: true });
+        states[id] = $(this).is(':checked');
+        $(this).closest('.theater-wb-entry').toggleClass('theater-wb-entry-off', !states[id]);
         save();
     });
     $d.off('click.tpsa').on('click.tpsa', '#theater-preset-select-all', () => {
-        if (!settings.presetEntryStates) settings.presetEntryStates = {};
+        const states = currentPresetEntryStates({ create: true });
         $('.theater-preset-check').each(function () {
             $(this).prop('checked', true);
-            settings.presetEntryStates[$(this).data('id')] = true;
+            states[$(this).data('id')] = true;
         });
         $('.theater-wb-entry', '#theater-preset-entries').removeClass('theater-wb-entry-off');
         save();
     });
     $d.off('click.tpda').on('click.tpda', '#theater-preset-deselect-all', () => {
-        if (!settings.presetEntryStates) settings.presetEntryStates = {};
+        const states = currentPresetEntryStates({ create: true });
         $('.theater-preset-check').each(function () {
             $(this).prop('checked', false);
-            settings.presetEntryStates[$(this).data('id')] = false;
+            states[$(this).data('id')] = false;
         });
         $('.theater-wb-entry', '#theater-preset-entries').addClass('theater-wb-entry-off');
         save();
@@ -5465,6 +5476,14 @@ let cachedPresetGenerationOptions = {};
 let presetNamesCache = [];
 let presetSearch = '';
 
+function currentPresetEntryStates({ create = false } = {}) {
+    return presetEntryStatesForPreset(
+        settings.presetEntryStatesByPreset,
+        settings.selectedPresetName,
+        { create },
+    );
+}
+
 function renderPresetOptions() {
     const $select = $('#theater-preset-name-select');
     if (!$select.length) return;
@@ -5740,10 +5759,10 @@ async function loadPresetEntries() {
     }
 
     // Init states
-    if (!settings.presetEntryStates) settings.presetEntryStates = {};
+    const states = presetEntryStatesForPreset(settings.presetEntryStatesByPreset, sel, { create: true });
     cachedPresetEntries.forEach(e => {
-        if (!(e.id in settings.presetEntryStates)) {
-            settings.presetEntryStates[e.id] = e.enabledInST;
+        if (!hasOwn(states, e.id)) {
+            states[e.id] = e.enabledInST;
         }
     });
 
@@ -5754,7 +5773,7 @@ async function loadPresetEntries() {
 
 function renderPresetEntries() {
     if (!cachedPresetEntries.length) return '<p class="theater-empty">暂无预设条目</p>';
-    const states = settings.presetEntryStates || {};
+    const states = currentPresetEntryStates();
     return cachedPresetEntries.map(entry => {
         const checked = states[entry.id] !== false;
         const roleTag = entry.role === 'system' ? 'SYS' : entry.role === 'user' ? 'USR' : 'AST';
@@ -5781,7 +5800,7 @@ function renderPresetEntries() {
 
 function getSelectedPresetPrompt() {
     if (!cachedPresetEntries.length) return '';
-    const states = settings.presetEntryStates || {};
+    const states = currentPresetEntryStates();
     return cachedPresetEntries
         .filter(e => states[e.id] !== false)
         .map(e => e.content)
@@ -5789,7 +5808,7 @@ function getSelectedPresetPrompt() {
 }
 
 function getSelectedPresetEntries() {
-    const states = settings.presetEntryStates || {};
+    const states = currentPresetEntryStates();
     return cachedPresetEntries.filter(entry => states[entry.id] !== false);
 }
 
