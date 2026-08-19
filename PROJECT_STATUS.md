@@ -1,23 +1,46 @@
 # st-theater 项目交接
 
-> 最后核对：2026-08-09（Asia/Shanghai）
+> 最后核对：2026-08-19（Asia/Shanghai）
 > 这份文件记录会变化的项目现状。长期施工规则以仓库外层的 `AGENTS.md` 和禾禾当轮要求为准。
+
+## 紧急交接：v4.0.2 长梦预览与手机端验收（2026-08-19）
+
+本节是当前权威状态；下方标注 2026-08-09 及更早的内容只保留为历史记录，不要用旧版本号、旧测试数或旧工作区状态覆盖本节。
+
+- 正确施工 worktree：`D:\st-theater\.codex-long-dream-ui`
+- 本地施工分支：`codex/long-dream-ui-tune`
+- 远端预览分支：`origin/codex/long-dream-preview`
+- 插件版本：`v4.0.2`（`index.js`、`manifest.json`、`style.css` 与设置页一致）
+- 最新功能提交：`6057805 fix: compact mobile popup footer`
+- 前一提交：`e6932a3 feat: remember preset states on mobile`
+- 再前一提交：`63819b2 fix: stabilize long dream review progress`
+- 自动检查：`git diff --check`、`node --check .\index.js`、`node --check .\preset-entry-states.js` 通过；核心测试 `185/185` 通过。
+
+本轮已经完成：
+
+- 手机端主插件外壳在 `768px` 以下使用 `100vw × 100dvh` 铺满网页可用区域；电脑端保持原弹窗，默认/跟随酒馆/自定义三种皮肤不重做内部 UI。
+- 保留 SillyTavern 原有底部 `Close`，不新增右上角 `×`。底栏上下留白从旧的厚间距压缩为 `4px`，按钮仍保持至少 `44px` 的触控高度。
+- 每个酒馆预设分别保存自己的条目勾选状态；切换、重新打开、单项勾选、全选和全不选都会恢复当前预设自己的记录。旧版公共记录会迁移给升级时正在使用的预设，不修改酒馆预设文件。
+- 长梦待确认页的字数统计按整个标题区居中；最终 HTML 排版进度统一由一处刷新，不再让“正文已完成”和“已接收多少字符”交替闪烁。
+- 放弃长梦本轮草稿继续保留续写指令；候选切换与全屏按钮保持同一行；旧历史开卷的世界线选择不再因世界书尚未同步而锁死。
+
+下一步只需要禾禾在真实手机 SillyTavern 更新预览后复测：插件是否铺满、底部 `Close` 区域是否明显收窄、三种皮肤是否正常，以及 A/B 两个预设来回切换时勾选状态是否分别恢复。若底栏在真实设备上仍异常，不要增加右上角关闭键；先查看酒馆当版 `.popup-controls` / `.popup-buttons` 的实际嵌套和计算样式。
 
 ## 新窗口先做什么
 
 请先完整阅读本文件和当前可用的 `AGENTS.md`，再检查真实仓库状态，不要只凭同名目录判断项目位置。
 
 ```powershell
-Set-Location -LiteralPath 'D:\st-theater'
+Set-Location -LiteralPath 'D:\st-theater\.codex-long-dream-ui'
 git status --short --branch
 git log -1 --oneline
 ```
 
-真实施工仓库是 `D:\st-theater`。Codex 新窗口有时会落在 `C:\Users\lenovo6\OneDrive\文档\st-theater`，该同名目录目前不是正在维护的仓库，不要在那里继续施工。
+当前长梦预览的正确施工目录是 `D:\st-theater\.codex-long-dream-ui`。`D:\st-theater` 是另一个已注册 worktree，可能包含禾禾的其他改动；不要把两个 worktree 的分支或未提交文件混在一起。Codex 新窗口若落在 `C:\Users\lenovo6\OneDrive\文档\st-theater`，该同名目录不是正在维护的仓库。
 
 建议禾禾在新窗口使用这句话开场：
 
-> 请先完整阅读 `D:\st-theater\PROJECT_STATUS.md`、`D:\st-theater\DREAM_MEMORY_V2_SPEC.md`、`D:\st-theater\DREAM_MEMORY_DISCUSSION.md` 和 AGENTS.md，核对真实仓库、`codex/long-dream-preview` 分支及未提交文件后，继续 `v3.6.4` 长梦真实验收。重点复测现有长梦用“素材页当前勾选”把旧的 33 条冻结资料更新为实际 5–7 条后，独立 API 首轮、自动补写第二轮、实时 Token、Char/User 人设继承与候选页码居中；不要改动 `standalone-scripts/`，不要继续施工或推送，除非禾禾当轮明确授权。
+> 请先完整阅读 `D:\st-theater\.codex-long-dream-ui\PROJECT_STATUS.md` 和 AGENTS.md，核对 `codex/long-dream-ui-tune`、`origin/codex/long-dream-preview`、当前提交与工作区状态后继续 `v4.0.2` 真实手机验收。重点复测手机铺满、底部 Close 紧凑区域、三种皮肤、分预设条目勾选记忆，以及长梦最终排版进度；不要改动其他 worktree，也不要继续施工或推送，除非禾禾当轮明确授权。
 
 ## 当前稳定快照
 
