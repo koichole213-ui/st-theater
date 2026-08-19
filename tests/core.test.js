@@ -1794,6 +1794,32 @@ test('点击续写会切回生成页、滚到顶部并聚焦指令框', () => {
     assert.match(source, /scheduleTokenEstimate\(\);\s*revealContinuationInput\(\);/);
 });
 
+test('悬浮球打开弹窗时会吞掉同一触点补发的点击并在下一轮再显示界面', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const guard = source.match(/function openTheaterPopupFromFloatingBall\([\s\S]*?\n\}/)?.[0] || '';
+    const floatingBall = source.match(/function createFloatingBall\(\)[\s\S]*?\/\/ Popup HTML/)?.[0] || '';
+    assert.match(guard, /document\.addEventListener\('click', guardOpeningClick, true\)/);
+    assert.match(guard, /Math\.hypot\(clickX - releaseX, clickY - releaseY\)/);
+    assert.match(guard, /event\.preventDefault\(\)/);
+    assert.match(guard, /event\.stopImmediatePropagation\(\)/);
+    assert.match(guard, /setTimeout\(\(\) => \{[\s\S]*?openTheaterPopup\(\)[\s\S]*?\}, 0\)/);
+    assert.match(floatingBall, /openTheaterPopupFromFloatingBall\(releasePoint\)/);
+    assert.doesNotMatch(floatingBall, /else \{\s*try \{ openTheaterPopup\(\)/);
+});
+
+test('悬浮球拖动被系统取消时会清理监听，旧浏览器也使用对应的鼠标事件', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const floatingBall = source.match(/function createFloatingBall\(\)[\s\S]*?\/\/ Popup HTML/)?.[0] || '';
+    assert.match(floatingBall, /document\.addEventListener\('pointercancel', onPointerCancel\)/);
+    assert.match(floatingBall, /document\.addEventListener\('touchcancel', onPointerCancel\)/);
+    assert.match(floatingBall, /document\.addEventListener\('mousemove', onPointerMove/);
+    assert.match(floatingBall, /document\.addEventListener\('mouseup', onPointerUp\)/);
+    assert.match(floatingBall, /function removeGestureListeners\(\)[\s\S]*?removeEventListener\('touchcancel', onPointerCancel\)/);
+    assert.match(source, /let floatingBallCleanup = null/);
+    assert.match(floatingBall, /if \(floatingBallCleanup\) floatingBallCleanup\(\)/);
+    assert.match(floatingBall, /floatingBallCleanup = \(\) => \{[\s\S]*?cancelTuck\(\)[\s\S]*?removeGestureListeners\(\)[\s\S]*?removeEventListener\('resize', onViewportResize\)[\s\S]*?ball\.remove\(\)/);
+});
+
 test('插件更新成功后只提供需确认的酒馆刷新操作', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');

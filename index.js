@@ -1007,8 +1007,46 @@ function renderRuntimeLog() {
     if (list) list.scrollTop = list.scrollHeight;
 }
 
+const FLOATING_BALL_OPEN_GUARD_MS = 700;
+const FLOATING_BALL_OPEN_GUARD_RADIUS = 36;
+let floatingBallCleanup = null;
+
+function openTheaterPopupFromFloatingBall(releasePoint = {}) {
+    const releaseX = Number(releasePoint.x);
+    const releaseY = Number(releasePoint.y);
+    let guardTimer = null;
+
+    function removeOpeningClickGuard() {
+        document.removeEventListener('click', guardOpeningClick, true);
+        if (guardTimer) clearTimeout(guardTimer);
+        guardTimer = null;
+    }
+
+    function guardOpeningClick(event) {
+        const clickX = Number(event.clientX);
+        const clickY = Number(event.clientY);
+        if (!Number.isFinite(releaseX) || !Number.isFinite(releaseY)
+            || !Number.isFinite(clickX) || !Number.isFinite(clickY)
+            || Math.hypot(clickX - releaseX, clickY - releaseY) > FLOATING_BALL_OPEN_GUARD_RADIUS) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        removeOpeningClickGuard();
+    }
+
+    // pointerup 后浏览器还会补发一次 click。先拦住同一位置的这次 click，
+    // 再到下一轮事件循环打开弹窗，避免它落到刚出现的删除等按钮上。
+    document.addEventListener('click', guardOpeningClick, true);
+    guardTimer = setTimeout(removeOpeningClickGuard, FLOATING_BALL_OPEN_GUARD_MS);
+    setTimeout(() => {
+        try { openTheaterPopup(); } catch (err) { console.warn('[Theater] Popup error:', err); }
+    }, 0);
+}
+
 function createFloatingBall() {
     try {
+        if (floatingBallCleanup) floatingBallCleanup();
+        floatingBallCleanup = null;
         document.querySelectorAll('#theater-floating-ball').forEach(el => el.remove());
         if (!settings.floatingBall) return;
 
@@ -1097,6 +1135,31 @@ function createFloatingBall() {
 
         function clamp(val, min, max) { return Math.max(min, Math.min(max, val)); }
 
+        function addGestureListeners() {
+            if (window.PointerEvent) {
+                document.addEventListener('pointermove', onPointerMove, { passive: false });
+                document.addEventListener('pointerup', onPointerUp);
+                document.addEventListener('pointercancel', onPointerCancel);
+                return;
+            }
+            document.addEventListener('mousemove', onPointerMove, { passive: false });
+            document.addEventListener('mouseup', onPointerUp);
+            document.addEventListener('touchmove', onTouchMove, { passive: false });
+            document.addEventListener('touchend', onPointerUp);
+            document.addEventListener('touchcancel', onPointerCancel);
+        }
+
+        function removeGestureListeners() {
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerCancel);
+            document.removeEventListener('mousemove', onPointerMove);
+            document.removeEventListener('mouseup', onPointerUp);
+            document.removeEventListener('touchmove', onTouchMove);
+            document.removeEventListener('touchend', onPointerUp);
+            document.removeEventListener('touchcancel', onPointerCancel);
+        }
+
         function onPointerDown(e) {
             cancelTuck();
             startedTucked = ball.dataset.tucked === 'true';
@@ -1108,10 +1171,7 @@ function createFloatingBall() {
             startY = touch.clientY;
             startLeft = parseInt(ball.style.left);
             startTop = parseInt(ball.style.top);
-            document.addEventListener('pointermove', onPointerMove, { passive: false });
-            document.addEventListener('pointerup', onPointerUp);
-            document.addEventListener('touchmove', onTouchMove, { passive: false });
-            document.addEventListener('touchend', onPointerUp);
+            addGestureListeners();
         }
 
         function onPointerMove(e) {
@@ -1134,11 +1194,22 @@ function createFloatingBall() {
             ball.style.top = clamp(startTop + dy, 0, window.innerHeight - 46) + 'px';
         }
 
-        function onPointerUp() {
-            document.removeEventListener('pointermove', onPointerMove);
-            document.removeEventListener('pointerup', onPointerUp);
-            document.removeEventListener('touchmove', onTouchMove);
-            document.removeEventListener('touchend', onPointerUp);
+        function onPointerCancel() {
+            const wasDragging = isDragging;
+            removeGestureListeners();
+            isDragging = false;
+            startedTucked = false;
+            if (wasDragging) snapToEdge();
+            else scheduleTuck();
+        }
+
+        function onPointerUp(e) {
+            const release = e?.changedTouches?.[0] || e;
+            const releasePoint = {
+                x: Number.isFinite(Number(release?.clientX)) ? Number(release.clientX) : startX,
+                y: Number.isFinite(Number(release?.clientY)) ? Number(release.clientY) : startY,
+            };
+            removeGestureListeners();
             if (!isDragging) {
                 if (isExternalCaptureModeActive()) {
                     untuck();
@@ -1146,7 +1217,7 @@ function createFloatingBall() {
                     untuck();
                     scheduleTuck();
                 } else {
-                    try { openTheaterPopup(); } catch (err) { console.warn('[Theater] Popup error:', err); }
+                    openTheaterPopupFromFloatingBall(releasePoint);
                     untuck();
                 }
                 isDragging = false;
@@ -1178,15 +1249,22 @@ function createFloatingBall() {
             scheduleTuck();
         });
 
-        window.addEventListener('resize', () => {
-            if (!document.getElementById('theater-floating-ball')) return;
+        function onViewportResize() {
+            if (!ball.isConnected) return;
             const side = ball.dataset.side || 'right';
             const tucked = ball.dataset.tucked === 'true';
             ball.style.top = clamp(parseInt(ball.style.top), 0, window.innerHeight - 46) + 'px';
             ball.style.left = (tucked ? tuckedLeft(side) : untuckedLeft(side)) + 'px';
-        });
+        }
 
         document.documentElement.appendChild(ball);
+        window.addEventListener('resize', onViewportResize);
+        floatingBallCleanup = () => {
+            cancelTuck();
+            removeGestureListeners();
+            window.removeEventListener('resize', onViewportResize);
+            ball.remove();
+        };
         refreshUpdateBadges();
         snapToEdge();
     } catch (e) {
