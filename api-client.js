@@ -47,65 +47,9 @@ export function buildApiEndpoint(url, protocol) {
     return base + '/v1' + path;
 }
 
-function firstPresetValue(preset, key) {
-    const sources = [preset, preset?.openai_settings];
-    for (const source of sources) {
-        if (source && Object.prototype.hasOwnProperty.call(source, key)) return source[key];
-    }
-    return undefined;
-}
-
-function finiteNumber(value, { min = -Infinity, max = Infinity, integer = false, omit = [] } = {}) {
-    if (value === null || value === undefined || String(value).trim() === '') return undefined;
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || omit.includes(parsed) || parsed < min || parsed > max) return undefined;
-    return integer ? Math.trunc(parsed) : parsed;
-}
-
-function normalizeReasoningEffort(value) {
-    const effort = String(value ?? '').trim().toLowerCase();
-    if (!effort || effort === 'auto') return undefined;
-    if (effort === 'min') return 'low';
-    if (effort === 'max') return 'high';
-    return ['none', 'minimal', 'low', 'medium', 'high'].includes(effort) ? effort : undefined;
-}
-
-// 只读取创作预设中的生成参数；连接信息、工具、响应格式和自定义请求头绝不继承。
-export function extractPresetGenerationOptions(preset = {}) {
-    const options = {};
-    const numericFields = {
-        temperature: { min: 0, max: 2 },
-        top_p: { min: 0, max: 1 },
-        frequency_penalty: { min: -2, max: 2 },
-        presence_penalty: { min: -2, max: 2 },
-        top_k: { min: 0, max: 100000, integer: true, omit: [-1] },
-        top_a: { min: 0, max: 1 },
-        min_p: { min: 0, max: 1 },
-        repetition_penalty: { min: 0, max: 2 },
-        seed: { min: 0, max: 2147483647, integer: true, omit: [-1] },
-    };
-    for (const [key, limits] of Object.entries(numericFields)) {
-        const value = finiteNumber(firstPresetValue(preset, key), limits);
-        if (value !== undefined) options[key] = value;
-    }
-    const reasoningEffort = normalizeReasoningEffort(firstPresetValue(preset, 'reasoning_effort'));
-    if (reasoningEffort !== undefined) options.reasoning_effort = reasoningEffort;
-    return options;
-}
-
-export function normalizeGenerationOptions(options = {}, protocol = API_PROTOCOLS.OPENAI) {
-    const safe = extractPresetGenerationOptions(options);
-    if (protocol === API_PROTOCOLS.ANTHROPIC) {
-        return Object.fromEntries(['temperature', 'top_p', 'top_k']
-            .filter(key => safe[key] !== undefined)
-            .map(key => [key, safe[key]]));
-    }
-    return safe;
-}
-
 export function buildApiRequest({
     url, protocol, key, model, systemPrompt, userPrompt, messages,
-    postProcessing = '', generationOptions = {}, maxTokens = DEFAULT_MAX_OUTPUT_TOKENS, stream = true,
+    postProcessing = '', maxTokens = DEFAULT_MAX_OUTPUT_TOKENS, stream = true,
 }) {
     const resolved = resolveProtocol(protocol, url);
     const endpoint = buildApiEndpoint(url, resolved);
@@ -117,7 +61,6 @@ export function buildApiRequest({
         postProcessing,
     );
     if (resolved === API_PROTOCOLS.ANTHROPIC) {
-        const safeGenerationOptions = normalizeGenerationOptions(generationOptions, resolved);
         const system = finalMessages
             .filter(message => message.role === 'system')
             .map(message => message.content)
@@ -128,16 +71,15 @@ export function buildApiRequest({
         return {
             protocol: resolved, endpoint,
             headers: { 'Content-Type': 'application/json', Accept: stream ? 'text/event-stream' : 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-            body: { ...safeGenerationOptions, model, max_tokens: maxTokens, stream, system, messages: anthropicMessages },
+            body: { model, max_tokens: maxTokens, stream, system, messages: anthropicMessages },
             messages: finalMessages,
         };
     }
     const headers = { 'Content-Type': 'application/json', Accept: stream ? 'text/event-stream' : 'application/json' };
     if (key) headers.Authorization = `Bearer ${key}`;
-    const safeGenerationOptions = normalizeGenerationOptions(generationOptions, resolved);
     return {
         protocol: resolved, endpoint, headers,
-        body: { ...safeGenerationOptions, model, messages: finalMessages.map(message => ({ role: message.role, content: message.content })), stream, max_tokens: maxTokens },
+        body: { model, messages: finalMessages.map(message => ({ role: message.role, content: message.content })), stream, max_tokens: maxTokens },
         messages: finalMessages,
     };
 }

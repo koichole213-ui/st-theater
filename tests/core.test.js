@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
-import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractPresetGenerationOptions, extractResponseMeta, extractStreamText, hasReasoningContent, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
+import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, hasReasoningContent, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { readNonStreamingResponse, readSSEStream, requestCustomApi, requestMainApi } from '../api-runtime.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
 import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, normalizeContinuationText, readableCharCount } from '../text-counter.js';
@@ -2439,33 +2439,26 @@ test('流式解析兼容 OpenAI、Gemini 原生与 Responses API 正文格式', 
     assert.equal(extractStreamText({ candidates: [{ content: { parts: [{ thought: true, text: '只有思考' }] } }] }), '');
 });
 
-test('独立 API 只继承预设的安全采样参数，不继承连接、工具与响应格式', () => {
-    const options = extractPresetGenerationOptions({
-        temperature: 0.8,
-        top_p: 0.92,
-        top_k: 40,
-        min_p: 0.1,
-        reasoning_effort: 'auto',
-        custom_url: 'https://不应继承.example',
-        api_key: '不应继承',
-        tools: [{ type: 'function' }],
-        response_format: { type: 'json_object' },
-    });
-    assert.deepEqual(options, { temperature: 0.8, top_p: 0.92, top_k: 40, min_p: 0.1 });
-    const request = buildApiRequest({
-        url: 'https://example.com/v1',
-        protocol: API_PROTOCOLS.OPENAI,
-        model: 'model',
-        systemPrompt: '系统',
-        userPrompt: '用户',
-        generationOptions: options,
-    });
-    assert.equal(request.body.temperature, 0.8);
-    assert.equal(request.body.top_p, 0.92);
-    assert.equal(request.body.reasoning_effort, undefined);
-    assert.equal('tools' in request.body, false);
-    assert.equal('response_format' in request.body, false);
-    assert.equal(request.headers.Accept, 'text/event-stream');
+test('独立 API 请求构造层不会继承任何创作预设采样参数', () => {
+    const forbidden = [
+        'temperature', 'top_p', 'top_k', 'top_a', 'min_p', 'frequency_penalty',
+        'presence_penalty', 'repetition_penalty', 'seed', 'reasoning_effort',
+    ];
+    for (const protocol of [API_PROTOCOLS.OPENAI, API_PROTOCOLS.ANTHROPIC]) {
+        const request = buildApiRequest({
+            url: 'https://example.com/v1',
+            protocol,
+            key: 'secret',
+            model: 'model',
+            systemPrompt: '系统',
+            userPrompt: '用户',
+            generationOptions: Object.fromEntries(forbidden.map(name => [name, 0.8])),
+        });
+        for (const name of forbidden) assert.equal(request.body[name], undefined, `${protocol} 不应发送 ${name}`);
+        assert.equal('tools' in request.body, false);
+        assert.equal('response_format' in request.body, false);
+        assert.equal(request.headers.Accept, 'text/event-stream');
+    }
 });
 
 test('思考标签在流式未闭合时不会闪出，并在闭合后只保留正文', () => {
@@ -2567,6 +2560,97 @@ test('独立 API 收到合法结束事件但没有正文时不会重复生成', 
     }), error => error?.diagnosticSignal === REQUEST_DIAGNOSTIC_SIGNAL.EMPTY
         && error?.code === 'THEATER_RESPONSE_EMPTY');
     assert.equal(calls, 1);
+});
+
+test('独立 API 即使收到旧调用方附带的采样配置也不会发到线上', async () => {
+    let requestBody;
+    let requestTrace;
+    const logs = [];
+    const forbidden = [
+        'temperature', 'top_p', 'top_k', 'top_a', 'min_p', 'frequency_penalty',
+        'presence_penalty', 'repetition_penalty', 'seed', 'reasoning_effort',
+    ];
+    const result = await requestCustomApi({
+        config: {
+            apiUrl: 'https://api.example.com/v1',
+            apiProtocol: API_PROTOCOLS.OPENAI,
+            apiModel: 'gemini-3.1-pro-preview',
+            maxOutputTokens: 16384,
+            generationOptions: Object.fromEntries(forbidden.map(name => [name, 0.8])),
+        },
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        shouldStream: false,
+        onRequest: details => { requestTrace = details; },
+        log: (level, message, details) => logs.push({ level, message, details }),
+        fetchImpl: async (_url, options) => {
+            requestBody = JSON.parse(options.body);
+            return new Response(JSON.stringify({ choices: [{ message: { content: '默认采样成功' } }] }), {
+                status: 200, headers: { 'content-type': 'application/json' },
+            });
+        },
+    });
+    assert.equal(result.text, '默认采样成功');
+    for (const name of forbidden) assert.equal(requestBody[name], undefined, `线上请求不应包含 ${name}`);
+    assert.equal(requestTrace.presetGenerationOptionsInherited, false);
+    assert.match(JSON.stringify(logs), /not_inherited/);
+});
+
+test('独立 API 的普通 400 不因预设采样参数再发第二次请求', async () => {
+    let calls = 0;
+    await assert.rejects(() => requestCustomApi({
+        config: {
+            apiUrl: 'https://api.example.com/v1', apiProtocol: API_PROTOCOLS.OPENAI,
+            apiModel: 'model-name', maxOutputTokens: 1024, generationOptions: { top_k: 40 },
+        },
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        shouldStream: false,
+        fetchImpl: async () => {
+            calls += 1;
+            return new Response('{"error":{"message":"Unknown parameter: top_k"}}', { status: 400 });
+        },
+    }), error => error?.diagnosticSignal === 'T-HTTP-400');
+    assert.equal(calls, 1);
+});
+
+test('独立 API 的 Token 降档继续生效且每一档都不带预设采样参数', async () => {
+    const bodies = [];
+    const fallbacks = [];
+    const result = await requestCustomApi({
+        config: {
+            apiUrl: 'https://api.example.com/v1', apiProtocol: API_PROTOCOLS.OPENAI,
+            apiModel: 'model-name', maxOutputTokens: 16384, generationOptions: { top_k: 40, temperature: 0.8 },
+        },
+        systemPrompt: '系统',
+        userPrompt: '用户',
+        shouldStream: false,
+        onFallback: value => fallbacks.push(value),
+        fetchImpl: async (_url, options) => {
+            bodies.push(JSON.parse(options.body));
+            if (bodies.length === 1) return new Response('max_tokens must be less than or equal to 8192', { status: 400 });
+            return new Response(JSON.stringify({ choices: [{ message: { content: '降档成功' } }] }), {
+                status: 200, headers: { 'content-type': 'application/json' },
+            });
+        },
+    });
+    assert.equal(result.text, '降档成功');
+    assert.deepEqual(bodies.map(body => [body.max_tokens, body.top_k, body.temperature]), [
+        [16384, undefined, undefined],
+        [8192, undefined, undefined],
+    ]);
+    assert.deepEqual(fallbacks, ['custom:max-token 16384→8192']);
+});
+
+test('正式生成与连接测试都不再读取创作预设采样参数', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /cachedPresetGenerationOptions|extractPresetGenerationOptions|generationOptions/);
+    const start = source.indexOf('async function testAPIConnection()');
+    const end = source.indexOf('// Update', start);
+    const connectionTestSource = source.slice(start, end);
+    assert.match(connectionTestSource, /preset_generation_options: 'not_inherited'/);
+    assert.match(connectionTestSource, /maxTokens: 16/);
+    assert.doesNotMatch(connectionTestSource, /temperature|top_p|top_k|min_p|reasoning_effort/);
 });
 
 test('流式解析能取出状态为 200 的错误事件，而不是只报告空流', () => {
@@ -3194,6 +3278,8 @@ test('创作请求结构来自传输层输入且不包含正文、Key、Authoriz
     const report = formatRequestTrace(createRequestTrace(traceInput));
     assert.doesNotMatch(report, /sk-super-secret|secret-host\.example|Authorization/i);
     assert.match(report, /工具：已强制禁用/);
+    assert.match(report, /预设采样参数：未继承（使用线路默认值）/);
+    assert.match(formatRequestTrace(createRequestTrace({ route: 'main' })), /预设采样参数：由酒馆主 API 决定/);
     assert.doesNotMatch(report, /系统|用户|request\/system|request\/user/);
     assert.match(report, /system · preset\/main · 2 字符 · 约 3 token/);
     assert.match(report, /user · theater\/instruction · 2 字符 · 约 3 token/);

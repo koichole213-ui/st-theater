@@ -1,7 +1,97 @@
 # st-theater 项目交接
 
-> 最后核对：2026-08-19（Asia/Shanghai）
+> 最后核对：2026-08-20（Asia/Shanghai）
 > 这份文件记录会变化的项目现状。长期施工规则以仓库外层的 `AGENTS.md` 和禾禾当轮要求为准。
+
+## 紧急交接：v4.1.1 独立 API 更新后持续 400（2026-08-20）
+
+### 当前目标与边界
+
+- 已有 3 位用户反馈更新到 `v4.1.1` 后，使用 GG 独立 API 生成时持续报 `T-HTTP-400`；禾禾使用同一 GG API、同为 `gemini-3.1-pro-preview` 时可以正常生成。
+- 本窗口已按禾禾确认完成本地修复：独立 API 改为从第一请求起完全不继承预设采样参数，并补齐自动测试与安全诊断。当前仍未提交、未推送，等待真实 GG 验收或禾禾后续发布指令。
+- 用户提供的第一份报告位于 `C:\Users\lenovo6\Downloads\报错.docx`。它只作为本地诊断证据使用，不要复制进仓库、提交或公开；任何新增日志都必须继续避免记录 API Key、Token、Authorization 和正文。
+- 当前版本继续保持 `4.1.1`，除非禾禾另行指定版本号。
+
+### 本窗口最终确认方案（2026-08-20，待真实 GG 验收）
+
+- 禾禾确认独立 API 不需要继承酒馆创作预设的隐藏采样参数。最终方案已从“服务端明确拒绝后去参重试”改为更简单、可证明的硬规则：独立 API 从第一请求起就不读取、不保存、不发送 `temperature`、`top_p`、`top_k`、`top_a`、`min_p`、`frequency_penalty`、`presence_penalty`、`repetition_penalty`、`seed`、`reasoning_effort` 等预设采样字段，直接使用线路/模型默认采样值。
+- 该改动只影响插件独立 API。酒馆主 API 不变；预设正文条目、原始 `system/user/assistant` 角色与顺序、角色设定、User 人设、世界书、后处理、流式开关和最大输出 Token 都继续保留。
+- `api-client.js` 已删除预设采样参数提取/归一化与请求体展开；`index.js` 已删除缓存、线路快照及连接测试中的参数传递；`api-runtime.js` 即使收到旧调用方残留的 `generationOptions` 也不会把它们交给请求构造层。
+- “测试连接”继续只发送 `Hi`、16 Token、非流式，并与正式独立 API 一样不携带预设采样参数。创作请求结构和运行日志固定显示“预设采样参数未继承（使用线路默认值）”，仍不记录消息正文、API Key、Authorization 或服务端响应正文。
+- 新日志 `C:\Users\lenovo6\Downloads\报错.txt` 仍是 GG `gemini-3.1-pro-preview`，预设已换成“日月西”、后处理为 `none`、聊天前文仅 5 条，94 条消息估算输入约 86,466 Token，仍在首字前约 3.154 秒返回 400。这排除了 `strict/strict-placeholder` 是两份报告共同必要条件，并进一步削弱了聊天前文过多的解释；尾部 assistant 与末尾 system 排列仍是参数去除后若继续 400 的第二检查方向。
+- 有用户口述“更新到 4.0 之后就不行”。代码史核对显示 `v3.6.4 → v4.0.0` 没有修改 `api-client.js`/`api-runtime.js` 或普通独立 API 请求构造；预设采样参数继承由 `c33a7b1` 加入，首次进入公开版本是 `v4.1.0`，再由 `v4.1.1` 继承。因此先把“4.0之后”保留为宽泛升级时间线，不把它误写成已证实的 `v4.0.0` 回归。
+- 新增硬性回归覆盖 OpenAI/Anthropic 构造层、旧调用方残留配置、普通 400 不重复发送、Token 降档每一档都不带预设采样参数，以及正式生成/连接测试源码不再读取这些字段。`node --check`（`index.js`、`api-client.js`、`api-runtime.js`、`request-trace.js`）、`git diff --check` 与核心测试 `191/191` 均通过。
+- 本轮仍为本地未提交修改，没有提交或推送，版本保持 `v4.1.1`。真实 GG 验收不要求禾禾复现原故障，可优先交给已稳定复现的报告用户；若去参版本仍为 400，再根据新诊断检查消息角色排列或 GG 自设上下文上限。
+
+### 第一份失败报告的已确认事实
+
+- 插件 `v4.1.1`，模式为独立 API，协议 `auto` 实际解析为 `openai`，线路为 `https://gcli.ggchan.dev/v1/chat/completions`。
+- `gemini-2.5-pro` 与 `gemini-3.1-pro-preview` 都出现过 400，说明不太像单个模型名写错；同一线路还出现过一次 429，说明请求能够到达服务端，429 是另一次临时繁忙，不等于反复 400 的根因。
+- 失败均发生在首字之前，`retained_chars: 0`。多次 400 大约在请求后 2–15 秒返回。
+- 失败请求为 `custom / stream`，创作预设 `【Ako】1.9_Polaroid`，后处理 `strict`，工具已强制禁用；共 106 条消息，聊天前文参与 100 条，世界书 2 本/14 条。
+- 报告逐条 Token 估算合计：输入约 `129598`，设置的最大输出为 `16384`，两者相加约 `145982`。请求确实很大，但 Gemini 3.1 Pro 官方模型页给出的原生上限为 1,048,576 输入 / 65,536 输出，因此不能仅凭这组数字断言是 Gemini 原生上下文超限；GG 网关是否另有限制仍未知。
+- `strict` 后的消息布局包含中后段和末尾 `system`，并包含 `strict-placeholder`。部分 OpenAI 兼容网关可能拒绝这种排列，但现有报告没有保留服务端原始 400 文本，尚不能把它定为根因。
+
+### 修复前诊断：最高概率代码原因
+
+1. **正式生成和“测试连接”实际发送的参数不同。**
+   - 修复前的 `index.js:testAPIConnection()` 只发送 `Hi`、`maxTokens: 16`、非流式，且没有传 `generationOptions`；最终确认方案改为正式生成与连接测试都不再继承这组参数。
+   - 正式独立 API 生成会在 `captureGenerationApiRoute()` / `callCustomAPIStream()` 中携带 `cachedPresetGenerationOptions`。
+   - `api-client.js:extractPresetGenerationOptions()` 会从酒馆创作预设继承 `temperature`、`top_p`、`frequency_penalty`、`presence_penalty`、`top_k`、`top_a`、`min_p`、`repetition_penalty`、`seed`、`reasoning_effort`；OpenAI 兼容网关不一定接受全部字段。
+   - 这套正式生成参数继承是在提交 `c33a7b1 fix: align generation API streaming` 中加入的，符合“更新后、同一 GG 与同一模型，但不同用户/预设结果不同”的现象。目前它是第一嫌疑。
+2. **原始服务端拒绝原因被诊断层丢掉。**
+   - `api-runtime.js:requestCustomApi()` 已读取 `errorBody`，但 `statusError()` 只转成 `T-HTTP-400`，未留下安全分类结果。
+   - 现有 Token 自动降档只在 `isMaxTokenLimitError(status, errorBody)` 命中明确的长度关键词时生效；普通 400 不会降档，也不会去掉预设参数重试。
+3. **次要嫌疑是 strict 消息排列和升级后的 16384。**
+   - `init()` 会把缺少 `maxOutputTokensSchema` 且原值为 8192 的旧设置迁移为 16384，因此不同升级历史可能产生不同请求。
+   - 第一份报告输入很大且消息角色复杂，仍需用另外两份失败报告和禾禾的一份成功报告做横向对照，不能现在就只修其中一个猜测。
+
+### 初始建议（已被上方最终确认方案取代）
+
+优先做可回退、尽量不改变现有成功用户行为的兼容修复：
+
+1. 在独立 API 收到 400/422 后，读取并安全分类服务端错误内容；只记录错误类别、参数名等脱敏信息，不记录 API Key 或请求正文。
+2. 若错误指向未知/不支持的采样参数，自动去掉可选的 `generationOptions` 后重试一次；成功用户仍走原请求，不要全局删除预设参数。
+3. 若错误明确指向 Token/上下文，沿用或加强现有 Token 降档，并给出“减少聊天前文/资料”一类准确提示；不要把所有 400 都当作长度问题。
+4. 若错误明确指向消息角色或顺序，再评估针对 OpenAI 兼容网关的消息兼容处理。不要无条件合并或重排 system，以免牺牲预设分类、顺序、世界书深度和 HTML 丰富度。
+5. 让“测试连接”至少使用与正式生成相同的协议解析和预设参数形状，使它能提前发现参数不兼容；连接测试仍保持最小消息与极小输出，避免高消耗。
+6. 诊断报告新增安全字段：本次携带的可选参数名称、是否发生“去除可选参数”回退、服务端拒绝类别。不要保存参数中的秘密值，也不要保存正文。
+
+### 需要继续收集的对照材料
+
+- 另外两位失败用户：完整诊断报告、报错前后运行日志、创作预设名、模型名、聊天前文数量、最大输出 Token，以及“测试连接是否成功”。
+- 禾禾：成功生成一次后导出同样的诊断与附近日志，作为成功对照。
+- 最有判别力的对照：是否都使用 `【Ako】1.9_Polaroid`、是否都是 `strict`、预设包含哪些生成参数、消息数/输入 Token 是否接近、成功样本与失败样本的可选参数名称是否不同。
+
+### 新窗口开始时先执行
+
+```powershell
+Set-Location -LiteralPath 'D:\st-theater\.codex-long-dream-ui'
+git status --short --branch
+git log -1 --oneline
+```
+
+- 交接前代码 HEAD：`8f05c62 fix: restore smooth floating ball drag`。
+- 分支：`codex/long-dream-ui-tune`，跟踪 `origin/codex/long-dream-preview`。
+- 交接前远端引用：`origin/codex/long-dream-preview` 与 `origin/main` 都是 `8f05c62`。
+- 施工前工作区除本交接外原本干净；当前未提交文件为 `PROJECT_STATUS.md`、`api-client.js`、`api-runtime.js`、`index.js`、`request-trace.js`、`tests/core.test.js`。不要覆盖或丢弃这些修复。
+- `D:\st-theater` 是另一个已注册且包含其他工作/未提交内容的 worktree，不要在那里修本次 400，也不要清理它。
+
+### 修复后的最低验证
+
+```powershell
+node --check .\index.js
+node --check .\api-client.js
+node --check .\api-runtime.js
+node --test --test-isolation=none .\tests\core.test.js
+git diff --check
+```
+
+当前最终验证标准以上方“本窗口最终确认方案”为准；本段旧标准只保留为问题演变记录，不再要求正式请求携带或回退预设采样参数。
+
+建议禾禾在新窗口使用这句话开场：
+
+> 请先完整阅读 `D:\st-theater\.codex-long-dream-ui\PROJECT_STATUS.md` 顶部“v4.1.1 独立 API 更新后持续 400”交接，核对真实 worktree 与 6 个未提交文件，复核“独立 API 从第一请求起完全不继承预设采样参数”的最终实现和 `191/191` 测试结果。不要改动 `D:\st-theater` 另一个 worktree，未经我明确同意不要提交或 push；若有真实 GG 新报告，再按脱敏诊断继续排查消息排列或网关上下文上限。
 
 ## 紧急交接：v4.1.1 悬浮球防误触与设置页稳定（2026-08-19）
 

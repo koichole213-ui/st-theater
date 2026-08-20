@@ -138,6 +138,11 @@ function statusError(status, body = '', { phase = 'body', transport = '' } = {})
             code: 'THEATER_OUTPUT_LIMIT', status: numericStatus, phase, transport,
         });
     }
+    if (isContentBlockedErrorMessage(body)) {
+        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
+            code: 'THEATER_CONTENT_FILTER', status: numericStatus, phase, transport,
+        });
+    }
     const signal = numericStatus >= 400 && numericStatus <= 599
         ? `T-HTTP-${numericStatus}`
         : REQUEST_DIAGNOSTIC_SIGNAL.INVALID_RESPONSE;
@@ -643,7 +648,6 @@ export async function requestCustomApi({
             userPrompt,
             messages,
             postProcessing,
-            generationOptions: config.generationOptions,
             maxTokens,
             stream: shouldStream,
         });
@@ -652,10 +656,14 @@ export async function requestCustomApi({
                 code: 'THEATER_CONFIG', phase: 'body', transport: request.protocol,
             });
         }
-        log('info', '请求发出', { mode: 'custom', url: request.endpoint, protocol: request.protocol, max_tokens: maxTokens });
+        log('info', '请求发出', {
+            mode: 'custom', url: request.endpoint, protocol: request.protocol, max_tokens: maxTokens,
+            preset_generation_options: 'not_inherited',
+        });
         onRequest({
             route: 'custom', transport: shouldStream ? 'stream' : 'non-stream', protocol: request.protocol,
             model: config.apiModel, presetName, postProcessing, maxTokens, messages: request.messages,
+            presetGenerationOptionsInherited: false,
         });
         const performRequest = body => fetchImpl(request.endpoint, {
             method: 'POST',
@@ -728,6 +736,7 @@ export async function requestCustomApi({
                     onRequest({
                         route: 'custom', transport: 'non-stream-fallback', protocol: request.protocol,
                         model: config.apiModel, presetName, postProcessing, maxTokens, messages: request.messages,
+                        presetGenerationOptionsInherited: false,
                     });
                     const fallbackBody = { ...request.body, stream: false };
                     let fallbackResponse = await performCustomFetch(() => performRequest(fallbackBody), {

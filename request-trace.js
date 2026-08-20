@@ -13,6 +13,7 @@ export function redactRequestTraceText(value = '') {
 export function createRequestTrace({
     route = '', transport = '', protocol = '', model = '', presetName = '',
     postProcessing = '', maxTokens = null, messages = [], purpose = 'creative',
+    presetGenerationOptionsInherited = null,
 } = {}) {
     return {
         capturedAt: new Date().toISOString(),
@@ -24,6 +25,9 @@ export function createRequestTrace({
         postProcessing: String(postProcessing || 'none'),
         purpose: String(purpose || 'creative'),
         toolsDisabled: true,
+        presetGenerationOptionsInherited: presetGenerationOptionsInherited === null
+            ? null
+            : !!presetGenerationOptionsInherited,
         maxTokens: maxTokens !== null && maxTokens !== undefined && Number.isFinite(Number(maxTokens))
             ? Number(maxTokens)
             : null,
@@ -55,6 +59,7 @@ export function formatRequestTrace(trace) {
         `线路：${trace.route} / ${trace.transport}`,
         `协议：${trace.protocol} · 模型：${trace.model} · 最大输出：${trace.maxTokens ?? '未指定'}`,
         `预设：${trace.presetName} · 后处理：${trace.postProcessing} · 工具：${trace.toolsDisabled ? '已强制禁用' : '未知'}`,
+        `预设采样参数：${trace.route === 'custom' ? '未继承（使用线路默认值）' : '由酒馆主 API 决定'}`,
     ];
     const body = (trace.messages || []).map(message =>
         `[${message.index}] ${requestTraceMessageLabel(message)} · ${message.chars ?? 0} 字符 · 约 ${message.estimatedTokens ?? 0} token`

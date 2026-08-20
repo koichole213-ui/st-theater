@@ -6,7 +6,7 @@ import { playSoundFile } from './notification-sound.js';
 import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follow.js';
 import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
-import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, extractPresetGenerationOptions, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
+import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml } from './generation-payload.js';
 import { debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
@@ -4672,7 +4672,6 @@ function bindEvents() {
             cachedPresetEntries = [];
             cachedPresetPostProcessing = '';
             cachedPresetSquashSystemMessages = false;
-            cachedPresetGenerationOptions = {};
             $('#theater-preset-entries').html('<p class="theater-empty">请选择预设</p>');
         }
     });
@@ -5609,7 +5608,6 @@ function loadPersona(options = {}) {
 let cachedPresetEntries = [];
 let cachedPresetPostProcessing = '';
 let cachedPresetSquashSystemMessages = false;
-let cachedPresetGenerationOptions = {};
 let presetNamesCache = [];
 let presetSearch = '';
 
@@ -5862,7 +5860,6 @@ async function loadPresetEntries() {
     cachedPresetEntries = [];
     cachedPresetPostProcessing = '';
     cachedPresetSquashSystemMessages = false;
-    cachedPresetGenerationOptions = {};
     const sel = settings.selectedPresetName;
 
     if (!sel) {
@@ -5882,7 +5879,6 @@ async function loadPresetEntries() {
             ?? '',
         );
         cachedPresetSquashSystemMessages = !!data.squash_system_messages;
-        cachedPresetGenerationOptions = extractPresetGenerationOptions(data);
         console.log(`[Theater] Extracted ${cachedPresetEntries.length} entries from preset "${sel}"`);
     }
 
@@ -8426,7 +8422,6 @@ function captureGenerationApiRoute(ctx = SillyTavern.getContext()) {
         apiKey: settings.apiKey || '',
         apiModel: settings.apiModel || '',
         maxOutputTokens: normalizeMaxTokens(settings.maxOutputTokens),
-        generationOptions: Object.freeze({ ...cachedPresetGenerationOptions }),
     });
     return Object.freeze({
         mode,
@@ -8504,7 +8499,6 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
         apiKey: settings.apiKey,
         apiModel: settings.apiModel,
         maxOutputTokens: settings.maxOutputTokens,
-        generationOptions: { ...cachedPresetGenerationOptions },
     };
     return requestCustomApi({
         config: apiConfig,
@@ -8614,7 +8608,7 @@ function buildDiagnostics() {
         ...(lastRequestIssue ? [diagnosticLine('warn', '错误处理建议', `${lastRequestIssue.signal}：${lastRequestIssue.action}`)] : []),
         diagnosticLine(lastRequestContext ? 'ok' : 'warn', '最近请求摘要', formatRequestContextSummary(lastRequestContext)),
         diagnosticLine(lastRequestTrace ? 'ok' : 'warn', '创作请求结构', lastRequestTrace
-            ? `${lastRequestTrace.route}/${lastRequestTrace.transport} · ${lastRequestTrace.messages.length} 条消息 · 工具已强制禁用`
+            ? `${lastRequestTrace.route}/${lastRequestTrace.transport} · ${lastRequestTrace.messages.length} 条消息 · ${lastRequestTrace.route === 'custom' ? '预设采样参数未继承' : '预设采样参数由酒馆主 API 决定'} · 工具已强制禁用`
             : '暂无；完成一次插件正文请求后会在此显示发送前的角色、来源和长度，不包含消息正文'),
         diagnosticLine(lastApiResponseSummary?.hasText ? 'ok' : 'warn', '最近响应结构', formatApiResponseSummary(lastApiResponseSummary)),
         buildAutoModeDiagnostic(),
@@ -8652,6 +8646,7 @@ function runDiagnostics() {
                 <span>模型 ${esc(lastRequestTrace.model)}</span>
                 <span>预设 ${esc(lastRequestTrace.presetName)}</span>
                 <span>后处理 ${esc(lastRequestTrace.postProcessing)}</span>
+                <span>预设采样参数 ${lastRequestTrace.route === 'custom' ? '未继承（使用线路默认值）' : '由酒馆主 API 决定'}</span>
                 <span>工具 已强制禁用</span>
             </div>
             ${(lastRequestTrace.messages || []).map(message => `
@@ -9003,9 +8998,22 @@ async function testAPIConnection() {
     clearRequestIssue();
 
     try {
-        const request = buildApiRequest({ url, protocol: $('#theater-api-protocol').val() || settings.apiProtocol, key, model, systemPrompt: '', userPrompt: 'Hi', maxTokens: 16, stream: false });
-        if (request.protocol === API_PROTOCOLS.ANTHROPIC && !key) { toastr.warning('Anthropic 接口需要 API Key'); return; }
         lastRequestContext = { kind: '连接测试' };
+        const request = buildApiRequest({
+            url,
+            protocol: $('#theater-api-protocol').val() || settings.apiProtocol,
+            key,
+            model,
+            systemPrompt: '',
+            userPrompt: 'Hi',
+            maxTokens: 16,
+            stream: false,
+        });
+        if (request.protocol === API_PROTOCOLS.ANTHROPIC && !key) { toastr.warning('Anthropic 接口需要 API Key'); return; }
+        runtimeLog('info', '连接测试请求发出', {
+            protocol: request.protocol,
+            preset_generation_options: 'not_inherited',
+        });
         const res = await fetch(request.endpoint, { method: 'POST', headers: request.headers, body: JSON.stringify(request.body) });
         if (res.ok) toastr.success('连接成功！');
         else {
