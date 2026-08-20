@@ -10,7 +10,7 @@
 - 已有 3 位用户反馈更新到 `v4.1.1` 后，使用 GG 独立 API 生成时持续报 `T-HTTP-400`；禾禾使用同一 GG API、同为 `gemini-3.1-pro-preview` 时可以正常生成。
 - 本窗口已按禾禾确认完成本地修复：独立 API 改为从第一请求起完全不继承预设采样参数，并补齐自动测试与安全诊断。当前仍未提交、未推送，等待真实 GG 验收或禾禾后续发布指令。
 - 用户提供的第一份报告位于 `C:\Users\lenovo6\Downloads\报错.docx`。它只作为本地诊断证据使用，不要复制进仓库、提交或公开；任何新增日志都必须继续避免记录 API Key、Token、Authorization 和正文。
-- 当前版本继续保持 `4.1.1`，除非禾禾另行指定版本号。
+- 本次独立 API 兼容修复发布为 `v4.1.2`，便于报告用户明确辨认验收版本。
 
 ### 本窗口最终确认方案（2026-08-20，待真实 GG 验收）
 
@@ -21,7 +21,7 @@
 - 新日志 `C:\Users\lenovo6\Downloads\报错.txt` 仍是 GG `gemini-3.1-pro-preview`，预设已换成“日月西”、后处理为 `none`、聊天前文仅 5 条，94 条消息估算输入约 86,466 Token，仍在首字前约 3.154 秒返回 400。这排除了 `strict/strict-placeholder` 是两份报告共同必要条件，并进一步削弱了聊天前文过多的解释；尾部 assistant 与末尾 system 排列仍是参数去除后若继续 400 的第二检查方向。
 - 有用户口述“更新到 4.0 之后就不行”。代码史核对显示 `v3.6.4 → v4.0.0` 没有修改 `api-client.js`/`api-runtime.js` 或普通独立 API 请求构造；预设采样参数继承由 `c33a7b1` 加入，首次进入公开版本是 `v4.1.0`，再由 `v4.1.1` 继承。因此先把“4.0之后”保留为宽泛升级时间线，不把它误写成已证实的 `v4.0.0` 回归。
 - 新增硬性回归覆盖 OpenAI/Anthropic 构造层、旧调用方残留配置、普通 400 不重复发送、Token 降档每一档都不带预设采样参数，以及正式生成/连接测试源码不再读取这些字段。`node --check`（`index.js`、`api-client.js`、`api-runtime.js`、`request-trace.js`）、`git diff --check` 与核心测试 `191/191` 均通过。
-- 本轮仍为本地未提交修改，没有提交或推送，版本保持 `v4.1.1`。真实 GG 验收不要求禾禾复现原故障，可优先交给已稳定复现的报告用户；若去参版本仍为 400，再根据新诊断检查消息角色排列或 GG 自设上下文上限。
+- 独立 API 去参修复已提交并同步到预览分支与 `main`，随后统一升级版本标识为 `v4.1.2`。真实 GG 验收不要求禾禾复现原故障，可优先交给已稳定复现的报告用户；若去参版本仍为 400，再根据新诊断检查消息角色排列或 GG 自设上下文上限。
 
 ### 第一份失败报告的已确认事实
 
@@ -74,7 +74,7 @@ git log -1 --oneline
 - 交接前代码 HEAD：`8f05c62 fix: restore smooth floating ball drag`。
 - 分支：`codex/long-dream-ui-tune`，跟踪 `origin/codex/long-dream-preview`。
 - 交接前远端引用：`origin/codex/long-dream-preview` 与 `origin/main` 都是 `8f05c62`。
-- 施工前工作区除本交接外原本干净；当前未提交文件为 `PROJECT_STATUS.md`、`api-client.js`、`api-runtime.js`、`index.js`、`request-trace.js`、`tests/core.test.js`。不要覆盖或丢弃这些修复。
+- 本次修复及 `v4.1.2` 版本标识已按禾禾授权提交并同步到预览分支与 `main`；新窗口先核对远端提交与工作区状态，不要用旧交接覆盖这次修复。
 - `D:\st-theater` 是另一个已注册且包含其他工作/未提交内容的 worktree，不要在那里修本次 400，也不要清理它。
 
 ### 修复后的最低验证
@@ -91,7 +91,7 @@ git diff --check
 
 建议禾禾在新窗口使用这句话开场：
 
-> 请先完整阅读 `D:\st-theater\.codex-long-dream-ui\PROJECT_STATUS.md` 顶部“v4.1.1 独立 API 更新后持续 400”交接，核对真实 worktree 与 6 个未提交文件，复核“独立 API 从第一请求起完全不继承预设采样参数”的最终实现和 `191/191` 测试结果。不要改动 `D:\st-theater` 另一个 worktree，未经我明确同意不要提交或 push；若有真实 GG 新报告，再按脱敏诊断继续排查消息排列或网关上下文上限。
+> 请先完整阅读 `D:\st-theater\.codex-long-dream-ui\PROJECT_STATUS.md` 顶部“v4.1.1 独立 API 更新后持续 400”交接，核对真实 worktree、`v4.1.2` 版本与远端状态，复核“独立 API 从第一请求起完全不继承预设采样参数”的最终实现和 `191/191` 测试结果。不要改动 `D:\st-theater` 另一个 worktree，未经我明确同意不要继续施工或 push；若有真实 GG 新报告，再按脱敏诊断继续排查消息排列或网关上下文上限。
 
 ## 紧急交接：v4.1.1 悬浮球防误触与设置页稳定（2026-08-19）
 
