@@ -41,7 +41,7 @@ import { createRequestTrace, formatRequestTrace, requestTraceCompatibilityLabel,
 import { migrateLegacyPresetEntryStates, presetEntryStatesForPreset } from './preset-entry-states.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.1.3';
+const VERSION = '4.1.4';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let updateReadyToReload = false;

@@ -3,7 +3,7 @@
 > 最后核对：2026-08-22（Asia/Shanghai）
 > 这份文件记录会变化的项目现状。长期施工规则以仓库外层的 `AGENTS.md` 和禾禾当轮要求为准。
 
-## 紧急交接：v4.1.3 独立 API 丢失中后段 system（2026-08-22）
+## 紧急交接：v4.1.4 独立 API 丢失中后段 system（2026-08-22）
 
 ### 已确认原因
 
@@ -12,7 +12,7 @@
 - 已只读核对禾禾本地 gcli2api 转换器：它只提取请求开头连续的 system，随后又跳过消息列表里的全部 system。因此只要 OpenAI 兼容请求先出现 user/assistant、后面才出现人物/世界书 system，中后段 system 就会被静默丢弃。这与诊断中的 user-first 六消息结构和异常低 input tokens 完全吻合。
 - 历史核对显示，`c33a7b1 fix: align generation API streaming` 开始让独立 API 直接发送完整结构化 messages；它首次随 `v4.0.3` 发布，并进入 `v4.1.0`。旧版独立 API 使用扁平的 system + user，所以不会触发这种网关兼容缺陷。普通续写每轮带齐冻结人物、世界书与预设是禾禾明确要求保留的功能，不得为规避问题而删减资料。
 
-### v4.1.3 发布修复
+### v4.1.4 正式发布修复
 
 - 正确 worktree 仍是 `D:\st-theater\.codex-long-dream-ui`，分支 `codex/long-dream-ui-tune`，基线 `2ba1ecb release: publish v4.1.2`；禁止改动 `D:\st-theater` 另一个 worktree。
 - 禾禾已授权改代码，并明确把范围从“Gemini 特判”扩大为“所有独立 API”。实际按协议安全处理：
@@ -22,7 +22,7 @@
 - 诊断报告与运行日志新增脱敏的“消息兼容”标记：`OpenAI system 已安全前置`、`Anthropic 顶层 system` 或 `原始消息结构`；合并消息只记录条数，不记录正文、Key、Authorization 或完整 URL。
 - 已新增回归覆盖：任意模型名与 `auto` 的 OpenAI 线路、user-first 与续写交错结构、纯开头 system 原样保持、Anthropic 顶层 system、Token 降档、流式转非流式以及诊断脱敏。
 - 当前检查结果：`api-client.js`、`api-runtime.js`、`request-trace.js`、`index.js` 语法检查通过，`git diff --check` 通过，核心测试 `194/194` 通过。
-- 禾禾已授权将本修复作为 `v4.1.3` 发布；`index.js`、`manifest.json`、`style.css`、设置页版本与版本回归测试同步为 `4.1.3`。提交与远端状态以本节下方命令现场核对结果为准。
+- `v4.1.3` 推送后禾禾初步实测反馈“好像没问题了”，已授权将同一修复正式升级为 `v4.1.4`；`index.js`、`manifest.json`、`style.css`、设置页版本与版本回归测试同步为 `4.1.4`。提交与远端状态以本节下方命令现场核对结果为准。
 
 ## 紧急交接：v4.1.1 独立 API 更新后持续 400（2026-08-20）
 
