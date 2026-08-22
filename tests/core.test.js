@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
-import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, hasReasoningContent, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
+import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, MESSAGE_COMPATIBILITY, applyIndependentOpenAICompatibility, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, hasReasoningContent, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { readNonStreamingResponse, readSSEStream, requestCustomApi, requestMainApi } from '../api-runtime.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
 import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, normalizeContinuationText, readableCharCount } from '../text-counter.js';
@@ -1959,13 +1959,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.1.2 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.1.3 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.1\.2'/);
-    assert.equal(manifest.version, '4.1.2');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.1\.2/);
+    assert.match(source, /const VERSION = '4\.1\.3'/);
+    assert.equal(manifest.version, '4.1.3');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.1\.3/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -2461,6 +2461,88 @@ test('独立 API 请求构造层不会继承任何创作预设采样参数', () 
     }
 });
 
+test('所有独立 OpenAI 兼容线路都会安全前置对话后的 system，不再限定模型名', () => {
+    const sourceMessages = [
+        { role: 'user', content: '预设用户段一', source: 'preset', sourceId: 'u1' },
+        { role: 'system', content: '人物与世界书一', source: 'world-book', sourceId: 's1' },
+        { role: 'user', content: '预设用户段二', source: 'preset', sourceId: 'u2' },
+        { role: 'system', content: '最终规则二', source: 'theater-rules', sourceId: 's2' },
+    ];
+    for (const protocol of [API_PROTOCOLS.OPENAI, API_PROTOCOLS.AUTO]) {
+        const request = buildApiRequest({
+            url: 'https://example.com/v1',
+            protocol,
+            model: 'not-a-gemini-model',
+            messages: sourceMessages,
+        });
+        assert.equal(request.protocol, API_PROTOCOLS.OPENAI);
+        assert.equal(request.messageCompatibility, MESSAGE_COMPATIBILITY.OPENAI_SYSTEM_FIRST);
+        assert.deepEqual(request.body.messages.map(message => message.role), ['system', 'user']);
+        assert.equal(request.body.messages[0].content, '人物与世界书一\n\n最终规则二');
+        assert.equal(request.body.messages[1].content, '预设用户段一\n\n预设用户段二');
+        for (const expected of sourceMessages.map(message => message.content)) {
+            assert.equal(request.body.messages.map(message => message.content).join('\n').split(expected).length - 1, 1);
+        }
+        assert.equal(request.messages[0].foldedMessageCount, 2);
+        assert.equal(request.messages[1].foldedMessageCount, 2);
+    }
+});
+
+test('独立 OpenAI 续写兼容只移动 system，完整保留 user/assistant 次序与资料', () => {
+    const compatible = applyIndependentOpenAICompatibility([
+        { role: 'user', content: '首轮预设' },
+        { role: 'system', content: '冻结人物世界书' },
+        { role: 'assistant', content: '上一轮正文' },
+        { role: 'system', content: '续写规则' },
+        { role: 'user', content: '本轮续写指令' },
+    ]);
+    assert.equal(compatible.mode, MESSAGE_COMPATIBILITY.OPENAI_SYSTEM_FIRST);
+    assert.deepEqual(compatible.messages.map(message => message.role), ['system', 'user', 'assistant', 'user']);
+    assert.deepEqual(compatible.messages.map(message => message.content), [
+        '冻结人物世界书\n\n续写规则',
+        '首轮预设',
+        '上一轮正文',
+        '本轮续写指令',
+    ]);
+});
+
+test('独立 OpenAI 的纯开头 system 保持原结构，Anthropic 继续使用顶层 system', () => {
+    const leadingOnly = applyIndependentOpenAICompatibility([
+        { role: 'system', content: '系统一' },
+        { role: 'system', content: '系统二' },
+        { role: 'user', content: '用户' },
+    ]);
+    assert.equal(leadingOnly.mode, MESSAGE_COMPATIBILITY.NATIVE);
+    assert.deepEqual(leadingOnly.messages.map(message => message.role), ['system', 'system', 'user']);
+
+    const systemAfterDialogue = applyIndependentOpenAICompatibility([
+        { role: 'system', content: '开头系统' },
+        { role: 'user', content: '中间用户' },
+        { role: 'system', content: '后置系统' },
+    ]);
+    assert.equal(systemAfterDialogue.mode, MESSAGE_COMPATIBILITY.OPENAI_SYSTEM_FIRST);
+    assert.deepEqual(systemAfterDialogue.messages.map(message => message.role), ['system', 'user']);
+    assert.equal(systemAfterDialogue.messages[0].content, '开头系统\n\n后置系统');
+
+    const anthropic = buildApiRequest({
+        url: 'https://example.com/v1',
+        protocol: API_PROTOCOLS.ANTHROPIC,
+        key: 'secret',
+        model: 'claude-test',
+        messages: [
+            { role: 'user', content: '用户一' },
+            { role: 'system', content: '人物世界书' },
+            { role: 'assistant', content: '正文' },
+            { role: 'system', content: '最终规则' },
+            { role: 'user', content: '用户二' },
+        ],
+    });
+    assert.equal(anthropic.messageCompatibility, MESSAGE_COMPATIBILITY.ANTHROPIC_TOP_LEVEL_SYSTEM);
+    assert.equal(anthropic.body.system, '人物世界书\n\n最终规则');
+    assert.deepEqual(anthropic.body.messages.map(message => message.role), ['user', 'assistant', 'user']);
+    assert.equal(anthropic.body.messages.some(message => message.role === 'system'), false);
+});
+
 test('思考标签在流式未闭合时不会闪出，并在闭合后只保留正文', () => {
     assert.deepEqual(filterTaggedReasoning('<thin'), {
         content: '',
@@ -2593,7 +2675,9 @@ test('独立 API 即使收到旧调用方附带的采样配置也不会发到线
     assert.equal(result.text, '默认采样成功');
     for (const name of forbidden) assert.equal(requestBody[name], undefined, `线上请求不应包含 ${name}`);
     assert.equal(requestTrace.presetGenerationOptionsInherited, false);
+    assert.equal(requestTrace.messageCompatibility, MESSAGE_COMPATIBILITY.NATIVE);
     assert.match(JSON.stringify(logs), /not_inherited/);
+    assert.match(JSON.stringify(logs), /message_compatibility/);
 });
 
 test('独立 API 的普通 400 不因预设采样参数再发第二次请求', async () => {
@@ -2617,14 +2701,20 @@ test('独立 API 的普通 400 不因预设采样参数再发第二次请求', a
 test('独立 API 的 Token 降档继续生效且每一档都不带预设采样参数', async () => {
     const bodies = [];
     const fallbacks = [];
+    const requestModes = [];
     const result = await requestCustomApi({
         config: {
             apiUrl: 'https://api.example.com/v1', apiProtocol: API_PROTOCOLS.OPENAI,
             apiModel: 'model-name', maxOutputTokens: 16384, generationOptions: { top_k: 40, temperature: 0.8 },
         },
-        systemPrompt: '系统',
-        userPrompt: '用户',
+        messages: [
+            { role: 'user', content: '预设用户段' },
+            { role: 'system', content: '人物世界书' },
+            { role: 'user', content: '创作指令' },
+            { role: 'system', content: '最终规则' },
+        ],
         shouldStream: false,
+        onRequest: details => requestModes.push(details.messageCompatibility),
         onFallback: value => fallbacks.push(value),
         fetchImpl: async (_url, options) => {
             bodies.push(JSON.parse(options.body));
@@ -2638,6 +2728,12 @@ test('独立 API 的 Token 降档继续生效且每一档都不带预设采样�
     assert.deepEqual(bodies.map(body => [body.max_tokens, body.top_k, body.temperature]), [
         [16384, undefined, undefined],
         [8192, undefined, undefined],
+    ]);
+    assert.equal(bodies.every(body => body.messages[0].role === 'system'), true);
+    assert.equal(bodies.every(body => body.messages[0].content === '人物世界书\n\n最终规则'), true);
+    assert.deepEqual(requestModes, [
+        MESSAGE_COMPATIBILITY.OPENAI_SYSTEM_FIRST,
+        MESSAGE_COMPATIBILITY.OPENAI_SYSTEM_FIRST,
     ]);
     assert.deepEqual(fallbacks, ['custom:max-token 16384→8192']);
 });
@@ -2828,6 +2924,7 @@ test('独立 API 遇到 429 会按 Retry-After 单次重试并读取非流式正
 
 test('独立 API 空流会在同一轮改用非流式请求', async () => {
     const requestBodies = [];
+    const requestTraces = [];
     const chunks = [];
     const fallbacks = [];
     const result = await requestCustomApi({
@@ -2837,10 +2934,14 @@ test('独立 API 空流会在同一轮改用非流式请求', async () => {
             apiModel: 'test-model',
             maxOutputTokens: 1024,
         },
-        systemPrompt: '系统',
-        userPrompt: '用户',
+        messages: [
+            { role: 'user', content: '预设用户段' },
+            { role: 'system', content: '人物世界书' },
+            { role: 'user', content: '生成指令' },
+        ],
         onChunk: text => chunks.push(text),
         onFallback: path => fallbacks.push(path),
+        onRequest: details => requestTraces.push(details),
         fetchImpl: async (_url, options) => {
             requestBodies.push(JSON.parse(options.body));
             if (requestBodies.length === 1) {
@@ -2855,6 +2956,11 @@ test('独立 API 空流会在同一轮改用非流式请求', async () => {
     assert.equal(requestBodies.length, 2);
     assert.equal(requestBodies[0].stream, true);
     assert.equal(requestBodies[1].stream, false);
+    assert.deepEqual(requestBodies[0].messages, requestBodies[1].messages);
+    assert.deepEqual(requestTraces.map(trace => trace.messageCompatibility), [
+        MESSAGE_COMPATIBILITY.OPENAI_SYSTEM_FIRST,
+        MESSAGE_COMPATIBILITY.OPENAI_SYSTEM_FIRST,
+    ]);
     assert.deepEqual(chunks, ['非流式恢复正文']);
     assert.equal(result.text, '非流式恢复正文');
     assert.deepEqual(fallbacks, ['custom:stream→non-stream']);
@@ -3279,10 +3385,24 @@ test('创作请求结构来自传输层输入且不包含正文、Key、Authoriz
     assert.doesNotMatch(report, /sk-super-secret|secret-host\.example|Authorization/i);
     assert.match(report, /工具：已强制禁用/);
     assert.match(report, /预设采样参数：未继承（使用线路默认值）/);
+    assert.match(report, /消息兼容：原始消息结构/);
     assert.match(formatRequestTrace(createRequestTrace({ route: 'main' })), /预设采样参数：由酒馆主 API 决定/);
+    assert.match(formatRequestTrace(createRequestTrace({ route: 'main' })), /消息兼容：由酒馆主 API 决定/);
     assert.doesNotMatch(report, /系统|用户|request\/system|request\/user/);
     assert.match(report, /system · preset\/main · 2 字符 · 约 3 token/);
     assert.match(report, /user · theater\/instruction · 2 字符 · 约 3 token/);
+
+    const compatibilityReport = formatRequestTrace(createRequestTrace({
+        route: 'custom',
+        messageCompatibility: MESSAGE_COMPATIBILITY.OPENAI_SYSTEM_FIRST,
+        messages: [{
+            role: 'system', content: '折叠后的系统资料', source: 'openai-compat',
+            sourceId: 'system-fold', foldedMessageCount: 4,
+        }],
+    }));
+    assert.match(compatibilityReport, /消息兼容：OpenAI system 已安全前置/);
+    assert.match(compatibilityReport, /合并 4 条/);
+    assert.doesNotMatch(compatibilityReport, /折叠后的系统资料/);
 });
 
 test('诊断界面只展示创作请求结构，不渲染或复制真实消息正文', () => {

@@ -13,7 +13,7 @@ export function redactRequestTraceText(value = '') {
 export function createRequestTrace({
     route = '', transport = '', protocol = '', model = '', presetName = '',
     postProcessing = '', maxTokens = null, messages = [], purpose = 'creative',
-    presetGenerationOptionsInherited = null,
+    presetGenerationOptionsInherited = null, messageCompatibility = '',
 } = {}) {
     return {
         capturedAt: new Date().toISOString(),
@@ -28,6 +28,7 @@ export function createRequestTrace({
         presetGenerationOptionsInherited: presetGenerationOptionsInherited === null
             ? null
             : !!presetGenerationOptionsInherited,
+        messageCompatibility: String(messageCompatibility || ''),
         maxTokens: maxTokens !== null && maxTokens !== undefined && Number.isFinite(Number(maxTokens))
             ? Number(maxTokens)
             : null,
@@ -40,9 +41,17 @@ export function createRequestTrace({
                 sourceId: String(message?.sourceId || `message-${index + 1}`),
                 chars: content.length,
                 estimatedTokens: estimateTokenCount(content),
+                foldedMessageCount: Math.max(1, Number(message?.foldedMessageCount) || 1),
             };
         }),
     };
+}
+
+export function requestTraceCompatibilityLabel(trace = {}) {
+    if (trace.route !== 'custom') return '由酒馆主 API 决定';
+    if (trace.messageCompatibility === 'openai-system-first') return 'OpenAI system 已安全前置';
+    if (trace.messageCompatibility === 'anthropic-top-level-system') return 'Anthropic 顶层 system';
+    return '原始消息结构';
 }
 
 export function requestTraceMessageLabel(message = {}) {
@@ -60,9 +69,10 @@ export function formatRequestTrace(trace) {
         `协议：${trace.protocol} · 模型：${trace.model} · 最大输出：${trace.maxTokens ?? '未指定'}`,
         `预设：${trace.presetName} · 后处理：${trace.postProcessing} · 工具：${trace.toolsDisabled ? '已强制禁用' : '未知'}`,
         `预设采样参数：${trace.route === 'custom' ? '未继承（使用线路默认值）' : '由酒馆主 API 决定'}`,
+        `消息兼容：${requestTraceCompatibilityLabel(trace)}`,
     ];
     const body = (trace.messages || []).map(message =>
-        `[${message.index}] ${requestTraceMessageLabel(message)} · ${message.chars ?? 0} 字符 · 约 ${message.estimatedTokens ?? 0} token`
+        `[${message.index}] ${requestTraceMessageLabel(message)} · ${message.chars ?? 0} 字符 · 约 ${message.estimatedTokens ?? 0} token${message.foldedMessageCount > 1 ? ` · 合并 ${message.foldedMessageCount} 条` : ''}`
     );
     return [...header, ...body].join('\n');
 }

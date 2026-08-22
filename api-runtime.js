@@ -659,11 +659,13 @@ export async function requestCustomApi({
         log('info', '请求发出', {
             mode: 'custom', url: request.endpoint, protocol: request.protocol, max_tokens: maxTokens,
             preset_generation_options: 'not_inherited',
+            message_compatibility: request.messageCompatibility,
         });
         onRequest({
             route: 'custom', transport: shouldStream ? 'stream' : 'non-stream', protocol: request.protocol,
             model: config.apiModel, presetName, postProcessing, maxTokens, messages: request.messages,
             presetGenerationOptionsInherited: false,
+            messageCompatibility: request.messageCompatibility,
         });
         const performRequest = body => fetchImpl(request.endpoint, {
             method: 'POST',
@@ -732,11 +734,13 @@ export async function requestCustomApi({
                         protocol: request.protocol,
                         max_tokens: maxTokens,
                         transport: 'non_stream_fallback',
+                        message_compatibility: request.messageCompatibility,
                     });
                     onRequest({
                         route: 'custom', transport: 'non-stream-fallback', protocol: request.protocol,
                         model: config.apiModel, presetName, postProcessing, maxTokens, messages: request.messages,
                         presetGenerationOptionsInherited: false,
+                        messageCompatibility: request.messageCompatibility,
                     });
                     const fallbackBody = { ...request.body, stream: false };
                     let fallbackResponse = await performCustomFetch(() => performRequest(fallbackBody), {

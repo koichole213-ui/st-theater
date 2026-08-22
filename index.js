@@ -37,11 +37,11 @@ import { LONG_DREAM_MEMORY_BUILTIN_PRESET_ID, MAX_LONG_DREAM_MEMORY_PRESET_BYTES
 import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, buildLongDreamCanonSuggestionPayload, composeLongDreamCanon, parseLongDreamCanonSuggestions } from './long-dream-canon-suggestions.js';
 import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkSide, normalizeBookmarkYRatio } from './result-bookmark.js';
 import { applyPromptPostProcessing, composeGenerationContinuationMessages, composePresetMessages, noToolsPostProcessingMode, normalizePromptRole } from './request-layout.js';
-import { createRequestTrace, formatRequestTrace, requestTraceMessageLabel } from './request-trace.js';
+import { createRequestTrace, formatRequestTrace, requestTraceCompatibilityLabel, requestTraceMessageLabel } from './request-trace.js';
 import { migrateLegacyPresetEntryStates, presetEntryStatesForPreset } from './preset-entry-states.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.1.2';
+const VERSION = '4.1.3';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let updateReadyToReload = false;
@@ -8608,7 +8608,7 @@ function buildDiagnostics() {
         ...(lastRequestIssue ? [diagnosticLine('warn', '错误处理建议', `${lastRequestIssue.signal}：${lastRequestIssue.action}`)] : []),
         diagnosticLine(lastRequestContext ? 'ok' : 'warn', '最近请求摘要', formatRequestContextSummary(lastRequestContext)),
         diagnosticLine(lastRequestTrace ? 'ok' : 'warn', '创作请求结构', lastRequestTrace
-            ? `${lastRequestTrace.route}/${lastRequestTrace.transport} · ${lastRequestTrace.messages.length} 条消息 · ${lastRequestTrace.route === 'custom' ? '预设采样参数未继承' : '预设采样参数由酒馆主 API 决定'} · 工具已强制禁用`
+            ? `${lastRequestTrace.route}/${lastRequestTrace.transport} · ${lastRequestTrace.messages.length} 条消息 · ${lastRequestTrace.route === 'custom' ? '预设采样参数未继承' : '预设采样参数由酒馆主 API 决定'} · 消息兼容：${requestTraceCompatibilityLabel(lastRequestTrace)} · 工具已强制禁用`
             : '暂无；完成一次插件正文请求后会在此显示发送前的角色、来源和长度，不包含消息正文'),
         diagnosticLine(lastApiResponseSummary?.hasText ? 'ok' : 'warn', '最近响应结构', formatApiResponseSummary(lastApiResponseSummary)),
         buildAutoModeDiagnostic(),
@@ -8647,12 +8647,13 @@ function runDiagnostics() {
                 <span>预设 ${esc(lastRequestTrace.presetName)}</span>
                 <span>后处理 ${esc(lastRequestTrace.postProcessing)}</span>
                 <span>预设采样参数 ${lastRequestTrace.route === 'custom' ? '未继承（使用线路默认值）' : '由酒馆主 API 决定'}</span>
+                <span>消息兼容 ${esc(requestTraceCompatibilityLabel(lastRequestTrace))}</span>
                 <span>工具 已强制禁用</span>
             </div>
             ${(lastRequestTrace.messages || []).map(message => `
                 <div class="theater-request-trace-message">
                     <span>${message.index}. ${esc(requestTraceMessageLabel(message))}</span>
-                    <small>${Number(message.chars) || 0} 字符 · 约 ${Number(message.estimatedTokens) || 0} token</small>
+                    <small>${Number(message.chars) || 0} 字符 · 约 ${Number(message.estimatedTokens) || 0} token${message.foldedMessageCount > 1 ? ` · 合并 ${Number(message.foldedMessageCount)} 条` : ''}</small>
                 </div>
             `).join('')}
         </details>` : '';
