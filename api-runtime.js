@@ -20,7 +20,7 @@ import { applyPromptPostProcessing } from './request-layout.js';
 
 export const RATE_LIMIT_DEFAULT_WAIT_MS = 3000;
 export const RATE_LIMIT_MAX_AUTO_WAIT_MS = 15000;
-export const CUSTOM_STREAM_IDLE_TIMEOUT_MS = 60000;
+export const CUSTOM_STREAM_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 export const MAIN_FIRST_TOKEN_TIMEOUT_MS = 180000;
 export const MAIN_STREAM_IDLE_TIMEOUT_MS = 120000;
 export const MAIN_RESPONSE_TIMEOUT_MS = 300000;
@@ -873,10 +873,15 @@ export async function readSSEStream(
     let hadReasoning = false;
     let eventCount = 0;
     let lastJson = null;
+    let streamFinished = false;
 
     const consumePayload = (payload) => {
         const text = String(payload || '').trim();
-        if (!text || text === '[DONE]') return;
+        if (!text) return;
+        if (text === '[DONE]') {
+            streamFinished = true;
+            return;
+        }
         let json;
         try { json = JSON.parse(text); } catch { return; }
         eventCount += 1;
@@ -906,7 +911,13 @@ export async function readSSEStream(
         }
         if (line.startsWith(':') || line.startsWith('event:') || line.startsWith('id:') || line.startsWith('retry:')) return;
         if (line.startsWith('data:')) {
-            eventData.push(line.slice(5).replace(/^ /, ''));
+            const data = line.slice(5).replace(/^ /, '');
+            if (data.trim() === '[DONE]') {
+                dispatchEvent();
+                consumePayload(data);
+                return;
+            }
+            eventData.push(data);
             return;
         }
         const text = line.trim();
@@ -923,6 +934,10 @@ export async function readSSEStream(
         buffer = lines.pop() || '';
 
         for (const line of lines) consumeLine(line.replace(/\r$/, ''));
+        if (streamFinished) {
+            await reader.cancel('stream completed').catch(() => {});
+            break;
+        }
     }
     const finalChunk = decoder.decode();
     rawText += finalChunk;

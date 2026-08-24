@@ -13,7 +13,7 @@ import { debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount 
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, diagnosticSignalCatalog, diagnosticSignalInfo, signalForStopReason } from './request-diagnostics.js';
 import { autoSourceLabel, resolveAutoInstruction } from './auto-mode.js';
-import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from './generation-job.js';
+import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, generationTextWithLiveSegment, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from './generation-job.js';
 import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, readableCharCount, tailText } from './text-counter.js';
 import { classifyLengthTier, firstRoundGuidance, isLongFormTarget, isStagedRenderTarget, longFormFirstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
 import { clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
@@ -6888,7 +6888,6 @@ function buildGenerationContinuationRoundPayload({ foundation, instruction, ctx 
             worldInfoEntries: foundation.worldInfoEntries,
             chatMessages: foundation.chatMessages,
             foundationTailMessages: foundation.tailMessages,
-            originalInstruction: foundation.originalInstruction,
             continuationSystemPrompt: continuationPayload.systemPrompt,
             continuationUserPrompt: continuationPayload.userPrompt,
             squashSystemMessages: foundation.squashSystemMessages,
@@ -7052,7 +7051,6 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
             worldInfoEntries: freezeGenerationFoundationList(activeWorldInfoEntries),
             chatMessages: freezeGenerationFoundationList(structuredChatMessages),
             tailMessages: freezeGenerationFoundationList(foundationTailMessages),
-            originalInstruction: cleanInstruction,
             squashSystemMessages: cachedPresetSquashSystemMessages,
             postProcessing: cachedPresetPostProcessing,
             presetName,
@@ -8042,8 +8040,11 @@ async function runGeneration(instruction, isAuto) {
     let activeRound = 1;
     let progressLogged = false;
     let nextProgressAt = 1000;
+    let retainStreamAsBody = true;
+    let currentRoundStreamText = '';
     const onChunk = (text) => {
         bgStreamText = text;
+        if (retainStreamAsBody) currentRoundStreamText = String(text || '');
         const cumulativeChars = String(text || '').length;
         if (cumulativeChars > 0 && (!progressLogged || cumulativeChars >= nextProgressAt)) {
             runtimeLog('info', '流式进度', { round: activeRound, cumulative_chars: cumulativeChars });
@@ -8075,6 +8076,8 @@ async function runGeneration(instruction, isAuto) {
             activeRound = round;
             progressLogged = false;
             nextProgressAt = 1000;
+            retainStreamAsBody = true;
+            currentRoundStreamText = '';
             if (popupAlive()) {
                 const current = readableCharCount(currentGenerationJob.segments.join('\n\n'));
                 const shownMaxRounds = currentGenerationJob.autoContinue ? currentGenerationJob.maxRounds : 1;
@@ -8117,6 +8120,7 @@ async function runGeneration(instruction, isAuto) {
             if (!segmentText) throw new Error('生成完成但没有可显示内容');
             const resolvedStopReason = result?.stopReason && result.stopReason !== 'unknown' ? result.stopReason : 'stop';
             addGenerationSegment(currentGenerationJob, segmentText, resolvedStopReason, result?.rawStopReason || null);
+            currentRoundStreamText = '';
             runtimeLog(resolvedStopReason === 'length' ? 'warn' : 'info', '请求结束', {
                 round,
                 stop_reason: resolvedStopReason,
@@ -8160,6 +8164,8 @@ async function runGeneration(instruction, isAuto) {
             activeRound = 'render';
             firstChunkShown = false;
             bgStreamText = '';
+            retainStreamAsBody = false;
+            currentRoundStreamText = '';
             try {
                 const rendered = await requestFinalRenderedHtml({
                     sourceText: newText,
@@ -8245,7 +8251,10 @@ async function runGeneration(instruction, isAuto) {
         if (isAuto) setBallDot(true);
     } catch (err) {
         recordRequestMetrics(lastRequestMetrics);
-        const partialText = currentGenerationJob?.segments?.join('\n\n').trim() || '';
+        const liveBodyText = retainStreamAsBody
+            ? (htmlToPlainText(currentRoundStreamText) || String(currentRoundStreamText || '').trim())
+            : '';
+        const partialText = generationTextWithLiveSegment(currentGenerationJob, liveBodyText);
         if (partialText) {
             runtimeLog('warn', '渲染路径', { path: '错误兜底', retained_chars: readableCharCount(partialText) });
             lastGeneratedText = partialText;

@@ -30,6 +30,13 @@ export function addGenerationSegment(job, text, stopReason = 'unknown', rawStopR
     return job;
 }
 
+export function generationTextWithLiveSegment(job, liveSegment = '') {
+    return [
+        ...(Array.isArray(job?.segments) ? job.segments : []),
+        String(liveSegment || '').trim(),
+    ].map(value => String(value || '').trim()).filter(Boolean).join('\n\n').trim();
+}
+
 export function shouldContinueJob(job, countChars) {
     if (!job.autoContinue || !job.targetChars || job.aborted || job.stopReason === 'error') return false;
     job.actualChars = countChars(job.segments.join('\n\n'));

@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs';
 import { estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, MESSAGE_COMPATIBILITY, applyIndependentOpenAICompatibility, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, hasReasoningContent, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
-import { readNonStreamingResponse, readSSEStream, requestCustomApi, requestMainApi } from '../api-runtime.js';
-import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
+import { CUSTOM_STREAM_IDLE_TIMEOUT_MS, readNonStreamingResponse, readSSEStream, requestCustomApi, requestMainApi } from '../api-runtime.js';
+import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, generationTextWithLiveSegment, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
 import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, normalizeContinuationText, readableCharCount } from '../text-counter.js';
 import { RENDER_REPORT_TIMEOUT_MS, injectResizeReporter, installSafeResizeListener, renderSafeIframe, sandboxPermissions } from '../safe-renderer.js';
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from '../request-metrics.js';
@@ -2792,6 +2792,45 @@ test('API 运行层能累积 SSE 正文并保留结束原因', async () => {
     assert.equal(result.rawStopReason, 'stop');
 });
 
+test('独立 API 收到 DONE 后立即结束，不等待上游关闭连接', async () => {
+    const chunks = [];
+    let cancelled = false;
+    const encoder = new TextEncoder();
+    const response = new Response(new ReadableStream({
+        start(controller) {
+            controller.enqueue(encoder.encode([
+                'data: {"choices":[{"delta":{"content":"完整正文"},"finish_reason":"stop"}]}',
+                '',
+                'data: [DONE]',
+                '',
+            ].join('\n')));
+        },
+        cancel() {
+            cancelled = true;
+        },
+    }), { headers: { 'content-type': 'text/event-stream' } });
+
+    const result = await readSSEStream(response, text => chunks.push(text), API_PROTOCOLS.OPENAI, { idleTimeoutMs: 50 });
+    assert.equal(result.text, '完整正文');
+    assert.deepEqual(chunks, ['完整正文']);
+    assert.equal(cancelled, true);
+});
+
+test('独立 API 的心跳数据会刷新空闲等待，十分钟只限制连续静默而非总生成时长', async () => {
+    assert.equal(CUSTOM_STREAM_IDLE_TIMEOUT_MS, 10 * 60 * 1000);
+    const encoder = new TextEncoder();
+    const response = new Response(new ReadableStream({
+        start(controller) {
+            controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"前半段"}}]}\n\n'));
+            setTimeout(() => controller.enqueue(encoder.encode(': keep-alive\n\n')), 50);
+            setTimeout(() => controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"后半段"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')), 100);
+        },
+    }), { headers: { 'content-type': 'text/event-stream' } });
+
+    const result = await readSSEStream(response, () => {}, API_PROTOCOLS.OPENAI, { idleTimeoutMs: 75 });
+    assert.equal(result.text, '前半段后半段');
+});
+
 test('共用独立 API 流在长时间无新数据时结束等待并保留已收到正文', async () => {
     const chunks = [];
     let cancelled = false;
@@ -3753,6 +3792,7 @@ test('续写提示携带当前、目标和本轮篇幅，但不携带原始指�
     assert.match(payload.userPrompt, /目标约 5000 字/);
     assert.match(payload.userPrompt, /仍差约 1800 字/);
     assert.match(payload.userPrompt, /本轮请新增约 1100 字/);
+    assert.match(payload.userPrompt, /不得.*重新开启一条剧情/);
     assert.doesNotMatch(payload.userPrompt, /原始要求/);
     assert.doesNotMatch(payload.userPrompt, /输出完整 HTML/);
 
@@ -3792,12 +3832,27 @@ test('普通生成后续每轮重新带齐冻结的预设、人物、人设、�
     const text = messages.map(message => message.content).join('\n');
     for (const expected of [
         '冻结预设', 'NPC 是女性', '冻结 User 人设', 'NPC 名叫林秋',
-        '冻结聊天前文', '冻结文风补充', '让林秋陪主角调查旧站',
-        '从当前结尾继续第二轮', '只续写新增正文',
+        '冻结聊天前文', '冻结文风补充', '从当前结尾继续第二轮', '只续写新增正文',
     ]) assert.match(text, new RegExp(expected));
-    assert.equal(messages.filter(message => message.sourceId === 'original-instruction').length, 1);
+    assert.doesNotMatch(text, /让林秋陪主角调查旧站/);
+    assert.equal(messages.filter(message => message.sourceId === 'original-instruction').length, 0);
     assert.equal(messages.filter(message => message.sourceId === 'continuation-round').length, 1);
     assert.equal(messages.filter(message => message.sourceId === 'continuation-rules').length, 1);
+});
+
+test('普通生成中途失败会合并已完成轮次和当前流式正文，不再把一万字记成零', () => {
+    const job = createGenerationJob({ targetChars: 12000, maxRounds: 3, autoContinue: true });
+    addGenerationSegment(job, '第一轮正文', 'length');
+    assert.equal(generationTextWithLiveSegment(job, '第二轮已流出正文'), '第一轮正文\n\n第二轮已流出正文');
+    assert.equal(generationTextWithLiveSegment(createGenerationJob(), '首轮已流出正文'), '首轮已流出正文');
+
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const ordinaryGeneration = source.slice(
+        source.indexOf('async function runGeneration'),
+        source.indexOf('function currentAutoInstruction'),
+    );
+    assert.match(ordinaryGeneration, /retainStreamAsBody = false;[\s\S]*?requestFinalRenderedHtml/);
+    assert.match(ordinaryGeneration, /generationTextWithLiveSegment\(currentGenerationJob, liveBodyText\)/);
 });
 
 test('普通生成多轮复用首轮资料包而不是退回简化续写请求', () => {
