@@ -115,5 +115,5 @@ export function longFormFirstRoundTarget(targetChars) {
 export function longFormFirstRoundGuidance(targetChars) {
     const target = Math.max(0, Math.round(Number(targetChars) || 0));
     const firstRoundTarget = longFormFirstRoundTarget(target);
-    return `本篇长篇小剧场的可读中文正文总目标约为 ${target} 字。本轮只创作上半篇纯文字正文，目标约 ${firstRoundTarget} 字（不含 HTML、CSS、JavaScript 和排版代码）；请从开篇充分展开并停在剧情中段，保留明确的发展空间，不要总结、收束、写出结局或“未完待续”等提示。用有效情节、动作、对白和心理变化推进，不要复述、注水，也不要在正文中报告或标注字数。`;
+    return `本篇小剧场是一份总目标约为 ${target} 字的完整作品，将由多个纯正文轮共同完成。本轮只创作前半部分，目标约 ${firstRoundTarget} 字（不含 HTML、CSS、JavaScript 和排版代码）；请从开篇充分展开核心事件并停在剧情发展途中，不要把本轮压缩成独立完结篇，不要总结、收束、写出结局或“未完待续”等提示。用有效情节、动作、对白和心理变化推进，不要复述、注水，也不要在正文中报告或标注字数。`;
 }

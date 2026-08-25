@@ -6878,8 +6878,8 @@ function freezeGenerationFoundationList(items = []) {
     return Object.freeze((Array.isArray(items) ? items : []).map(item => Object.freeze({ ...item })));
 }
 
-function buildGenerationContinuationRoundPayload({ foundation, instruction, ctx }) {
-    const continuationPayload = buildContinuationPayload({ instruction });
+function buildGenerationContinuationRoundPayload({ foundation, instruction, ctx, manuscriptMode = false }) {
+    const continuationPayload = buildContinuationPayload({ instruction, manuscriptMode });
     return {
         ...continuationPayload,
         messages: composeGenerationContinuationMessages({
@@ -6976,7 +6976,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     const { isPlainTextRender, textTheme } = renderSelection;
     let { rules } = renderSelection;
     if (longFormPlan) {
-        rules += '\n\n【长篇分段优先规则】本轮是同一篇长篇小剧场的上半篇，不要求独立完结。只输出正文并停在剧情中段；不要输出 HTML、标题、总结、结局或“未完待续”。';
+        rules += '\n\n【同一稿件分段规则】本轮是同一篇小剧场正文的前半部分，不是独立成品。只输出正文并停在剧情发展途中；不要输出 HTML、标题、总结、结局或“未完待续”。';
     }
 
     if (loadPreset && !cachedPresetEntries.length) await loadPresetEntries();
@@ -7054,6 +7054,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
             squashSystemMessages: cachedPresetSquashSystemMessages,
             postProcessing: cachedPresetPostProcessing,
             presetName,
+            originalInstruction: cleanInstruction,
         }),
         diagnosticContext: {
             kind: '普通小剧场',
@@ -7082,11 +7083,11 @@ async function refreshTokenEstimate() {
         });
         const configuredRounds = Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3));
         const stagedRenderPlan = !continueContext && isStagedRenderTarget(targetWordCount);
-        const longFormPlan = stagedRenderPlan && settings.autoContinue && configuredRounds >= 2 && isLongFormTarget(targetWordCount);
+        const stagedMultiRoundPlan = stagedRenderPlan && settings.autoContinue && configuredRounds >= 2;
         const payload = await assembleGenerationPayload(instruction, {
             continuationText: continueContext,
             forcePlainText: stagedRenderPlan,
-            longFormPlan,
+            longFormPlan: stagedMultiRoundPlan,
             loadPreset: false,
             evaluateWorldBook: false,
         });
@@ -7976,11 +7977,12 @@ async function runGeneration(instruction, isAuto) {
     });
     const configuredMaxRounds = Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3));
     const stagedRenderMode = !contCtx && isStagedRenderTarget(plannedTargetWordCount);
-    const longFormMode = stagedRenderMode && settings.autoContinue && configuredMaxRounds >= 2 && isLongFormTarget(plannedTargetWordCount);
+    const stagedMultiRoundMode = stagedRenderMode && settings.autoContinue && configuredMaxRounds >= 2;
+    const longFormMode = stagedMultiRoundMode && isLongFormTarget(plannedTargetWordCount);
     const payload = await assembleGenerationPayload(instruction, {
         continuationText: contCtx,
         forcePlainText: stagedRenderMode,
-        longFormPlan: longFormMode,
+        longFormPlan: stagedMultiRoundMode,
     });
     lastRequestContext = {
         ...payload.diagnosticContext,
@@ -8012,6 +8014,7 @@ async function runGeneration(instruction, isAuto) {
         target_chars: targetWordCount || null,
         length_tier: classifyLengthTier(targetWordCount),
         staged_render_mode: stagedRenderMode,
+        staged_multi_round_mode: stagedMultiRoundMode,
         long_form_mode: longFormMode,
     });
 
@@ -8063,8 +8066,9 @@ async function runGeneration(instruction, isAuto) {
     currentGenerationJob = createGenerationJob({
         targetChars: targetWordCount,
         maxRounds: longFormMode ? 2 : configuredMaxRounds,
-        minimumRounds: longFormMode ? 2 : 1,
+        minimumRounds: stagedMultiRoundMode ? 2 : 1,
         autoContinue: autoTargetContinue,
+        requireTargetCompletion: stagedMultiRoundMode,
     });
 
     try {
@@ -8082,8 +8086,8 @@ async function runGeneration(instruction, isAuto) {
                 const current = readableCharCount(currentGenerationJob.segments.join('\n\n'));
                 const shownMaxRounds = currentGenerationJob.autoContinue ? currentGenerationJob.maxRounds : 1;
                 $('#theater-stream-text').text(round === 1
-                    ? (longFormMode
-                        ? `正在创作长篇上半篇 · 第 1/${shownMaxRounds} 轮……`
+                    ? (stagedMultiRoundMode
+                        ? `正在创作同一篇正文的前半部分 · 第 1/${shownMaxRounds} 轮……`
                         : `正在生成第 1/${shownMaxRounds} 轮……`)
                     : `正在补写第 ${round}/${shownMaxRounds} 轮 · 当前约 ${current}/${targetWordCount} 字`);
             }
@@ -8130,21 +8134,27 @@ async function runGeneration(instruction, isAuto) {
             });
 
             if (!shouldContinueJob(currentGenerationJob, readableCharCount)) break;
-            const finishThisRound = shouldAuthorizeFinishRound(currentGenerationJob, readableCharCount);
+            const shouldFinishThisRound = shouldAuthorizeFinishRound(currentGenerationJob, readableCharCount);
             currentGenerationJob.round++;
-            authorizeFinish(currentGenerationJob, finishThisRound);
+            authorizeFinish(currentGenerationJob, shouldFinishThisRound);
+            const finishThisRound = currentGenerationJob.finishAuthorized;
+            const accumulatedText = currentGenerationJob.segments.join('\n\n');
             const continuationInstruction = buildContinuationInstruction({
                 round: currentGenerationJob.round,
-                tail: tailText(currentGenerationJob.segments.join('\n\n'), 1500),
+                tail: tailText(accumulatedText, 1500),
                 finishThisRound,
                 currentChars: currentGenerationJob.actualChars,
                 targetChars: currentGenerationJob.targetChars,
                 roundsRemaining: currentGenerationJob.maxRounds - currentGenerationJob.round + 1,
+                manuscriptMode: stagedMultiRoundMode,
+                originalInstruction: payload.generationFoundation?.originalInstruction || '',
+                draft: stagedMultiRoundMode ? continuationContextWindow(accumulatedText) : '',
             });
             roundPayload = buildGenerationContinuationRoundPayload({
                 foundation: payload.generationFoundation,
                 instruction: continuationInstruction,
                 ctx,
+                manuscriptMode: stagedMultiRoundMode,
             });
             firstChunkShown = false;
             bgStreamText = '';

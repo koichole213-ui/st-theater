@@ -4,7 +4,13 @@ export function targetCompletionChars(targetChars) {
     return targetChars ? Math.ceil(targetChars * TARGET_COMPLETION_RATIO) : 0;
 }
 
-export function createGenerationJob({ targetChars = null, maxRounds = 3, minimumRounds = 1, autoContinue = false } = {}) {
+export function createGenerationJob({
+    targetChars = null,
+    maxRounds = 3,
+    minimumRounds = 1,
+    autoContinue = false,
+    requireTargetCompletion = false,
+} = {}) {
     const normalizedMaxRounds = Math.max(1, Math.floor(Number(maxRounds) || 1));
     return {
         targetChars,
@@ -14,6 +20,7 @@ export function createGenerationJob({ targetChars = null, maxRounds = 3, minimum
         maxRounds: normalizedMaxRounds,
         minimumRounds: Math.min(normalizedMaxRounds, Math.max(1, Math.floor(Number(minimumRounds) || 1))),
         autoContinue,
+        requireTargetCompletion: !!requireTargetCompletion,
         stopReason: null,
         rawStopReason: null,
         aborted: false,
@@ -41,8 +48,11 @@ export function shouldContinueJob(job, countChars) {
     if (!job.autoContinue || !job.targetChars || job.aborted || job.stopReason === 'error') return false;
     job.actualChars = countChars(job.segments.join('\n\n'));
     if (job.round < job.minimumRounds) return job.round < job.maxRounds;
-    if (job.actualChars >= job.targetCompletionChars) return false;
-    if (job.finishAuthorized && job.stopReason !== 'length') {
+    if (job.actualChars >= job.targetCompletionChars) {
+        if (job.requireTargetCompletion && !job.finishAuthorized && job.round < job.maxRounds) return true;
+        return false;
+    }
+    if (!job.requireTargetCompletion && job.finishAuthorized && job.stopReason !== 'length') {
         job.completedBelowTarget = true;
         return false;
     }
@@ -59,7 +69,9 @@ export function shouldAuthorizeFinishRound(job, countChars) {
 }
 
 export function authorizeFinish(job, allowed = true) {
-    job.finishAuthorized = !!allowed;
+    job.finishAuthorized = job.requireTargetCompletion
+        ? (job.finishAuthorized || !!allowed)
+        : !!allowed;
     return job;
 }
 

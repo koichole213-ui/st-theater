@@ -111,9 +111,11 @@ export function buildFinalRenderPayload({ sourceText = '', rules = '' } = {}) {
     };
 }
 
-export function buildContinuationPayload({ instruction = '' } = {}) {
+export function buildContinuationPayload({ instruction = '', manuscriptMode = false } = {}) {
     return {
-        systemPrompt: '你正在续写同一篇小剧场。只负责承接给出的结尾创作新增正文，保持人物、视角、时态与文风一致。',
+        systemPrompt: manuscriptMode
+            ? '你正在补完同一份尚未完成的小剧场正文。所有正文轮共同组成一个作品，不是续集或后日谈。已有正文是不可重复的前半稿；只输出紧接其后的缺失正文，保持人物、视角、时态与文风一致。'
+            : '你正在续写同一篇小剧场。只负责承接给出的结尾创作新增正文，保持人物、视角、时态与文风一致。',
         userPrompt: String(instruction || '').trim(),
     };
 }
@@ -125,6 +127,9 @@ export function buildContinuationInstruction({
     currentChars = 0,
     targetChars = 0,
     roundsRemaining = 1,
+    manuscriptMode = false,
+    originalInstruction = '',
+    draft = '',
 }) {
     const current = Math.max(0, Math.round(Number(currentChars) || 0));
     const target = Math.max(0, Math.round(Number(targetChars) || 0));
@@ -136,6 +141,27 @@ export function buildContinuationInstruction({
     const lengthPlan = target
         ? `【本轮篇幅】程序已统计当前可读正文约 ${current} 字，目标约 ${target} 字，仍差约 ${remaining} 字。本轮请新增约 ${suggestedChars} 字的有效正文；不需要自行计算、报告或标注字数。`
         : '';
+    if (manuscriptMode) {
+        const task = String(originalInstruction || '').trim();
+        const currentDraft = String(draft || tail || '').trim();
+        return `这是同一份小剧场稿件的第 ${round} 个正文轮，不是新的续写任务或后日谈。
+
+${task ? `【整篇作品任务｜只用于确认同一稿件的整体目标，不要重新执行已经写完的内容】\n${task}\n` : ''}
+【已有未完成正文｜属于本篇前半部分，只作承接依据，不要重复输出】
+${currentDraft}
+
+${lengthPlan}
+
+请从已有正文的最后位置继续补完同一个作品：
+1. 所有正文轮合计必须构成一篇连续、完整的小剧场，不得把本轮写成续集、番外或新的事件；
+2. 已有正文中的人物、事实、动作和事件进度全部有效，不要复述、改写、推倒重来或再次执行；
+3. 预设、人物、世界书和聊天前文只负责约束设定；已有正文的末尾才是唯一当前叙事位置；
+4. 只输出本轮新增的纯正文，不要输出已有正文、HTML、CSS、JavaScript、标题、创作说明或字数报告；
+5. 用新的动作、对白、心理变化和必要情节完成本篇尚未写完的部分，不要用总结、空话或重复情节填充；
+6. ${finishThisRound
+            ? '本轮是最终正文补完轮：请在充分完成剩余发展后，完成核心事件及其直接反应，并为整篇作品写出明确、自然的最终落点。最终落点必须停在本篇核心事件的直接后果或人物反应之内；核心事件及直接反应完成后，不得回到触发事件前的起始活动，不得继续下一轮、开启新任务或恢复日常活动来延长正文。'
+            : '本轮继续完成作品中段，保留尚待完成的核心发展，不要提前写出整篇结局。'}`;
+    }
     return `这是同一篇小剧场的第 ${round} 次续写。
 
 上一段结尾：

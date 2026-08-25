@@ -1,10 +1,12 @@
-const REASONING_TAG_NAMES = new Set(['think', 'thinking']);
-const COMPLETE_TAG_PATTERN = /<\s*(\/?)\s*(think|thinking)\b[^>]*>/gi;
+const REASONING_TAG_NAMES = new Set(['think', 'thinking', 'electric']);
+const COMPLETE_TAG_PATTERN = /<\s*(\/?)\s*(think|thinking|electric)\b[^>]*>/gi;
 const TAG_PREFIXES = Object.freeze([
     '<think>',
     '</think>',
     '<thinking>',
     '</thinking>',
+    '<electric>',
+    '</electric>',
 ]);
 
 function trailingPartialTagLength(value) {
@@ -17,8 +19,8 @@ function trailingPartialTagLength(value) {
 }
 
 /**
- * Removes model reasoning wrapped in <thinking> or <think> without exposing an
- * unfinished block during cumulative streaming updates.
+ * Removes model reasoning wrapped in <thinking>, <think>, or <electric>
+ * without exposing an unfinished block during cumulative streaming updates.
  */
 export function filterTaggedReasoning(value) {
     const text = String(value || '');

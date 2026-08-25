@@ -2556,10 +2556,21 @@ test('思考标签在流式未闭合时不会闪出，并在闭合后只保留�
     });
     assert.equal(reasoningSafeContent('<thinking>不能显示</thinking>真正正文'), '真正正文');
     assert.equal(reasoningSafeContent('<think>旧标签也隐藏</think>第二段正文'), '第二段正文');
+    assert.equal(reasoningSafeContent('<electric>3.7 Flash 思维链</electric>适配后的正文'), '适配后的正文');
     assert.equal(reasoningSafeContent('开头正文<thinking>中间思考</thinking>结尾正文'), '开头正文结尾正文');
+    assert.deepEqual(filterTaggedReasoning('<electric>尚未闭合的思维链'), {
+        content: '',
+        hadReasoning: true,
+        incomplete: true,
+    });
+    assert.deepEqual(filterTaggedReasoning('正文<elec'), {
+        content: '正文',
+        hadReasoning: true,
+        incomplete: false,
+    });
 });
 
-test('独立 API 会在交付前隐藏 thinking，只有思考内容时给出稳定信号', async () => {
+test('独立 API 会在交付前隐藏思考标签，只有思考内容时给出稳定信号', async () => {
     const visibleChunks = [];
     const config = {
         apiUrl: 'https://api.example.com/v1',
@@ -2575,7 +2586,7 @@ test('独立 API 会在交付前隐藏 thinking，只有思考内容时给出稳
         shouldStream: false,
         onChunk: text => visibleChunks.push(text),
         fetchImpl: async () => new Response(JSON.stringify({
-            choices: [{ message: { content: '<thinking>私密思考</thinking>可见正文' } }],
+            choices: [{ message: { content: '<electric>3.7 Flash 私密思考</electric>可见正文' } }],
         }), { status: 200, headers: { 'content-type': 'application/json' } }),
     });
     assert.equal(result.text, '可见正文');
@@ -3809,6 +3820,37 @@ test('续写提示携带当前、目标和本轮篇幅，但不携带原始指�
     assert.match(longFinalRound, /可以.*自然收束结局/);
 });
 
+test('5000 字起后续正文轮补完同一份稿件，而不是把前稿当成独立成品续写', () => {
+    const prompt = buildContinuationInstruction({
+        round: 2,
+        tail: '只用于普通回退的末尾',
+        draft: '第一轮完整正文：游戏失败后，林秋正在执行大冒险。',
+        originalInstruction: '描写林秋游戏失败后接受大冒险以及众人的反应',
+        manuscriptMode: true,
+        finishThisRound: true,
+        currentChars: 2900,
+        targetChars: 5000,
+        roundsRemaining: 1,
+    });
+    const payload = buildContinuationPayload({ instruction: prompt, manuscriptMode: true });
+    assert.match(payload.systemPrompt, /补完同一份尚未完成/);
+    assert.match(payload.systemPrompt, /不是续集或后日谈/);
+    assert.match(payload.userPrompt, /同一份小剧场稿件/);
+    assert.match(payload.userPrompt, /第一轮完整正文/);
+    assert.match(payload.userPrompt, /整篇作品任务/);
+    assert.match(payload.userPrompt, /游戏失败后接受大冒险/);
+    assert.match(payload.userPrompt, /已有正文的末尾才是唯一当前叙事位置/);
+    assert.match(payload.userPrompt, /当前可读正文约 2900 字/);
+    assert.match(payload.userPrompt, /仍差约 2100 字/);
+    assert.match(payload.userPrompt, /本轮请新增约 2600 字/);
+    assert.match(payload.userPrompt, /最终正文补完轮/);
+    assert.match(payload.userPrompt, /明确、自然的最终落点/);
+    assert.match(payload.userPrompt, /不得回到触发事件前的起始活动/);
+    assert.match(payload.userPrompt, /不得继续下一轮、开启新任务或恢复日常活动/);
+    assert.doesNotMatch(payload.userPrompt, /只用于普通回退的末尾/);
+    assert.doesNotMatch(payload.userPrompt, /输出完整 HTML/);
+});
+
 test('普通生成后续每轮重新带齐冻结的预设、人物、人设、世界书与聊天前文', () => {
     const messages = composeGenerationContinuationMessages({
         presetEntries: [
@@ -3862,7 +3904,12 @@ test('普通生成多轮复用首轮资料包而不是退回简化续写请求',
         source.indexOf('function currentAutoInstruction'),
     );
     assert.match(source, /generationFoundation: Object\.freeze/);
+    assert.match(source, /originalInstruction: cleanInstruction/);
     assert.match(ordinaryGeneration, /buildGenerationContinuationRoundPayload/);
+    assert.match(ordinaryGeneration, /stagedMultiRoundMode = stagedRenderMode && settings\.autoContinue && configuredMaxRounds >= 2/);
+    assert.match(ordinaryGeneration, /minimumRounds: stagedMultiRoundMode \? 2 : 1/);
+    assert.match(ordinaryGeneration, /requireTargetCompletion: stagedMultiRoundMode/);
+    assert.match(ordinaryGeneration, /draft: stagedMultiRoundMode \? continuationContextWindow\(accumulatedText\) : ''/);
     assert.doesNotMatch(ordinaryGeneration, /\.\.\.buildContinuationPayload/);
 });
 
@@ -3879,7 +3926,7 @@ test('四档分诊边界保留，首轮明确告诉模型目标正文字数', ()
     assert.doesNotMatch(firstRoundGuidance(8000), /写满|统计注释/);
 });
 
-test('5000 字起正文与 HTML 分离，8000 字起进入上下篇模式', () => {
+test('5000 字起正文与 HTML 分离并规划多轮同一稿件，8000 字起限制为上下篇', () => {
     assert.equal(STAGED_RENDER_THRESHOLD, 5000);
     assert.equal(LONG_FORM_SPLIT_THRESHOLD, 8000);
     assert.equal(isStagedRenderTarget(4999), false);
@@ -3889,10 +3936,14 @@ test('5000 字起正文与 HTML 分离，8000 字起进入上下篇模式', () =
     assert.equal(isLongFormTarget(8000), true);
     assert.equal(longFormFirstRoundTarget(8000), 4000);
     assert.equal(longFormFirstRoundTarget(6500), 3300);
+    const stagedGuidance = longFormFirstRoundGuidance(5000);
+    assert.match(stagedGuidance, /多个纯正文轮共同完成/);
+    assert.match(stagedGuidance, /前半部分，目标约 2500 字/);
+    assert.match(stagedGuidance, /不要把本轮压缩成独立完结篇/);
     const guidance = longFormFirstRoundGuidance(8000);
     assert.match(guidance, /总目标约为 8000 字/);
-    assert.match(guidance, /上半篇纯文字正文，目标约 4000 字/);
-    assert.match(guidance, /停在剧情中段/);
+    assert.match(guidance, /前半部分，目标约 4000 字/);
+    assert.match(guidance, /停在剧情发展途中/);
     assert.match(guidance, /不要总结、收束、写出结局/);
     assert.match(guidance, /不要.*未完待续/);
 });
@@ -3946,6 +3997,98 @@ test('动态收束轮若被 Token 截断，仍可在轮数范围内继续', () =
     addGenerationSegment(job, '字'.repeat(300), 'length');
     assert.equal(shouldContinueJob(job, readableCharCount), true);
     assert.equal(job.completedBelowTarget, false);
+});
+
+test('5000 字起同一稿件补完轮未达到 90% 时不能提前交卷', () => {
+    const job = createGenerationJob({
+        targetChars: 5000,
+        maxRounds: 3,
+        minimumRounds: 2,
+        autoContinue: true,
+        requireTargetCompletion: true,
+    });
+    addGenerationSegment(job, '字'.repeat(2900), 'stop');
+    assert.equal(shouldContinueJob(job, readableCharCount), true);
+    job.round++;
+    authorizeFinish(job, true);
+    addGenerationSegment(job, '字'.repeat(1000), 'stop');
+    assert.equal(shouldContinueJob(job, readableCharCount), true);
+    assert.equal(job.actualChars, 3900);
+    assert.equal(job.completedBelowTarget, false);
+    job.round++;
+    addGenerationSegment(job, '字'.repeat(600), 'stop');
+    assert.equal(shouldContinueJob(job, readableCharCount), false);
+    assert.equal(job.actualChars, 4500);
+});
+
+test('同一稿件的非收束轮意外跨过 90% 时仍保留最终补完轮', () => {
+    const job = createGenerationJob({
+        targetChars: 5000,
+        maxRounds: 3,
+        minimumRounds: 2,
+        autoContinue: true,
+        requireTargetCompletion: true,
+    });
+    addGenerationSegment(job, '字'.repeat(1700), 'stop');
+    assert.equal(shouldContinueJob(job, readableCharCount), true);
+    assert.equal(shouldAuthorizeFinishRound(job, readableCharCount), false);
+    job.round++;
+    authorizeFinish(job, false);
+    addGenerationSegment(job, '字'.repeat(2800), 'stop');
+    assert.equal(shouldContinueJob(job, readableCharCount), true);
+    assert.equal(job.actualChars, 4500);
+    job.round++;
+    authorizeFinish(job, true);
+    addGenerationSegment(job, '最终落点', 'stop');
+    assert.equal(shouldContinueJob(job, readableCharCount), false);
+});
+
+test('最大轮数较多时一旦进入最终补完，后续轮也不能退回作品中段', () => {
+    const job = createGenerationJob({
+        targetChars: 5000,
+        maxRounds: 4,
+        minimumRounds: 2,
+        autoContinue: true,
+        requireTargetCompletion: true,
+    });
+    addGenerationSegment(job, '字'.repeat(2500), 'stop');
+    assert.equal(shouldAuthorizeFinishRound(job, readableCharCount), true);
+    authorizeFinish(job, true);
+    job.round++;
+    addGenerationSegment(job, '字'.repeat(100), 'stop');
+    assert.equal(shouldContinueJob(job, readableCharCount), true);
+    assert.equal(shouldAuthorizeFinishRound(job, readableCharCount), false);
+    authorizeFinish(job, false);
+    assert.equal(job.finishAuthorized, true);
+    const prompt = buildContinuationInstruction({
+        round: 3,
+        draft: '同一稿件已有正文',
+        manuscriptMode: true,
+        finishThisRound: job.finishAuthorized,
+        currentChars: job.actualChars,
+        targetChars: job.targetChars,
+        roundsRemaining: 2,
+    });
+    assert.match(prompt, /最终正文补完轮/);
+    assert.doesNotMatch(prompt, /继续完成作品中段/);
+});
+
+test('收束状态只在同一稿件补完模式保持单向，普通短篇仍按每轮重新判断', () => {
+    const ordinaryJob = createGenerationJob({ targetChars: 4000, maxRounds: 3, autoContinue: true });
+    authorizeFinish(ordinaryJob, true);
+    authorizeFinish(ordinaryJob, false);
+    assert.equal(ordinaryJob.finishAuthorized, false);
+
+    const manuscriptJob = createGenerationJob({
+        targetChars: 5000,
+        maxRounds: 3,
+        minimumRounds: 2,
+        autoContinue: true,
+        requireTargetCompletion: true,
+    });
+    authorizeFinish(manuscriptJob, true);
+    authorizeFinish(manuscriptJob, false);
+    assert.equal(manuscriptJob.finishAuthorized, true);
 });
 
 test('长篇上下篇至少执行两轮，即使上篇字数已碰到整篇阈值', () => {
