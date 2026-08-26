@@ -9,6 +9,7 @@ import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js'
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml } from './generation-payload.js';
+import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection, validateAdaptiveRenderHtml } from './adaptive-render.js';
 import { debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, diagnosticSignalCatalog, diagnosticSignalInfo, signalForStopReason } from './request-diagnostics.js';
@@ -41,7 +42,7 @@ import { createRequestTrace, formatRequestTrace, requestTraceCompatibilityLabel,
 import { migrateLegacyPresetEntryStates, presetEntryStatesForPreset } from './preset-entry-states.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.1.5';
+const VERSION = '4.2.0';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let updateReadyToReload = false;
@@ -100,7 +101,7 @@ function formatRequestContextSummary(context) {
         return `长梦正文 · 创作预设：${context.presetSource} · Char：${context.character ? '已参与' : '未读取'} · User 人设：${context.persona ? '已参与' : '未读取'} · 已保存章节：${context.chapterCount} · 本章检索梦脉：${context.memoryCount}/${context.activeMemoryCount ?? context.memoryCount} · 冻结世界书：${context.worldBookBooks} 本/${context.worldBookEntries} 条 · 聊天前文：不读取 · 文风补充：${context.styleAddon ? '已参与' : '未参与'} · NSFW 补充：${context.nsfwAddon ? '已参与' : '未参与'}`;
     }
     if (context.kind === '最终 HTML 排版') {
-        return `最终 HTML 排版 · 来源正文约 ${context.sourceChars} 字 · 模板：${context.renderLabel || '当前模板'} · 不携带聊天前文、角色卡、世界书或用户指令原文。`;
+        return `最终 HTML 排版 · 来源正文约 ${context.sourceChars} 字 · 模板：${context.renderLabel || '当前模板'} · 原始指令：${context.designBrief ? '仅作为设计意图参与' : '不读取'} · 不携带聊天前文、角色卡或世界书。`;
     }
     return `${context.kind || '普通小剧场'} · 创作预设：${context.presetSource} · 聊天前文：${context.readChatContext ? `已参与 ${context.chatMessages} 条（设置 ${context.contextRange} 条）` : '不读取'} · 角色设定：${context.character ? '已参与' : '未参与'} · User 人设：${context.persona ? '已参与' : '未参与'} · 世界书：${context.worldBookBooks} 本/${context.worldBookEntries} 条 · 文风补充：${context.styleAddon ? '已参与' : '未参与'} · NSFW 补充：${context.nsfwAddon ? '已参与' : '未参与'}${context.continuation ? ' · 普通续写前情：已参与' : ''}`;
 }
@@ -235,6 +236,7 @@ const BUILTIN_RENDER_SELECTIONS = new Set([
     '__default_pc__',
     PLAIN_TEXT_LIGHT_SELECTION,
     PLAIN_TEXT_DARK_SELECTION,
+    ...Object.values(ADAPTIVE_RENDER_SELECTIONS),
 ]);
 
 function isBuiltinRenderSelection(selection) {
@@ -244,11 +246,73 @@ function isBuiltinRenderSelection(selection) {
 function renderTemplateContentForSelection(selection, customTemplates = []) {
     if (selection === '__default_pc__') return DEFAULT_RENDER_TEMPLATE_PC;
     if (isPlainTextSelection(selection)) return DEFAULT_RENDER_TEMPLATE_TEXT;
+    const adaptive = adaptiveRenderProfile(selection);
+    if (adaptive) return adaptive.rules;
     if (selection !== '__default__') {
         const custom = customTemplates[parseInt(selection)];
         if (custom) return custom.content;
     }
     return DEFAULT_RENDER_TEMPLATE;
+}
+
+function normalizeRenderSelection(selection, customTemplates = []) {
+    const value = String(selection || '__default__');
+    if (isBuiltinRenderSelection(value)) return value;
+    const index = Number.parseInt(value, 10);
+    return Number.isInteger(index) && index >= 0 && customTemplates[index] ? String(index) : '__default__';
+}
+
+function renderSelectionMeta(selection, customTemplates = []) {
+    const value = normalizeRenderSelection(selection, customTemplates);
+    const adaptive = adaptiveRenderProfile(value);
+    if (adaptive) return { value, name: adaptive.name, shortName: adaptive.shortName, icon: adaptive.icon, adaptive: true };
+    if (value === '__default_pc__') return { value, name: '默认模板（PC端）', shortName: '默认 PC', icon: 'fa-desktop', adaptive: false };
+    if (value === PLAIN_TEXT_LIGHT_SELECTION) return { value, name: '纯文字模板（亮色）', shortName: '纯文字·亮色', icon: 'fa-book-open', adaptive: false };
+    if (value === PLAIN_TEXT_DARK_SELECTION) return { value, name: '纯文字模板（暗色夜读）', shortName: '纯文字·暗色', icon: 'fa-moon', adaptive: false };
+    if (value === '__default__') return { value, name: '默认模板（移动端）', shortName: '默认美化', icon: 'fa-mobile-screen', adaptive: false };
+    const custom = customTemplates[Number.parseInt(value, 10)];
+    return { value, name: custom?.name || '自定义模板', shortName: custom?.name || '自定义模板', icon: 'fa-palette', adaptive: false };
+}
+
+function renderTemplateOptions(selected, customTemplates = []) {
+    const current = normalizeRenderSelection(selected, customTemplates);
+    const option = (value, label) => `<option value="${esc(value)}" ${current === value ? 'selected' : ''}>${esc(label)}</option>`;
+    const basic = [
+        option('__default__', '默认模板（移动端）'),
+        option('__default_pc__', '默认模板（PC端）'),
+        option(PLAIN_TEXT_LIGHT_SELECTION, '纯文字模板（亮色）'),
+        option(PLAIN_TEXT_DARK_SELECTION, '纯文字模板（暗色夜读）'),
+    ].join('');
+    const adaptive = adaptiveRenderProfiles().map(profile => option(profile.id, profile.name)).join('');
+    const custom = customTemplates.map((template, index) => option(String(index), template.name)).join('');
+    return [
+        `<optgroup label="基础内置">${basic}</optgroup>`,
+        `<optgroup label="剧情自适应">${adaptive}</optgroup>`,
+        custom ? `<optgroup label="我的模板">${custom}</optgroup>` : '',
+    ].join('');
+}
+
+function renderSelectionHint(selection) {
+    const adaptive = adaptiveRenderProfile(selection);
+    return adaptive
+        ? `${adaptive.description} 会先完成纯正文，再增加一次独立 HTML 设计请求。`
+        : (isPlainTextSelection(selection)
+            ? '纯文字亮色与暗色都只让模型输出正文；夜间配色由插件在本地显示。'
+            : '普通美化模板沿用现有生成方式；5000 字起仍会在正文完成后独立排版。');
+}
+
+function quickRenderState() {
+    const customTemplates = settings.renderTemplates || [];
+    const a = normalizeRenderSelection(settings.quickRenderA, customTemplates);
+    const b = normalizeRenderSelection(settings.quickRenderB, customTemplates);
+    const current = normalizeRenderSelection(settings.selectedRenderIndex, customTemplates);
+    const slot = current === a ? 'A' : (current === b ? 'B' : '当前');
+    return { a, b, current, slot, meta: renderSelectionMeta(current, customTemplates) };
+}
+
+function quickRenderButtonContent() {
+    const state = quickRenderState();
+    return `<i class="fa-solid ${state.meta.icon}" aria-hidden="true"></i><span>${esc(state.slot)} · ${esc(state.meta.shortName)}</span>`;
 }
 
 const INTERACTIVE_ADDON = `
@@ -268,6 +332,8 @@ const defaultSettings = Object.freeze({
     instructionGroupFilter: '__all__', // 当前筛选：'__all__' | '__none__'(未分组) | 组名
     renderTemplates: [],
     selectedRenderIndex: '__default__',
+    quickRenderA: '__default__',
+    quickRenderB: ADAPTIVE_RENDER_SELECTIONS.immersive,
     selectedPresetName: '',  // name of selected ST preset (empty = none)
     presetEntryStatesByPreset: {},  // { [presetKey]: { identifier: true/false } }
     customStyleAddon: '',
@@ -697,6 +763,7 @@ async function init() {
     const upgradeNeedsMaxOutputDefault = !!existingSettings && !hasOwn(existingSettings, 'maxOutputTokensSchema');
     const upgradeNeedsFollowedWorldBookTracking = !!existingSettings && !hasOwn(existingSettings, 'followedWorldBooks');
     const upgradeNeedsMemoryPresetLibrary = !!existingSettings && !hasOwn(existingSettings, 'longDreamMemoryPresets');
+    const upgradeNeedsQuickRenderPair = !!existingSettings && !hasOwn(existingSettings, 'quickRenderA');
     const autoContinueDefaultMigrated = !!existingSettings && migrateAutoContinueDefault(existingSettings);
     if (!existingSettings) extensionSettings[MODULE_NAME] = cloneDefaultSettings();
     for (const k of Object.keys(defaultSettings)) {
@@ -751,6 +818,23 @@ async function init() {
     settings.manualTargetChars = normalizeManualTarget(settings.manualTargetChars);
     settings.resultBookmarkSide = normalizeBookmarkSide(settings.resultBookmarkSide);
     settings.resultBookmarkYRatio = normalizeBookmarkYRatio(settings.resultBookmarkYRatio);
+    if (!Array.isArray(settings.renderTemplates)) settings.renderTemplates = [];
+    settings.selectedRenderIndex = normalizeRenderSelection(settings.selectedRenderIndex, settings.renderTemplates);
+    if (upgradeNeedsQuickRenderPair) settings.quickRenderA = settings.selectedRenderIndex;
+    settings.quickRenderA = normalizeRenderSelection(settings.quickRenderA, settings.renderTemplates);
+    settings.quickRenderB = normalizeRenderSelection(settings.quickRenderB, settings.renderTemplates);
+    if (settings.quickRenderA === settings.quickRenderB) {
+        settings.quickRenderB = settings.quickRenderA === ADAPTIVE_RENDER_SELECTIONS.immersive
+            ? '__default__'
+            : ADAPTIVE_RENDER_SELECTIONS.immersive;
+    }
+    if (upgradeNeedsQuickRenderPair) {
+        runtimeLog('info', '生成页双模板切换已初始化', {
+            template_a: renderSelectionMeta(settings.quickRenderA, settings.renderTemplates).name,
+            template_b: renderSelectionMeta(settings.quickRenderB, settings.renderTemplates).name,
+        });
+        save();
+    }
     if (!['all', 'enabled', 'lights'].includes(settings.worldBookReadMode)) settings.worldBookReadMode = 'all';
     delete settings.customSystemPrompt;
     delete settings.presetMode;
@@ -1325,6 +1409,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
     const render = settings.renderTemplates || [];
     const hist = historyCache;
     const selRender = settings.selectedRenderIndex || '__default__';
+    const selectedAdaptiveRender = adaptiveRenderProfile(selRender);
     const runtimeEntries = getRuntimeLogEntries();
     const apiPresets = normalizeApiPresetList(settings.apiPresets);
     const memoryPresets = normalizeLongDreamMemoryPresetList(settings.longDreamMemoryPresets);
@@ -1354,7 +1439,10 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
     <!-- ===== 1. 生成 ===== -->
     <div class="theater-panel${activeTabClass('generate')}" data-panel="generate">
         <div class="theater-section">
-            <label class="theater-label">小剧场指令</label>
+            <div class="theater-instruction-heading-row">
+                <button type="button" id="theater-quick-render-toggle" class="theater-quick-render-toggle${selectedAdaptiveRender ? ' is-adaptive' : ''}" title="在设置中指定的 A/B 两个模板之间切换" aria-label="切换生成模板">${quickRenderButtonContent()}</button>
+                <label class="theater-label" for="theater-instruction">小剧场指令</label>
+            </div>
             <textarea id="theater-instruction" class="theater-textarea" rows="4" placeholder="例如：生成一个角色们一起吃火锅的番外小剧场">${esc(settings.lastInstruction || '')}</textarea>
             <details id="theater-manual-target-control" class="theater-target-details ${settings.manualTargetEnabled ? 'is-enabled' : ''}" ${settings.manualTargetPanelOpen ? 'open' : ''}>
                 <summary class="theater-target-summary">
@@ -1377,9 +1465,9 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <span id="theater-token-summary-value">正在估算…</span><span>明细 ▾</span>
             </div>
             <div id="theater-token-details" class="theater-hint-inline" style="display:none;margin:-2px 1px 8px;line-height:1.6;"></div>
-            <div class="theater-toggle-row">
-                <label class="theater-toggle-label"><input type="checkbox" id="theater-interactive-toggle" ${settings.interactiveMode ? 'checked' : ''}><span>交互模式</span></label>
-                <span class="theater-hint-inline">生成可交互的小剧场</span>
+            <div class="theater-toggle-row${selectedAdaptiveRender ? ' is-template-managed' : ''}" id="theater-interactive-row">
+                <label class="theater-toggle-label"><input type="checkbox" id="theater-interactive-toggle" ${settings.interactiveMode || selectedAdaptiveRender ? 'checked' : ''} ${selectedAdaptiveRender ? 'disabled' : ''}><span>交互模式</span></label>
+                <span class="theater-hint-inline" id="theater-interactive-hint">${selectedAdaptiveRender ? '当前模板已自带剧情自适应设计，无需另开交互模式' : '生成可交互的小剧场'}</span>
             </div>
             <div class="theater-btn-row">
                 <div id="theater-save-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-floppy-disk"></i><span>存为模板</span></div>
@@ -1572,13 +1660,9 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-palette"></i> 渲染规则模板</label>
             <select id="theater-render-select" class="theater-select">
-                <option value="__default__" ${selRender === '__default__' ? 'selected' : ''}>默认模板（移动端）</option>
-                <option value="__default_pc__" ${selRender === '__default_pc__' ? 'selected' : ''}>默认模板（PC端）</option>
-                <option value="${PLAIN_TEXT_LIGHT_SELECTION}" ${selRender === PLAIN_TEXT_LIGHT_SELECTION ? 'selected' : ''}>纯文字模板（亮色）</option>
-                <option value="${PLAIN_TEXT_DARK_SELECTION}" ${selRender === PLAIN_TEXT_DARK_SELECTION ? 'selected' : ''}>纯文字模板（暗色夜读）</option>
-                ${render.map((t, i) => `<option value="${i}" ${String(selRender) === String(i) ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
+                ${renderTemplateOptions(selRender, render)}
             </select>
-            <p class="theater-hint" style="margin:7px 1px 0;">纯文字亮色与暗色都只让模型输出正文；夜间配色由插件在本地显示，不会让模型生成 HTML。</p>
+            <p class="theater-hint" id="theater-render-selection-hint" style="margin:7px 1px 0;">${esc(renderSelectionHint(selRender))}</p>
             <textarea id="theater-render-content" class="theater-textarea" rows="6" style="margin-top:10px;">${esc(renderTemplateContentForSelection(selRender, render))}</textarea>
             <div class="theater-btn-row">
                 <div id="theater-save-render-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存为新模板</span></div>
@@ -1787,6 +1871,14 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
         ${configGroupStart('generation', 'fa-sliders', '生成控制')}
         <div class="theater-section" data-config-section="generation">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-sliders"></i> 生成策略</label>
+            <div class="theater-config-quick-render">
+                <div class="theater-config-setting-copy"><b>生成页双模板切换</b><small>选择按钮一按即可往返的两个模板</small></div>
+                <div class="theater-config-quick-render-grid">
+                    <label><span>模板 A</span><select id="theater-quick-render-a" class="theater-select">${renderTemplateOptions(settings.quickRenderA, render)}</select></label>
+                    <label><span>模板 B</span><select id="theater-quick-render-b" class="theater-select">${renderTemplateOptions(settings.quickRenderB, render)}</select></label>
+                </div>
+                <small>可以选择任意内置或自定义模板；三个剧情自适应模板会额外进行一次独立 HTML 设计请求。</small>
+            </div>
             <div class="theater-config-setting-row">
                 <span class="theater-config-setting-copy"><b>流式实时显示</b><small>逐字生成正文，可实时查看效果</small></span>
                 <label class="theater-config-switch" aria-label="流式实时显示"><input type="checkbox" id="theater-stream-enabled" ${settings.streamEnabled !== false ? 'checked' : ''}><span></span></label>
@@ -3895,6 +3987,77 @@ function applyResultToolboxMode() {
     }
 }
 
+function refreshRenderSelectionControls({ refreshOptions = false } = {}) {
+    const customTemplates = settings.renderTemplates || [];
+    settings.selectedRenderIndex = normalizeRenderSelection(settings.selectedRenderIndex, customTemplates);
+    settings.quickRenderA = normalizeRenderSelection(settings.quickRenderA, customTemplates);
+    settings.quickRenderB = normalizeRenderSelection(settings.quickRenderB, customTemplates);
+    const state = quickRenderState();
+    const adaptive = adaptiveRenderProfile(state.current);
+
+    if (refreshOptions) {
+        $('#theater-render-select').html(renderTemplateOptions(state.current, customTemplates));
+        $('#theater-quick-render-a').html(renderTemplateOptions(state.a, customTemplates));
+        $('#theater-quick-render-b').html(renderTemplateOptions(state.b, customTemplates));
+    } else {
+        $('#theater-render-select').val(state.current);
+        $('#theater-quick-render-a').val(state.a);
+        $('#theater-quick-render-b').val(state.b);
+    }
+    $('#theater-render-content').val(renderTemplateContentForSelection(state.current, customTemplates));
+    $('#theater-render-selection-hint').text(renderSelectionHint(state.current));
+    $('#theater-delete-render-btn').toggle(!isBuiltinRenderSelection(state.current));
+    $('#theater-quick-render-toggle')
+        .html(quickRenderButtonContent())
+        .toggleClass('is-adaptive', !!adaptive)
+        .prop('disabled', isGenerating);
+    $('#theater-interactive-toggle').prop('disabled', !!adaptive).prop('checked', adaptive ? true : !!settings.interactiveMode);
+    $('#theater-interactive-row').toggleClass('is-template-managed', !!adaptive);
+    $('#theater-interactive-hint').text(adaptive
+        ? '当前模板已自带剧情自适应设计，无需另开交互模式'
+        : '生成可交互的小剧场');
+    scheduleTokenEstimate();
+}
+
+function switchQuickRenderSelection() {
+    if (isGenerating) {
+        toastr.info('本轮生成已经开始，完成后再切换模板');
+        return;
+    }
+    const state = quickRenderState();
+    settings.selectedRenderIndex = state.current === state.a ? state.b : state.a;
+    save();
+    refreshRenderSelectionControls();
+    toastr.info(`本次使用：${renderSelectionMeta(settings.selectedRenderIndex, settings.renderTemplates).name}`);
+}
+
+function updateQuickRenderSetting(slot, selection) {
+    const field = slot === 'B' ? 'quickRenderB' : 'quickRenderA';
+    const otherField = slot === 'B' ? 'quickRenderA' : 'quickRenderB';
+    const customTemplates = settings.renderTemplates || [];
+    const next = normalizeRenderSelection(selection, customTemplates);
+    const previous = normalizeRenderSelection(settings[field], customTemplates);
+    const other = normalizeRenderSelection(settings[otherField], customTemplates);
+    if (next === other) {
+        toastr.warning('模板 A 和模板 B 需要选择不同模板');
+        $(`#theater-quick-render-${slot.toLowerCase()}`).val(previous);
+        return;
+    }
+    settings[field] = next;
+    if (normalizeRenderSelection(settings.selectedRenderIndex, customTemplates) === previous) {
+        settings.selectedRenderIndex = next;
+    }
+    save();
+    refreshRenderSelectionControls();
+}
+
+function renderSelectionAfterCustomDelete(selection, deletedIndex) {
+    if (isBuiltinRenderSelection(selection)) return selection;
+    const index = Number.parseInt(selection, 10);
+    if (!Number.isInteger(index) || index === deletedIndex) return '__default__';
+    return String(index > deletedIndex ? index - 1 : index);
+}
+
 function decorateConfigLayout() {
     const $panel = $('.theater-panel[data-panel="config"]');
     if (!$panel.length || $panel.children('.theater-config-layout').length) return;
@@ -3933,6 +4096,7 @@ function bindEvents() {
     // ---- Generate ----
     $d.off('click.tg').on('click.tg', '#theater-generate-btn', generateTheater);
     $d.off('click.tstop').on('click.tstop', '#theater-stop-btn', stopGeneration);
+    $d.off('click.tquickrender').on('click.tquickrender', '#theater-quick-render-toggle', switchQuickRenderSelection);
     let bookmarkDragged = false;
     let bookmarkDrag = null;
     $d.off('pointerdown.trad').on('pointerdown.trad', '.theater-result-toolbox.is-bookmark #theater-result-actions-toggle', function (event) {
@@ -4997,8 +5161,7 @@ function bindEvents() {
     $d.off('change.tr').on('change.tr', '#theater-render-select', function () {
         const v = $(this).val();
         settings.selectedRenderIndex = v; save();
-        $('#theater-render-content').val(renderTemplateContentForSelection(v, settings.renderTemplates));
-        $('#theater-delete-render-btn').toggle(!isBuiltinRenderSelection(v));
+        refreshRenderSelectionControls();
     });
     $d.off('click.tsr').on('click.tsr', '#theater-save-render-btn', saveRenderTpl);
     $d.off('click.tdr').on('click.tdr', '#theater-delete-render-btn', deleteRenderTpl);
@@ -5309,6 +5472,12 @@ function bindEvents() {
         settings.maxAutoRounds = Math.min(10, Math.max(1, parseInt(this.value) || 3));
         this.value = settings.maxAutoRounds;
         save();
+    });
+    $d.off('change.tquickrendera').on('change.tquickrendera', '#theater-quick-render-a', function () {
+        updateQuickRenderSetting('A', $(this).val());
+    });
+    $d.off('change.tquickrenderb').on('change.tquickrenderb', '#theater-quick-render-b', function () {
+        updateQuickRenderSetting('B', $(this).val());
     });
     $d.off('click.tnumberstep').on('click.tnumberstep', '[data-theater-number-step]', function () {
         const input = document.getElementById(String($(this).data('theater-number-target') || ''));
@@ -6352,19 +6521,21 @@ async function saveRenderTpl() {
     const n = await SillyTavern.getContext().Popup.show.input('保存渲染模板', '名字：'); if (!n) return;
     settings.renderTemplates.push({ name: n, content: c }); save();
     const i = settings.renderTemplates.length - 1;
-    $('#theater-render-select').append(`<option value="${i}">${esc(n)}</option>`).val(i.toString());
     settings.selectedRenderIndex = String(i); save();
-    $('#theater-delete-render-btn').show(); toastr.success('已保存');
+    refreshRenderSelectionControls({ refreshOptions: true });
+    toastr.success('已保存');
 }
 
 function deleteRenderTpl() {
     const v = $('#theater-render-select').val(); if (isBuiltinRenderSelection(v)) return;
-    settings.renderTemplates.splice(parseInt(v), 1); save();
-    const s = $('#theater-render-select');
-    s.find('option').filter((_, option) => !isBuiltinRenderSelection(option.value)).remove();
-    settings.renderTemplates.forEach((t, i) => s.append(`<option value="${i}">${esc(t.name)}</option>`));
-    s.val('__default__'); settings.selectedRenderIndex = '__default__'; save();
-    $('#theater-render-content').val(DEFAULT_RENDER_TEMPLATE); $('#theater-delete-render-btn').hide();
+    const deletedIndex = Number.parseInt(v, 10);
+    settings.renderTemplates.splice(deletedIndex, 1);
+    settings.selectedRenderIndex = renderSelectionAfterCustomDelete(settings.selectedRenderIndex, deletedIndex);
+    settings.quickRenderA = renderSelectionAfterCustomDelete(settings.quickRenderA, deletedIndex);
+    settings.quickRenderB = renderSelectionAfterCustomDelete(settings.quickRenderB, deletedIndex);
+    if (settings.quickRenderA === settings.quickRenderB) settings.quickRenderB = ADAPTIVE_RENDER_SELECTIONS.immersive;
+    save();
+    refreshRenderSelectionControls({ refreshOptions: true });
 }
 
 // ============================================================
@@ -6823,18 +6994,20 @@ function prepareContinuationContext(value) {
 }
 
 function resolveRenderSelection(forcePlainText = false) {
-    const selectedRender = settings.selectedRenderIndex || '__default__';
+    const selectedRender = normalizeRenderSelection(settings.selectedRenderIndex, settings.renderTemplates || []);
+    const adaptiveProfile = adaptiveRenderProfile(selectedRender);
     const isPlainTextRender = forcePlainText || isPlainTextSelection(selectedRender);
     const textTheme = plainTextThemeForSelection(selectedRender);
     const customRender = (settings.renderTemplates || [])[parseInt(selectedRender)];
     let rules = isPlainTextRender ? DEFAULT_RENDER_TEMPLATE_TEXT : DEFAULT_RENDER_TEMPLATE;
     if (!isPlainTextRender && selectedRender === '__default_pc__') rules = DEFAULT_RENDER_TEMPLATE_PC;
+    else if (!isPlainTextRender && adaptiveProfile) rules = adaptiveProfile.rules;
     else if (!isPlainTextRender && selectedRender !== '__default__' && customRender) rules = customRender.content;
-    if (settings.interactiveMode && !isPlainTextRender) rules += INTERACTIVE_ADDON;
+    if (settings.interactiveMode && !isPlainTextRender && !adaptiveProfile) rules += INTERACTIVE_ADDON;
     const label = isPlainTextRender
         ? (textTheme === 'dark' ? '纯文字·暗色夜读' : '纯文字·亮色')
-        : (selectedRender === '__default_pc__' ? '内置 PC' : (selectedRender === '__default__' ? '内置默认' : (customRender?.name || `自定义 ${selectedRender}`)));
-    return { selectedRender, isPlainTextRender, textTheme, rules, label };
+        : (adaptiveProfile?.name || (selectedRender === '__default_pc__' ? '内置 PC' : (selectedRender === '__default__' ? '内置默认' : (customRender?.name || `自定义 ${selectedRender}`))));
+    return { selectedRender, isPlainTextRender, textTheme, rules, label, adaptiveProfile };
 }
 
 function resolveGenerationIdentity(ctx = SillyTavern.getContext()) {
@@ -7083,17 +7256,19 @@ async function refreshTokenEstimate() {
         });
         const configuredRounds = Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3));
         const stagedRenderPlan = !continueContext && isStagedRenderTarget(targetWordCount);
+        const adaptiveRenderPlan = !!resolveRenderSelection(false).adaptiveProfile;
+        const separateRenderPlan = stagedRenderPlan || adaptiveRenderPlan;
         const stagedMultiRoundPlan = stagedRenderPlan && settings.autoContinue && configuredRounds >= 2;
         const payload = await assembleGenerationPayload(instruction, {
             continuationText: continueContext,
-            forcePlainText: stagedRenderPlan,
+            forcePlainText: separateRenderPlan,
             longFormPlan: stagedMultiRoundPlan,
             loadPreset: false,
             evaluateWorldBook: false,
         });
         const estimate = estimateTokenBreakdown(payload.tokenParts);
-        $('#theater-token-summary-value').text(`预计输入约 ${formatTokenCount(estimate.total)} Token`);
-        $('#theater-token-details').text(`预设 ${formatTokenCount(estimate.preset)} · 角色/人设 ${formatTokenCount(estimate.role)} · 世界书 ${formatTokenCount(estimate.worldBook)} · 上下文 ${formatTokenCount(estimate.context)} · 续写 ${formatTokenCount(estimate.continuation)} · 规则 ${formatTokenCount(estimate.rules)} · 当前指令 ${formatTokenCount(estimate.instruction)}`);
+        $('#theater-token-summary-value').text(`预计正文输入约 ${formatTokenCount(estimate.total)} Token${adaptiveRenderPlan ? ' · 另有自适应排版请求' : ''}`);
+        $('#theater-token-details').text(`预设 ${formatTokenCount(estimate.preset)} · 角色/人设 ${formatTokenCount(estimate.role)} · 世界书 ${formatTokenCount(estimate.worldBook)} · 上下文 ${formatTokenCount(estimate.context)} · 续写 ${formatTokenCount(estimate.continuation)} · 规则 ${formatTokenCount(estimate.rules)} · 当前指令 ${formatTokenCount(estimate.instruction)}${adaptiveRenderPlan ? ' · 完整正文生成后会另发一次 HTML 设计请求' : ''}`);
     } catch (error) {
         console.warn('[Theater] Token estimate failed:', error);
         $('#theater-token-summary-value').text('Token 预估暂不可用');
@@ -7152,13 +7327,14 @@ function revealContinuationInput() {
     else reveal();
 }
 
-function validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText) {
+function validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText, adaptiveSelection = '') {
     if (!/<(?:!doctype|html|head|body|style|main|section|article|div)\b/i.test(String(renderText || ''))) {
         const invalidHtml = new Error('最终渲染未返回完整 HTML 页面');
         invalidHtml.code = 'THEATER_RENDER_VALIDATION';
         throw invalidHtml;
     }
     const templateHtml = extractHtml(renderText);
+    validateAdaptiveRenderHtml(templateHtml, adaptiveSelection);
     const finalHtml = hydrateFinalRenderHtml(templateHtml, finalRenderPayload.placeholderPlan);
     const sourceChars = readableCharCount(sourceText);
     const renderedChars = readableCharCount(htmlToPlainText(finalHtml));
@@ -7180,6 +7356,8 @@ function validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText) {
 async function requestFinalRenderedHtml({
     sourceText,
     rules,
+    originalInstruction = '',
+    adaptiveSelection = '',
     ctx,
     signal,
     apiRoute,
@@ -7188,7 +7366,13 @@ async function requestFinalRenderedHtml({
     renderLabel = '所选模板',
     metricScope = 'final-render',
 } = {}) {
-    const finalRenderPayload = buildFinalRenderPayload({ sourceText, rules });
+    const finalRenderPayload = buildFinalRenderPayload({ sourceText, rules, originalInstruction });
+    lastRequestContext = {
+        kind: '最终 HTML 排版',
+        sourceChars: readableCharCount(sourceText),
+        renderLabel,
+        designBrief: !!String(originalInstruction || '').trim(),
+    };
     runtimeLog('info', '最终 HTML 渲染开始', {
         scope: metricScope,
         render: renderLabel,
@@ -7196,7 +7380,7 @@ async function requestFinalRenderedHtml({
     });
     let lastValidationError = null;
     for (let renderAttempt = 1; renderAttempt <= 2; renderAttempt++) {
-        const retryNote = renderAttempt === 1 ? '' : `\n\n---\n\n【排版修复】上一次输出未通过完整性检查：${lastValidationError?.message || '段落编号不完整'}。请重新生成整份 HTML，尤其确认所有 token 各出现一次、顺序正确且都位于可见文本节点中。`;
+        const retryNote = renderAttempt === 1 ? '' : `\n\n---\n\n【排版修复】上一次输出未通过检查：${lastValidationError?.message || '段落编号不完整'}。请重新生成整份 HTML，修复错误提示涉及的模板约束，并确认所有 token 各出现一次、顺序正确且都位于可见文本节点中。`;
         if (renderAttempt > 1) {
             runtimeLog('warn', '最终 HTML 排版校验失败，自动重试', {
                 scope: metricScope,
@@ -7218,7 +7402,7 @@ async function requestFinalRenderedHtml({
             if (!renderText) throw new Error('最终渲染未返回内容');
             markCompleted(lastRequestMetrics);
             recordRequestMetrics(lastRequestMetrics);
-            const validated = validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText);
+            const validated = validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText, adaptiveSelection);
             runtimeLog(result?.stopReason === 'length' ? 'warn' : 'info', '最终 HTML 渲染完成', {
                 scope: metricScope,
                 attempt: renderAttempt,
@@ -7977,11 +8161,14 @@ async function runGeneration(instruction, isAuto) {
     });
     const configuredMaxRounds = Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3));
     const stagedRenderMode = !contCtx && isStagedRenderTarget(plannedTargetWordCount);
+    const plannedRenderSelection = resolveRenderSelection(false);
+    const adaptiveRenderMode = !!plannedRenderSelection.adaptiveProfile;
+    const separateRenderMode = stagedRenderMode || adaptiveRenderMode;
     const stagedMultiRoundMode = stagedRenderMode && settings.autoContinue && configuredMaxRounds >= 2;
     const longFormMode = stagedMultiRoundMode && isLongFormTarget(plannedTargetWordCount);
     const payload = await assembleGenerationPayload(instruction, {
         continuationText: contCtx,
-        forcePlainText: stagedRenderMode,
+        forcePlainText: separateRenderMode,
         longFormPlan: stagedMultiRoundMode,
     });
     lastRequestContext = {
@@ -7993,7 +8180,7 @@ async function runGeneration(instruction, isAuto) {
     const targetWordCount = payload.targetWordCount;
     const autoTargetContinue = !!targetWordCount && settings.autoContinue;
     let { ctx, systemPrompt, userPrompt: prompt, isPlainTextRender } = payload;
-    const { selectedRender: selectedRenderProfile, label: renderTemplate, isPlainTextRender: selectedPlainTextRender, textTheme: selectedTextTheme } = resolveRenderSelection(false);
+    const { selectedRender: selectedRenderProfile, label: renderTemplate, isPlainTextRender: selectedPlainTextRender, textTheme: selectedTextTheme } = plannedRenderSelection;
     const apiRoute = captureGenerationApiRoute(ctx);
     const generationSourceConfig = {
         metadataCaptured: true,
@@ -8014,6 +8201,8 @@ async function runGeneration(instruction, isAuto) {
         target_chars: targetWordCount || null,
         length_tier: classifyLengthTier(targetWordCount),
         staged_render_mode: stagedRenderMode,
+        separate_render_mode: separateRenderMode,
+        adaptive_render_mode: adaptiveRenderMode,
         staged_multi_round_mode: stagedMultiRoundMode,
         long_form_mode: longFormMode,
     });
@@ -8035,6 +8224,7 @@ async function runGeneration(instruction, isAuto) {
     $('#theater-length-hint').hide().empty();
     $('#theater-generate-btn').hide();
     $('#theater-stop-btn').show();
+    $('#theater-quick-render-toggle').prop('disabled', true);
     abortController = new AbortController();
     let firstChunkShown = false;
     const streamRenderer = createCumulativeStreamRenderer(
@@ -8166,11 +8356,13 @@ async function runGeneration(instruction, isAuto) {
         if (selectedPlainTextRender) {
             lastGeneratedHtml = textFallbackHtml(newText, selectedTextTheme);
             currentOutputMode = textOutputModeForTheme(selectedTextTheme);
-        } else if (!stagedRenderMode && currentGenerationJob.segments.length === 1) {
+        } else if (!separateRenderMode && currentGenerationJob.segments.length === 1) {
             lastGeneratedHtml = firstHtml || textFallbackHtml(newText);
         } else {
-            const { rules } = resolveRenderSelection(false);
-            if (popupAlive()) $('#theater-stream-text').text('正文创作已结束，正在套用所选 HTML 模板……');
+            const { rules } = plannedRenderSelection;
+            if (popupAlive()) $('#theater-stream-text').text(adaptiveRenderMode
+                ? '正文创作已结束，正在根据本篇内容设计互动 HTML……'
+                : '正文创作已结束，正在套用所选 HTML 模板……');
             activeRound = 'render';
             firstChunkShown = false;
             bgStreamText = '';
@@ -8180,6 +8372,8 @@ async function runGeneration(instruction, isAuto) {
                 const rendered = await requestFinalRenderedHtml({
                     sourceText: newText,
                     rules,
+                    originalInstruction: adaptiveRenderMode ? (payload.generationFoundation?.originalInstruction || instruction) : '',
+                    adaptiveSelection: adaptiveRenderMode ? selectedRenderProfile : '',
                     ctx,
                     signal: abortController?.signal,
                     apiRoute,
@@ -8306,6 +8500,7 @@ async function runGeneration(instruction, isAuto) {
         if (popupAlive()) {
             $('#theater-generate-btn').show();
             $('#theater-stop-btn').hide();
+            $('#theater-quick-render-toggle').prop('disabled', false);
         }
         abortController = null;
         currentGenerationJob = null;
@@ -8595,6 +8790,7 @@ function buildDiagnostics() {
     const customRenderOk = selectedRender === '__default__'
         || selectedRender === '__default_pc__'
         || isPlainTextSelection(selectedRender)
+        || isAdaptiveRenderSelection(selectedRender)
         || !!(settings.renderTemplates || [])[parseInt(selectedRender)];
     const timingDetail = requestMetricsLog.length
         ? requestMetricsLog.slice(0, 3).reverse().map((metrics, index, list) => `请求${requestMetricsLog.length - list.length + index + 1}：${summarizeMetrics(metrics)}`).join('；')
@@ -8618,7 +8814,7 @@ function buildDiagnostics() {
         diagnosticLine(typeof fetch === 'function' && typeof AbortController === 'function' ? 'ok' : 'bad', '请求能力', 'fetch / AbortController ' + (typeof fetch === 'function' && typeof AbortController === 'function' ? '可用' : '不可用')),
         diagnosticLine(window.indexedDB ? (idb ? 'ok' : 'warn') : 'bad', '本地存档库', window.indexedDB ? (idb ? 'IndexedDB 已打开' : 'IndexedDB 存在，但当前未打开，可能会回退到 settings') : '浏览器不支持 IndexedDB'),
         diagnosticLine('warn', '历史存储提示', '历史存在浏览器本地存储里。夸克等手机浏览器崩溃或清理后可能丢失，建议定期批量导出备份'),
-        diagnosticLine(customRenderOk ? 'ok' : 'bad', '渲染模板', customRenderOk ? `当前模板：${selectedRender}` : `当前选择 ${selectedRender} 找不到对应模板`),
+        diagnosticLine(customRenderOk ? 'ok' : 'bad', '渲染模板', customRenderOk ? `当前模板：${renderSelectionMeta(selectedRender, settings.renderTemplates).name}` : `当前选择 ${selectedRender} 找不到对应模板`),
         diagnosticLine(continueContext ? 'warn' : 'ok', '续写状态', continueContext ? `续写模式仍有前情：约 ${readableCharCount(continueContext)} 字` : '未处于续写模式'),
         diagnosticLine(isGenerating ? 'warn' : 'ok', '生成状态', isGenerating ? '正在生成中' : '空闲'),
         diagnosticLine(lastRequestIssue ? lastRequestIssue.status : (bgError ? 'bad' : 'ok'), '最近错误信号', lastRequestIssue

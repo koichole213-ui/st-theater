@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
+import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection, validateAdaptiveRenderHtml } from '../adaptive-render.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, MESSAGE_COMPATIBILITY, applyIndependentOpenAICompatibility, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, hasReasoningContent, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { CUSTOM_STREAM_IDLE_TIMEOUT_MS, readNonStreamingResponse, readSSEStream, requestCustomApi, requestMainApi } from '../api-runtime.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, generationTextWithLiveSegment, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
@@ -1959,13 +1960,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.1.5 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.2.0 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.1\.5'/);
-    assert.equal(manifest.version, '4.1.5');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.1\.5/);
+    assert.match(source, /const VERSION = '4\.2\.0'/);
+    assert.equal(manifest.version, '4.2.0');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.0/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -2260,6 +2261,71 @@ test('final HTML payload tells the model to return layout tokens exactly once', 
     assert.match(payload.userPrompt, /不要在 HTML 中重新输出 text/);
     assert.match(payload.userPrompt, /每个 token 必须且只能出现一次/);
     assert.match(payload.userPrompt, /输出完整 HTML/);
+});
+
+test('三种剧情自适应模板共用详细设计方法，并按创意强度区分', () => {
+    const profiles = adaptiveRenderProfiles();
+    assert.deepEqual(profiles.map(profile => profile.id), Object.values(ADAPTIVE_RENDER_SELECTIONS));
+    assert.equal(profiles.length, 3);
+    for (const profile of profiles) {
+        assert.equal(isAdaptiveRenderSelection(profile.id), true);
+        assert.match(profile.rules, /核心物件/);
+        assert.match(profile.rules, /核心结构/);
+        assert.match(profile.rules, /只选择一个最贴题的主隐喻/);
+        assert.match(profile.rules, /data-theater-direct-read/);
+        assert.match(profile.rules, /体检报告/);
+        assert.match(profile.rules, /不同年龄阶段/);
+        assert.match(profile.rules, /禁止照抄题材或固定外观/);
+    }
+    assert.match(adaptiveRenderProfile(ADAPTIVE_RENDER_SELECTIONS.lively).rules, /轻量、直观/);
+    assert.match(adaptiveRenderProfile(ADAPTIVE_RENDER_SELECTIONS.immersive).rules, /一个有叙事意义的主要互动/);
+    assert.match(adaptiveRenderProfile(ADAPTIVE_RENDER_SELECTIONS.experimental).rules, /两到三个相互配合的交互/);
+});
+
+test('剧情自适应排版只把原始指令作为设计意图，不重新执行故事任务', () => {
+    const payload = buildFinalRenderPayload({
+        sourceText: '报告封面被轻轻翻开。\n\n他终于看见了结果。',
+        rules: adaptiveRenderProfile(ADAPTIVE_RENDER_SELECTIONS.immersive).rules,
+        originalInstruction: 'user 偷偷给 char 做了一份体检报告。',
+    });
+    assert.match(payload.userPrompt, /原始小剧场指令：仅作为设计意图参考/);
+    assert.match(payload.userPrompt, /不能被重新执行、续写或抄进页面/);
+    assert.match(payload.userPrompt, /偷偷给 char 做了一份体检报告/);
+    assert.deepEqual(payload.placeholderPlan.paragraphs.map(item => item.text), [
+        '报告封面被轻轻翻开。',
+        '他终于看见了结果。',
+    ]);
+});
+
+test('剧情自适应 HTML 必须具备设计、主要互动与阅读全文标记，并拒绝外部资源', () => {
+    const selection = ADAPTIVE_RENDER_SELECTIONS.immersive;
+    const valid = '<html><body><main data-theater-adaptive-root data-theater-concept="翻阅体检报告"><button data-theater-primary-action>翻开</button><button data-theater-direct-read>展开全文</button></main></body></html>';
+    assert.equal(validateAdaptiveRenderHtml(valid, selection), true);
+    assert.throws(
+        () => validateAdaptiveRenderHtml('<html><body><main>普通卡片</main></body></html>', selection),
+        error => error?.code === 'THEATER_ADAPTIVE_RENDER_VALIDATION',
+    );
+    assert.throws(
+        () => validateAdaptiveRenderHtml(valid.replace('</main>', '<script>fetch("https://example.com")</script></main>'), selection),
+        error => error?.code === 'THEATER_ADAPTIVE_RENDER_VALIDATION',
+    );
+    assert.equal(validateAdaptiveRenderHtml('<html></html>', '__default__'), true);
+});
+
+test('生成页双模板切换和自适应独立排版都接入真实生成流程', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    assert.match(source, /id="theater-quick-render-toggle"/);
+    assert.match(source, /id="theater-quick-render-a"/);
+    assert.match(source, /id="theater-quick-render-b"/);
+    assert.match(source, /const separateRenderMode = stagedRenderMode \|\| adaptiveRenderMode/);
+    assert.match(source, /forcePlainText: separateRenderMode/);
+    assert.match(source, /!separateRenderMode && currentGenerationJob\.segments\.length === 1/);
+    assert.match(source, /originalInstruction: adaptiveRenderMode/);
+    assert.match(source, /adaptiveSelection: adaptiveRenderMode/);
+    assert.match(source, /settings\.interactiveMode && !isPlainTextRender && !adaptiveProfile/);
+    assert.match(styles, /\.theater-instruction-heading-row/);
+    assert.match(styles, /\.theater-config-quick-render-grid/);
 });
 
 test('iframe 没有回报渲染状态时会触发正文兜底', async () => {

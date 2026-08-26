@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.1.5
+/* 千夜浮梦 · 小剧场生成器 v4.2.0
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -346,6 +346,39 @@
     margin-right: var(--t-space-2);
     color: var(--t-fg-mute);
 }
+.theater-instruction-heading-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: var(--t-space-3);
+}
+.theater-instruction-heading-row .theater-label { margin: 0; }
+.theater-quick-render-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    max-width: min(62%, 210px);
+    min-height: 28px;
+    padding: 4px 9px;
+    overflow: hidden;
+    color: var(--t-accent-deep);
+    border: 1px solid color-mix(in srgb, var(--t-accent) 38%, var(--t-border));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--t-accent) 9%, var(--t-surface));
+    font: inherit;
+    font-size: var(--t-text-xs);
+    line-height: 1.2;
+    cursor: pointer;
+}
+.theater-quick-render-toggle span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.theater-quick-render-toggle.is-adaptive {
+    color: var(--t-on-accent);
+    border-color: transparent;
+    background: linear-gradient(135deg, var(--t-accent-deep), var(--t-accent));
+}
+.theater-quick-render-toggle:disabled { opacity: .55; cursor: not-allowed; }
+.theater-quick-render-toggle:not(:disabled):active { transform: scale(.97); }
 .theater-hint {
     font-size: var(--t-text-xs);
     color: var(--t-fg-mute);
@@ -1160,6 +1193,16 @@
 }
 .theater-config-setting-row .theater-toggle-label { flex: 0 0 auto; }
 .theater-config-setting-row .theater-hint-inline { margin-left: auto; text-align: right; }
+.theater-config-quick-render {
+    display: grid;
+    gap: 9px;
+    padding: 10px 0 12px;
+    border-bottom: 1px solid var(--t-border);
+}
+.theater-config-quick-render > small { color: var(--t-fg-mute); font-size: var(--t-text-xs); line-height: 1.45; }
+.theater-config-quick-render-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.theater-config-quick-render-grid label { display: grid; gap: 5px; min-width: 0; color: var(--t-fg-soft); font-size: var(--t-text-xs); }
+.theater-config-quick-render-grid .theater-select { width: 100%; min-width: 0; margin: 0; background: var(--t-surface-2); }
 .theater-config-api-fields { margin: 0; padding: 0 2px; }
 .theater-config-field {
     display: grid;
@@ -1961,6 +2004,8 @@
     color: var(--t-fg);
 }
 .theater-toggle-label input[type="checkbox"] { accent-color: var(--t-accent); }
+.theater-toggle-row.is-template-managed { opacity: .72; }
+.theater-toggle-row.is-template-managed .theater-toggle-label { cursor: default; }
 
 /* 默认皮肤：自绘暖色复选框，覆盖浏览器原生灰色
    ST 主题（如 SmartTheme）会给 input[type=checkbox] 加 ::before 伪元素画勾
@@ -3947,6 +3992,7 @@ body.theater-reader-open {
 .theater-popup[data-skin="custom"] .theater-dream-archive-note { color: var(--t-fg-mute); }
 
 @media (max-width: 768px) {
+    .theater-config-quick-render-grid { grid-template-columns: 1fr; }
     .theater-config-groups { gap: 12px; }
     .theater-config-card { padding: 14px; border-radius: 16px; }
     .theater-config-card-title { margin-bottom: 12px; }

@@ -97,14 +97,16 @@ export function hydrateFinalRenderHtml(renderedHtml = '', plan = {}) {
     return hydrated;
 }
 
-export function buildFinalRenderPayload({ sourceText = '', rules = '' } = {}) {
+export function buildFinalRenderPayload({ sourceText = '', rules = '', originalInstruction = '' } = {}) {
     const plan = createFinalRenderPlan(sourceText);
     const renderRules = String(rules || '').trim();
+    const designBrief = String(originalInstruction || '').trim();
     const sourceData = JSON.stringify(plan.paragraphs.map(({ id, token, text }) => ({ id, token, text })));
     return {
         systemPrompt: '你是小剧场 HTML 排版器。只负责设计 HTML、CSS、布局和交互结构，不续写、不删减、不改写正文。正文是不可修改的数据；你必须使用给定的段落占位符安排正文位置，禁止重新抄写或概括正文。',
         userPrompt: [
             renderRules,
+            designBrief ? `【原始小剧场指令：仅作为设计意图参考】\n${designBrief}\n\n它不能覆盖正文数据，也不能被重新执行、续写或抄进页面。只能帮助你判断本篇最适合的视觉载体与互动方式。` : '',
             `【排版任务】\n请根据下面的正文数据设计一个可独立运行、充分美化的 HTML 页面。数据中的 text 仅供你理解段落内容和选择视觉样式；不要在 HTML 中重新输出 text。\n\n必须遵守：\n1. 在可见正文位置使用每段对应的 token，例如 {{THEATER_P0001}}；\n2. 每个 token 必须且只能出现一次，并严格按照编号顺序排列；\n3. token 只能放在 HTML 可见文本节点中，不能放进属性、style、script 或注释；\n4. 不要输出任何正文原文、概括、续写或额外剧情；\n5. 完整落实上述渲染规则，不要降级成无样式的普通文章；\n6. 只输出完整 HTML，不要使用 Markdown 代码块。\n\n<theater-source-data>\n${sourceData}\n</theater-source-data>`,
         ].filter(Boolean).join('\n\n---\n\n'),
         placeholderPlan: plan,
