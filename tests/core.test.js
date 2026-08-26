@@ -2318,6 +2318,7 @@ test('生成页双模板切换和自适应独立排版都接入真实生成流�
     assert.match(source, /id="theater-quick-render-toggle"/);
     assert.match(source, /id="theater-quick-render-a"/);
     assert.match(source, /id="theater-quick-render-b"/);
+    assert.doesNotMatch(source, /toastr\.info\(`本次使用：/);
     assert.match(source, /const separateRenderMode = stagedRenderMode \|\| adaptiveRenderMode/);
     assert.match(source, /forcePlainText: separateRenderMode/);
     assert.match(source, /!separateRenderMode && currentGenerationJob\.segments\.length === 1/);

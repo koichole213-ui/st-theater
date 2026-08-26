@@ -4028,7 +4028,6 @@ function switchQuickRenderSelection() {
     settings.selectedRenderIndex = state.current === state.a ? state.b : state.a;
     save();
     refreshRenderSelectionControls();
-    toastr.info(`本次使用：${renderSelectionMeta(settings.selectedRenderIndex, settings.renderTemplates).name}`);
 }
 
 function updateQuickRenderSetting(slot, selection) {
