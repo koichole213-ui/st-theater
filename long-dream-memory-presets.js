@@ -31,7 +31,7 @@ export function builtinLongDreamMemoryPreset() {
         id: LONG_DREAM_MEMORY_BUILTIN_PRESET_ID,
         format: LONG_DREAM_MEMORY_PRESET_FORMAT,
         version: LONG_DREAM_MEMORY_PRESET_VERSION,
-        name: '内置 · 连续性梦脉 v2',
+        name: '内置 · 连续性梦脉 v2（完善版）',
         author: '千夜浮梦',
         description: '平衡人物状态、人物弧光、关系变化、未完因果和世界线偏离。',
         focusPrompt: DEFAULT_LONG_DREAM_MEMORY_PRESET,
@@ -71,6 +71,9 @@ export function normalizeLongDreamMemoryPresetList(values = []) {
     for (const value of Array.isArray(values) ? values : []) {
         const preset = normalizeLongDreamMemoryPreset(value, result.length);
         if (!preset || preset.builtin) continue;
+        // 早期版本可能把当时的内置项作为普通副本留在设置中；内容完全相同才去重，用户改过的副本仍保留。
+        if (/^内置\s*[·・]?\s*连续性梦脉\s*v2(?:（完善版）)?$/i.test(preset.name)
+            && preset.focusPrompt === DEFAULT_LONG_DREAM_MEMORY_PRESET) continue;
         let name = preset.name;
         let suffix = 2;
         while (names.has(name.toLocaleLowerCase())) name = `${preset.name} ${suffix++}`.slice(0, 120);

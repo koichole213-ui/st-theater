@@ -2185,6 +2185,8 @@
 .theater-inst-info {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
     min-width: 0;
 }
 .theater-inst-name {
@@ -2231,7 +2233,8 @@
     color: var(--t-accent);
     background: color-mix(in srgb, var(--t-accent) 12%, transparent);
 }
-.theater-inst-move {
+.theater-inst-move,
+.theater-inst-tags {
     cursor: pointer;
     color: var(--t-fg-faint);
     padding: var(--t-space-1) var(--t-space-2);
@@ -2240,7 +2243,8 @@
     transition: color var(--t-dur-fast) var(--t-ease),
                 background var(--t-dur-fast) var(--t-ease);
 }
-.theater-inst-move:hover {
+.theater-inst-move:hover,
+.theater-inst-tags:hover {
     color: var(--t-accent);
     background: color-mix(in srgb, var(--t-accent) 12%, transparent);
 }
@@ -2394,6 +2398,99 @@
     white-space: nowrap;
     min-width: 0;
 }
+.theater-tag-source-control { flex-basis: 210px; width: min(210px, 58%); }
+.theater-tag-source-control .theater-btn {
+    max-width: 92px;
+    min-width: 64px;
+}
+.theater-tag-source-control .theater-btn span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 多标签沿用插件主题变量，三种皮肤都会跟随原有配色。 */
+.theater-tag-badges {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+.theater-tag-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 110px;
+    padding: 2px 7px;
+    border: 1px solid color-mix(in srgb, var(--t-accent) 20%, var(--t-border));
+    border-radius: var(--t-radius-pill);
+    background: color-mix(in srgb, var(--t-accent) 10%, var(--t-surface-2));
+    color: var(--t-accent-deep, var(--t-accent));
+    font-size: var(--t-text-xs);
+    line-height: 1.35;
+}
+.theater-tag-badge span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.theater-tag-badge i { flex: 0 0 auto; font-size: 9px; opacity: .75; }
+.theater-tag-badge.is-uncategorized {
+    border-style: dashed;
+    background: var(--t-surface-2);
+    color: var(--t-fg-mute);
+}
+.theater-tag-filter-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: flex-start;
+}
+.theater-tag-filter-btn span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.theater-tag-choice-list { display: grid; gap: var(--t-space-2); margin-top: var(--t-space-3); }
+.theater-tag-choice {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-3);
+    min-height: 42px;
+    padding: var(--t-space-2) var(--t-space-3);
+    border: 1px solid var(--t-border);
+    border-radius: var(--t-radius-sm);
+    background: var(--t-surface-2);
+    cursor: pointer;
+}
+.theater-tag-choice:has(input:checked) {
+    border-color: var(--t-accent);
+    background: color-mix(in srgb, var(--t-accent) 10%, var(--t-surface-2));
+}
+.theater-tag-choice input { accent-color: var(--t-accent); }
+.theater-tag-choice > span { display: flex; align-items: center; gap: var(--t-space-2); min-width: 0; }
+.theater-tag-choice > span i { color: var(--t-accent); }
+.theater-tag-choice > span small { color: var(--t-fg-mute); }
+.theater-bulk-tag-mode { margin-bottom: var(--t-space-3); }
+.theater-active-instruction-tags {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--t-space-2);
+    margin: 7px 1px 2px;
+}
+.theater-active-instruction-tag-list { min-width: 0; }
+.theater-tag-link {
+    flex: 0 0 auto;
+    border: 0;
+    padding: 3px 0;
+    background: transparent;
+    color: var(--t-accent-deep, var(--t-accent));
+    font: inherit;
+    font-size: var(--t-text-xs);
+    cursor: pointer;
+}
+.theater-tag-link:hover { text-decoration: underline; }
 
 /* 管理分组弹窗每一行 */
 .theater-group-mgmt-row {
@@ -4192,6 +4289,7 @@ body.theater-reader-open {
     gap: var(--t-space-2);
     flex-wrap: wrap;
 }
+.theater-history-tags { margin: calc(-1 * var(--t-space-1)) 0 var(--t-space-3); }
 .theater-history-actions span {
     font-size: var(--t-text-xs);
     cursor: pointer;
@@ -4217,6 +4315,11 @@ body.theater-reader-open {
     color: var(--t-danger);
     background: var(--t-danger-soft);
     border-color: color-mix(in srgb, var(--t-danger) 32%, transparent);
+}
+
+.theater-btn:disabled {
+    cursor: not-allowed;
+    opacity: .55;
 }
 
 /* ============================================================
@@ -4491,7 +4594,7 @@ body.theater-reader-open {
         padding: 7px 9px;
     }
     .theater-inst-item.theater-inst-actions-open { z-index: 5; }
-    .theater-inst-info { gap: 6px; }
+    .theater-inst-info { gap: 6px; flex-wrap: wrap; }
     .theater-inst-name {
         flex: 1 1 auto;
         min-width: 0;
@@ -4499,7 +4602,8 @@ body.theater-reader-open {
         white-space: nowrap;
     }
     .theater-inst-name i { margin-right: 6px; }
-    .theater-inst-group-badge {
+    .theater-inst-group-badge,
+    .theater-tag-badge {
         margin-right: 0;
         max-width: 72px;
         padding: 1px 5px;
@@ -4539,6 +4643,7 @@ body.theater-reader-open {
     .theater-inst-actions-open .theater-inst-actions { display: flex; }
     .theater-inst-edit,
     .theater-inst-move,
+    .theater-inst-tags,
     .theater-inst-delete {
         display: inline-flex;
         align-items: center;

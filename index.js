@@ -40,6 +40,7 @@ import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkSide, no
 import { applyPromptPostProcessing, composeGenerationContinuationMessages, composePresetMessages, noToolsPostProcessingMode, normalizePromptRole } from './request-layout.js';
 import { createRequestTrace, formatRequestTrace, requestTraceCompatibilityLabel, requestTraceMessageLabel } from './request-trace.js';
 import { migrateLegacyPresetEntryStates, presetEntryStatesForPreset } from './preset-entry-states.js';
+import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, migrateLegacyTagSettings, normalizeTagFilter, normalizeTagList, removeTagFromList, renameTagInList } from './tag-system.js';
 
 const MODULE_NAME = 'theater_generator';
 const VERSION = '4.2.0';
@@ -330,6 +331,13 @@ const defaultSettings = Object.freeze({
     instructionTemplates: [],
     instructionGroups: [],            // 用户创建的分组名列表
     instructionGroupFilter: '__all__', // 当前筛选：'__all__' | '__none__'(未分组) | 组名
+    instructionTags: [],              // 模板与历史共用的标签名称
+    instructionTagFilter: [],         // 空数组=全部；多个标签按“同时包含”筛选
+    randomTagFilter: [],
+    autoTagFilter: [],
+    historyTagFilter: [],
+    tagSchemaVersion: 0,
+    historyTagSchemaVersion: 0,
     renderTemplates: [],
     selectedRenderIndex: '__default__',
     quickRenderA: '__default__',
@@ -339,6 +347,7 @@ const defaultSettings = Object.freeze({
     customStyleAddon: '',
     customNsfwAddon: '',
     lastInstruction: '',
+    lastInstructionTags: [],
     manualTargetEnabled: false,
     manualTargetChars: 3000,
     manualTargetPanelOpen: false,
@@ -376,10 +385,10 @@ const defaultSettings = Object.freeze({
     soundPreset: 'chime',
     soundVolume: 70,
     randomEnabled: false,
-    randomScope: '__current__',  // '__current__' | '__all__' | '__none__' | 分组名
+    randomScope: '__current__',  // '__current__' | '__all__' | '__uncategorized__' | '__tags__'
     autoMode: false,             // 自动生成开关
     autoInterval: 10,            // 每攒够 N 层 AI 楼自动生成一次
-    autoSource: '__last__',      // '__last__' | '__all__' | '__none__' | 分组名
+    autoSource: '__last__',      // '__last__' | '__all__' | '__uncategorized__' | '__tags__'
     autoAnchors: {},             // { [chatId]: 上次触发时的 AI 楼数 }
     recentGenerations: [],  // 最近 3 条自动保留的生成结果 [{ html, mode, time, instruction }]
     recentIndex: 0,         // 当前查看的 recentGenerations 索引
@@ -575,7 +584,7 @@ async function storageInit() {
             const completed = idbTransactionDone(transaction);
             const store = transaction.objectStore('history');
             for (const h of settings.history) {
-                store.add({ title: h.title, html: h.html, mode: h.mode, instruction: h.instruction, sourceConfig: h.sourceConfig || null, date: h.date });
+                store.add({ title: h.title, html: h.html, mode: h.mode, instruction: h.instruction, sourceConfig: h.sourceConfig || null, tags: normalizeTagList(h.tags), date: h.date });
             }
             await completed;
             settings.history = [];
@@ -770,6 +779,15 @@ async function init() {
         if (!hasOwn(extensionSettings[MODULE_NAME], k)) extensionSettings[MODULE_NAME][k] = defaultSettings[k];
     }
     settings = extensionSettings[MODULE_NAME];
+    const tagSettingsMigrated = migrateLegacyTagSettings(settings);
+    settings.historyTagFilter = normalizeTagFilter(settings.historyTagFilter, settings.instructionTags);
+    settings.lastInstructionTags = itemTags({ tags: settings.lastInstructionTags }, settings.instructionTags);
+    activeInstructionTags = [...settings.lastInstructionTags];
+    activeInstructionContent = activeInstructionTags.length ? String(settings.lastInstruction || '') : '';
+    if (tagSettingsMigrated) {
+        runtimeLog('info', '指令模板分组已升级为多标签', { tags: settings.instructionTags.length });
+        save();
+    }
     settings.contextRange = normalizeContextRange(settings.contextRange);
     setRuntimeLogSecretProvider(() => [settings?.apiKey, ...apiPresetSecretValues(settings?.apiPresets)]);
     if (upgradeNeedsProtocolCompatibility) settings.apiProtocol = 'auto';
@@ -867,6 +885,7 @@ async function init() {
     }
 
     await storageInit();
+    await migrateHistoryTags();
     applyUIFontSize();
 
     const html = await renderExtensionTemplateAsync('third-party/st-theater', 'settings');
@@ -1444,6 +1463,10 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <label class="theater-label" for="theater-instruction">小剧场指令</label>
             </div>
             <textarea id="theater-instruction" class="theater-textarea" rows="4" placeholder="例如：生成一个角色们一起吃火锅的番外小剧场">${esc(settings.lastInstruction || '')}</textarea>
+            <div id="theater-active-instruction-tags" class="theater-active-instruction-tags" style="${activeInstructionTags.length ? '' : 'display:none;'}">
+                <span class="theater-active-instruction-tag-list">${itemTagBadgesHTML({ tags: activeInstructionTags })}</span>
+                <button type="button" id="theater-edit-active-instruction-tags" class="theater-tag-link"><i class="fa-solid fa-pen"></i> 修改本次标签</button>
+            </div>
             <details id="theater-manual-target-control" class="theater-target-details ${settings.manualTargetEnabled ? 'is-enabled' : ''}" ${settings.manualTargetPanelOpen ? 'open' : ''}>
                 <summary class="theater-target-summary">
                     <span><i class="fa-solid fa-bullseye"></i> 独立设置目标字数</span>
@@ -1633,11 +1656,9 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 </div>
                 <div class="theater-drawer-body" style="display:none;">
                     <div class="theater-inst-toolbar">
-                        <select id="theater-inst-group-filter" class="theater-select theater-inst-group-select">
-                            ${renderGroupFilterOptions()}
-                        </select>
-                        <div id="theater-inst-new-group-btn" class="theater-btn theater-inst-tool-btn" title="新建分组"><i class="fa-solid fa-folder-plus"></i></div>
-                        <div id="theater-inst-manage-group-btn" class="theater-btn theater-inst-tool-btn" title="管理分组"><i class="fa-solid fa-gear"></i></div>
+                        <button type="button" id="theater-inst-tag-filter" class="theater-btn theater-tag-filter-btn"><i class="fa-solid fa-filter"></i><span>${esc(tagFilterSummary(settings.instructionTagFilter))}</span></button>
+                        <div id="theater-inst-new-tag-btn" class="theater-btn theater-inst-tool-btn" title="新建标签"><i class="fa-solid fa-tag"></i></div>
+                        <div id="theater-inst-manage-tag-btn" class="theater-btn theater-inst-tool-btn" title="管理标签"><i class="fa-solid fa-gear"></i></div>
                     </div>
                     <div class="theater-inst-search-row">
                         <input type="text" id="theater-inst-search" class="theater-input theater-inst-search-input" placeholder="搜索模板名…" value="${esc(instSearch || '')}">
@@ -1646,7 +1667,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                     <div id="theater-inst-bulk-bar" class="theater-inst-bulk-bar" style="display:none;">
                         <span class="theater-inst-bulk-label">已选 <b id="theater-inst-bulk-count">0</b> 个</span>
                         <div class="theater-inst-bulk-actions">
-                            <div id="theater-inst-bulk-move-btn" class="theater-btn primary"><i class="fa-solid fa-folder-tree"></i><span>移到…</span></div>
+                            <div id="theater-inst-bulk-tags-btn" class="theater-btn primary"><i class="fa-solid fa-tags"></i><span>改标签</span></div>
                             <div id="theater-inst-bulk-delete-btn" class="theater-btn danger"><i class="fa-solid fa-trash"></i><span>删除</span></div>
                             <div id="theater-inst-bulk-clear-btn" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>取消</span></div>
                         </div>
@@ -1666,7 +1687,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
             <textarea id="theater-render-content" class="theater-textarea" rows="6" style="margin-top:10px;">${esc(renderTemplateContentForSelection(selRender, render))}</textarea>
             <div class="theater-btn-row">
                 <div id="theater-save-render-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存为新模板</span></div>
-                <div id="theater-delete-render-btn" class="theater-btn danger" style="${isBuiltinRenderSelection(selRender) ? 'display:none;' : ''}"><i class="fa-solid fa-trash"></i><span>删除当前</span></div>
+                <button type="button" id="theater-delete-render-btn" class="theater-btn danger" ${isBuiltinRenderSelection(selRender) ? 'disabled title="内置模板不可删除"' : ''}><i class="fa-solid fa-trash"></i><span>${isBuiltinRenderSelection(selRender) ? '内置模板不可删除' : '删除这个自定义模板'}</span></button>
             </div>
         </div>
     </div>
@@ -1678,9 +1699,12 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <label class="theater-label" style="margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> 保存的小剧场</label>
                 <div id="theater-export-all-history" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-download"></i><span>批量导出</span></div>
                 <div id="theater-import-history-btn" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入备份</span></div>
-                <div id="theater-hist-batch-enter" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-trash-can"></i><span>批量删除</span></div>
+                <div id="theater-history-tag-filter" class="theater-btn"><i class="fa-solid fa-filter"></i><span>${esc(tagFilterSummary(settings.historyTagFilter))}</span></div>
+                <div id="theater-history-manage-tags" class="theater-btn"><i class="fa-solid fa-tags"></i><span>管理标签</span></div>
+                <div id="theater-hist-batch-enter" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-list-check"></i><span>批量管理</span></div>
                 <div id="theater-hist-batch-bar" style="display:none;">
                     <div id="theater-hist-select-all" class="theater-btn"><i class="fa-solid fa-check-double"></i><span>全选</span></div>
+                    <div id="theater-hist-tag-selected" class="theater-btn primary"><i class="fa-solid fa-tags"></i><span>改标签</span></div>
                     <div id="theater-hist-delete-selected" class="theater-btn danger"><i class="fa-solid fa-trash-can"></i><span>删除选中 (<span id="theater-hist-sel-count">0</span>)</span></div>
                     <div id="theater-hist-batch-cancel" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>取消</span></div>
                 </div>
@@ -1950,21 +1974,16 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <label class="theater-config-switch" aria-label="开启抽一个按钮"><input type="checkbox" id="theater-random-enabled" ${settings.randomEnabled ? 'checked' : ''}><span></span></label>
             </div>
             <div class="theater-config-choice-row">
-                <span><b>抽取范围</b><small>可以跟随当前筛选或锁定分组</small></span>
-                <select id="theater-random-scope" class="theater-select">
-                    ${(() => {
-                        const cur = settings.randomScope || '__current__';
-                        const opts = [
-                            `<option value="__current__" ${cur === '__current__' ? 'selected' : ''}>跟随当前筛选</option>`,
-                            `<option value="__all__" ${cur === '__all__' ? 'selected' : ''}>全部模板</option>`,
-                            `<option value="__none__" ${cur === '__none__' ? 'selected' : ''}>仅未分组</option>`,
-                        ];
-                        (settings.instructionGroups || []).forEach(g => {
-                            opts.push(`<option value="${esc(g)}" ${cur === g ? 'selected' : ''}>分组：${esc(g)}</option>`);
-                        });
-                        return opts.join('');
-                    })()}
-                </select>
+                <span><b>抽取范围</b><small>多个标签表示同时包含</small></span>
+                <div class="theater-config-inline-control theater-tag-source-control">
+                    <select id="theater-random-scope" class="theater-select">
+                        <option value="__current__" ${settings.randomScope === '__current__' ? 'selected' : ''}>跟随筛选</option>
+                        <option value="__all__" ${settings.randomScope === '__all__' ? 'selected' : ''}>全部模板</option>
+                        <option value="${TAG_UNCATEGORIZED}" ${settings.randomScope === TAG_UNCATEGORIZED ? 'selected' : ''}>未分类</option>
+                        <option value="__tags__" ${settings.randomScope === '__tags__' ? 'selected' : ''}>指定标签</option>
+                    </select>
+                    <button type="button" id="theater-random-tag-picker" class="theater-btn" ${settings.randomScope === '__tags__' ? '' : 'hidden'} title="${esc(tagFilterSummary(settings.randomTagFilter))}"><i class="fa-solid fa-tags"></i><span>${esc(tagFilterSummary(settings.randomTagFilter, '选择'))}</span></button>
+                </div>
             </div>
         </div>
         <div class="theater-section" data-config-section="auto">
@@ -1975,27 +1994,23 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
             </div>
             <div class="theater-config-choice-row">
                 <span><b>触发间隔</b><small id="theater-auto-summary">每 ${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))} 层 AI 回复</small></span>
-                <div class="theater-config-range-control">
-                    <input id="theater-auto-interval" type="range" min="1" max="50" value="${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))}" class="theater-slider">
-                    <span id="theater-auto-interval-num">${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))}</span>
+                <div class="theater-config-stepper">
+                    <button type="button" data-theater-number-step="-1" data-theater-number-target="theater-auto-interval" aria-label="触发间隔减一">−</button>
+                    <input id="theater-auto-interval" type="number" min="1" max="50" step="1" inputmode="numeric" value="${Math.max(1, Math.min(50, Number(settings.autoInterval) || 10))}" class="theater-input" aria-label="触发间隔，1 到 50 层">
+                    <button type="button" data-theater-number-step="1" data-theater-number-target="theater-auto-interval" aria-label="触发间隔加一">＋</button>
                 </div>
             </div>
             <div class="theater-config-choice-row">
                 <span><b>指令来源</b><small>选择自动生成时使用的指令</small></span>
-                <select id="theater-auto-source" class="theater-select">
-                    ${(() => {
-                        const cur = settings.autoSource || '__last__';
-                        const opts = [
-                            `<option value="__last__" ${cur === '__last__' ? 'selected' : ''}>上次使用的指令</option>`,
-                            `<option value="__all__" ${cur === '__all__' ? 'selected' : ''}>随机 · 全部模板</option>`,
-                            `<option value="__none__" ${cur === '__none__' ? 'selected' : ''}>随机 · 仅未分组</option>`,
-                        ];
-                        (settings.instructionGroups || []).forEach(g => {
-                            opts.push(`<option value="${esc(g)}" ${cur === g ? 'selected' : ''}>随机 · 分组：${esc(g)}</option>`);
-                        });
-                        return opts.join('');
-                    })()}
-                </select>
+                <div class="theater-config-inline-control theater-tag-source-control">
+                    <select id="theater-auto-source" class="theater-select">
+                        <option value="__last__" ${settings.autoSource === '__last__' ? 'selected' : ''}>上次指令</option>
+                        <option value="__all__" ${settings.autoSource === '__all__' ? 'selected' : ''}>全部模板</option>
+                        <option value="${TAG_UNCATEGORIZED}" ${settings.autoSource === TAG_UNCATEGORIZED ? 'selected' : ''}>未分类</option>
+                        <option value="__tags__" ${settings.autoSource === '__tags__' ? 'selected' : ''}>指定标签</option>
+                    </select>
+                    <button type="button" id="theater-auto-tag-picker" class="theater-btn" ${settings.autoSource === '__tags__' ? '' : 'hidden'} title="${esc(tagFilterSummary(settings.autoTagFilter))}"><i class="fa-solid fa-tags"></i><span>${esc(tagFilterSummary(settings.autoTagFilter, '选择'))}</span></button>
+                </div>
             </div>
         </div>
         ${configGroupEnd}
@@ -2059,10 +2074,12 @@ function historyItemHTML(h) {
             <span class="theater-history-title">${esc(h.title || '未命名小剧场')}</span>
             <span class="theater-history-date">${h.date || ''}</span>
         </div>
+        <div class="theater-history-tags">${itemTagBadgesHTML(h, { showUncategorized: true })}</div>
         <div class="theater-history-actions">
             <span class="theater-history-view" data-id="${h.id}"><i class="fa-solid fa-eye"></i> 查看</span>
             <span class="theater-history-continue" data-id="${h.id}"><i class="fa-solid fa-forward"></i> 续写</span>
             <span class="theater-history-export" data-id="${h.id}"><i class="fa-solid fa-download"></i> 导出 HTML</span>
+            <span class="theater-history-tags-edit" data-id="${h.id}"><i class="fa-solid fa-tags"></i> 标签</span>
             <span class="theater-history-delete" data-id="${h.id}"><i class="fa-solid fa-trash"></i> 删除</span>
         </div>
     </div>`;
@@ -3455,23 +3472,32 @@ function renderLongDreamReviewDraft(dream) {
 }
 
 
-// 把没有 group 字段或 group 在已删除组里的模板视为「未分组」
-function templateGroup(t) {
-    const g = t && t.group;
-    if (!g) return '';
-    const groups = settings.instructionGroups || [];
-    return groups.includes(g) ? g : '';
+function knownInstructionTags() {
+    return normalizeTagList(settings.instructionTags);
 }
 
-// 返回 { '': N未分组, '组名1': N1, ... } 仅包含有内容的键
-function groupCountsMap() {
-    const arr = settings.instructionTemplates || [];
-    const m = Object.create(null);
-    arr.forEach(t => {
-        const g = templateGroup(t);
-        m[g] = (m[g] || 0) + 1;
-    });
-    return m;
+function tagFilterSummary(filter, allLabel = '全部标签') {
+    const selected = normalizeTagFilter(filter, knownInstructionTags());
+    if (!selected.length) return allLabel;
+    if (selected[0] === TAG_UNCATEGORIZED) return '未分类';
+    return selected.join(' ＋ ');
+}
+
+function itemTagBadgesHTML(item, { showUncategorized = false } = {}) {
+    const tags = itemTags(item, knownInstructionTags());
+    if (!tags.length) {
+        return showUncategorized
+            ? '<span class="theater-tag-badge is-uncategorized"><i class="fa-solid fa-tag"></i><span>未分类</span></span>'
+            : '';
+    }
+    return `<span class="theater-tag-badges">${tags.map(tag => `<span class="theater-tag-badge" title="${esc(tag)}"><i class="fa-solid fa-tag"></i><span>${esc(tag)}</span></span>`).join('')}</span>`;
+}
+
+function tagUsageCounts() {
+    const counts = new Map(knownInstructionTags().map(tag => [tag, { templates: 0, history: 0 }]));
+    (settings.instructionTemplates || []).forEach(item => itemTags(item, knownInstructionTags()).forEach(tag => counts.get(tag).templates++));
+    historyCache.forEach(item => itemTags(item, knownInstructionTags()).forEach(tag => counts.get(tag).history++));
+    return counts;
 }
 
 function rollRandomInstruction() {
@@ -3479,45 +3505,24 @@ function rollRandomInstruction() {
     if (!templates.length) { toastr.warning('模板库是空的'); return; }
 
     const scope = settings.randomScope || '__current__';
-    let pool;
-    if (scope === '__current__') {
-        const filter = settings.instructionGroupFilter || '__all__';
-        if (filter === '__all__') pool = templates;
-        else if (filter === '__none__') pool = templates.filter(t => !templateGroup(t));
-        else pool = templates.filter(t => templateGroup(t) === filter);
-    } else if (scope === '__all__') {
-        pool = templates;
-    } else if (scope === '__none__') {
-        pool = templates.filter(t => !templateGroup(t));
-    } else {
-        pool = templates.filter(t => templateGroup(t) === scope);
+    let filter = [];
+    if (scope === '__current__') filter = settings.instructionTagFilter;
+    else if (scope === TAG_UNCATEGORIZED) filter = [TAG_UNCATEGORIZED];
+    else if (scope === '__tags__') filter = settings.randomTagFilter;
+    if (scope === '__tags__' && !normalizeTagFilter(filter, knownInstructionTags()).length) {
+        toastr.warning('请先给“抽一个”选择至少一个标签');
+        return;
     }
+    const pool = scope === '__all__' ? templates : templates.filter(template => matchesTagFilter(template, filter, knownInstructionTags()));
 
     if (!pool.length) { toastr.warning('当前抽取范围内没有模板'); return; }
     const t = pool[Math.floor(Math.random() * pool.length)];
     $('#theater-instruction').val(t.content);
     settings.lastInstruction = t.content;
+    setActiveInstructionTags(itemTags(t, knownInstructionTags()), t.content);
     save();
     scheduleTokenEstimate();
     toastr.info(`已填入：${t.name || '未命名'}`, '', { timeOut: 3000 });
-}
-
-function renderGroupFilterOptions() {
-    const filter = settings.instructionGroupFilter || '__all__';
-    const groups = settings.instructionGroups || [];
-    const counts = groupCountsMap();
-    const total = (settings.instructionTemplates || []).length;
-    const ungrouped = counts[''] || 0;
-    const opts = [];
-    opts.push(`<option value="__all__" ${filter === '__all__' ? 'selected' : ''}>📁 全部（${total}）</option>`);
-    groups.forEach(name => {
-        const c = counts[name] || 0;
-        opts.push(`<option value="${esc(name)}" ${filter === name ? 'selected' : ''}>📁 ${esc(name)}（${c}）</option>`);
-    });
-    if (ungrouped > 0 || groups.length === 0) {
-        opts.push(`<option value="__none__" ${filter === '__none__' ? 'selected' : ''}>📂 未分组（${ungrouped}）</option>`);
-    }
-    return opts.join('');
 }
 
 // 临时状态：当前选中索引 + 搜索关键词，仅本次会话有效
@@ -3525,16 +3530,31 @@ let instSelected = new Set();
 let histSelected = new Set();
 let histBatchMode = false;
 let instSearch = '';
+let activeInstructionTags = [];
+let activeInstructionContent = '';
+let continuationSourceTags = [];
+
+function setActiveInstructionTags(tags, content = '') {
+    activeInstructionTags = itemTags({ tags }, knownInstructionTags());
+    activeInstructionContent = String(content || '');
+    if (activeInstructionContent && activeInstructionContent === String(settings.lastInstruction || '')) {
+        settings.lastInstructionTags = [...activeInstructionTags];
+    }
+    refreshActiveInstructionTags();
+}
+
+function refreshActiveInstructionTags() {
+    const $row = $('#theater-active-instruction-tags');
+    if (!$row.length) return;
+    $row.toggle(activeInstructionTags.length > 0);
+    $row.find('.theater-active-instruction-tag-list').html(itemTagBadgesHTML({ tags: activeInstructionTags }));
+}
 
 function filterInstAll(arr) {
-    const filter = settings.instructionGroupFilter || '__all__';
+    const filter = settings.instructionTagFilter || [];
     const q = (instSearch || '').toLowerCase().trim();
     return arr.map((t, i) => ({ t, i })).filter(x => {
-        if (filter === '__none__') {
-            if (templateGroup(x.t)) return false;
-        } else if (filter !== '__all__') {
-            if (templateGroup(x.t) !== filter) return false;
-        }
+        if (!matchesTagFilter(x.t, filter, knownInstructionTags())) return false;
         if (q && !(x.t.name || '').toLowerCase().includes(q)) return false;
         return true;
     });
@@ -3545,13 +3565,10 @@ function renderInstList(arr) {
     const filtered = filterInstAll(arr);
     if (!filtered.length) {
         const q = (instSearch || '').trim();
-        return `<p class="theater-empty">${q ? `没找到包含「${esc(q)}」的模板` : '这个分组里还没有模板'}</p>`;
+        return `<p class="theater-empty">${q ? `没找到包含「${esc(q)}」的模板` : '当前标签组合下还没有模板'}</p>`;
     }
     return filtered.map(({ t: item, i }) => {
-        const g = templateGroup(item);
-        const groupBadge = g
-            ? `<span class="theater-inst-group-badge" title="${esc(g)}"><i class="fa-solid fa-folder"></i><span class="theater-inst-group-badge-text">${esc(g)}</span></span>`
-            : '';
+        const tagBadges = itemTagBadgesHTML(item, { showUncategorized: true });
         const checked = instSelected.has(i) ? 'checked' : '';
         const selClass = instSelected.has(i) ? ' theater-inst-item-selected' : '';
         return `
@@ -3559,12 +3576,12 @@ function renderInstList(arr) {
             <input type="checkbox" class="theater-inst-checkbox" data-index="${i}" ${checked}>
             <div class="theater-inst-info">
                 <span class="theater-inst-name" data-index="${i}"><i class="fa-solid fa-file-lines"></i> ${esc(item.name)}</span>
-                ${groupBadge}
+                ${tagBadges}
             </div>
             <button type="button" class="theater-inst-more" data-index="${i}" title="更多操作" aria-label="打开模板操作菜单" aria-expanded="false"><i class="fa-solid fa-ellipsis"></i></button>
             <div class="theater-inst-actions">
                 <span class="theater-inst-edit" data-index="${i}" title="编辑" aria-label="编辑模板"><i class="fa-solid fa-pen"></i></span>
-                <span class="theater-inst-move" data-index="${i}" title="改分组" aria-label="修改模板分组"><i class="fa-solid fa-folder-tree"></i></span>
+                <span class="theater-inst-tags" data-index="${i}" title="编辑标签" aria-label="编辑模板标签"><i class="fa-solid fa-tags"></i></span>
                 <span class="theater-inst-delete" data-index="${i}" title="删除" aria-label="删除模板"><i class="fa-solid fa-xmark"></i></span>
             </div>
         </div>
@@ -3987,6 +4004,54 @@ function applyResultToolboxMode() {
     }
 }
 
+async function histPut(item) {
+    if (!item?.id) return false;
+    const normalized = { ...item, tags: itemTags(item, settings.instructionTags) };
+    const index = historyCache.findIndex(history => history.id === item.id);
+    if (!idb) {
+        if (index !== -1) historyCache[index] = normalized;
+        settings.history = historyCache;
+        save();
+        return true;
+    }
+    try {
+        await idbReq(idb.transaction('history', 'readwrite').objectStore('history').put(normalized));
+        if (index !== -1) historyCache[index] = normalized;
+        return true;
+    } catch (e) {
+        console.error('[Theater] 更新历史失败:', e);
+        toastr.error('更新历史失败（本地数据库写入出错）：' + (e?.message || e));
+        return false;
+    }
+}
+
+function inferHistoryTags(instruction) {
+    const text = String(instruction || '').trim();
+    if (!text) return [];
+    const matches = (settings.instructionTemplates || []).filter(template => String(template?.content || '').trim() === text);
+    if (matches.length !== 1) return [];
+    return itemTags(matches[0], settings.instructionTags);
+}
+
+async function migrateHistoryTags() {
+    if (Number(settings.historyTagSchemaVersion) >= 1) {
+        historyCache.forEach(item => { item.tags = itemTags(item, settings.instructionTags); });
+        recentCache.forEach(item => { item.tags = itemTags(item, settings.instructionTags); });
+        return;
+    }
+    for (const history of historyCache) {
+        history.tags = Array.isArray(history.tags) ? itemTags(history, settings.instructionTags) : inferHistoryTags(history.instruction);
+        await histPut(history);
+    }
+    recentCache.forEach(item => {
+        item.tags = Array.isArray(item.tags) ? itemTags(item, settings.instructionTags) : inferHistoryTags(item.instruction);
+    });
+    if (recentCache.length) await recentPersist();
+    settings.historyTagSchemaVersion = 1;
+    save();
+    runtimeLog('info', '旧历史标签升级完成', { history: historyCache.length });
+}
+
 function refreshRenderSelectionControls({ refreshOptions = false } = {}) {
     const customTemplates = settings.renderTemplates || [];
     settings.selectedRenderIndex = normalizeRenderSelection(settings.selectedRenderIndex, customTemplates);
@@ -4006,7 +4071,11 @@ function refreshRenderSelectionControls({ refreshOptions = false } = {}) {
     }
     $('#theater-render-content').val(renderTemplateContentForSelection(state.current, customTemplates));
     $('#theater-render-selection-hint').text(renderSelectionHint(state.current));
-    $('#theater-delete-render-btn').toggle(!isBuiltinRenderSelection(state.current));
+    const builtinSelection = isBuiltinRenderSelection(state.current);
+    $('#theater-delete-render-btn')
+        .prop('disabled', builtinSelection)
+        .attr('title', builtinSelection ? '内置模板不可删除' : '删除当前选中的自定义模板')
+        .find('span').text(builtinSelection ? '内置模板不可删除' : '删除这个自定义模板');
     $('#theater-quick-render-toggle')
         .html(quickRenderButtonContent())
         .toggleClass('is-adaptive', !!adaptive)
@@ -4160,7 +4229,14 @@ function bindEvents() {
     });
     $(window).off('resize.tra').on('resize.tra', positionResultToolbox);
     $d.off('change.ti').on('change.ti', '#theater-interactive-toggle', function () { settings.interactiveMode = $(this).is(':checked'); save(); });
-    $d.off('input.tii').on('input.tii', '#theater-instruction', function () { settings.lastInstruction = $(this).val(); save(); scheduleTokenEstimate(); });
+    $d.off('input.tii').on('input.tii', '#theater-instruction', function () {
+        settings.lastInstruction = $(this).val();
+        if (!continueContext && String($(this).val()) !== activeInstructionContent) {
+            settings.lastInstructionTags = [];
+            setActiveInstructionTags([], '');
+        }
+        save(); scheduleTokenEstimate();
+    });
 
     // ---- Long Dream ----
     $d.off('input.tdcompose change.tdcompose').on('input.tdcompose change.tdcompose', '#theater-dream-next-instruction,#theater-dream-next-title,#theater-dream-next-target', function () {
@@ -5054,6 +5130,8 @@ function bindEvents() {
         if (!ok) return;
         $('#theater-instruction').val('');
         settings.lastInstruction = '';
+        settings.lastInstructionTags = [];
+        setActiveInstructionTags([], '');
         save();
     });
     $d.off('click.titog').on('click.titog', '#theater-inst-toggle', function () {
@@ -5065,6 +5143,7 @@ function bindEvents() {
         if (t) {
             $('#theater-instruction').val(t.content);
             settings.lastInstruction = t.content;
+            setActiveInstructionTags(itemTags(t, knownInstructionTags()), t.content);
             clearContinueMode({ silent: true });
             save();
             $('.theater-tab[data-tab="generate"]').click();
@@ -5127,17 +5206,15 @@ function bindEvents() {
         save();
         refreshInstUI();
     });
-    // ---- Groups ----
-    $d.off('change.tigf').on('change.tigf', '#theater-inst-group-filter', function () {
-        settings.instructionGroupFilter = $(this).val();
-        save();
-        $('#theater-instruction-list').html(renderInstList(settings.instructionTemplates || []));
+    // ---- Tags ----
+    $d.off('click.titf').on('click.titf', '#theater-inst-tag-filter', async function () {
+        const chosen = await chooseTags({ title: '筛选指令模板', selected: settings.instructionTagFilter, allowUncategorized: true });
+        if (chosen === null) return;
+        settings.instructionTagFilter = chosen; instSelected.clear(); save(); refreshInstUI(); refreshTagControls();
     });
-    $d.off('click.tigew').on('click.tigew', '#theater-inst-new-group-btn', newInstructionGroup);
-    $d.off('click.tigmg').on('click.tigmg', '#theater-inst-manage-group-btn', manageInstructionGroups);
-    $d.off('click.tim').on('click.tim', '.theater-inst-move', function () {
-        moveInstructionTemplate($(this).data('index'));
-    });
+    $d.off('click.titnew').on('click.titnew', '#theater-inst-new-tag-btn', async function () { await newInstructionTag(); refreshTagControls(); });
+    $d.off('click.titmanage').on('click.titmanage', '#theater-inst-manage-tag-btn, #theater-history-manage-tags', manageInstructionTags);
+    $d.off('click.tittags').on('click.tittags', '.theater-inst-tags', function () { editTemplateTags($(this).data('index')); });
     // ---- Search & Bulk ----
     $d.off('input.tis').on('input.tis', '#theater-inst-search', function () {
         instSearch = $(this).val() || '';
@@ -5152,7 +5229,7 @@ function bindEvents() {
         updateBulkBar();
     });
     $d.off('click.tisa').on('click.tisa', '#theater-inst-select-all-btn', selectAllVisible);
-    $d.off('click.tibm').on('click.tibm', '#theater-inst-bulk-move-btn', bulkMoveSelected);
+    $d.off('click.tibm').on('click.tibm', '#theater-inst-bulk-tags-btn', bulkEditSelectedTemplateTags);
     $d.off('click.tibd').on('click.tibd', '#theater-inst-bulk-delete-btn', bulkDeleteSelected);
     $d.off('click.tibc').on('click.tibc', '#theater-inst-bulk-clear-btn', clearInstSelection);
 
@@ -5164,6 +5241,12 @@ function bindEvents() {
     });
     $d.off('click.tsr').on('click.tsr', '#theater-save-render-btn', saveRenderTpl);
     $d.off('click.tdr').on('click.tdr', '#theater-delete-render-btn', deleteRenderTpl);
+
+    $d.off('click.tactiveinstructiontags').on('click.tactiveinstructiontags', '#theater-edit-active-instruction-tags', async function () {
+        const chosen = await chooseTags({ title: '修改本次生成标签', selected: activeInstructionTags, subtitle: '只影响这次生成结果以及之后保存的历史' });
+        if (chosen === null) return;
+        setActiveInstructionTags(chosen, $('#theater-instruction').val());
+    });
 
     // ---- History ----
     $d.off('click.tsh').on('click.tsh', '#theater-save-history-btn', saveToHistory);
@@ -5252,7 +5335,8 @@ function bindEvents() {
     $d.off('click.tcont').on('click.tcont', '#theater-continue-btn', function () {
         const html = lastGeneratedHtml || currentDisplayHtml;
         if (!html) { toastr.warning('没有可续写的内容'); return; }
-        startContinue(html);
+        const source = recentCache.find(item => item.html === html) || historyCache.find(item => item.html === html);
+        startContinue(html, source?.tags || activeInstructionTags);
     });
     // 取消续写
     $d.off('click.tcc').on('click.tcc', '#theater-cancel-continue', function () {
@@ -5261,13 +5345,14 @@ function bindEvents() {
     $d.off('click.thv').on('click.thv', '.theater-history-view', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
         lastGeneratedHtml = item.html;
+        setActiveInstructionTags(itemTags(item, knownInstructionTags()), item.instruction || '');
         showInIframe(item.html, item.mode || 'html'); $('.theater-tab[data-tab="generate"]').click(); $('#theater-output-section').show();
     });
     // 续写：从历史记录
     $d.off('click.thc').on('click.thc', '.theater-history-continue', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
         lastGeneratedHtml = item.html;
-        startContinue(item.html);
+        startContinue(item.html, item.tags);
     });
     $d.off('click.the').on('click.the', '.theater-history-export', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
@@ -5279,6 +5364,15 @@ function bindEvents() {
         const ok = await Popup.show.confirm('确定删除这条历史？');
         if (!ok) return;
         if (await histDelete([id])) refreshHistList();
+    });
+    $d.off('click.thetags').on('click.thetags', '.theater-history-tags-edit', function () { editHistoryTags($(this).data('id')); });
+    $d.off('click.thfilter').on('click.thfilter', '#theater-history-tag-filter', async function () {
+        const chosen = await chooseTags({ title: '筛选保存的小剧场', selected: settings.historyTagFilter, allowUncategorized: true });
+        if (chosen === null) return;
+        settings.historyTagFilter = chosen;
+        histSelected.clear();
+        save(); refreshHistList(); refreshTagControls();
+        if (histBatchMode) enterHistBatchMode();
     });
     $d.off('click.teah').on('click.teah', '#theater-export-all-history', requestHistoryExport);
     $d.off('click.tih').on('click.tih', '#theater-import-history-btn', importHistoryBackup);
@@ -5300,11 +5394,12 @@ function bindEvents() {
         updateHistBulkBar();
     });
     $d.off('click.thsa').on('click.thsa', '#theater-hist-select-all', function () {
-        if (histSelected.size === historyCache.length) {
+        const visible = filterHistoryAll(historyCache);
+        if (visible.length && visible.every(item => histSelected.has(item.id))) {
             histSelected.clear();
             $(this).find('span').text('全选');
         } else {
-            historyCache.forEach(h => histSelected.add(h.id));
+            visible.forEach(h => histSelected.add(h.id));
             $(this).find('span').text('取消全选');
         }
         refreshHistList();
@@ -5323,6 +5418,7 @@ function bindEvents() {
         exitHistBatchMode();
         toastr.success(`已删除 ${n} 条`);
     });
+    $d.off('click.thtagsselected').on('click.thtagsselected', '#theater-hist-tag-selected', bulkEditSelectedHistoryTags);
 
     // ---- Theme ----
     $d.off('click.tcss').on('click.tcss', '#theater-save-css-btn', function () { settings.customCSS = $('#theater-custom-css').val(); save(); applyCustomCSS(); toastr.success('样式已应用'); });
@@ -5459,7 +5555,7 @@ function bindEvents() {
         settings.longDreamMemoryPresetId = LONG_DREAM_MEMORY_BUILTIN_PRESET_ID;
         refreshLongDreamMemoryPresetControls();
         save();
-        toastr.success('已切回“连续性梦脉 v2”内置预设');
+        toastr.success('已切回“连续性梦脉 v2（完善版）”内置预设');
     });
     $d.off('change.tstream').on('change.tstream', '#theater-stream-enabled', function () {
         settings.streamEnabled = this.checked; save();
@@ -5667,7 +5763,16 @@ function bindEvents() {
     });
     $d.off('change.trs').on('change.trs', '#theater-random-scope', function () {
         settings.randomScope = $(this).val();
+        refreshTagControls();
         save();
+    });
+    $d.off('click.trtagpicker').on('click.trtagpicker', '#theater-random-tag-picker', async function () {
+        const chosen = await chooseTags({ title: '指定“抽一个”的标签', selected: settings.randomTagFilter, allowUncategorized: true });
+        if (chosen === null) return;
+        settings.randomTagFilter = chosen;
+        settings.randomScope = chosen[0] === TAG_UNCATEGORIZED ? TAG_UNCATEGORIZED : '__tags__';
+        $('#theater-random-scope').val(settings.randomScope);
+        save(); refreshTagControls();
     });
     $d.off('click.trb').on('click.trb', '#theater-random-btn', rollRandomInstruction);
 
@@ -5693,10 +5798,10 @@ function bindEvents() {
             lastAutoIssueFingerprint = '';
         }
     });
-    $d.off('input.tai').on('input.tai', '#theater-auto-interval', function () {
+    $d.off('change.tai').on('change.tai', '#theater-auto-interval', function () {
         const v = Math.max(1, Math.min(50, parseInt($(this).val()) || 10));
         settings.autoInterval = v;
-        $('#theater-auto-interval-num').text(v);
+        $(this).val(v);
         refreshConfigSummaries();
         save();
     });
@@ -5704,7 +5809,17 @@ function bindEvents() {
         settings.autoSource = $(this).val();
         lastAutoIssue = null;
         lastAutoIssueFingerprint = '';
+        refreshTagControls();
         save();
+    });
+    $d.off('click.tautagpicker').on('click.tautagpicker', '#theater-auto-tag-picker', async function () {
+        const chosen = await chooseTags({ title: '指定自动生成的模板标签', selected: settings.autoTagFilter, allowUncategorized: true });
+        if (chosen === null) return;
+        settings.autoTagFilter = chosen;
+        settings.autoSource = chosen[0] === TAG_UNCATEGORIZED ? TAG_UNCATEGORIZED : '__tags__';
+        $('#theater-auto-source').val(settings.autoSource);
+        lastAutoIssue = null; lastAutoIssueFingerprint = '';
+        save(); refreshTagControls();
     });
 
     // ---- Instruction Import/Export ----
@@ -5722,24 +5837,67 @@ function bindEvents() {
 
 function refreshInstUI() {
     const inst = settings.instructionTemplates || [];
-    $('#theater-inst-group-filter').html(renderGroupFilterOptions());
     $('#theater-instruction-list').html(renderInstList(inst));
     $('#theater-inst-count').text(inst.length);
     $('#theater-inst-drawer').toggleClass('empty', !inst.length);
     updateBulkBar();
+    refreshTagControls();
+}
+
+function filterHistoryAll(items = historyCache) {
+    return (Array.isArray(items) ? items : []).filter(item => matchesTagFilter(item, settings.historyTagFilter, knownInstructionTags()));
 }
 
 function refreshHistList() {
-    const h = historyCache;
-    $('#theater-history-list').html(h.length === 0 ? '<p class="theater-empty">暂无</p>' : h.map(item => historyItemHTML(item)).join(''));
-    $('#theater-export-all-history').toggle(h.length > 0);
+    const h = filterHistoryAll(historyCache);
+    const empty = historyCache.length ? '当前标签组合下没有历史' : '暂无';
+    $('#theater-history-list').html(h.length === 0 ? `<p class="theater-empty">${empty}</p>` : h.map(item => historyItemHTML(item)).join(''));
+    $('#theater-export-all-history').toggle(historyCache.length > 0);
     $('#theater-hist-select-all').toggle(h.length > 0);
+    $('#theater-hist-batch-enter').toggle(historyCache.length > 0 && !histBatchMode);
     updateHistBulkBar();
+    refreshTagControls();
+}
+
+function refreshTagControls() {
+    $('#theater-inst-tag-filter span').text(tagFilterSummary(settings.instructionTagFilter));
+    $('#theater-history-tag-filter span').text(tagFilterSummary(settings.historyTagFilter));
+    const randomTags = tagFilterSummary(settings.randomTagFilter, '选择');
+    $('#theater-random-tag-picker').prop('hidden', settings.randomScope !== '__tags__').attr('title', tagFilterSummary(settings.randomTagFilter)).find('span').text(randomTags);
+    const autoTags = tagFilterSummary(settings.autoTagFilter, '选择');
+    $('#theater-auto-tag-picker').prop('hidden', settings.autoSource !== '__tags__').attr('title', tagFilterSummary(settings.autoTagFilter)).find('span').text(autoTags);
+}
+
+async function editHistoryTags(id) {
+    const item = historyCache.find(history => history.id === id);
+    if (!item) return;
+    const chosen = await chooseTags({ title: `编辑「${item.title || '未命名小剧场'}」的标签`, selected: item.tags, subtitle: '不选择任何标签时显示为“未分类”' });
+    if (chosen === null) return;
+    if (await histPut({ ...item, tags: chosen })) {
+        refreshHistList();
+        toastr.success(chosen.length ? '历史标签已更新' : '历史已设为未分类');
+    }
+}
+
+async function bulkEditSelectedHistoryTags() {
+    if (!histSelected.size) return;
+    const operation = await chooseBulkTagOperation(histSelected.size);
+    if (!operation) return;
+    if (!operation.tags.length && operation.mode !== 'replace') { toastr.warning('请至少选择一个标签'); return; }
+    let updated = 0;
+    for (const item of [...historyCache]) {
+        if (!histSelected.has(item.id)) continue;
+        const tags = applyBulkTagOperation(itemTags(item, knownInstructionTags()), operation);
+        if (await histPut({ ...item, tags })) updated++;
+    }
+    histSelected.clear(); histBatchMode = false; refreshHistList(); exitHistBatchMode();
+    toastr.success(`已更新 ${updated} 条历史的标签`);
 }
 
 function updateHistBulkBar() {
     const n = histSelected.size;
     $('#theater-hist-delete-selected').toggle(n > 0);
+    $('#theater-hist-tag-selected').toggle(n > 0);
     $('#theater-hist-sel-count').text(n);
 }
 
@@ -6283,6 +6441,151 @@ async function applyCharBoundBooks({ announce = false } = {}) {
 // ============================================================
 // Templates
 // ============================================================
+async function chooseTags({ title = '选择标签', subtitle = '可多选；多个筛选标签表示同时包含', selected = [], allowUncategorized = false } = {}) {
+    const { Popup, POPUP_TYPE } = SillyTavern.getContext();
+    const current = normalizeTagFilter(selected, knownInstructionTags());
+    const uncategorized = current[0] === TAG_UNCATEGORIZED;
+    const rows = [];
+    if (allowUncategorized) {
+        rows.push(`<label class="theater-tag-choice is-special"><input type="checkbox" value="${TAG_UNCATEGORIZED}" ${uncategorized ? 'checked' : ''}><span><i class="fa-solid fa-inbox"></i><b>未分类</b><small>没有任何标签的内容</small></span></label>`);
+    }
+    knownInstructionTags().forEach(tag => {
+        rows.push(`<label class="theater-tag-choice"><input type="checkbox" value="${esc(tag)}" ${current.includes(tag) ? 'checked' : ''}><span><i class="fa-solid fa-tag"></i><b>${esc(tag)}</b></span></label>`);
+    });
+    const emptyHint = knownInstructionTags().length ? '' : '<p class="theater-empty">还没有标签，可以先用“新建标签”添加。</p>';
+    const html = `<div class="theater-popup" data-skin="${settings.skinMode || 'default'}">
+        <div class="theater-popup-header"><p class="theater-title">${esc(title)}</p><p class="theater-subtitle">${esc(subtitle)}</p></div>
+        <div class="theater-section"><button type="button" class="theater-tag-clear theater-btn"><i class="fa-solid fa-rotate-left"></i><span>清空选择${allowUncategorized ? '（显示全部）' : ''}</span></button><div class="theater-tag-choice-list">${rows.join('')}${emptyHint}</div></div>
+    </div>`;
+    const popup = new Popup(html, POPUP_TYPE.CONFIRM, '', { wide: false, okButton: '应用', cancelButton: '取消', allowVerticalScrolling: true });
+    const showPromise = popup.show();
+    const $body = $(popup.dlg);
+    $body.on('change', '.theater-tag-choice input', function () {
+        if (this.value === TAG_UNCATEGORIZED && this.checked) {
+            $body.find('.theater-tag-choice input').not(this).prop('checked', false);
+        } else if (this.checked) {
+            $body.find(`.theater-tag-choice input[value="${TAG_UNCATEGORIZED}"]`).prop('checked', false);
+        }
+    });
+    $body.on('click', '.theater-tag-clear', () => $body.find('.theater-tag-choice input').prop('checked', false));
+    const result = await showPromise;
+    if (!result) return null;
+    return normalizeTagFilter($body.find('.theater-tag-choice input:checked').map((_, input) => input.value).get(), knownInstructionTags());
+}
+
+async function newInstructionTag() {
+    const name = await SillyTavern.getContext().Popup.show.input('新建标签', '标签名称：', '');
+    const tag = cleanTagName(name);
+    if (!tag) return null;
+    const duplicate = knownInstructionTags().find(item => item.toLocaleLowerCase() === tag.toLocaleLowerCase());
+    if (duplicate) { toastr.warning(`标签「${duplicate}」已存在`); return duplicate; }
+    settings.instructionTags = [...knownInstructionTags(), tag];
+    save();
+    refreshInstUI();
+    refreshHistList();
+    toastr.success(`已新建标签「${tag}」`);
+    return tag;
+}
+
+async function updateAllHistoryTags(transform) {
+    let updated = 0;
+    for (const item of [...historyCache]) {
+        const before = normalizeTagList(item.tags);
+        const tags = transform(before);
+        if (JSON.stringify(tags) === JSON.stringify(before)) continue;
+        if (await histPut({ ...item, tags })) updated++;
+    }
+    recentCache.forEach(item => { item.tags = transform(normalizeTagList(item.tags)); });
+    if (recentCache.length) await recentPersist();
+    return updated;
+}
+
+async function manageInstructionTags() {
+    const { Popup, POPUP_TYPE } = SillyTavern.getContext();
+    const tags = knownInstructionTags();
+    if (!tags.length) { await newInstructionTag(); return; }
+    const counts = tagUsageCounts();
+    const rows = tags.map(tag => {
+        const count = counts.get(tag) || { templates: 0, history: 0 };
+        return `<div class="theater-group-mgmt-row" data-tag="${esc(tag)}">
+            <span class="theater-group-mgmt-name"><i class="fa-solid fa-tag"></i> ${esc(tag)} <small>模板 ${count.templates} · 历史 ${count.history}</small></span>
+            <button type="button" class="theater-tag-mgmt-rename theater-btn" data-tag="${esc(tag)}"><i class="fa-solid fa-pen"></i><span>改名</span></button>
+            <button type="button" class="theater-tag-mgmt-delete theater-btn danger" data-tag="${esc(tag)}"><i class="fa-solid fa-trash"></i><span>删除</span></button>
+        </div>`;
+    }).join('');
+    const html = `<div class="theater-popup" data-skin="${settings.skinMode || 'default'}"><div class="theater-popup-header"><p class="theater-title">管理标签</p><p class="theater-subtitle">模板和历史共用名称；删除标签不会删除内容</p></div><div class="theater-section">${rows}</div></div>`;
+    const popup = new Popup(html, POPUP_TYPE.TEXT, '', { wide: false, okButton: '关闭', allowVerticalScrolling: true });
+    const $body = $(popup.dlg);
+    const close = () => typeof popup.completeAffirmative === 'function' ? popup.completeAffirmative() : popup.dlg?.close?.();
+    $body.on('click', '.theater-tag-mgmt-rename', async function (event) {
+        event.preventDefault();
+        const oldName = String($(this).data('tag'));
+        const newName = cleanTagName(await Popup.show.input('重命名标签', `把「${oldName}」改成：`, oldName));
+        if (!newName || newName === oldName) return;
+        if (knownInstructionTags().some(tag => tag !== oldName && tag.toLocaleLowerCase() === newName.toLocaleLowerCase())) { toastr.warning('已经有同名标签'); return; }
+        settings.instructionTags = renameTagInList(settings.instructionTags, oldName, newName);
+        (settings.instructionTemplates || []).forEach(item => { item.tags = renameTagInList(item.tags, oldName, newName); });
+        settings.instructionTagFilter = renameTagInList(settings.instructionTagFilter, oldName, newName);
+        settings.randomTagFilter = renameTagInList(settings.randomTagFilter, oldName, newName);
+        settings.autoTagFilter = renameTagInList(settings.autoTagFilter, oldName, newName);
+        settings.historyTagFilter = renameTagInList(settings.historyTagFilter, oldName, newName);
+        settings.lastInstructionTags = renameTagInList(settings.lastInstructionTags, oldName, newName);
+        activeInstructionTags = renameTagInList(activeInstructionTags, oldName, newName);
+        continuationSourceTags = renameTagInList(continuationSourceTags, oldName, newName);
+        await updateAllHistoryTags(tags => renameTagInList(tags, oldName, newName));
+        save(); close(); refreshInstUI(); refreshHistList(); refreshActiveInstructionTags();
+        toastr.success(`已改名为「${newName}」`);
+    });
+    $body.on('click', '.theater-tag-mgmt-delete', async function (event) {
+        event.preventDefault();
+        const name = String($(this).data('tag'));
+        const count = counts.get(name) || { templates: 0, history: 0 };
+        const ok = await Popup.show.confirm(`删除标签「${name}」？`, `会从 ${count.templates} 个模板和 ${count.history} 条历史中移除这个标签，内容本身不会删除。`);
+        if (!ok) return;
+        settings.instructionTags = removeTagFromList(settings.instructionTags, name);
+        (settings.instructionTemplates || []).forEach(item => { item.tags = removeTagFromList(item.tags, name); });
+        settings.instructionTagFilter = removeTagFromList(settings.instructionTagFilter, name);
+        settings.randomTagFilter = removeTagFromList(settings.randomTagFilter, name);
+        settings.autoTagFilter = removeTagFromList(settings.autoTagFilter, name);
+        settings.historyTagFilter = removeTagFromList(settings.historyTagFilter, name);
+        settings.lastInstructionTags = removeTagFromList(settings.lastInstructionTags, name);
+        activeInstructionTags = removeTagFromList(activeInstructionTags, name);
+        continuationSourceTags = removeTagFromList(continuationSourceTags, name);
+        await updateAllHistoryTags(tags => removeTagFromList(tags, name));
+        save(); close(); refreshInstUI(); refreshHistList(); refreshActiveInstructionTags();
+        toastr.success(`标签「${name}」已删除，模板和历史都保留`);
+    });
+    popup.show();
+}
+
+async function editTemplateTags(index) {
+    const template = (settings.instructionTemplates || [])[index];
+    if (!template) return;
+    const chosen = await chooseTags({ title: `编辑「${template.name || '未命名'}」的标签`, selected: template.tags, subtitle: '可以同时选择角色、口味、场景等多个标签' });
+    if (chosen === null) return;
+    template.tags = chosen;
+    if (activeInstructionContent === String(template.content || '')) setActiveInstructionTags(chosen, activeInstructionContent);
+    save(); refreshInstUI();
+    toastr.success(chosen.length ? '模板标签已更新' : '模板已设为未分类');
+}
+
+async function chooseBulkTagOperation(count) {
+    const { Popup, POPUP_TYPE } = SillyTavern.getContext();
+    const html = `<div class="theater-popup" data-skin="${settings.skinMode || 'default'}"><div class="theater-popup-header"><p class="theater-title">批量修改标签</p><p class="theater-subtitle">已选 ${count} 项</p></div><div class="theater-section"><select class="theater-select theater-bulk-tag-mode"><option value="add">添加所选标签</option><option value="remove">移除所选标签</option><option value="replace">替换为所选标签</option></select>${knownInstructionTags().map(tag => `<label class="theater-tag-choice"><input type="checkbox" value="${esc(tag)}"><span><i class="fa-solid fa-tag"></i><b>${esc(tag)}</b></span></label>`).join('')}</div></div>`;
+    const popup = new Popup(html, POPUP_TYPE.CONFIRM, '', { wide: false, okButton: '应用', cancelButton: '取消', allowVerticalScrolling: true });
+    const showPromise = popup.show();
+    const $body = $(popup.dlg);
+    const result = await showPromise;
+    if (!result) return null;
+    return { mode: $body.find('.theater-bulk-tag-mode').val(), tags: normalizeTagList($body.find('.theater-tag-choice input:checked').map((_, input) => input.value).get()) };
+}
+
+function applyBulkTagOperation(tags, operation) {
+    if (operation.mode === 'replace') return operation.tags;
+    if (operation.mode === 'remove') return normalizeTagList(tags).filter(tag => !operation.tags.includes(tag));
+    return normalizeTagList([...normalizeTagList(tags), ...operation.tags]);
+}
+
 async function saveInstructionTpl() {
     const c = $('#theater-instruction').val().trim();
     if (!c) { toastr.warning('请先在「生成」页输入指令'); return; }
@@ -6290,244 +6593,40 @@ async function saveInstructionTpl() {
     const defaultName = `小剧场模板 ${count}`;
     const n = await SillyTavern.getContext().Popup.show.input('保存指令模板', '模板名称：', defaultName);
     if (!n) return;
-    // 自动归到「当前筛选的组」：__all__/__none__ 都视为未分组
-    const filter = settings.instructionGroupFilter || '__all__';
-    const groups = settings.instructionGroups || [];
-    const targetGroup = (filter !== '__all__' && filter !== '__none__' && groups.includes(filter)) ? filter : '';
-    const tpl = { name: n, content: c };
-    if (targetGroup) tpl.group = targetGroup;
+    const currentFilter = normalizeTagFilter(settings.instructionTagFilter, knownInstructionTags());
+    const suggested = currentFilter[0] === TAG_UNCATEGORIZED ? [] : currentFilter;
+    const tags = await chooseTags({ title: '给新模板加标签', subtitle: '可多选，也可以暂时不选', selected: suggested });
+    if (tags === null) return;
+    const tpl = { name: n.trim(), content: c, tags };
     settings.instructionTemplates.push(tpl);
     save(); refreshInstUI();
-    toastr.success(targetGroup ? `已保存到「${targetGroup}」` : '已保存');
+    toastr.success(tags.length ? `已保存 · ${tags.join('、')}` : '已保存为未分类');
 }
 
-async function newInstructionGroup() {
-    const name = await SillyTavern.getContext().Popup.show.input('新建分组', '分组名称：', '');
-    if (!name) return;
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    if (!Array.isArray(settings.instructionGroups)) settings.instructionGroups = [];
-    if (settings.instructionGroups.includes(trimmed)) {
-        toastr.warning(`分组「${trimmed}」已存在`);
-        return;
-    }
-    settings.instructionGroups.push(trimmed);
-    settings.instructionGroupFilter = trimmed;
-    save(); refreshInstUI();
-    toastr.success(`已新建「${trimmed}」`);
-}
 
-async function manageInstructionGroups() {
-    const { Popup, POPUP_TYPE } = SillyTavern.getContext();
-    const groups = settings.instructionGroups || [];
-    const counts = groupCountsMap();
-    if (!groups.length) {
-        toastr.info('还没有分组，点旁边的 ➕ 新建一个');
-        return;
-    }
-    const rows = groups.map(name => {
-        const c = counts[name] || 0;
-        return `
-        <div class="theater-group-mgmt-row" data-group="${esc(name)}">
-            <span class="theater-group-mgmt-name"><i class="fa-solid fa-folder"></i> ${esc(name)} <small style="opacity:.6;">（${c}）</small></span>
-            <button class="theater-group-mgmt-rename theater-btn" data-group="${esc(name)}"><i class="fa-solid fa-pen"></i><span>改名</span></button>
-            <button class="theater-group-mgmt-delete theater-btn danger" data-group="${esc(name)}"><i class="fa-solid fa-trash"></i><span>删除</span></button>
-        </div>`;
-    }).join('');
-    const html = `
-    <div class="theater-popup" data-skin="${settings.skinMode || 'default'}">
-        <div class="theater-popup-header"><p class="theater-title">管理分组</p><p class="theater-subtitle">改名 / 删除（删除后该组模板回到未分组）</p></div>
-        <div class="theater-section">${rows}</div>
-    </div>`;
-    const popup = new Popup(html, POPUP_TYPE.TEXT, '', { wide: false, okButton: '关闭', allowVerticalScrolling: true });
-    const $body = $(popup.dlg);
-
-    $body.on('click', '.theater-group-mgmt-rename', async function (e) {
-        e.preventDefault();
-        const oldName = $(this).data('group');
-        const newName = await Popup.show.input('改名分组', `把「${oldName}」改成：`, oldName);
-        if (!newName) return;
-        const trimmed = newName.trim();
-        if (!trimmed || trimmed === oldName) return;
-        const list = settings.instructionGroups || [];
-        if (list.includes(trimmed)) { toastr.warning(`「${trimmed}」已存在`); return; }
-        const idx = list.indexOf(oldName);
-        if (idx !== -1) list[idx] = trimmed;
-        (settings.instructionTemplates || []).forEach(t => {
-            if (t.group === oldName) t.group = trimmed;
-        });
-        if (settings.instructionGroupFilter === oldName) settings.instructionGroupFilter = trimmed;
-        save();
-        if (typeof popup.completeAffirmative === 'function') popup.completeAffirmative();
-        else popup.dlg?.close?.();
-        refreshInstUI();
-        toastr.success(`已改名为「${trimmed}」`);
+async function bulkEditSelectedTemplateTags() {
+    if (!instSelected.size) return;
+    const operation = await chooseBulkTagOperation(instSelected.size);
+    if (!operation) return;
+    if (!operation.tags.length && operation.mode !== 'replace') { toastr.warning('请至少选择一个标签'); return; }
+    const templates = settings.instructionTemplates || [];
+    let updated = 0;
+    instSelected.forEach(index => {
+        const template = templates[index];
+        if (!template) return;
+        template.tags = applyBulkTagOperation(itemTags(template, knownInstructionTags()), operation);
+        updated++;
     });
-
-    $body.on('click', '.theater-group-mgmt-delete', async function (e) {
-        e.preventDefault();
-        const name = $(this).data('group');
-        const c = groupCountsMap()[name] || 0;
-        const msg = c > 0
-            ? `删除「${name}」？里面 ${c} 个模板会回到「未分组」`
-            : `删除空分组「${name}」？`;
-        const ok = await Popup.show.confirm(msg, '');
-        if (!ok) return;
-        settings.instructionGroups = (settings.instructionGroups || []).filter(g => g !== name);
-        (settings.instructionTemplates || []).forEach(t => {
-            if (t.group === name) delete t.group;
-        });
-        if (settings.instructionGroupFilter === name) settings.instructionGroupFilter = '__all__';
-        save();
-        if (typeof popup.completeAffirmative === 'function') popup.completeAffirmative();
-        else popup.dlg?.close?.();
-        refreshInstUI();
-        toastr.success(`已删除「${name}」`);
-    });
-
-    popup.show();
+    instSelected.clear(); save(); refreshInstUI();
+    toastr.success(`已更新 ${updated} 个模板的标签`);
 }
 
-async function moveInstructionTemplate(idx) {
-    const { Popup, POPUP_TYPE } = SillyTavern.getContext();
-    const t = (settings.instructionTemplates || [])[idx];
-    if (!t) return;
-    const groups = settings.instructionGroups || [];
-    const currentGroup = templateGroup(t);
-    const rows = [];
-    rows.push(`<div class="theater-group-pick-row" data-target=""><i class="fa-solid fa-folder-open"></i> 未分组 ${currentGroup === '' ? '<small>· 当前</small>' : ''}</div>`);
-    groups.forEach(name => {
-        rows.push(`<div class="theater-group-pick-row" data-target="${esc(name)}"><i class="fa-solid fa-folder"></i> ${esc(name)} ${currentGroup === name ? '<small>· 当前</small>' : ''}</div>`);
-    });
-    rows.push(`<div class="theater-group-pick-row theater-group-pick-new" data-target="__new__"><i class="fa-solid fa-folder-plus"></i> 新建分组…</div>`);
-    const html = `
-    <div class="theater-popup" data-skin="${settings.skinMode || 'default'}">
-        <div class="theater-popup-header"><p class="theater-title">移动到分组</p><p class="theater-subtitle">${esc(t.name)}</p></div>
-        <div class="theater-section">${rows.join('')}</div>
-    </div>`;
-    const popup = new Popup(html, POPUP_TYPE.TEXT, '', { wide: false, okButton: '关闭', allowVerticalScrolling: true });
-    const $body = $(popup.dlg);
-    $body.on('click', '.theater-group-pick-row', async function (e) {
-        e.preventDefault();
-        let target = $(this).data('target');
-        if (target === '__new__') {
-            const name = await Popup.show.input('新建分组并移入', '分组名称：', '');
-            if (!name) return;
-            target = name.trim();
-            if (!target) return;
-            if (!Array.isArray(settings.instructionGroups)) settings.instructionGroups = [];
-            if (!settings.instructionGroups.includes(target)) settings.instructionGroups.push(target);
-        }
-        const tpl = (settings.instructionTemplates || [])[idx];
-        if (!tpl) return;
-        if (target === '') delete tpl.group;
-        else tpl.group = target;
-        save();
-        if (typeof popup.completeAffirmative === 'function') popup.completeAffirmative();
-        else popup.dlg?.close?.();
-        refreshInstUI();
-        toastr.success(target ? `已移到「${target}」` : '已移到未分组');
-    });
-    popup.show();
-}
-
-// 把当前 instSelected 里所有模板批量移到指定组
-async function bulkMoveSelected() {
-    const { Popup, POPUP_TYPE } = SillyTavern.getContext();
-    if (instSelected.size === 0) return;
-    const groups = settings.instructionGroups || [];
-    const rows = [];
-    rows.push(`<div class="theater-group-pick-row" data-target=""><i class="fa-solid fa-folder-open"></i> 未分组</div>`);
-    groups.forEach(name => {
-        rows.push(`<div class="theater-group-pick-row" data-target="${esc(name)}"><i class="fa-solid fa-folder"></i> ${esc(name)}</div>`);
-    });
-    rows.push(`<div class="theater-group-pick-row theater-group-pick-new" data-target="__new__"><i class="fa-solid fa-folder-plus"></i> 新建分组…</div>`);
-    const html = `
-    <div class="theater-popup" data-skin="${settings.skinMode || 'default'}">
-        <div class="theater-popup-header"><p class="theater-title">批量移动</p><p class="theater-subtitle">${instSelected.size} 个模板</p></div>
-        <div class="theater-section">${rows.join('')}</div>
-    </div>`;
-    const popup = new Popup(html, POPUP_TYPE.TEXT, '', { wide: false, okButton: '关闭', allowVerticalScrolling: true });
-    const $body = $(popup.dlg);
-    $body.on('click', '.theater-group-pick-row', async function (e) {
-        e.preventDefault();
-        let target = $(this).data('target');
-        if (target === '__new__') {
-            const name = await Popup.show.input('新建分组并移入', '分组名称：', '');
-            if (!name) return;
-            target = name.trim();
-            if (!target) return;
-            if (!Array.isArray(settings.instructionGroups)) settings.instructionGroups = [];
-            if (!settings.instructionGroups.includes(target)) settings.instructionGroups.push(target);
-        }
-        const arr = settings.instructionTemplates || [];
-        let moved = 0;
-        instSelected.forEach(i => {
-            const tpl = arr[i];
-            if (!tpl) return;
-            if (target === '') delete tpl.group;
-            else tpl.group = target;
-            moved++;
-        });
-        instSelected.clear();
-        save();
-        if (typeof popup.completeAffirmative === 'function') popup.completeAffirmative();
-        else popup.dlg?.close?.();
-        refreshInstUI();
-        toastr.success(target ? `${moved} 个模板已移到「${target}」` : `${moved} 个模板已移到未分组`);
-    });
-    popup.show();
-}
-
-async function bulkDeleteSelected() {
-    if (instSelected.size === 0) return;
-    const { Popup } = SillyTavern.getContext();
-    const n = instSelected.size;
-    const ok = await Popup.show.confirm(`确定删除选中的 ${n} 个模板？`, '删除后无法恢复');
-    if (!ok) return;
-    // 从大到小删，避免索引变化
-    const sorted = [...instSelected].sort((a, b) => b - a);
-    const arr = settings.instructionTemplates || [];
-    sorted.forEach(i => arr.splice(i, 1));
-    instSelected.clear();
-    save();
-    refreshInstUI();
-    toastr.success(`已删除 ${n} 个模板`);
-}
-
-function selectAllVisible() {
-    const arr = settings.instructionTemplates || [];
-    const visible = filterInstAll(arr);
-    if (!visible.length) {
-        toastr.info('当前没有可选的模板');
-        return;
-    }
-    visible.forEach(({ i }) => instSelected.add(i));
-    // 只重画 list 的勾选状态，不重建 toolbar/搜索框
-    $('#theater-instruction-list').html(renderInstList(arr));
-    updateBulkBar();
-}
-
-function clearInstSelection() {
-    instSelected.clear();
-    $('.theater-inst-checkbox').prop('checked', false);
-    $('.theater-inst-item').removeClass('theater-inst-item-selected');
-    updateBulkBar();
-}
-
-async function saveRenderTpl() {
-    const c = $('#theater-render-content').val().trim(); if (!c) return;
-    const n = await SillyTavern.getContext().Popup.show.input('保存渲染模板', '名字：'); if (!n) return;
-    settings.renderTemplates.push({ name: n, content: c }); save();
-    const i = settings.renderTemplates.length - 1;
-    settings.selectedRenderIndex = String(i); save();
-    refreshRenderSelectionControls({ refreshOptions: true });
-    toastr.success('已保存');
-}
-
-function deleteRenderTpl() {
+async function deleteRenderTpl() {
     const v = $('#theater-render-select').val(); if (isBuiltinRenderSelection(v)) return;
     const deletedIndex = Number.parseInt(v, 10);
+    const name = settings.renderTemplates?.[deletedIndex]?.name || '未命名模板';
+    const ok = await SillyTavern.getContext().Popup.show.confirm(`删除渲染模板「${name}」？`, '只删除这个自定义模板；已经生成和保存的小剧场不会受影响。');
+    if (!ok) return;
     settings.renderTemplates.splice(deletedIndex, 1);
     settings.selectedRenderIndex = renderSelectionAfterCustomDelete(settings.selectedRenderIndex, deletedIndex);
     settings.quickRenderA = renderSelectionAfterCustomDelete(settings.quickRenderA, deletedIndex);
@@ -6535,6 +6634,7 @@ function deleteRenderTpl() {
     if (settings.quickRenderA === settings.quickRenderB) settings.quickRenderB = ADAPTIVE_RENDER_SELECTIONS.immersive;
     save();
     refreshRenderSelectionControls({ refreshOptions: true });
+    toastr.success(`已删除渲染模板「${name}」`);
 }
 
 // ============================================================
@@ -6581,14 +6681,13 @@ function importInstructionTemplates() {
         try {
             const text = await file.text();
             let imported = [];
-            let importedGroups = [];
+            let importedTags = [];
             let strippedCount = 0;
-            const addImported = (content, suggestedName = '', group = '') => {
+            const addImported = (content, suggestedName = '', tags = []) => {
                 const parsed = splitImportedTemplate(content, suggestedName);
                 if (!parsed.content.trim()) return;
                 if (parsed.stripped) strippedCount++;
-                const item = { name: parsed.name, content: parsed.content };
-                if (String(group || '').trim()) item.group = String(group).trim();
+                const item = { name: parsed.name, content: parsed.content, tags: normalizeTagList(Array.isArray(tags) ? tags : [tags]) };
                 imported.push(item);
             };
 
@@ -6599,7 +6698,7 @@ function importInstructionTemplates() {
                 // 酒馆世界书格式: { entries: { "0": { comment, content, key, ... }, ... } }
                 if (theaterBackup) {
                     imported = theaterBackup.templates;
-                    importedGroups = theaterBackup.groups;
+                    importedTags = theaterBackup.tags;
                 }
                 else if (data.entries && typeof data.entries === 'object' && !Array.isArray(data.entries)) {
                     Object.values(data.entries).forEach(entry => {
@@ -6616,7 +6715,7 @@ function importInstructionTemplates() {
                         const content = item.content || item.instruction || '';
                         if (!content.trim()) return;
                         const name = item.name || item.title || '';
-                        addImported(content, name, item.group || item.folder || '');
+                        addImported(content, name, item.tags || item.group || item.folder || '');
                     });
                 }
             } else {
@@ -6628,21 +6727,20 @@ function importInstructionTemplates() {
             }
 
             imported.forEach(item => {
-                const group = String(item.group || '').trim();
-                if (group && !importedGroups.includes(group)) importedGroups.push(group);
+                item.tags = normalizeTagList(item.tags);
+                item.tags.forEach(tag => { if (!importedTags.includes(tag)) importedTags.push(tag); });
             });
-            if (!imported.length && !importedGroups.length) { toastr.warning('文件中没有找到指令或分组'); return; }
-            if (!Array.isArray(settings.instructionGroups)) settings.instructionGroups = [];
-            let addedGroups = 0;
-            importedGroups.forEach(group => {
-                if (!settings.instructionGroups.includes(group)) {
-                    settings.instructionGroups.push(group);
-                    addedGroups++;
+            if (!imported.length && !importedTags.length) { toastr.warning('文件中没有找到指令或标签'); return; }
+            let addedTags = 0;
+            importedTags.forEach(tag => {
+                if (!knownInstructionTags().some(existing => existing.toLocaleLowerCase() === tag.toLocaleLowerCase())) {
+                    settings.instructionTags = normalizeTagList([...settings.instructionTags, tag]);
+                    addedTags++;
                 }
             });
             settings.instructionTemplates.push(...imported);
             save(); refreshInstUI();
-            toastr.success(`导入了 ${imported.length} 条指令${addedGroups ? `、${addedGroups} 个分组` : ''}${strippedCount ? `，已排除 ${strippedCount} 条标题或署名` : ''}`);
+            toastr.success(`导入了 ${imported.length} 条指令${addedTags ? `、${addedTags} 个标签` : ''}${strippedCount ? `，已排除 ${strippedCount} 条标题或署名` : ''}`);
         } catch (err) { toastr.error('导入失败: ' + err.message); }
     };
     input.click();
@@ -6650,11 +6748,11 @@ function importInstructionTemplates() {
 
 function exportInstructionTemplates() {
     const inst = settings.instructionTemplates || [];
-    const groups = settings.instructionGroups || [];
-    if (!inst.length && !groups.length) { toastr.warning('没有可导出的指令模板或分组'); return; }
-    const backup = createInstructionBackup(groups, inst);
+    const tags = knownInstructionTags();
+    if (!inst.length && !tags.length) { toastr.warning('没有可导出的指令模板或标签'); return; }
+    const backup = createInstructionBackup(tags, inst);
     downloadFile('theater-instructions.json', JSON.stringify(backup, null, 2), 'application/json');
-    toastr.success(`导出了 ${inst.length} 条指令和 ${backup.groups.length} 个分组`);
+    toastr.success(`导出了 ${inst.length} 条指令和 ${backup.tags.length} 个标签`);
 }
 
 // ============================================================
@@ -6677,6 +6775,7 @@ async function saveToHistory() {
         // 优先跟随这篇结果生成时的元数据，避免把保存当下输入框里的另一条指令错配给它。
         instruction: sourceMeta ? (sourceMeta.instruction || '') : ($('#theater-instruction').val() || ''),
         sourceConfig: sourceMeta?.sourceConfig || null,
+        tags: sourceMeta ? itemTags(sourceMeta, knownInstructionTags()) : itemTags({ tags: activeInstructionTags }, knownInstructionTags()),
         date: `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
     };
     if (await histAdd(item)) { refreshHistList(); toastr.success('已保存'); }
@@ -6870,6 +6969,8 @@ async function requestHistoryExport() {
 }
 
 async function addHistoryItems(items) {
+    const importedTags = normalizeTagList((Array.isArray(items) ? items : []).flatMap(item => normalizeTagList(item?.tags)));
+    settings.instructionTags = normalizeTagList([...knownInstructionTags(), ...importedTags]);
     let added = 0;
     for (const item of items) {
         if (!item?.html) continue;
@@ -6879,6 +6980,7 @@ async function addHistoryItems(items) {
             mode: item.mode || 'html',
             instruction: item.instruction || '',
             sourceConfig: item.sourceConfig || null,
+            tags: itemTags(item, knownInstructionTags()),
             date: item.date || new Date().toLocaleString('zh-CN', { hour12: false }),
         });
         if (ok) added++;
@@ -7301,6 +7403,7 @@ function updateContinueHint() {
 
 function clearContinueMode({ silent = false } = {}) {
     continueContext = '';
+    continuationSourceTags = [];
     $('#theater-continue-hint').remove();
     $('#theater-instruction').attr('placeholder', '输入指令…');
     scheduleTokenEstimate();
@@ -8097,12 +8200,16 @@ async function changeLongDreamDraftCandidate(step) {
 }
 
 // 设置续写上下文并跳转到生成面板
-function startContinue(html) {
+function startContinue(html, tags = []) {
     const plainText = htmlToPlainText(html);
     if (!plainText) { toastr.warning('没有可续写的内容'); return; }
 
     // 只读取当前结果的纯正文；不携带 HTML，也不累计更早的续写结果。
     continueContext = prepareContinuationContext(plainText);
+    continuationSourceTags = itemTags({ tags }, knownInstructionTags());
+    activeInstructionTags = [...continuationSourceTags];
+    activeInstructionContent = '';
+    refreshActiveInstructionTags();
     if (readableCharCount(plainText) > MAX_CONTINUATION_CONTEXT_CHARS) {
         toastr.info('前情内容较长，已自动截取后半段', '', { timeOut: 3000 });
     }
@@ -8147,11 +8254,14 @@ async function generateTheater() {
     }
     if (typedInstruction) settings.lastInstruction = typedInstruction;
     save();
-    await runGeneration(instruction, false);
+    const sourceTags = continueContext
+        ? continuationSourceTags
+        : (typedInstruction && typedInstruction === activeInstructionContent ? activeInstructionTags : []);
+    await runGeneration(instruction, false, sourceTags);
 }
 
 // 生成核心。isAuto = 自动模式触发（弹窗可能根本没开，所有 UI 操作都已有 popupAlive 保护）
-async function runGeneration(instruction, isAuto) {
+async function runGeneration(instruction, isAuto, sourceTags = []) {
     if (isGenerating) return;
     const contCtx = isAuto ? '' : continueContext;  // 自动生成永远是全新的，不掺手动的续写上下文
     const plannedTargetWordCount = resolveTargetWordCount(instruction, {
@@ -8190,6 +8300,7 @@ async function runGeneration(instruction, isAuto) {
         renderSelection: selectedRenderProfile,
         renderLabel: renderTemplate,
         textTheme: selectedTextTheme,
+        tags: itemTags({ tags: sourceTags }, knownInstructionTags()),
     };
     runtimeLog('info', '生成开始', {
         trigger: isAuto ? 'auto' : (contCtx ? 'continue' : 'manual'),
@@ -8419,10 +8530,12 @@ async function runGeneration(instruction, isAuto) {
                 time: new Date().toLocaleString('zh-CN', { hour12: false }),
                 instruction: instruction || '',
                 sourceConfig: generationSourceConfig,
+                tags: itemTags({ tags: sourceTags }, knownInstructionTags()),
             });
             if (recentCache.length > 3) recentCache.length = 3;
             recentIndex = 0;
             recentPersist();
+            setActiveInstructionTags(sourceTags, instruction);
         }
 
         if (popupAlive()) {
@@ -8513,16 +8626,18 @@ function currentAutoInstruction() {
     return resolveAutoInstruction({
         source: settings.autoSource,
         lastInstruction: settings.lastInstruction,
+        lastTags: settings.lastInstructionTags,
         templates: settings.instructionTemplates,
-        groups: settings.instructionGroups,
+        tags: settings.instructionTags,
+        tagFilter: settings.autoTagFilter,
     });
 }
 
 function autoSourceKind(source) {
     if (source === '__last__') return 'last';
     if (source === '__all__') return 'all';
-    if (source === '__none__') return 'ungrouped';
-    return 'group';
+    if (source === TAG_UNCATEGORIZED) return 'uncategorized';
+    return 'tags';
 }
 
 function pickAutoInstruction() {
@@ -8592,7 +8707,7 @@ async function autoTick() {
     if (!wbEntries.length && (settings.selectedWorldBooks || []).length) {
         try { await reloadWorldBooks({ silent: true }); } catch { }
     }
-    await runGeneration(instruction, true);
+    await runGeneration(instruction, true, autoInstruction.tags);
 }
 
 // 悬浮球小红点：自动生成完成后亮起，打开面板就熄灭
@@ -8752,9 +8867,7 @@ function formatApiResponseSummary(summary) {
 function buildAutoModeDiagnostic() {
     if (!settings.autoMode) return diagnosticLine('ok', '自动模式', '未开启');
     const readiness = currentAutoInstruction();
-    const sourceLabel = ['__last__', '__all__', '__none__'].includes(readiness.source)
-        ? autoSourceLabel(readiness.source, settings.instructionGroups)
-        : '随机·自定义分组';
+    const sourceLabel = autoSourceLabel(readiness.source, settings.instructionTags, settings.autoTagFilter);
     const issue = lastAutoIssue || (!readiness.text ? {
         signal: readiness.signal || REQUEST_DIAGNOSTIC_SIGNAL.AUTO_NO_INSTRUCTION,
         source: readiness.source,
@@ -9090,6 +9203,7 @@ function showRecentResult(index) {
     lastGeneratedHtml = item.html;
     lastGeneratedText = htmlToPlainText(item.html);
     currentOutputMode = item.mode || 'html';
+    setActiveInstructionTags(item.tags || [], item.instruction || '');
     showInIframe(item.html, currentOutputMode);
     $('#theater-output-section').show();
     updateRecentNav();

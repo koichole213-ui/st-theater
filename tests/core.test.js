@@ -33,10 +33,11 @@ import { LONG_DREAM_BACKUP_FORMAT, LONG_DREAM_BACKUP_VERSION, createLongDreamBac
 import { LONG_DREAM_ARCHIVE_FORMAT, LONG_DREAM_ARCHIVE_MANIFEST, createLongDreamArchive, parseLongDreamArchive } from '../long-dream-archive.js';
 import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, buildLongDreamCanonSuggestionPayload, composeLongDreamCanon, parseLongDreamCanonSuggestions } from '../long-dream-canon-suggestions.js';
 import { buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, pendingLongDreamChapters, shouldWeaveLongDreamMemory } from '../long-dream-memory.js';
-import { LONG_DREAM_MEMORY_OUTPUT_CONTRACT, exportLongDreamMemoryPreset, parseLongDreamMemoryPreset } from '../long-dream-memory-presets.js';
+import { LONG_DREAM_MEMORY_OUTPUT_CONTRACT, builtinLongDreamMemoryPreset, exportLongDreamMemoryPreset, normalizeLongDreamMemoryPresetList, parseLongDreamMemoryPreset } from '../long-dream-memory-presets.js';
 import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing, composeGenerationContinuationMessages, composePresetMessages, normalizeRequestMessages, normalizeWorldInfoEntry, squashAdjacentSystemMessages } from '../request-layout.js';
 import { createRequestTrace, formatRequestTrace } from '../request-trace.js';
 import { migrateLegacyPresetEntryStates, normalizePresetEntryStatesByPreset, presetEntryStateStorageKey, presetEntryStatesForPreset } from '../preset-entry-states.js';
+import { TAG_UNCATEGORIZED, matchesTagFilter, migrateLegacyTagSettings } from '../tag-system.js';
 
 test('每个酒馆预设会分别记住自己的条目勾选状态', () => {
     const statesByPreset = {};
@@ -2393,7 +2394,7 @@ test('历史 ZIP 清单保留元数据并为重名小剧场生成唯一 HTML 文
                 textTheme: 'light',
             },
         },
-        { title: '同名', date: '2026/07/28 10:01', instruction: '第二条指令', html: '<html>乙</html>', mode: 'text-dark' },
+        { title: '同名', date: '2026/07/28 10:01', instruction: '第二条指令', tags: ['刀子', '角色甲'], html: '<html>乙</html>', mode: 'text-dark' },
     ];
     const archive = createHistoryArchive(source);
     assert.equal(HISTORY_ARCHIVE_MANIFEST, 'theater-history.json');
@@ -2401,6 +2402,7 @@ test('历史 ZIP 清单保留元数据并为重名小剧场生成唯一 HTML 文
     assert.notEqual(archive.files[0].name, archive.files[1].name);
     assert.equal(archive.manifest.items[1].instruction, '第二条指令');
     assert.equal(archive.manifest.items[1].mode, 'text-dark');
+    assert.deepEqual(archive.manifest.items[1].tags, ['刀子', '角色甲']);
     assert.equal(archive.manifest.items[0].sourceConfig.renderLabel, '内置默认');
     const restored = historyItemsFromArchive(archive.manifest, archive.files);
     assert.deepEqual(restored, normalizeHistoryBackup(source));
@@ -3716,15 +3718,24 @@ test('TXT 指令导入只把独立一行的三横线视为分隔符', () => {
     assert.deepEqual(splitInstructionTextFile('正文里的---不是分隔符\r\n下一行'), ['正文里的---不是分隔符\n下一行']);
 });
 
-test('指令备份跨设备导入时保留分组与空文件夹', () => {
-    const exported = createInstructionBackup(['甜文', '空文件夹'], [
-        { name: '雨夜', content: '写雨夜重逢', group: '甜文' },
+test('指令备份跨设备导入时保留多标签与暂未使用的标签', () => {
+    const exported = createInstructionBackup(['甜饼', '角色甲', '暂未使用'], [
+        { name: '雨夜', content: '写雨夜重逢', tags: ['甜饼', '角色甲'] },
         { name: '散装', content: '写一顿晚饭' },
     ]);
     const restored = parseInstructionBackup(JSON.parse(JSON.stringify(exported)));
-    assert.deepEqual(restored.groups, ['甜文', '空文件夹']);
-    assert.equal(restored.templates[0].group, '甜文');
-    assert.equal(restored.templates[1].group, undefined);
+    assert.deepEqual(restored.tags, ['甜饼', '角色甲', '暂未使用']);
+    assert.deepEqual(restored.templates[0].tags, ['甜饼', '角色甲']);
+    assert.deepEqual(restored.templates[1].tags, []);
+});
+
+test('旧分组备份导入时一对一转换为同名标签', () => {
+    const restored = parseInstructionBackup({
+        format: 'st-theater-instructions', version: 2, groups: ['甜文'],
+        templates: [{ name: '旧模板', content: '内容', group: '甜文' }],
+    });
+    assert.deepEqual(restored.tags, ['甜文']);
+    assert.deepEqual(restored.templates[0].tags, ['甜文']);
 });
 
 test('世界书读取并区分酒馆蓝灯、绿灯与链式策略', () => {
@@ -4286,7 +4297,7 @@ test('请求计时会记录最终错误信号', () => {
     assert.match(summarizeMetrics(metrics), /失败 \+250ms（T-API-EMPTY）/);
 });
 
-test('自动模式只从有正文的模板中抽取，并给空来源稳定信号', () => {
+test('自动模式按多标签交集抽取，并给空来源稳定信号', () => {
     const missing = resolveAutoInstruction({ source: '__last__', lastInstruction: '' });
     assert.equal(missing.text, '');
     assert.equal(missing.signal, 'T-AUTO-NO-INSTRUCTION');
@@ -4300,13 +4311,59 @@ test('自动模式只从有正文的模板中抽取，并给空来源稳定信�
     assert.equal(resolved.candidateCount, 1);
     assert.equal(resolved.signal, null);
 
-    const missingGroup = resolveAutoInstruction({
-        source: '已删除分组',
-        groups: [],
-        templates: [{ group: '已删除分组', content: '不应被抽到' }],
+    const tagged = resolveAutoInstruction({
+        source: '__tags__', tags: ['角色甲', '甜饼', '刀子'], tagFilter: ['角色甲', '甜饼'],
+        templates: [
+            { tags: ['角色甲', '刀子'], content: '不应抽到' },
+            { tags: ['角色甲', '甜饼'], content: '命中模板' },
+        ],
+        random: () => 0,
     });
-    assert.equal(missingGroup.signal, 'T-AUTO-NO-INSTRUCTION');
-    assert.equal(autoSourceLabel('__none__'), '随机·未分组模板');
+    assert.equal(tagged.text, '命中模板');
+    assert.deepEqual(tagged.tags, ['角色甲', '甜饼']);
+
+    const missingTags = resolveAutoInstruction({ source: '__tags__', tags: ['角色甲'], tagFilter: [], templates: [{ tags: ['角色甲'], content: '不应回退到全部' }] });
+    assert.equal(missingTags.signal, 'T-AUTO-NO-INSTRUCTION');
+    assert.equal(autoSourceLabel(TAG_UNCATEGORIZED), '随机·未分类模板');
+});
+
+test('旧分组设置升级为同名多标签并保留抽取与自动来源', () => {
+    const settings = {
+        instructionGroups: ['角色甲', '甜饼'],
+        instructionGroupFilter: '角色甲',
+        instructionTemplates: [{ name: '模板', content: '内容', group: '角色甲' }],
+        randomScope: '甜饼', autoSource: '__none__', tagSchemaVersion: 0,
+    };
+    assert.equal(migrateLegacyTagSettings(settings), true);
+    assert.deepEqual(settings.instructionTags, ['角色甲', '甜饼']);
+    assert.deepEqual(settings.instructionTemplates[0].tags, ['角色甲']);
+    assert.deepEqual(settings.instructionTagFilter, ['角色甲']);
+    assert.equal(settings.randomScope, '__tags__');
+    assert.deepEqual(settings.randomTagFilter, ['甜饼']);
+    assert.equal(settings.autoSource, TAG_UNCATEGORIZED);
+    assert.equal(matchesTagFilter(settings.instructionTemplates[0], ['角色甲'], settings.instructionTags), true);
+    assert.equal(matchesTagFilter(settings.instructionTemplates[0], ['角色甲', '甜饼'], settings.instructionTags), false);
+});
+
+test('标签界面、历史未分类、数字触发间隔和渲染模板删除入口都接入主面板', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    assert.match(source, /id="theater-inst-tag-filter"/);
+    assert.match(source, /id="theater-history-tag-filter"/);
+    assert.match(source, /showUncategorized: true/);
+    assert.match(source, /id="theater-auto-interval" type="number" min="1" max="50"/);
+    assert.doesNotMatch(source, /id="theater-auto-interval" type="range"/);
+    assert.match(source, /删除这个自定义模板/);
+    assert.match(source, /内置模板不可删除/);
+});
+
+test('梦脉只保留一个明确标注的完善版内置预设', () => {
+    const builtin = builtinLongDreamMemoryPreset();
+    assert.match(builtin.name, /连续性梦脉 v2（完善版）/);
+    const presets = normalizeLongDreamMemoryPresetList([{
+        id: 'legacy-copy', name: '内置 · 连续性梦脉 v2', focusPrompt: builtin.focusPrompt,
+    }]);
+    assert.equal(presets.length, 1);
+    assert.equal(presets[0].id, builtin.id);
 });
 
 test('运行日志统一脱敏密钥、Authorization 与 URL 路径', () => {

@@ -1,5 +1,5 @@
 export const HISTORY_BACKUP_FORMAT = 'st-theater-history';
-export const HISTORY_BACKUP_VERSION = 2;
+export const HISTORY_BACKUP_VERSION = 3;
 export const HISTORY_ARCHIVE_MANIFEST = 'theater-history.json';
 
 function cleanText(value) {
@@ -13,6 +13,7 @@ function normalizeHistoryItem(item, fallbackTitle = '导入的小剧场') {
         title: cleanText(item?.title) || fallbackTitle,
         date: cleanText(item?.date),
         instruction: String(item?.instruction || ''),
+        tags: [...new Set((Array.isArray(item?.tags) ? item.tags : []).map(cleanText).filter(Boolean))],
         sourceConfig: item?.sourceConfig && typeof item.sourceConfig === 'object'
             ? {
                 metadataCaptured: item.sourceConfig.metadataCaptured === true,
@@ -88,6 +89,7 @@ export function createHistoryArchive(items = []) {
             title: item.title,
             date: item.date,
             instruction: item.instruction,
+            tags: item.tags,
             sourceConfig: item.sourceConfig,
             mode: item.mode,
             file,
