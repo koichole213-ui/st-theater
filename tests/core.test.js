@@ -38,6 +38,53 @@ import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing,
 import { createRequestTrace, formatRequestTrace } from '../request-trace.js';
 import { migrateLegacyPresetEntryStates, normalizePresetEntryStatesByPreset, presetEntryStateStorageKey, presetEntryStatesForPreset } from '../preset-entry-states.js';
 import { TAG_UNCATEGORIZED, matchesTagFilter, migrateLegacyTagSettings } from '../tag-system.js';
+import { waitForPopupElements } from '../popup-lifecycle.js';
+
+test('弹窗会等待预设和世界书容器真正挂载后再继续初始化', async () => {
+    let elapsed = 0;
+    const mounted = new Set();
+    const result = await waitForPopupElements(
+        id => mounted.has(id) ? { id } : null,
+        ['theater-preset-name-select', 'theater-wb-books'],
+        {
+            timeoutMs: 100,
+            intervalMs: 10,
+            now: () => elapsed,
+            sleep: async milliseconds => {
+                elapsed += milliseconds;
+                if (elapsed >= 30) {
+                    mounted.add('theater-preset-name-select');
+                    mounted.add('theater-wb-books');
+                }
+            },
+        },
+    );
+    assert.equal(result, true);
+    assert.equal(elapsed, 30);
+});
+
+test('弹窗缺少必要容器时会在期限内停止等待', async () => {
+    let elapsed = 0;
+    const result = await waitForPopupElements(
+        () => null,
+        ['theater-preset-name-select', 'theater-wb-books'],
+        {
+            timeoutMs: 25,
+            intervalMs: 10,
+            now: () => elapsed,
+            sleep: async milliseconds => { elapsed += milliseconds; },
+        },
+    );
+    assert.equal(result, false);
+    assert.equal(elapsed, 30);
+});
+
+test('主弹窗不再固定等待，并独立读取预设和世界书列表', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    assert.match(source, /waitForPopupElements\([\s\S]*?'theater-preset-name-select'[\s\S]*?'theater-wb-books'/);
+    assert.match(source, /Promise\.allSettled\(\[[\s\S]*?loadWorldBookList\(\)[\s\S]*?loadPresetNameList\(\)/);
+    assert.doesNotMatch(source, /setTimeout\(r, 50\)/);
+});
 
 test('每个酒馆预设会分别记住自己的条目勾选状态', () => {
     const statesByPreset = {};

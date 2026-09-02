@@ -41,6 +41,7 @@ import { applyPromptPostProcessing, composeGenerationContinuationMessages, compo
 import { createRequestTrace, formatRequestTrace, requestTraceCompatibilityLabel, requestTraceMessageLabel } from './request-trace.js';
 import { migrateLegacyPresetEntryStates, presetEntryStatesForPreset } from './preset-entry-states.js';
 import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, migrateLegacyTagSettings, normalizeTagFilter, normalizeTagList, removeTagFromList, renameTagInList } from './tag-system.js';
+import { waitForPopupElements } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
 const VERSION = '4.2.0';
@@ -3803,7 +3804,18 @@ async function openTheaterPopup() {
     const { Popup, POPUP_TYPE } = SillyTavern.getContext();
     const popup = new Popup(buildPopupHTML(initialTab), POPUP_TYPE.TEXT, '', { wide: true, okButton: 'Close', allowVerticalScrolling: true });
     const p = popup.show();
-    await new Promise(r => setTimeout(r, 50));
+    const popupMounted = await waitForPopupElements(
+        id => document.getElementById(id),
+        ['theater-preset-name-select', 'theater-wb-books'],
+    );
+    if (!popupMounted) {
+        runtimeLog('error', '小剧场弹窗挂载超时，预设与世界书暂未加载');
+        toastr.error('小剧场界面加载超时，请关闭后重试');
+        await p;
+        resetLongDreamCanonSuggestions();
+        closeFullscreenReader();
+        return;
+    }
     setBallDot(false);  // 看过了，红点熄灭
     // 搜索框是重建的空框，过滤词也要跟着清，不然看起来"列表少了一截"
     wbSearch = '';
@@ -3812,13 +3824,27 @@ async function openTheaterPopup() {
     decorateConfigLayout();
     applyResultToolboxMode();
     renderRuntimeLog();
-    await loadWorldBookList();
-    await loadPresetNameList();
+    const [worldBookListResult, presetListResult] = await Promise.allSettled([
+        loadWorldBookList(),
+        loadPresetNameList(),
+    ]);
+    if (worldBookListResult.status === 'rejected') {
+        console.error('[Theater] World book list initialization failed:', worldBookListResult.reason);
+        runtimeLog('error', '世界书列表初始化失败', { message: String(worldBookListResult.reason?.message || worldBookListResult.reason) });
+        $('#theater-wb-books').html('<p class="theater-empty">世界书列表读取失败，请关闭后重试</p>');
+    }
+    if (presetListResult.status === 'rejected') {
+        console.error('[Theater] Preset list initialization failed:', presetListResult.reason);
+        runtimeLog('error', '预设列表初始化失败', { message: String(presetListResult.reason?.message || presetListResult.reason) });
+        $('#theater-preset-name-select').empty().append('<option value="">-- 预设列表读取失败，请关闭后重试 --</option>');
+    }
     // 世界书：跟随角色卡的话先按当前卡选书，然后把选中的书的条目现读进来
-    if (settings.followCharCard) await applyCharBoundBooks();
-    else await reloadWorldBooks({ silent: true });
+    if (worldBookListResult.status === 'fulfilled') {
+        if (settings.followCharCard) await applyCharBoundBooks();
+        else await reloadWorldBooks({ silent: true });
+    }
     // Restore selected preset
-    if (settings.selectedPresetName) {
+    if (presetListResult.status === 'fulfilled' && settings.selectedPresetName) {
         $('#theater-preset-name-select').val(settings.selectedPresetName);
         await loadPresetEntries();
     }
