@@ -38,7 +38,7 @@ import { LONG_DREAM_MEMORY_OUTPUT_CONTRACT, builtinLongDreamMemoryPreset, export
 import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing, composeGenerationContinuationMessages, composePresetMessages, normalizeRequestMessages, normalizeWorldInfoEntry, squashAdjacentSystemMessages } from '../request-layout.js';
 import { createRequestTrace, formatRequestTrace } from '../request-trace.js';
 import { migrateLegacyPresetEntryStates, normalizePresetEntryStatesByPreset, presetEntryStateStorageKey, presetEntryStatesForPreset } from '../preset-entry-states.js';
-import { TAG_UNCATEGORIZED, matchesTagFilter, migrateLegacyTagSettings } from '../tag-system.js';
+import { TAG_UNCATEGORIZED, matchesTagFilter, mergeTagLists, migrateLegacyTagSettings } from '../tag-system.js';
 import { waitForPopupElements } from '../popup-lifecycle.js';
 import { fetchInstalledExtensionStatus } from '../version-check.js';
 
@@ -134,6 +134,73 @@ test('主弹窗事件命名空间不互相覆盖，历史操作保持完整绑�
         '#theater-hist-delete-selected',
     ];
     requiredHistorySelectors.forEach(selector => assert.ok(bindSource.includes(`'${selector}'`), `${selector} 没有绑定`));
+});
+
+test('历史卡片按标题标签、时间、操作三层排列，并提供即时触控与连续多选', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const renderer = source.match(/function historyItemHTML[\s\S]*?function longDreamSources/)?.[0] || '';
+    const bindStart = source.indexOf('function bindEvents() {');
+    const bindEnd = source.indexOf('function refreshInstUI', bindStart);
+    const bindings = source.slice(bindStart, bindEnd);
+    const titleRow = renderer.indexOf('theater-history-title-row');
+    const tags = renderer.indexOf('theater-history-tags');
+    const meta = renderer.indexOf('theater-history-meta');
+    const actions = renderer.indexOf('theater-history-actions');
+
+    assert.ok(titleRow >= 0 && tags > titleRow && meta > tags && actions > meta);
+    assert.match(renderer, /function historyTagBadgesHTML[\s\S]*?tags\.slice\(0, 2\)[\s\S]*?hidden\.join\('、'\)/);
+    ['view', 'continue', 'export', 'tags-edit', 'delete'].forEach(action => {
+        assert.match(renderer, new RegExp(`<button type="button" class="theater-history-${action}"`));
+    });
+    ['theater-export-all-history', 'theater-import-history-btn', 'theater-history-tag-filter', 'theater-history-manage-tags', 'theater-hist-batch-enter'].forEach(id => {
+        assert.match(source, new RegExp(`<button type="button" id="${id}"`));
+    });
+    assert.match(bindings, /pointerdown\.thhistgesture/);
+    assert.match(bindings, /pointermove\.thhistgesture/);
+    assert.match(bindings, /touchstart\.thhistgesture/);
+    assert.match(bindings, /histTouchMoveHandler = function[\s\S]*?event\.preventDefault\(\)[\s\S]*?updateHistorySelectionAutoScroll/);
+    assert.match(bindings, /document\.addEventListener\('touchmove', histTouchMoveHandler, \{ passive: false \}\)/);
+    assert.match(source, /function detachHistoryTouchMoveHandler[\s\S]*?document\.removeEventListener\('touchmove', histTouchMoveHandler\)/);
+    assert.match(source, /const onPopupClosed = \(\) => \{[\s\S]*?activeTheaterPopupSession !== session[\s\S]*?detachHistoryTouchMoveHandler\(\);[\s\S]*?resetHistorySelectionGesture\(\)/);
+    assert.match(source, /Promise\.resolve\(p\)\.then\(onPopupClosed, onPopupClosed\)/);
+    assert.match(source, /if \(!isCurrentPopup\(\)\) return;/);
+    assert.match(bindings, /histSelectionGesture\.timer = setTimeout\(activateHistorySelectionGesture, 420\)/);
+    assert.doesNotMatch(bindings, /if \(histBatchMode\) activateHistorySelectionGesture\(\)/);
+    assert.match(source, /function runHistorySelectionAutoScroll[\s\S]*?scrollTop \+= gesture\.autoScrollSpeed[\s\S]*?applyHistorySelectionGestureAt/);
+    assert.match(source, /function updateHistorySelectionAutoScroll[\s\S]*?rect\.top \+ edge[\s\S]*?rect\.bottom - edge/);
+    assert.match(styles, /\.theater-history-top-bar > \.theater-btn[\s\S]*?touch-action: manipulation/);
+    assert.match(styles, /\.theater-history-actions > button[\s\S]*?touch-action: manipulation/);
+    assert.match(styles, /\.theater-history-title-row \{[\s\S]*?flex-wrap: nowrap/);
+    assert.match(styles, /\.theater-history-title \{[\s\S]*?text-overflow: ellipsis[\s\S]*?white-space: nowrap/);
+    assert.doesNotMatch(bindings, /\$\('\.theater-inst-item'\)\.removeClass\('theater-inst-actions-open'\)/);
+    assert.match(source, /function closeInstructionActionMenus[\s\S]*?querySelectorAll\('\.theater-inst-item\.theater-inst-actions-open'\)/);
+});
+
+test('模板列表保持单行紧凑布局，手机菜单不被裁切并支持长按扫选', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const renderer = source.match(/function renderInstList[\s\S]*?function updateBulkBar/)?.[0] || '';
+    const menu = source.match(/function positionInstructionActionMenu[\s\S]*?function bindInstructionSweepSelection/)?.[0] || '';
+    const gesture = source.match(/function bindInstructionSweepSelection[\s\S]*?\/\/ ---- World Book/)?.[0] || '';
+
+    assert.match(renderer, /showUncategorized: true, limit: 1/);
+    assert.match(source, /function itemTagBadgesHTML[\s\S]*?visibleTags[\s\S]*?hiddenCount[\s\S]*?is-count/);
+    assert.match(styles, /\.theater-inst-info \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto/);
+    assert.match(styles, /\.theater-inst-name \{[\s\S]*?text-overflow: ellipsis;[\s\S]*?white-space: nowrap/);
+
+    assert.match(menu, /is-viewport-positioned/);
+    assert.match(menu, /getBoundingClientRect\(\)[\s\S]*?opensUp/);
+    assert.match(styles, /\.theater-inst-actions\.is-viewport-positioned \{[\s\S]*?position: fixed;[\s\S]*?z-index: 10020/);
+    assert.match(styles, /\.theater-drawer\.theater-inst-menu-open \{ overflow: visible; \}/);
+
+    assert.match(gesture, /INSTRUCTION_SWEEP_HOLD_MS/);
+    assert.match(gesture, /INSTRUCTION_SWEEP_MOVE_TOLERANCE/);
+    assert.match(gesture, /touchmove[\s\S]*?passive: false/);
+    assert.match(gesture, /document\.elementFromPoint/);
+    assert.match(gesture, /const autoScrollStep[\s\S]*?scrollTop \+= direction \* speed[\s\S]*?applyAt\(gesture\.lastX, gesture\.lastY\)/);
+    assert.match(gesture, /rect\.top \+ edge[\s\S]*?rect\.bottom - edge/);
+    assert.match(gesture, /\.theater-inst-more, \.theater-inst-actions, button, a, input, textarea, select/);
 });
 
 test('插件按当前安装分支检查更新，并兼容全局安装位置', async () => {
@@ -4668,8 +4735,17 @@ test('标签迁移会把大小写不同的模板标签归一到标签库名称',
     assert.deepEqual(settings.instructionTemplates[0].tags, ['Sweet']);
 });
 
+test('导入目标标签会追加到原标签并按现有标签名称归一', () => {
+    assert.deepEqual(
+        mergeTagLists(['刀子', 'sweet'], ['角色甲', '甜饼', 'Sweet'], ['刀子', 'Sweet', '角色甲', '甜饼']),
+        ['刀子', 'Sweet', '角色甲', '甜饼'],
+    );
+    assert.deepEqual(mergeTagLists([], ['__UNCATEGORIZED__', '甜饼'], []), ['甜饼']);
+});
+
 test('标签界面、历史未分类、数字触发间隔和渲染模板删除入口都接入主面板', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     assert.match(source, /id="theater-inst-tag-filter"/);
     assert.match(source, /id="theater-history-tag-filter"/);
     assert.match(source, /showUncategorized: true/);
@@ -4677,6 +4753,13 @@ test('标签界面、历史未分类、数字触发间隔和渲染模板删除�
     assert.doesNotMatch(source, /id="theater-auto-interval" type="range"/);
     assert.match(source, /删除这个自定义模板/);
     assert.match(source, /内置模板不可删除/);
+    assert.match(source, /async function chooseTagsWithNew/);
+    assert.match(source, /class="theater-tag-choice-list is-compact"/);
+    assert.match(style, /\.theater-tag-choice-list\.is-compact\s*\{[\s\S]*?flex-wrap:\s*wrap/);
+    const saveTemplateFlow = source.match(/async function saveInstructionTpl\(\)[\s\S]*?async function bulkEditSelectedTemplateTags/)?.[0] || '';
+    assert.doesNotMatch(saveTemplateFlow, /Popup\.show\.input/);
+    assert.match(saveTemplateFlow, /title: '保存指令模板'[\s\S]*?templateName: defaultName[\s\S]*?name: selection\.name[\s\S]*?settings\.instructionTemplates\.push\(tpl\)/);
+    assert.match(source, /给这 \$\{imported\.length\} 条导入模板统一加标签[\s\S]*?if \(target === null\) return;[\s\S]*?mergeTagLists\(item\.tags, target\.tags/);
     const popupBuilder = source.match(/function buildPopupHTML[\s\S]*?function historyItemHTML/)?.[0] || '';
     assert.match(popupBuilder, /const allHistory = historyCache;\s*const hist = filterHistoryAll\(allHistory\)/);
     assert.match(popupBuilder, /allHistory\.length \? '当前标签组合下没有历史' : '暂无'/);

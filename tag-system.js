@@ -8,14 +8,23 @@ export function cleanTagName(value) {
 export function normalizeTagList(values = []) {
     const result = [];
     const seen = new Set();
+    const uncategorizedKey = TAG_UNCATEGORIZED.toLocaleLowerCase();
     for (const value of Array.isArray(values) ? values : []) {
         const tag = cleanTagName(value);
         const key = tag.toLocaleLowerCase();
-        if (!tag || tag === TAG_UNCATEGORIZED || seen.has(key)) continue;
+        if (!tag || key === uncategorizedKey || seen.has(key)) continue;
         seen.add(key);
         result.push(tag);
     }
     return result;
+}
+
+export function mergeTagLists(source = [], appended = [], knownTags = []) {
+    const known = new Map(normalizeTagList(knownTags).map(tag => [tag.toLocaleLowerCase(), tag]));
+    return normalizeTagList([
+        ...(Array.isArray(source) ? source : []),
+        ...(Array.isArray(appended) ? appended : []),
+    ]).map(tag => known.get(tag.toLocaleLowerCase()) || tag);
 }
 
 export function itemTags(item, knownTags = []) {
@@ -27,7 +36,8 @@ export function itemTags(item, knownTags = []) {
 
 export function normalizeTagFilter(value, knownTags = []) {
     const raw = Array.isArray(value) ? value : [];
-    if (raw.includes(TAG_UNCATEGORIZED)) return [TAG_UNCATEGORIZED];
+    const uncategorizedKey = TAG_UNCATEGORIZED.toLocaleLowerCase();
+    if (raw.some(value => cleanTagName(value).toLocaleLowerCase() === uncategorizedKey)) return [TAG_UNCATEGORIZED];
     return itemTags({ tags: raw }, knownTags);
 }
 

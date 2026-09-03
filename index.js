@@ -40,7 +40,7 @@ import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkSide, no
 import { applyPromptPostProcessing, composeGenerationContinuationMessages, composePresetMessages, noToolsPostProcessingMode, normalizePromptRole } from './request-layout.js';
 import { createRequestTrace, formatRequestTrace, requestTraceCompatibilityLabel, requestTraceMessageLabel } from './request-trace.js';
 import { migrateLegacyPresetEntryStates, presetEntryStatesForPreset } from './preset-entry-states.js';
-import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, migrateLegacyTagSettings, normalizeTagFilter, normalizeTagList, removeTagFromList, renameTagInList } from './tag-system.js';
+import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLists, migrateLegacyTagSettings, normalizeTagFilter, normalizeTagList, removeTagFromList, renameTagInList } from './tag-system.js';
 import { waitForPopupElements } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
@@ -1750,11 +1750,11 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
         <div class="theater-section">
             <div class="theater-history-top-bar">
                 <label class="theater-label" style="margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> 保存的小剧场</label>
-                <div id="theater-export-all-history" class="theater-btn" ${allHistory.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-download"></i><span>批量导出</span></div>
-                <div id="theater-import-history-btn" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入备份</span></div>
-                <div id="theater-history-tag-filter" class="theater-btn"><i class="fa-solid fa-filter"></i><span>${esc(tagFilterSummary(settings.historyTagFilter))}</span></div>
-                <div id="theater-history-manage-tags" class="theater-btn"><i class="fa-solid fa-tags"></i><span>管理标签</span></div>
-                <div id="theater-hist-batch-enter" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-list-check"></i><span>批量管理</span></div>
+                <button type="button" id="theater-export-all-history" class="theater-btn" ${allHistory.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-download"></i><span>批量导出</span></button>
+                <button type="button" id="theater-import-history-btn" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入备份</span></button>
+                <button type="button" id="theater-history-tag-filter" class="theater-btn"><i class="fa-solid fa-filter"></i><span>${esc(tagFilterSummary(settings.historyTagFilter))}</span></button>
+                <button type="button" id="theater-history-manage-tags" class="theater-btn"><i class="fa-solid fa-tags"></i><span>管理标签</span></button>
+                <button type="button" id="theater-hist-batch-enter" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-list-check"></i><span>批量管理</span></button>
                 <div id="theater-hist-batch-bar" style="display:none;">
                     <div id="theater-hist-select-all" class="theater-btn"><i class="fa-solid fa-check-double"></i><span>全选</span></div>
                     <div id="theater-hist-tag-selected" class="theater-btn primary"><i class="fa-solid fa-tags"></i><span>改标签</span></div>
@@ -2120,21 +2120,40 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
 function historyItemHTML(h) {
     const checked = histSelected.has(h.id) ? 'checked' : '';
     const selClass = histSelected.has(h.id) ? ' theater-history-item-selected' : '';
+    const title = h.title || '未命名小剧场';
     return `<div class="theater-history-item${selClass}" data-id="${h.id}">
         <div class="theater-history-header">
             <input type="checkbox" class="theater-hist-checkbox" data-id="${h.id}" ${checked} style="display:none;">
-            <span class="theater-history-title">${esc(h.title || '未命名小剧场')}</span>
-            <span class="theater-history-date">${h.date || ''}</span>
+            <div class="theater-history-heading">
+                <div class="theater-history-title-row">
+                    <span class="theater-history-title" title="${esc(title)}">${esc(title)}</span>
+                    <div class="theater-history-tags">${historyTagBadgesHTML(h)}</div>
+                </div>
+                <div class="theater-history-meta"><span class="theater-history-date">${esc(h.date || '')}</span></div>
+            </div>
         </div>
-        <div class="theater-history-tags">${itemTagBadgesHTML(h, { showUncategorized: true })}</div>
         <div class="theater-history-actions">
-            <span class="theater-history-view" data-id="${h.id}"><i class="fa-solid fa-eye"></i> 查看</span>
-            <span class="theater-history-continue" data-id="${h.id}"><i class="fa-solid fa-forward"></i> 续写</span>
-            <span class="theater-history-export" data-id="${h.id}"><i class="fa-solid fa-download"></i> 导出 HTML</span>
-            <span class="theater-history-tags-edit" data-id="${h.id}"><i class="fa-solid fa-tags"></i> 标签</span>
-            <span class="theater-history-delete" data-id="${h.id}"><i class="fa-solid fa-trash"></i> 删除</span>
+            <button type="button" class="theater-history-view" data-id="${h.id}"><i class="fa-solid fa-eye"></i><span>查看</span></button>
+            <button type="button" class="theater-history-continue" data-id="${h.id}"><i class="fa-solid fa-forward"></i><span>续写</span></button>
+            <button type="button" class="theater-history-export" data-id="${h.id}"><i class="fa-solid fa-download"></i><span>导出 HTML</span></button>
+            <button type="button" class="theater-history-tags-edit" data-id="${h.id}"><i class="fa-solid fa-tags"></i><span>标签</span></button>
+            <button type="button" class="theater-history-delete" data-id="${h.id}"><i class="fa-solid fa-trash"></i><span>删除</span></button>
         </div>
     </div>`;
+}
+
+function historyTagBadgesHTML(item) {
+    const tags = itemTags(item, knownInstructionTags());
+    if (!tags.length) {
+        return '<span class="theater-tag-badge is-uncategorized"><i class="fa-solid fa-tag"></i><span>未分类</span></span>';
+    }
+    const visible = tags.slice(0, 2);
+    const hidden = tags.slice(2);
+    const badges = visible.map(tag => `<span class="theater-tag-badge" title="${esc(tag)}"><i class="fa-solid fa-tag"></i><span>${esc(tag)}</span></span>`).join('');
+    const more = hidden.length
+        ? `<span class="theater-tag-badge theater-history-tag-more" title="${esc(hidden.join('、'))}"><span>+${hidden.length}</span></span>`
+        : '';
+    return `<span class="theater-tag-badges">${badges}${more}</span>`;
 }
 
 function longDreamSources() {
@@ -3535,14 +3554,17 @@ function tagFilterSummary(filter, allLabel = '全部标签') {
     return selected.join(' ＋ ');
 }
 
-function itemTagBadgesHTML(item, { showUncategorized = false } = {}) {
+function itemTagBadgesHTML(item, { showUncategorized = false, limit = Infinity } = {}) {
     const tags = itemTags(item, knownInstructionTags());
     if (!tags.length) {
         return showUncategorized
             ? '<span class="theater-tag-badge is-uncategorized"><i class="fa-solid fa-tag"></i><span>未分类</span></span>'
             : '';
     }
-    return `<span class="theater-tag-badges">${tags.map(tag => `<span class="theater-tag-badge" title="${esc(tag)}"><i class="fa-solid fa-tag"></i><span>${esc(tag)}</span></span>`).join('')}</span>`;
+    const visibleLimit = Number.isFinite(Number(limit)) ? Math.max(1, Math.floor(Number(limit))) : tags.length;
+    const visibleTags = tags.slice(0, visibleLimit);
+    const hiddenCount = Math.max(0, tags.length - visibleTags.length);
+    return `<span class="theater-tag-badges" title="${esc(tags.join('、'))}">${visibleTags.map(tag => `<span class="theater-tag-badge" title="${esc(tag)}"><i class="fa-solid fa-tag"></i><span>${esc(tag)}</span></span>`).join('')}${hiddenCount ? `<span class="theater-tag-badge is-count" title="另有 ${hiddenCount} 个标签"><span>+${hiddenCount}</span></span>` : ''}</span>`;
 }
 
 function tagUsageCounts() {
@@ -3581,10 +3603,20 @@ function rollRandomInstruction() {
 let instSelected = new Set();
 let histSelected = new Set();
 let histBatchMode = false;
+let histSelectionGesture = null;
+let histTouchMoveHandler = null;
+let suppressHistoryCardClickUntil = 0;
 let instSearch = '';
 let activeInstructionTags = [];
 let activeInstructionContent = '';
 let continuationSourceTags = [];
+let instructionSweepCleanup = null;
+let activeTheaterPopupSession = null;
+
+const INSTRUCTION_SWEEP_HOLD_MS = 420;
+const INSTRUCTION_SWEEP_MOVE_TOLERANCE = 10;
+const INSTRUCTION_SWEEP_SCROLL_EDGE = 56;
+const INSTRUCTION_SWEEP_SCROLL_MAX_SPEED = 14;
 
 function setActiveInstructionTags(tags, content = '') {
     activeInstructionTags = itemTags({ tags }, knownInstructionTags());
@@ -3620,14 +3652,14 @@ function renderInstList(arr) {
         return `<p class="theater-empty">${q ? `没找到包含「${esc(q)}」的模板` : '当前标签组合下还没有模板'}</p>`;
     }
     return filtered.map(({ t: item, i }) => {
-        const tagBadges = itemTagBadgesHTML(item, { showUncategorized: true });
+        const tagBadges = itemTagBadgesHTML(item, { showUncategorized: true, limit: 1 });
         const checked = instSelected.has(i) ? 'checked' : '';
         const selClass = instSelected.has(i) ? ' theater-inst-item-selected' : '';
         return `
         <div class="theater-inst-item${selClass}" data-index="${i}">
             <input type="checkbox" class="theater-inst-checkbox" data-index="${i}" ${checked}>
             <div class="theater-inst-info">
-                <span class="theater-inst-name" data-index="${i}"><i class="fa-solid fa-file-lines"></i> ${esc(item.name)}</span>
+                <span class="theater-inst-name" data-index="${i}" title="${esc(item.name || '未命名模板')}"><i class="fa-solid fa-file-lines"></i> ${esc(item.name)}</span>
                 ${tagBadges}
             </div>
             <button type="button" class="theater-inst-more" data-index="${i}" title="更多操作" aria-label="打开模板操作菜单" aria-expanded="false"><i class="fa-solid fa-ellipsis"></i></button>
@@ -3649,6 +3681,251 @@ function updateBulkBar() {
         $('#theater-inst-bulk-bar').show();
         $('#theater-inst-bulk-count').text(n);
     }
+}
+
+function setInstructionItemSelected(index, selected, itemElement = null) {
+    const i = Number(index);
+    if (!Number.isInteger(i) || i < 0 || i >= (settings.instructionTemplates || []).length) return;
+    if (selected) instSelected.add(i);
+    else instSelected.delete(i);
+    const item = itemElement || document.querySelector(`.theater-inst-item[data-index="${i}"]`);
+    if (item) {
+        item.classList.toggle('theater-inst-item-selected', selected);
+        const checkbox = item.querySelector('.theater-inst-checkbox');
+        if (checkbox) checkbox.checked = selected;
+    }
+    updateBulkBar();
+}
+
+function closeInstructionActionMenus(exceptItem = null) {
+    document.querySelectorAll('.theater-inst-item.theater-inst-actions-open').forEach(item => {
+        if (item === exceptItem) return;
+        item.classList.remove('theater-inst-actions-open');
+        item.querySelector('.theater-inst-more')?.setAttribute('aria-expanded', 'false');
+        const actions = item.querySelector('.theater-inst-actions');
+        if (actions) {
+            actions.classList.remove('is-viewport-positioned');
+            actions.removeAttribute('style');
+            actions.removeAttribute('data-placement');
+        }
+    });
+    const hasOpenMenu = !!document.querySelector('.theater-inst-item.theater-inst-actions-open');
+    document.getElementById('theater-inst-drawer')?.classList.toggle('theater-inst-menu-open', hasOpenMenu);
+}
+
+function positionInstructionActionMenu(item) {
+    if (!item?.classList.contains('theater-inst-actions-open')) return;
+    const actions = item.querySelector('.theater-inst-actions');
+    const trigger = item.querySelector('.theater-inst-more');
+    if (!actions || !trigger || !window.matchMedia('(max-width: 768px)').matches) return;
+
+    actions.classList.add('is-viewport-positioned');
+    actions.style.left = '0px';
+    actions.style.top = '0px';
+    actions.style.visibility = 'hidden';
+    const triggerRect = trigger.getBoundingClientRect();
+    const actionsRect = actions.getBoundingClientRect();
+    const scrollRect = document.querySelector('.theater-panels-wrapper')?.getBoundingClientRect();
+    const edge = 8;
+    const gap = 4;
+    const minLeft = Math.max(edge, (scrollRect?.left ?? 0) + edge);
+    const maxRight = Math.min(window.innerWidth - edge, (scrollRect?.right ?? window.innerWidth) - edge);
+    const minTop = Math.max(edge, (scrollRect?.top ?? 0) + edge);
+    const maxBottom = Math.min(window.innerHeight - edge, (scrollRect?.bottom ?? window.innerHeight) - edge);
+    const left = Math.max(minLeft, Math.min(maxRight - actionsRect.width, triggerRect.right - actionsRect.width));
+    const belowTop = triggerRect.bottom + gap;
+    const aboveTop = triggerRect.top - actionsRect.height - gap;
+    const opensUp = belowTop + actionsRect.height > maxBottom && aboveTop >= minTop;
+    const top = Math.max(minTop, Math.min(maxBottom - actionsRect.height, opensUp ? aboveTop : belowTop));
+    actions.style.left = `${Math.round(left)}px`;
+    actions.style.top = `${Math.round(top)}px`;
+    actions.style.visibility = '';
+    actions.dataset.placement = opensUp ? 'up' : 'down';
+}
+
+function bindInstructionSweepSelection() {
+    if (instructionSweepCleanup) instructionSweepCleanup();
+    const list = document.getElementById('theater-instruction-list');
+    if (!list) {
+        instructionSweepCleanup = null;
+        return;
+    }
+
+    let gesture = null;
+    let suppressClickUntil = 0;
+    const excluded = '.theater-inst-checkbox, .theater-inst-more, .theater-inst-actions, button, a, input, textarea, select';
+    const scrollHost = (() => {
+        let node = list.parentElement;
+        while (node) {
+            const overflowY = window.getComputedStyle(node).overflowY;
+            if (/(auto|scroll)/.test(overflowY) && node.scrollHeight > node.clientHeight) return node;
+            node = node.parentElement;
+        }
+        return document.querySelector('.theater-panels-wrapper');
+    })();
+
+    const reset = ({ suppressClick = false } = {}) => {
+        if (gesture?.timer) clearTimeout(gesture.timer);
+        if (gesture?.autoScrollFrame) cancelAnimationFrame(gesture.autoScrollFrame);
+        if (gesture?.active) {
+            list.classList.remove('is-sweep-selecting');
+            list.querySelectorAll('.is-sweep-touched').forEach(item => item.classList.remove('is-sweep-touched'));
+            if (suppressClick) suppressClickUntil = Date.now() + 600;
+        }
+        gesture = null;
+    };
+
+    const applyAt = (clientX, clientY) => {
+        if (!gesture?.active) return;
+        const item = document.elementFromPoint(clientX, clientY)?.closest?.('.theater-inst-item');
+        if (!item || !list.contains(item)) return;
+        const index = Number(item.dataset.index);
+        if (!Number.isInteger(index) || gesture.visited.has(index)) return;
+        gesture.visited.add(index);
+        item.classList.add('is-sweep-touched');
+        setInstructionItemSelected(index, gesture.selecting, item);
+    };
+
+    const autoScrollStep = () => {
+        if (!gesture?.active) return;
+        gesture.autoScrollFrame = null;
+        if (!scrollHost || !Number.isFinite(gesture.lastY)) return;
+
+        const rect = scrollHost.getBoundingClientRect();
+        const edge = Math.min(INSTRUCTION_SWEEP_SCROLL_EDGE, rect.height / 3);
+        let direction = 0;
+        let pressure = 0;
+        if (gesture.lastY < rect.top + edge) {
+            direction = -1;
+            pressure = (rect.top + edge - gesture.lastY) / edge;
+        } else if (gesture.lastY > rect.bottom - edge) {
+            direction = 1;
+            pressure = (gesture.lastY - (rect.bottom - edge)) / edge;
+        }
+
+        if (!direction) return;
+        const before = scrollHost.scrollTop;
+        const speed = Math.max(3, Math.round(Math.min(1, pressure) * INSTRUCTION_SWEEP_SCROLL_MAX_SPEED));
+        scrollHost.scrollTop += direction * speed;
+        if (scrollHost.scrollTop !== before) {
+            applyAt(gesture.lastX, gesture.lastY);
+            gesture.autoScrollFrame = requestAnimationFrame(autoScrollStep);
+        }
+    };
+
+    const trackAt = (clientX, clientY) => {
+        if (!gesture?.active) return;
+        gesture.lastX = clientX;
+        gesture.lastY = clientY;
+        applyAt(clientX, clientY);
+        if (!gesture.autoScrollFrame) gesture.autoScrollFrame = requestAnimationFrame(autoScrollStep);
+    };
+
+    const activate = () => {
+        if (!gesture || gesture.active || !gesture.item.isConnected) return;
+        gesture.active = true;
+        gesture.selecting = !instSelected.has(gesture.index);
+        gesture.visited = new Set();
+        closeInstructionActionMenus();
+        list.classList.add('is-sweep-selecting');
+        trackAt(gesture.startX, gesture.startY);
+    };
+
+    const arm = ({ item, clientX, clientY, pointerId = null, kind }) => {
+        reset();
+        const index = Number(item.dataset.index);
+        if (!Number.isInteger(index)) return;
+        gesture = {
+            item, index, kind, pointerId,
+            startX: clientX, startY: clientY,
+            lastX: clientX, lastY: clientY,
+            active: false, selecting: true, visited: new Set(), timer: null,
+            autoScrollFrame: null,
+        };
+        gesture.timer = setTimeout(activate, INSTRUCTION_SWEEP_HOLD_MS);
+    };
+
+    const startItem = target => {
+        if (!(target instanceof Element) || target.closest(excluded)) return null;
+        const item = target.closest('.theater-inst-item');
+        return item && list.contains(item) ? item : null;
+    };
+
+    const onTouchStart = event => {
+        if (event.touches.length !== 1) { reset(); return; }
+        const item = startItem(event.target);
+        if (!item) return;
+        const touch = event.touches[0];
+        arm({ item, clientX: touch.clientX, clientY: touch.clientY, kind: 'touch' });
+    };
+    const onTouchMove = event => {
+        if (!gesture || gesture.kind !== 'touch') return;
+        const touch = event.touches[0];
+        if (!touch) { reset(); return; }
+        if (!gesture.active) {
+            if (Math.hypot(touch.clientX - gesture.startX, touch.clientY - gesture.startY) > INSTRUCTION_SWEEP_MOVE_TOLERANCE) reset();
+            return;
+        }
+        if (event.cancelable) event.preventDefault();
+        trackAt(touch.clientX, touch.clientY);
+    };
+    const onTouchEnd = event => {
+        if (!gesture || gesture.kind !== 'touch') return;
+        if (gesture.active && event.cancelable) event.preventDefault();
+        reset({ suppressClick: gesture.active });
+    };
+    const onPointerDown = event => {
+        if (event.pointerType === 'touch' || event.button !== 0) return;
+        const item = startItem(event.target);
+        if (!item) return;
+        arm({ item, clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId, kind: 'pointer' });
+    };
+    const onPointerMove = event => {
+        if (!gesture || gesture.kind !== 'pointer' || gesture.pointerId !== event.pointerId) return;
+        if (!gesture.active) {
+            if (Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY) > INSTRUCTION_SWEEP_MOVE_TOLERANCE) reset();
+            return;
+        }
+        event.preventDefault();
+        trackAt(event.clientX, event.clientY);
+    };
+    const onPointerEnd = event => {
+        if (!gesture || gesture.kind !== 'pointer' || gesture.pointerId !== event.pointerId) return;
+        reset({ suppressClick: gesture.active });
+    };
+    const onClickCapture = event => {
+        if (Date.now() >= suppressClickUntil || !event.target.closest?.('.theater-inst-item')) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    };
+    const onContextMenu = event => {
+        if (gesture?.active && event.target.closest?.('.theater-inst-item')) event.preventDefault();
+    };
+
+    list.addEventListener('touchstart', onTouchStart, { passive: true });
+    list.addEventListener('touchmove', onTouchMove, { passive: false });
+    list.addEventListener('touchend', onTouchEnd, { passive: false });
+    list.addEventListener('touchcancel', onTouchEnd, { passive: false });
+    list.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('pointermove', onPointerMove, { passive: false });
+    document.addEventListener('pointerup', onPointerEnd);
+    document.addEventListener('pointercancel', onPointerEnd);
+    list.addEventListener('click', onClickCapture, true);
+    list.addEventListener('contextmenu', onContextMenu);
+
+    instructionSweepCleanup = () => {
+        reset();
+        list.removeEventListener('touchstart', onTouchStart);
+        list.removeEventListener('touchmove', onTouchMove);
+        list.removeEventListener('touchend', onTouchEnd);
+        list.removeEventListener('touchcancel', onTouchEnd);
+        list.removeEventListener('pointerdown', onPointerDown);
+        document.removeEventListener('pointermove', onPointerMove);
+        document.removeEventListener('pointerup', onPointerEnd);
+        document.removeEventListener('pointercancel', onPointerEnd);
+        list.removeEventListener('click', onClickCapture, true);
+        list.removeEventListener('contextmenu', onContextMenu);
+    };
 }
 
 // ---- World Book 运行时状态 ----
@@ -3866,17 +4143,36 @@ async function openTheaterPopup() {
         : normalizeTheaterTab(settings.lastTheaterTab);
     const { Popup, POPUP_TYPE } = SillyTavern.getContext();
     const popup = new Popup(buildPopupHTML(initialTab), POPUP_TYPE.TEXT, '', { wide: true, okButton: 'Close', allowVerticalScrolling: true });
+    const session = {};
+    activeTheaterPopupSession = session;
+    let closed = false;
+    const isCurrentPopup = () => !closed && activeTheaterPopupSession === session;
+    const onPopupClosed = () => {
+        closed = true;
+        if (activeTheaterPopupSession !== session) return;
+        activeTheaterPopupSession = null;
+        closeInstructionActionMenus();
+        if (instructionSweepCleanup) {
+            instructionSweepCleanup();
+            instructionSweepCleanup = null;
+        }
+        detachHistoryTouchMoveHandler();
+        resetHistorySelectionGesture();
+        resetLongDreamCanonSuggestions();
+        closeFullscreenReader();
+    };
     const p = popup.show();
+    // 关窗立即清理交互，不等待仍在途的预设/世界书读取；旧窗也不能拆掉新窗的监听。
+    Promise.resolve(p).then(onPopupClosed, onPopupClosed);
     const popupMounted = await waitForPopupElements(
         id => document.getElementById(id),
         ['theater-preset-name-select', 'theater-wb-books'],
     );
+    if (!isCurrentPopup()) return;
     if (!popupMounted) {
         runtimeLog('error', '小剧场弹窗挂载超时，预设与世界书暂未加载');
         toastr.error('小剧场界面加载超时，请关闭后重试');
         await p;
-        resetLongDreamCanonSuggestions();
-        closeFullscreenReader();
         return;
     }
     setBallDot(false);  // 看过了，红点熄灭
@@ -3897,6 +4193,7 @@ async function openTheaterPopup() {
         loadWorldBookList(),
         loadPresetNameList(),
     ]);
+    if (!isCurrentPopup()) return;
     if (worldBookListResult.status === 'rejected') {
         console.error('[Theater] World book list initialization failed:', worldBookListResult.reason);
         runtimeLog('error', '世界书列表初始化失败', { message: String(worldBookListResult.reason?.message || worldBookListResult.reason) });
@@ -3912,12 +4209,15 @@ async function openTheaterPopup() {
         if (settings.followCharCard) await applyCharBoundBooks();
         else await reloadWorldBooks({ silent: true });
     }
+    if (!isCurrentPopup()) return;
     // Restore selected preset
     if (presetListResult.status === 'fulfilled' && settings.selectedPresetName) {
         $('#theater-preset-name-select').val(settings.selectedPresetName);
         await loadPresetEntries();
     }
+    if (!isCurrentPopup()) return;
     await refreshTokenEstimate();
+    if (!isCurrentPopup()) return;
     activateTheaterTab(initialTab, { persist: false, resetScroll: false });
     longDreamCache.forEach(dream => queueLongDreamMemoryWeave(dream.id));
 
@@ -3946,8 +4246,6 @@ async function openTheaterPopup() {
     }
 
     await p;
-    resetLongDreamCanonSuggestions();
-    closeFullscreenReader();
 }
 
 // ============================================================
@@ -5249,22 +5547,24 @@ function bindEvents() {
     });
     $d.off('click.timore').on('click.timore', '.theater-inst-more', function (e) {
         e.stopPropagation();
-        const $item = $(this).closest('.theater-inst-item');
-        const willOpen = !$item.hasClass('theater-inst-actions-open');
-        $('.theater-inst-item').not($item).removeClass('theater-inst-actions-open')
-            .find('.theater-inst-more').attr('aria-expanded', 'false');
-        $item.toggleClass('theater-inst-actions-open', willOpen);
+        const item = $(this).closest('.theater-inst-item')[0];
+        const willOpen = !item.classList.contains('theater-inst-actions-open');
+        closeInstructionActionMenus(item);
+        item.classList.toggle('theater-inst-actions-open', willOpen);
         $(this).attr('aria-expanded', String(willOpen));
+        document.getElementById('theater-inst-drawer')?.classList.toggle('theater-inst-menu-open', willOpen);
+        if (willOpen) requestAnimationFrame(() => positionInstructionActionMenu(item));
+        else closeInstructionActionMenus();
     });
     $d.off('click.timoreclose').on('click.timoreclose', function (e) {
         if ($(e.target).closest('.theater-inst-more, .theater-inst-actions').length) return;
-        $('.theater-inst-item').removeClass('theater-inst-actions-open')
-            .find('.theater-inst-more').attr('aria-expanded', 'false');
+        closeInstructionActionMenus();
     });
     $d.off('click.tiaction').on('click.tiaction', '.theater-inst-actions > span', function () {
-        $(this).closest('.theater-inst-item').removeClass('theater-inst-actions-open')
-            .find('.theater-inst-more').attr('aria-expanded', 'false');
+        closeInstructionActionMenus();
     });
+    $('.theater-panels-wrapper').off('scroll.timoreclose').on('scroll.timoreclose', closeInstructionActionMenus);
+    $(window).off('resize.timoreclose').on('resize.timoreclose', closeInstructionActionMenus);
     $d.off('click.tie').on('click.tie', '.theater-inst-edit', async function () {
         const idx = $(this).data('index');
         const tpl = settings.instructionTemplates[idx];
@@ -5320,11 +5620,9 @@ function bindEvents() {
     $d.off('change.ticb').on('change.ticb', '.theater-inst-checkbox', function (e) {
         e.stopPropagation();
         const i = parseInt($(this).data('index'));
-        if ($(this).is(':checked')) instSelected.add(i);
-        else instSelected.delete(i);
-        $(this).closest('.theater-inst-item').toggleClass('theater-inst-item-selected', $(this).is(':checked'));
-        updateBulkBar();
+        setInstructionItemSelected(i, $(this).is(':checked'), $(this).closest('.theater-inst-item')[0]);
     });
+    bindInstructionSweepSelection();
     $d.off('click.tisa').on('click.tisa', '#theater-inst-select-all-btn', selectAllVisible);
     $d.off('click.tibm').on('click.tibm', '#theater-inst-bulk-tags-btn', bulkEditSelectedTemplateTags);
     $d.off('click.tibd').on('click.tibd', '#theater-inst-bulk-delete-btn', bulkDeleteSelected);
@@ -5346,6 +5644,7 @@ function bindEvents() {
     });
 
     // ---- History ----
+    resetHistorySelectionGesture();
     $d.off('click.tsh').on('click.tsh', '#theater-save-history-btn', saveToHistory);
     $d.off('click.tch').on('click.tch', '#theater-copy-html-btn', copyHtml);
     $d.off('click.tfs').on('click.tfs', '#theater-fullscreen-btn', openFullscreenReader);
@@ -5485,10 +5784,117 @@ function bindEvents() {
     });
     $d.off('change.thcb').on('change.thcb', '.theater-hist-checkbox', function () {
         const id = $(this).data('id');
-        if ($(this).is(':checked')) histSelected.add(id);
-        else histSelected.delete(id);
-        $(this).closest('.theater-history-item').toggleClass('theater-history-item-selected', $(this).is(':checked'));
-        updateHistBulkBar();
+        setHistoryItemSelected(id, $(this).is(':checked'), $(this).closest('.theater-history-item')[0]);
+    });
+    $d.off('click.thcardselect').on('click.thcardselect', '.theater-history-item', function (event) {
+        if ($(event.target).closest('.theater-history-actions, .theater-hist-checkbox').length) return;
+        if (Date.now() < suppressHistoryCardClickUntil) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
+        if (!histBatchMode) return;
+        const id = $(this).data('id');
+        setHistoryItemSelected(id, !histSelected.has(id), this);
+    });
+    $d.off('pointerdown.thhistgesture').on('pointerdown.thhistgesture', '.theater-history-item', function (event) {
+        if ($(event.target).closest('.theater-history-actions, .theater-hist-checkbox, button, a, input, textarea, select').length) return;
+        const pointer = event.originalEvent || event;
+        // 触屏改走可 preventDefault 的 touchmove，避免浏览器在长按后把纵向拖选抢成页面滚动。
+        if (pointer.pointerType === 'touch') return;
+        if (pointer.button !== undefined && pointer.button !== 0) return;
+        resetHistorySelectionGesture();
+        const id = $(this).data('id');
+        histSelectionGesture = {
+            pointerId: pointer.pointerId,
+            startX: pointer.clientX,
+            startY: pointer.clientY,
+            id,
+            item: this,
+            active: false,
+            selecting: true,
+            visited: new Set([id]),
+            timer: null,
+            scrollContainer: null,
+            lastX: pointer.clientX,
+            lastY: pointer.clientY,
+            autoScrollSpeed: 0,
+            autoScrollFrame: null,
+        };
+        // 批量模式也保留短滑滚动；只有停留成长按后才接管为连续选择。
+        histSelectionGesture.timer = setTimeout(activateHistorySelectionGesture, 420);
+    });
+    $d.off('pointermove.thhistgesture').on('pointermove.thhistgesture', function (event) {
+        const gesture = histSelectionGesture;
+        const pointer = event.originalEvent || event;
+        if (!gesture || gesture.pointerId !== pointer.pointerId) return;
+        if (!gesture.active) {
+            if (Math.hypot(pointer.clientX - gesture.startX, pointer.clientY - gesture.startY) > 10) resetHistorySelectionGesture();
+            return;
+        }
+        event.preventDefault();
+        applyHistorySelectionGestureAt(pointer.clientX, pointer.clientY);
+        updateHistorySelectionAutoScroll(pointer.clientX, pointer.clientY);
+    });
+    $d.off('pointerup.thhistgesture pointercancel.thhistgesture').on('pointerup.thhistgesture pointercancel.thhistgesture', function (event) {
+        const gesture = histSelectionGesture;
+        const pointer = event.originalEvent || event;
+        if (!gesture || gesture.pointerId !== pointer.pointerId) return;
+        if (gesture.active) suppressHistoryCardClickUntil = Date.now() + 400;
+        resetHistorySelectionGesture();
+    });
+    $d.off('contextmenu.thhistgesture').on('contextmenu.thhistgesture', '.theater-history-item', function (event) {
+        if (histSelectionGesture?.active || Date.now() < suppressHistoryCardClickUntil) event.preventDefault();
+    });
+    $d.off('touchstart.thhistgesture').on('touchstart.thhistgesture', '.theater-history-item', function (event) {
+        if ($(event.target).closest('.theater-history-actions, .theater-hist-checkbox, button, a, input, textarea, select').length) return;
+        const touch = event.originalEvent?.changedTouches?.[0];
+        if (!touch) return;
+        resetHistorySelectionGesture();
+        const id = $(this).data('id');
+        histSelectionGesture = {
+            pointerId: `touch:${touch.identifier}`,
+            startX: touch.clientX,
+            startY: touch.clientY,
+            id,
+            item: this,
+            active: false,
+            selecting: true,
+            visited: new Set([id]),
+            timer: null,
+            scrollContainer: null,
+            lastX: touch.clientX,
+            lastY: touch.clientY,
+            autoScrollSpeed: 0,
+            autoScrollFrame: null,
+        };
+        histSelectionGesture.timer = setTimeout(activateHistorySelectionGesture, 420);
+    });
+    $d.off('touchmove.thhistgesture');
+    detachHistoryTouchMoveHandler();
+    histTouchMoveHandler = function (event) {
+        const gesture = histSelectionGesture;
+        if (!gesture || typeof gesture.pointerId !== 'string' || !gesture.pointerId.startsWith('touch:')) return;
+        const identifier = Number(gesture.pointerId.slice(6));
+        const touch = Array.from(event.touches || []).find(item => item.identifier === identifier);
+        if (!touch) return;
+        if (!gesture.active) {
+            if (Math.hypot(touch.clientX - gesture.startX, touch.clientY - gesture.startY) > 10) resetHistorySelectionGesture();
+            return;
+        }
+        event.preventDefault();
+        applyHistorySelectionGestureAt(touch.clientX, touch.clientY);
+        updateHistorySelectionAutoScroll(touch.clientX, touch.clientY);
+    };
+    document.addEventListener('touchmove', histTouchMoveHandler, { passive: false });
+    $d.off('touchend.thhistgesture touchcancel.thhistgesture').on('touchend.thhistgesture touchcancel.thhistgesture', function (event) {
+        const gesture = histSelectionGesture;
+        if (!gesture || typeof gesture.pointerId !== 'string' || !gesture.pointerId.startsWith('touch:')) return;
+        const identifier = Number(gesture.pointerId.slice(6));
+        const ended = Array.from(event.originalEvent?.changedTouches || []).some(item => item.identifier === identifier);
+        if (!ended) return;
+        if (gesture.active) suppressHistoryCardClickUntil = Date.now() + 400;
+        resetHistorySelectionGesture();
     });
     $d.off('click.thsa').on('click.thsa', '#theater-hist-select-all', function () {
         const visible = filterHistoryAll(historyCache);
@@ -5932,6 +6338,7 @@ function bindEvents() {
 
 function refreshInstUI() {
     const inst = settings.instructionTemplates || [];
+    closeInstructionActionMenus();
     $('#theater-instruction-list').html(renderInstList(inst));
     $('#theater-inst-count').text(inst.length);
     $('#theater-inst-drawer').toggleClass('empty', !inst.length);
@@ -5941,6 +6348,90 @@ function refreshInstUI() {
 
 function filterHistoryAll(items = historyCache) {
     return (Array.isArray(items) ? items : []).filter(item => matchesTagFilter(item, settings.historyTagFilter, knownInstructionTags()));
+}
+
+function setHistoryItemSelected(id, selected, itemElement = null) {
+    if (selected) histSelected.add(id);
+    else histSelected.delete(id);
+    const $item = itemElement ? $(itemElement) : $(`.theater-history-item[data-id="${id}"]`);
+    $item.toggleClass('theater-history-item-selected', selected)
+        .find('.theater-hist-checkbox').prop('checked', selected);
+    updateHistBulkBar();
+}
+
+function detachHistoryTouchMoveHandler() {
+    if (!histTouchMoveHandler) return;
+    document.removeEventListener('touchmove', histTouchMoveHandler);
+    histTouchMoveHandler = null;
+}
+
+function resetHistorySelectionGesture() {
+    if (histSelectionGesture?.timer) clearTimeout(histSelectionGesture.timer);
+    if (histSelectionGesture?.autoScrollFrame) cancelAnimationFrame(histSelectionGesture.autoScrollFrame);
+    $('.theater-history-item.is-selection-dragging').removeClass('is-selection-dragging');
+    histSelectionGesture = null;
+}
+
+function activateHistorySelectionGesture() {
+    const gesture = histSelectionGesture;
+    if (!gesture || gesture.active) return;
+    if (!histBatchMode) {
+        histBatchMode = true;
+        histSelected.clear();
+        enterHistBatchMode();
+    }
+    gesture.active = true;
+    gesture.selecting = !histSelected.has(gesture.id);
+    gesture.scrollContainer = gesture.item.closest('.theater-panels-wrapper');
+    gesture.item.classList.add('is-selection-dragging');
+    setHistoryItemSelected(gesture.id, gesture.selecting, gesture.item);
+}
+
+function applyHistorySelectionGestureAt(clientX, clientY) {
+    const gesture = histSelectionGesture;
+    if (!gesture?.active) return;
+    const item = document.elementFromPoint(clientX, clientY)?.closest?.('.theater-history-item');
+    if (!item || !item.closest('#theater-history-list')) return;
+    const id = $(item).data('id');
+    if (gesture.visited.has(id)) return;
+    gesture.visited.add(id);
+    setHistoryItemSelected(id, gesture.selecting, item);
+}
+
+function runHistorySelectionAutoScroll() {
+    const gesture = histSelectionGesture;
+    if (!gesture?.active || !gesture.scrollContainer || !gesture.autoScrollSpeed) return;
+    const before = gesture.scrollContainer.scrollTop;
+    gesture.scrollContainer.scrollTop += gesture.autoScrollSpeed;
+    if (gesture.scrollContainer.scrollTop === before) {
+        gesture.autoScrollSpeed = 0;
+        gesture.autoScrollFrame = null;
+        return;
+    }
+    applyHistorySelectionGestureAt(gesture.lastX, gesture.lastY);
+    gesture.autoScrollFrame = requestAnimationFrame(runHistorySelectionAutoScroll);
+}
+
+function updateHistorySelectionAutoScroll(clientX, clientY) {
+    const gesture = histSelectionGesture;
+    if (!gesture?.active || !gesture.scrollContainer) return;
+    gesture.lastX = clientX;
+    gesture.lastY = clientY;
+    const rect = gesture.scrollContainer.getBoundingClientRect();
+    const edge = Math.min(84, Math.max(54, rect.height * 0.14));
+    let speed = 0;
+    if (clientY < rect.top + edge) {
+        speed = -Math.max(3, Math.ceil((rect.top + edge - clientY) / edge * 18));
+    } else if (clientY > rect.bottom - edge) {
+        speed = Math.max(3, Math.ceil((clientY - (rect.bottom - edge)) / edge * 18));
+    }
+    gesture.autoScrollSpeed = speed;
+    if (speed && !gesture.autoScrollFrame) {
+        gesture.autoScrollFrame = requestAnimationFrame(runHistorySelectionAutoScroll);
+    } else if (!speed && gesture.autoScrollFrame) {
+        cancelAnimationFrame(gesture.autoScrollFrame);
+        gesture.autoScrollFrame = null;
+    }
 }
 
 function refreshHistList() {
@@ -6728,10 +7219,61 @@ async function chooseTags({ title = '选择标签', subtitle = '可多选；多�
     return normalizeTagFilter($body.find('.theater-tag-choice input:checked').map((_, input) => input.value).get(), knownInstructionTags());
 }
 
+async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已有标签，也可以同时新建一个标签', selected = [], okButton = '确认', templateName = null } = {}) {
+    const { Popup, POPUP_TYPE } = SillyTavern.getContext();
+    const known = knownInstructionTags();
+    const current = normalizeTagFilter(selected, known);
+    const rows = known.map(tag => `<label class="theater-tag-choice"><input type="checkbox" value="${esc(tag)}" ${current.includes(tag) ? 'checked' : ''}><span><i class="fa-solid fa-tag"></i><b>${esc(tag)}</b></span></label>`).join('');
+    const emptyHint = known.length ? '' : '<p class="theater-empty">还没有已有标签，可以在下方直接新建。</p>';
+    const html = `<div class="theater-popup" data-skin="${settings.skinMode || 'default'}">
+        <div class="theater-popup-header"><p class="theater-title">${esc(title)}</p><p class="theater-subtitle">${esc(subtitle)}</p></div>
+        <div class="theater-section">
+            ${templateName === null ? '' : `<div class="theater-tag-template-name-field">
+                <label for="theater-tag-template-name"><i class="fa-solid fa-file-signature"></i> 模板名称</label>
+                <input id="theater-tag-template-name" class="theater-input" maxlength="60" autocomplete="off" value="${esc(templateName)}" placeholder="给这个模板起个名字">
+            </div>`}
+            <div class="theater-tag-choice-list is-compact">${rows}${emptyHint}</div>
+            <div class="theater-tag-create-box">
+                <label for="theater-tag-create-input"><i class="fa-solid fa-plus"></i> 新建并选中标签</label>
+                <input id="theater-tag-create-input" class="theater-input" maxlength="30" autocomplete="off" placeholder="例如：角色甲">
+                <small>留空则只使用上面勾选的已有标签</small>
+            </div>
+        </div>
+    </div>`;
+    const popup = new Popup(html, POPUP_TYPE.CONFIRM, '', { wide: false, okButton, cancelButton: '取消', allowVerticalScrolling: true });
+    const showPromise = popup.show();
+    const $body = $(popup.dlg);
+    const result = await showPromise;
+    if (!result) return null;
+
+    const name = templateName === null ? null : String($body.find('#theater-tag-template-name').val() || '').trim();
+    if (templateName !== null && !name) {
+        toastr.warning('模板名称不能为空');
+        return null;
+    }
+    const checked = $body.find('.theater-tag-choice input:checked').map((_, input) => input.value).get();
+    const entered = cleanTagName($body.find('#theater-tag-create-input').val());
+    if (entered.toLocaleLowerCase() === TAG_UNCATEGORIZED.toLocaleLowerCase()) {
+        toastr.warning('这个名称是系统保留值，请换一个标签名');
+        return null;
+    }
+    const existing = known.find(tag => tag.toLocaleLowerCase() === entered.toLocaleLowerCase());
+    const newTags = entered && !existing ? [entered] : [];
+    return {
+        name,
+        tags: normalizeTagList([...checked, existing || entered]),
+        newTags,
+    };
+}
+
 async function newInstructionTag() {
     const name = await SillyTavern.getContext().Popup.show.input('新建标签', '标签名称：', '');
     const tag = cleanTagName(name);
     if (!tag) return null;
+    if (tag.toLocaleLowerCase() === TAG_UNCATEGORIZED.toLocaleLowerCase()) {
+        toastr.warning('这个名称是系统保留值，请换一个标签名');
+        return null;
+    }
     const duplicate = knownInstructionTags().find(item => item.toLocaleLowerCase() === tag.toLocaleLowerCase());
     if (duplicate) { toastr.warning(`标签「${duplicate}」已存在`); return duplicate; }
     settings.instructionTags = [...knownInstructionTags(), tag];
@@ -6846,13 +7388,19 @@ async function saveInstructionTpl() {
     if (!c) { toastr.warning('请先在「生成」页输入指令'); return; }
     const count = (settings.instructionTemplates || []).length + 1;
     const defaultName = `小剧场模板 ${count}`;
-    const n = await SillyTavern.getContext().Popup.show.input('保存指令模板', '模板名称：', defaultName);
-    if (!n) return;
     const currentFilter = normalizeTagFilter(settings.instructionTagFilter, knownInstructionTags());
     const suggested = currentFilter[0] === TAG_UNCATEGORIZED ? [] : currentFilter;
-    const tags = await chooseTags({ title: '给新模板加标签', subtitle: '可多选，也可以暂时不选', selected: suggested });
-    if (tags === null) return;
-    const tpl = { name: n.trim(), content: c, tags };
+    const selection = await chooseTagsWithNew({
+        title: '保存指令模板',
+        subtitle: '填写名称并选择标签；也可以在下方新建一个标签，都不选则归为“未分类”',
+        selected: suggested,
+        okButton: '保存模板',
+        templateName: defaultName,
+    });
+    if (selection === null) return;
+    settings.instructionTags = normalizeTagList([...knownInstructionTags(), ...selection.newTags]);
+    const tags = mergeTagLists([], selection.tags, settings.instructionTags);
+    const tpl = { name: selection.name, content: c, tags };
     settings.instructionTemplates.push(tpl);
     save(); refreshInstUI();
     toastr.success(tags.length ? `已保存 · ${tags.join('、')}` : '已保存为未分类');
@@ -7031,13 +7579,25 @@ function importInstructionTemplates() {
                 item.tags.forEach(tag => { if (!importedTags.includes(tag)) importedTags.push(tag); });
             });
             if (!imported.length && !importedTags.length) { toastr.warning('文件中没有找到指令或标签'); return; }
-            let addedTags = 0;
-            importedTags.forEach(tag => {
-                if (!knownInstructionTags().some(existing => existing.toLocaleLowerCase() === tag.toLocaleLowerCase())) {
-                    settings.instructionTags = normalizeTagList([...settings.instructionTags, tag]);
-                    addedTags++;
-                }
+            let target = { tags: [], newTags: [] };
+            if (imported.length) {
+                const currentFilter = normalizeTagFilter(settings.instructionTagFilter, knownInstructionTags());
+                const suggested = currentFilter[0] === TAG_UNCATEGORIZED ? [] : currentFilter;
+                target = await chooseTagsWithNew({
+                    title: `给这 ${imported.length} 条导入模板统一加标签`,
+                    subtitle: '文件原有标签会保留；这里勾选或新建的标签会追加到每一条模板',
+                    selected: suggested,
+                    okButton: '确认导入',
+                });
+                if (target === null) return;
+            }
+            const previousTags = knownInstructionTags();
+            settings.instructionTags = normalizeTagList([...previousTags, ...importedTags, ...target.newTags]);
+            imported.forEach(item => {
+                item.tags = mergeTagLists(item.tags, target.tags, settings.instructionTags);
             });
+            const previousKeys = new Set(previousTags.map(tag => tag.toLocaleLowerCase()));
+            const addedTags = settings.instructionTags.filter(tag => !previousKeys.has(tag.toLocaleLowerCase())).length;
             settings.instructionTemplates.push(...imported);
             save(); refreshInstUI();
             toastr.success(`导入了 ${imported.length} 条指令${addedTags ? `、${addedTags} 个标签` : ''}${strippedCount ? `，已排除 ${strippedCount} 条标题或署名` : ''}`);
