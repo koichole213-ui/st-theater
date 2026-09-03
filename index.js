@@ -4,7 +4,7 @@
 import { theaterError as notifyTheaterError } from './notify.js';
 import { playSoundFile } from './notification-sound.js';
 import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follow.js';
-import { compareVersion, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
+import { compareVersion, fetchInstalledExtensionStatus, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
@@ -47,6 +47,12 @@ const MODULE_NAME = 'theater_generator';
 const VERSION = '4.2.0';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
+let installedBranchHasUpdate = false;
+let installedBranchName = '';
+let installedBranchStatusKnown = false;
+let installedBranchCheckPending = false;
+let updateCheckPromise = null;
+let lastUpdateCheckAt = 0;
 let updateReadyToReload = false;
 let lastRequestMetrics = null;
 const requestMetricsLog = [];
@@ -926,36 +932,80 @@ async function init() {
     applyCustomCSS();
     // 悬浮球延迟创建，避免干扰其他插件初始化
     setTimeout(() => { try { createFloatingBall(); } catch (e) { console.warn('[Theater] Floating ball error:', e); } }, 2000);
-    // 后台检查 github 上的最新版本，只挂入口红点，不弹窗打扰主界面
-    setTimeout(() => { checkRemoteVersion(); }, 3000);
+    // 初始化完成就后台检查；不 await，不让慢网络拖住酒馆。
+    void checkRemoteVersion();
     console.log(`[Theater] v${VERSION} loaded`);
     console.log(`[Theater] 🐾 禾禾的千夜浮梦，麓克永远在山脚下等你。`);
     runtimeLog('info', '插件加载完成', { version: VERSION });
 }
 
-async function checkRemoteVersion() {
+async function checkRemoteVersion({ force = false } = {}) {
+    const now = Date.now();
+    if (updateCheckPromise) return updateCheckPromise;
+    if (!force && now - lastUpdateCheckAt < 60000) return;
+    lastUpdateCheckAt = now;
+    updateCheckPromise = (async () => {
+        const ctx = SillyTavern.getContext();
+        const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
+        installedBranchCheckPending = true;
+        const installedCheck = fetchInstalledExtensionStatus({ headers }).then(value => {
+            installedBranchCheckPending = false;
+            installedBranchStatusKnown = true;
+            installedBranchHasUpdate = !value.isUpToDate;
+            installedBranchName = value.branch;
+            console.log(`[Theater] installed branch ${installedBranchName} is ${installedBranchHasUpdate ? 'behind remote' : 'up to date'}`);
+            refreshUpdateBadges();
+        }).catch(error => {
+            installedBranchCheckPending = false;
+            installedBranchStatusKnown = false;
+            installedBranchHasUpdate = false;
+            installedBranchName = '';
+            console.log('[Theater] installed branch check failed:', formatVersionCheckError(error));
+            refreshUpdateBadges();
+        });
+        const manifestCheck = fetchLatestRemoteVersion().then(value => {
+            latestRemoteVersion = value.version;
+            console.log(`[Theater] remote v${latestRemoteVersion}, local v${VERSION} (via ${value.host})`);
+            refreshUpdateBadges();
+        }).catch(error => {
+            console.log('[Theater] release version check failed:', formatVersionCheckError(error));
+        });
+        await Promise.allSettled([installedCheck, manifestCheck]);
+    })();
     try {
-        const { version, host } = await fetchLatestRemoteVersion();
-        latestRemoteVersion = version;
-        console.log(`[Theater] remote v${latestRemoteVersion}, local v${VERSION} (via ${host})`);
-        refreshUpdateBadges();
-    } catch (e) {
-        console.log('[Theater] update check failed:', formatVersionCheckError(e));
+        await updateCheckPromise;
+    } catch (error) {
+        console.log('[Theater] update check failed:', formatVersionCheckError(error));
+    } finally {
+        updateCheckPromise = null;
     }
 }
 
 function hasRemoteUpdate() {
+    if (installedBranchCheckPending && !installedBranchStatusKnown) return false;
+    if (installedBranchStatusKnown) return installedBranchHasUpdate;
     return latestRemoteVersion && compareVersion(latestRemoteVersion, VERSION) > 0;
 }
 
+function remoteUpdateLabel() {
+    return !installedBranchStatusKnown && latestRemoteVersion && compareVersion(latestRemoteVersion, VERSION) > 0
+        ? `发现新版本 v${latestRemoteVersion}`
+        : `当前分支${installedBranchName ? ` ${installedBranchName}` : ''} 有新更新`;
+}
+
 function updateBadgeHTML(className = 'theater-tab-new-badge') {
-    return `<span class="${className}" title="发现新版本 v${esc(latestRemoteVersion)}"></span>`;
+    return `<span class="${className}" title="${esc(remoteUpdateLabel())}"></span>`;
 }
 
 function refreshUpdateBadges() {
     const hasUpdate = hasRemoteUpdate();
     $('.theater-update-badge').remove();
     $('.theater-tab-new-badge').remove();
+
+    $('.theater-update-notice')
+        .prop('hidden', !hasUpdate)
+        .find('span')
+        .text(hasUpdate ? remoteUpdateLabel() : '');
 
     if (!hasUpdate) return;
 
@@ -2042,11 +2092,10 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
         ${configGroupStart('extension', 'fa-toolbox', '扩展管理')}
         <div class="theater-section" data-config-section="extension">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-arrows-rotate"></i> 扩展入口</label>
-            ${hasRemoteUpdate() ? `
-            <div class="theater-update-notice">
+            <div class="theater-update-notice" ${hasRemoteUpdate() ? '' : 'hidden'}>
                 <i class="fa-solid fa-circle-arrow-up"></i>
-                <span>发现新版本 v${esc(latestRemoteVersion)}</span>
-            </div>` : ''}
+                <span>${hasRemoteUpdate() ? esc(remoteUpdateLabel()) : ''}</span>
+            </div>
             <div class="theater-config-action-row theater-update-actions">
                 <span><b>插件更新</b></span>
                 <div class="theater-update-button-stack">
@@ -3609,6 +3658,18 @@ let wbEntries = [];    // [{ book, uid, name, content } | { manual: true, mIdx, 
 let wbStates = [];     // 与 wbEntries 平行的开关数组
 let wbBookNames = [];  // 可选世界书名列表
 let wbSearch = '';
+let wbLoadedCacheKey = '';
+let wbLoadedReadMode = '';
+let wbReloadSequence = 0;
+let wbReloadInFlight = null;
+
+function worldBookCacheKey(books = settings.selectedWorldBooks, readMode = settings.worldBookReadMode) {
+    return JSON.stringify({ books: [...(Array.isArray(books) ? books : [])], readMode: String(readMode || 'all') });
+}
+
+function isWorldBookCacheCurrent() {
+    return wbLoadedCacheKey === worldBookCacheKey();
+}
 
 // 每本书一个节点：勾选框选书，点行展开条目，条目直接挂在书底下（树形）
 let wbGroupCollapsed = {};  // { 书名或 __manual__: false 表示展开 }，缺省收起
@@ -4937,28 +4998,25 @@ function bindEvents() {
         presetSearch = $(this).val() || '';
         renderPresetOptions();
     });
-    $d.off('change.tpns').on('change.tpns', '#theater-preset-name-select', function () {
+    $d.off('change.tpns').on('change.tpns', '#theater-preset-name-select', async function () {
         settings.selectedPresetName = $(this).val();
         save();
         if (settings.selectedPresetName) {
             $('#theater-preset-current').show();
-            loadPresetEntries();
+            await loadPresetEntries(settings.selectedPresetName);
         } else {
-            $('#theater-preset-current').hide();
-            cachedPresetEntries = [];
-            cachedPresetPostProcessing = '';
-            cachedPresetSquashSystemMessages = false;
-            $('#theater-preset-entries').html('<p class="theater-empty">请选择预设</p>');
+            await loadPresetEntries('');
         }
     });
     $d.off('click.tlpre').on('click.tlpre', '#theater-load-preset-btn', async function () {
         await loadPresetNameList();
         if (settings.selectedPresetName) {
             $('#theater-preset-name-select').val(settings.selectedPresetName);
-            loadPresetEntries();
+            await loadPresetEntries(settings.selectedPresetName);
         }
     });
     $d.off('change.tpec').on('change.tpec', '.theater-preset-check', function () {
+        if (cachedPresetLoadState === 'loading') return;
         const id = $(this).data('id');
         const states = currentPresetEntryStates({ create: true });
         states[id] = $(this).is(':checked');
@@ -4966,6 +5024,7 @@ function bindEvents() {
         save();
     });
     $d.off('click.tpsa').on('click.tpsa', '#theater-preset-select-all', () => {
+        if (cachedPresetLoadState === 'loading' || $('#theater-preset-select-all').hasClass('disabled')) return;
         const states = currentPresetEntryStates({ create: true });
         $('.theater-preset-check').each(function () {
             $(this).prop('checked', true);
@@ -4975,6 +5034,7 @@ function bindEvents() {
         save();
     });
     $d.off('click.tpda').on('click.tpda', '#theater-preset-deselect-all', () => {
+        if (cachedPresetLoadState === 'loading' || $('#theater-preset-deselect-all').hasClass('disabled')) return;
         const states = currentPresetEntryStates({ create: true });
         $('.theater-preset-check').each(function () {
             $(this).prop('checked', false);
@@ -5969,6 +6029,10 @@ function loadPersona(options = {}) {
 let cachedPresetEntries = [];
 let cachedPresetPostProcessing = '';
 let cachedPresetSquashSystemMessages = false;
+let cachedPresetName = '';
+let cachedPresetLoadState = 'default';
+let presetLoadSequence = 0;
+let presetLoadInFlight = null;
 let presetNamesCache = [];
 let presetSearch = '';
 
@@ -6217,52 +6281,126 @@ function extractPromptsFromData(data) {
     return entries;
 }
 
-async function loadPresetEntries() {
+function setPresetEntryControlsEnabled(enabled) {
+    $('#theater-preset-select-all, #theater-preset-deselect-all')
+        .toggleClass('disabled', !enabled)
+        .attr('aria-disabled', enabled ? 'false' : 'true');
+}
+
+function currentPresetSnapshot() {
+    const name = String(cachedPresetName || '');
+    const entries = cachedPresetEntries.map(entry => Object.freeze({ ...entry }));
+    const states = presetEntryStatesForPreset(settings.presetEntryStatesByPreset, name);
+    const selectedEntries = entries.filter(entry => states[entry.id] !== false);
+    return Object.freeze({
+        status: cachedPresetLoadState,
+        name,
+        entries: Object.freeze(entries),
+        selectedEntries: Object.freeze(selectedEntries),
+        prompt: selectedEntries.map(entry => entry.content).join('\n\n'),
+        postProcessing: cachedPresetPostProcessing,
+        squashSystemMessages: cachedPresetSquashSystemMessages,
+    });
+}
+
+async function loadPresetEntries(expectedName = settings.selectedPresetName) {
+    const sel = String(expectedName || '');
+    if (String(settings.selectedPresetName || '') !== sel) return { status: 'stale', name: sel };
+    if (presetLoadInFlight?.name === sel) return await presetLoadInFlight.promise;
+    const requestId = ++presetLoadSequence;
     cachedPresetEntries = [];
     cachedPresetPostProcessing = '';
     cachedPresetSquashSystemMessages = false;
-    const sel = settings.selectedPresetName;
+    cachedPresetName = sel;
+    cachedPresetLoadState = sel ? 'loading' : 'default';
 
     if (!sel) {
+        presetLoadInFlight = null;
         $('#theater-preset-entries').html('<p class="theater-empty">请选择预设</p>');
         $('#theater-preset-current').hide();
-        return;
+        setPresetEntryControlsEnabled(false);
+        return currentPresetSnapshot();
     }
-
-    // Fetch preset by name from ST
-    const data = await fetchPresetByName(sel);
-    if (data) {
-        cachedPresetEntries = extractPromptsFromData(data);
-        cachedPresetPostProcessing = noToolsPostProcessingMode(
-            data.custom_prompt_post_processing
-            ?? data.prompt_post_processing
-            ?? data.openai_settings?.custom_prompt_post_processing
-            ?? '',
-        );
-        cachedPresetSquashSystemMessages = !!data.squash_system_messages;
-        console.log(`[Theater] Extracted ${cachedPresetEntries.length} entries from preset "${sel}"`);
-    }
-
-    if (!cachedPresetEntries.length) {
-        const hint = data
-            ? `预设「${sel}」已读取但无可用条目（可能是采样器预设而非 Prompt 预设）`
-            : `预设「${sel}」读取失败，请打开浏览器控制台查看 [Theater] 日志`;
-        toastr.warning(hint);
-        $('#theater-preset-entries').html(`<p class="theater-empty">${esc(hint)}</p>`);
-        return;
-    }
-
-    // Init states
-    const states = presetEntryStatesForPreset(settings.presetEntryStatesByPreset, sel, { create: true });
-    cachedPresetEntries.forEach(e => {
-        if (!hasOwn(states, e.id)) {
-            states[e.id] = e.enabledInST;
-        }
-    });
 
     $('#theater-preset-current').show();
-    $('#theater-preset-entries').html(renderPresetEntries());
-    scheduleTokenEstimate();
+    $('#theater-preset-entries').show().html('<p class="theater-empty">正在读取预设…</p>');
+    setPresetEntryControlsEnabled(false);
+
+    const promise = (async () => {
+        // Fetch preset by name from ST
+        const data = await fetchPresetByName(sel);
+        const entries = data ? extractPromptsFromData(data) : [];
+        const postProcessing = data
+            ? noToolsPostProcessingMode(
+                data.custom_prompt_post_processing
+                ?? data.prompt_post_processing
+                ?? data.openai_settings?.custom_prompt_post_processing
+                ?? '',
+            )
+            : '';
+        const squashSystemMessages = !!data?.squash_system_messages;
+        if (requestId !== presetLoadSequence || String(settings.selectedPresetName || '') !== sel) {
+            return { status: 'stale', name: sel };
+        }
+        cachedPresetEntries = entries;
+        cachedPresetPostProcessing = postProcessing;
+        cachedPresetSquashSystemMessages = squashSystemMessages;
+        cachedPresetName = sel;
+        cachedPresetLoadState = !data ? 'error' : (entries.length ? 'ready' : 'empty');
+        if (data) {
+            console.log(`[Theater] Extracted ${cachedPresetEntries.length} entries from preset "${sel}"`);
+        }
+
+        if (!cachedPresetEntries.length) {
+            const hint = data
+                ? `预设「${sel}」已读取但无可用条目（可能是采样器预设而非 Prompt 预设）`
+                : `预设「${sel}」读取失败，请打开浏览器控制台查看 [Theater] 日志`;
+            toastr.warning(hint);
+            $('#theater-preset-entries').html(`<p class="theater-empty">${esc(hint)}</p>`);
+            setPresetEntryControlsEnabled(false);
+            return currentPresetSnapshot();
+        }
+
+        // Init states
+        const states = presetEntryStatesForPreset(settings.presetEntryStatesByPreset, sel, { create: true });
+        cachedPresetEntries.forEach(e => {
+            if (!hasOwn(states, e.id)) {
+                states[e.id] = e.enabledInST;
+            }
+        });
+
+        $('#theater-preset-current').show();
+        $('#theater-preset-entries').html(renderPresetEntries());
+        setPresetEntryControlsEnabled(true);
+        scheduleTokenEstimate();
+        return currentPresetSnapshot();
+    })();
+    presetLoadInFlight = { name: sel, requestId, promise };
+    promise.then(() => {
+        if (presetLoadInFlight?.requestId === requestId) presetLoadInFlight = null;
+    }, () => {
+        if (presetLoadInFlight?.requestId === requestId) presetLoadInFlight = null;
+    });
+    return await promise;
+}
+
+async function ensureSelectedPresetLoaded() {
+    for (let attempt = 0; attempt < 4; attempt++) {
+        const selected = String(settings.selectedPresetName || '');
+        if (cachedPresetName !== selected || cachedPresetLoadState === 'loading') {
+            await loadPresetEntries(selected);
+        }
+        if (selected !== String(settings.selectedPresetName || '')) continue;
+        if (cachedPresetName !== selected || cachedPresetLoadState === 'loading') continue;
+        if (cachedPresetLoadState === 'error') {
+            throw new Error(`所选预设「${selected}」读取失败，请刷新预设后重试`);
+        }
+        if (cachedPresetLoadState === 'empty') {
+            throw new Error(`所选预设「${selected}」没有可用 Prompt 条目，请换一个预设后重试`);
+        }
+        return currentPresetSnapshot();
+    }
+    throw new Error('预设正在切换，请等读取完成后再生成');
 }
 
 function renderPresetEntries() {
@@ -6311,6 +6449,8 @@ function getSelectedPresetEntries() {
 // ============================================================
 async function loadWorldBookList() {
     let names = [];
+    const previousNames = [...wbBookNames];
+    let serverListLoaded = false;
 
     try {
         const ctx = SillyTavern.getContext();
@@ -6337,18 +6477,19 @@ async function loadWorldBookList() {
             if (chatWI && !names.includes(chatWI)) names.push(chatWI);
         }
 
-        // Server API
-        if (names.length < 2) {
-            try {
-                const r = await fetch('/api/worldinfo/list', { method: 'GET', headers });
-                if (r.ok) {
-                    const list = await r.json();
-                    (Array.isArray(list) ? list : list?.data || []).forEach(n => { if (n && !names.includes(n)) names.push(n); });
-                }
-            } catch { }
-        }
+        // Server API：始终合并完整目录；页面下拉框可能只暴露当前使用的少数几本。
+        try {
+            const r = await fetch('/api/worldinfo/list', { method: 'GET', headers });
+            if (r.ok) {
+                const list = await r.json();
+                (Array.isArray(list) ? list : list?.data || []).forEach(n => { if (n && !names.includes(n)) names.push(n); });
+                serverListLoaded = true;
+            }
+        } catch { }
     } catch (e) { console.error('[Theater] WB list error:', e); }
 
+    // 服务器暂时失败时保留上一次完整目录，避免可选项突然缩水；成功时以最新目录为准。
+    if (!serverListLoaded) previousNames.forEach(name => { if (name && !names.includes(name)) names.push(name); });
     // 已选中但没被发现的书也要进列表，不然没法取消勾选
     (settings.selectedWorldBooks || []).forEach(b => { if (b && !names.includes(b)) names.push(b); });
     wbBookNames = names;
@@ -6362,77 +6503,155 @@ function entryKey(e) {
 }
 
 // 重新加载所有勾选的世界书条目（多本合并，手动条目排最后）
-async function reloadWorldBooks({ silent = false } = {}) {
-    const books = settings.selectedWorldBooks || [];
-    const all = [], allStates = [];
-    if (!settings.worldBookStatesByBook) settings.worldBookStatesByBook = {};
-    if (!settings.worldBookKnownEntriesByBook) settings.worldBookKnownEntriesByBook = {};
-    let loadedBooks = 0;
-
+function reloadWorldBooks({ silent = false } = {}) {
+    const books = [...(settings.selectedWorldBooks || [])];
+    const readMode = settings.worldBookReadMode;
+    const cacheKey = worldBookCacheKey(books, readMode);
+    if (wbReloadInFlight?.cacheKey === cacheKey) return wbReloadInFlight.promise;
+    const requestId = ++wbReloadSequence;
+    const previousByBook = new Map();
+    let previousCacheBooks = new Set();
     try {
-        const ctx = SillyTavern.getContext();
-        const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
-        for (const name of books) {
-            try {
-                const resp = await fetch('/api/worldinfo/get', { method: 'POST', headers, body: JSON.stringify({ name }) });
-                if (!resp.ok) { if (!silent) toastr.warning(`世界书「${name}」读取失败 (${resp.status})`); continue; }
-                const data = await resp.json();
-                if (!data?.entries) { loadedBooks++; continue; }
-
-                const sourceEntries = Object.entries(data.entries)
-                    .filter(([, entry]) => entry.content)
-                    .map(([entryId, entry]) => {
-                        const source = { ...entry, uid: entry.uid ?? entryId, world: name };
-                        return {
-                            source,
-                            normalized: {
-                                book: name,
-                                uid: source.uid,
-                                name: source.comment || (Array.isArray(source.key) ? source.key.join(', ') : String(source.key || '')) || '未命名',
-                                content: source.content,
-                                disabled: !!source.disable,
-                                strategy: worldBookEntryStrategy(source),
-                                position: Number.isFinite(Number(source.position)) ? Number(source.position) : 0,
-                                depth: Math.max(0, Math.floor(Number(source.depth) || 0)),
-                                order: Number.isFinite(Number(source.order)) ? Number(source.order) : 100,
-                                role: normalizePromptRole(source.role),
-                                outletName: String(source.outletName || source.outlet || ''),
-                                raw: source,
-                            },
-                        };
-                    });
-                const entries = sourceEntries
-                    .filter(({ source }) => shouldReadWorldBookEntry(source, settings.worldBookReadMode))
-                    .map(({ normalized }) => normalized);
-
-                const remembered = rememberWorldBookEntryStates(
-                    sourceEntries.map(({ normalized }) => entryKey(normalized)),
-                    settings.worldBookKnownEntriesByBook[name],
-                    settings.worldBookStatesByBook[name],
-                );
-                settings.worldBookStatesByBook[name] = remembered.savedStates;
-                settings.worldBookKnownEntriesByBook[name] = remembered.knownKeys;
-
-                entries.forEach(e => {
-                    const k = entryKey(e);
-                    allStates.push(remembered.savedStates[k] !== false);
-                    all.push(e);
-                });
-                loadedBooks++;
-            } catch (e) {
-                console.error('[Theater] WB load error:', name, e);
-                if (!silent) toastr.error(`世界书「${name}」读取失败: ` + e.message);
-            }
+        const previousCache = JSON.parse(wbLoadedCacheKey || '{}');
+        if (String(previousCache.readMode || 'all') === String(readMode || 'all')) {
+            previousCacheBooks = new Set(Array.isArray(previousCache.books) ? previousCache.books : []);
         }
-    } catch (e) { console.error('[Theater] WB reload error:', e); }
+    } catch {}
+    wbEntries.forEach(entry => {
+        if (entry.manual || !entry.book) return;
+        if (!previousByBook.has(entry.book)) previousByBook.set(entry.book, []);
+        previousByBook.get(entry.book).push(entry);
+    });
+    const promise = (async () => {
+        const results = [];
+        let loadedBooks = 0;
+        try {
+            const ctx = SillyTavern.getContext();
+            const headers = ctx.getRequestHeaders ? ctx.getRequestHeaders() : { 'Content-Type': 'application/json' };
+            for (const name of books) {
+                try {
+                    const resp = await fetch('/api/worldinfo/get', { method: 'POST', headers, body: JSON.stringify({ name }) });
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const data = await resp.json();
+                    if (!data?.entries || typeof data.entries !== 'object' || Array.isArray(data.entries)) {
+                        throw new Error('世界书返回格式不完整');
+                    }
+                    const sourceEntries = Object.entries(data.entries)
+                        .filter(([, entry]) => entry.content)
+                        .map(([entryId, entry]) => {
+                            const source = { ...entry, uid: entry.uid ?? entryId, world: name };
+                            return {
+                                source,
+                                normalized: {
+                                    book: name,
+                                    uid: source.uid,
+                                    name: source.comment || (Array.isArray(source.key) ? source.key.join(', ') : String(source.key || '')) || '未命名',
+                                    content: source.content,
+                                    disabled: !!source.disable,
+                                    strategy: worldBookEntryStrategy(source),
+                                    position: Number.isFinite(Number(source.position)) ? Number(source.position) : 0,
+                                    depth: Math.max(0, Math.floor(Number(source.depth) || 0)),
+                                    order: Number.isFinite(Number(source.order)) ? Number(source.order) : 100,
+                                    role: normalizePromptRole(source.role),
+                                    outletName: String(source.outletName || source.outlet || ''),
+                                    raw: source,
+                                },
+                            };
+                        });
+                    results.push({
+                        name,
+                        sourceKeys: sourceEntries.map(({ normalized }) => entryKey(normalized)),
+                        entries: sourceEntries
+                            .filter(({ source }) => shouldReadWorldBookEntry(source, readMode))
+                            .map(({ normalized }) => normalized),
+                        available: true,
+                    });
+                    loadedBooks++;
+                } catch (error) {
+                    console.error('[Theater] WB load error:', name, error);
+                    const fallbackEntries = wbLoadedReadMode === String(readMode || 'all')
+                        ? [...(previousByBook.get(name) || [])]
+                        : [];
+                    results.push({
+                        name,
+                        sourceKeys: null,
+                        entries: fallbackEntries,
+                        available: fallbackEntries.length > 0 || previousCacheBooks.has(name),
+                    });
+                    if (!silent && requestId === wbReloadSequence) toastr.error(`世界书「${name}」读取失败: ` + error.message);
+                }
+            }
+        } catch (error) {
+            console.error('[Theater] WB reload error:', error);
+        }
 
-    wbEntries = all;
-    wbStates = allStates;
-    syncManualIntoWB();
-    save();
-    refreshWBUI();
-    scheduleTokenEstimate();
-    if (!silent && books.length) toastr.success(`已加载 ${loadedBooks} 本世界书 · ${all.length} 个条目`);
+        if (requestId !== wbReloadSequence || cacheKey !== worldBookCacheKey()) return false;
+
+        // 到提交这一刻才读取条目开关，避免慢请求把用户刚刚的勾选覆盖掉。
+        const currentStatesByBook = settings.worldBookStatesByBook || {};
+        const currentKnownEntriesByBook = settings.worldBookKnownEntriesByBook || {};
+        const committedStatesByBook = { ...currentStatesByBook };
+        const committedKnownEntriesByBook = { ...currentKnownEntriesByBook };
+        const all = [];
+        const allStates = [];
+        let complete = results.length === books.length;
+
+        results.forEach(result => {
+            if (!result.available) {
+                complete = false;
+                return;
+            }
+            if (Array.isArray(result.sourceKeys)) {
+                const remembered = rememberWorldBookEntryStates(
+                    result.sourceKeys,
+                    currentKnownEntriesByBook[result.name],
+                    currentStatesByBook[result.name],
+                );
+                committedStatesByBook[result.name] = remembered.savedStates;
+                committedKnownEntriesByBook[result.name] = remembered.knownKeys;
+            }
+            const latestBookStates = committedStatesByBook[result.name] || currentStatesByBook[result.name] || {};
+            result.entries.forEach(entry => {
+                all.push(entry);
+                allStates.push(latestBookStates[entryKey(entry)] !== false);
+            });
+        });
+
+        settings.worldBookStatesByBook = committedStatesByBook;
+        settings.worldBookKnownEntriesByBook = committedKnownEntriesByBook;
+        wbEntries = all;
+        wbStates = allStates;
+        wbLoadedCacheKey = complete ? cacheKey : '';
+        wbLoadedReadMode = String(readMode || 'all');
+        syncManualIntoWB();
+        save();
+        refreshWBUI();
+        scheduleTokenEstimate();
+        if (!silent && books.length && complete) toastr.success(`已加载 ${loadedBooks} 本世界书 · ${all.length} 个条目`);
+        return complete;
+    })();
+    wbReloadInFlight = { cacheKey, requestId, promise };
+    promise.then(() => {
+        if (wbReloadInFlight?.requestId === requestId) wbReloadInFlight = null;
+    }, () => {
+        if (wbReloadInFlight?.requestId === requestId) wbReloadInFlight = null;
+    });
+    return promise;
+}
+
+async function ensureWorldBooksCurrent({ silent = true } = {}) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const cacheKey = worldBookCacheKey();
+        const active = wbReloadInFlight?.cacheKey === cacheKey ? wbReloadInFlight.promise : null;
+        if (active) {
+            await active;
+        } else if (wbLoadedCacheKey !== cacheKey) {
+            await reloadWorldBooks({ silent });
+        }
+        if (cacheKey !== worldBookCacheKey()) continue;
+        if (wbLoadedCacheKey === cacheKey) return true;
+    }
+    throw new Error('当前选择的世界书读取失败，请检查世界书后重试');
 }
 
 // ---- 跟随角色卡 ----
@@ -6466,11 +6685,12 @@ async function applyCharBoundBooks({ announce = false } = {}) {
     settings.followedWorldBooks = synced.followedBooks;
     save();
     if (announce) toastr.info(books.length ? `已跟随当前角色卡的 ${books.length} 本世界书，手动勾选会保留` : '这张卡没有绑定世界书，已撤下上一张卡自动带入的书');
+    books.forEach(b => { if (!wbBookNames.includes(b)) wbBookNames.push(b); });
     if ($('#theater-wb-books').length) {
-        books.forEach(b => { if (!wbBookNames.includes(b)) wbBookNames.push(b); });
         $('#theater-wb-books').html(renderWBTree());
-        await reloadWorldBooks({ silent: true });
     }
+    // 即使弹窗关闭也刷新缓存，避免自动生成沿用上一张角色卡的世界书。
+    await reloadWorldBooks({ silent: true });
 }
 
 // ============================================================
@@ -7146,6 +7366,7 @@ let lastGeneratedText = '';
 let currentOutputMode = 'html';
 let abortController = null;
 let isGenerating = false;      // 是否正在生成
+let isPreparingGeneration = false;
 let bgStreamText = '';         // 后台生成时保存的流式文本
 let bgError = '';              // 后台生成时的错误信息
 let continueContext = '';      // 续写时的前情内容
@@ -7174,6 +7395,16 @@ function prepareContinuationContext(value) {
     const containsHtml = /<(?:!doctype|\/?[a-z][^>]*)>/i.test(raw);
     const plainText = containsHtml ? htmlToPlainText(raw) : raw;
     return continuationContextWindow(plainText);
+}
+
+function generationPreparationKey(ctx = SillyTavern.getContext()) {
+    return JSON.stringify({
+        chatId: String(ctx?.chatId ?? ''),
+        characterId: String(ctx?.characterId ?? ''),
+        worldBooks: [...(settings.selectedWorldBooks || [])],
+        worldBookReadMode: String(settings.worldBookReadMode || 'all'),
+        presetName: String(settings.selectedPresetName || ''),
+    });
 }
 
 function resolveRenderSelection(forcePlainText = false) {
@@ -7257,6 +7488,7 @@ function buildGenerationContinuationRoundPayload({ foundation, instruction, ctx,
 
 async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, longFormPlan = false, loadPreset = true, evaluateWorldBook = true } = {}) {
     const ctx = SillyTavern.getContext();
+    const preparationKey = generationPreparationKey(ctx);
     const { chat = [] } = ctx;
     const identity = resolveGenerationIdentity(ctx);
     const { character, description, personality, scenario, creatorNotes, currentPersona, role, persona, name1, name2 } = identity;
@@ -7279,7 +7511,11 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
             ? '本次聊天前文读取条数设为 0，请只根据角色设定、世界书和用户指令生成小剧场。'
         : '本次不读取聊天前文，请只根据角色设定、世界书和用户指令生成小剧场。';
 
-    const selectedWBEntries = wbEntries.filter((_entry, index) => wbStates[index] !== false);
+    if (evaluateWorldBook) await ensureWorldBooksCurrent({ silent: true });
+    const selectedBookNames = new Set(settings.selectedWorldBooks || []);
+    const selectedWBEntries = wbEntries.filter((entry, index) =>
+        wbStates[index] !== false && (entry.manual || selectedBookNames.has(entry.book))
+    );
     let activeWorldInfoEntries = [...selectedWBEntries];
     let wbParts = selectedWBEntries.map(entry => entry.content);
     if (evaluateWorldBook && settings.worldBookReadMode === 'lights') {
@@ -7335,8 +7571,8 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         rules += '\n\n【同一稿件分段规则】本轮是同一篇小剧场正文的前半部分，不是独立成品。只输出正文并停在剧情发展途中；不要输出 HTML、标题、总结、结局或“未完待续”。';
     }
 
-    if (loadPreset && !cachedPresetEntries.length) await loadPresetEntries();
-    const selectedPresetPrompt = getSelectedPresetPrompt();
+    const presetSnapshot = loadPreset ? await ensureSelectedPresetLoaded() : currentPresetSnapshot();
+    const selectedPresetPrompt = presetSnapshot.prompt;
     const preset = selectedPresetPrompt || DEFAULT_SYSTEM_PROMPT;
     const addons = [
         settings.customStyleAddon?.trim() ? `【文风补充】\n${settings.customStyleAddon.trim()}` : '',
@@ -7364,7 +7600,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         fixed,
         instruction: `用户指令：${cleanInstruction}`,
     });
-    const selectedPresetEntries = getSelectedPresetEntries();
+    const selectedPresetEntries = presetSnapshot.selectedEntries;
     const presetEntriesForLayout = selectedPresetEntries.length
         ? selectedPresetEntries
         : [{ id: 'main', role: 'system', content: DEFAULT_SYSTEM_PROMPT }];
@@ -7383,19 +7619,22 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         { role: 'system', content: [rules, fixed].filter(Boolean).join('\n\n'), source: 'theater-rules', sourceId: 'final-rules' },
     ].filter(Boolean);
     const identitySlots = generationIdentitySlots(identity);
-    const presetName = settings.selectedPresetName || '内置默认预设';
+    const presetName = presetSnapshot.name || '内置默认预设';
     const messages = composePresetMessages({
         presetEntries: presetEntriesForLayout,
         slots: identitySlots,
         worldInfoEntries: activeWorldInfoEntries,
         chatMessages: structuredChatMessages,
         tailMessages,
-        squashSystemMessages: cachedPresetSquashSystemMessages,
+        squashSystemMessages: presetSnapshot.squashSystemMessages,
     });
+    if (preparationKey !== generationPreparationKey()) {
+        throw new Error('准备资料时角色、聊天或资料选择发生了变化，请重新点击生成');
+    }
     return {
         ...payload,
         messages,
-        postProcessing: cachedPresetPostProcessing,
+        postProcessing: presetSnapshot.postProcessing,
         presetName,
         isPlainTextRender,
         textTheme,
@@ -7407,8 +7646,8 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
             worldInfoEntries: freezeGenerationFoundationList(activeWorldInfoEntries),
             chatMessages: freezeGenerationFoundationList(structuredChatMessages),
             tailMessages: freezeGenerationFoundationList(foundationTailMessages),
-            squashSystemMessages: cachedPresetSquashSystemMessages,
-            postProcessing: cachedPresetPostProcessing,
+            squashSystemMessages: presetSnapshot.squashSystemMessages,
+            postProcessing: presetSnapshot.postProcessing,
             presetName,
             originalInstruction: cleanInstruction,
         }),
@@ -7902,7 +8141,7 @@ function getLongDreamGenerationController() {
 }
 
 async function resolveLongDreamRequestFoundation(dream) {
-    if (!cachedPresetEntries.length) await loadPresetEntries();
+    const presetSnapshot = await ensureSelectedPresetLoaded();
     const ctx = SillyTavern.getContext();
     const identity = resolveGenerationIdentity(ctx);
     const relation = dream?.inheritance?.worldLineRelation || LONG_DREAM_WORLD_LINE_RELATION.ISOLATED;
@@ -7910,8 +8149,8 @@ async function resolveLongDreamRequestFoundation(dream) {
         // 完全隔离的 AU 不沿用原作场景，但仍保留 Char 与 User 的人物身份和性格。
         includeScenario: relation !== LONG_DREAM_WORLD_LINE_RELATION.ISOLATED,
     });
-    const selectedPresetPrompt = getSelectedPresetPrompt();
-    const selectedPresetEntries = getSelectedPresetEntries();
+    const selectedPresetPrompt = presetSnapshot.prompt;
+    const selectedPresetEntries = presetSnapshot.selectedEntries;
     return {
         ctx,
         identitySlots,
@@ -7927,9 +8166,9 @@ async function resolveLongDreamRequestFoundation(dream) {
         presetEntries: selectedPresetEntries.length
             ? selectedPresetEntries
             : [{ id: 'main', role: 'system', content: DEFAULT_SYSTEM_PROMPT }],
-        presetName: settings.selectedPresetName || '内置默认预设',
-        postProcessing: cachedPresetPostProcessing,
-        squashSystemMessages: cachedPresetSquashSystemMessages,
+        presetName: presetSnapshot.name || '内置默认预设',
+        postProcessing: presetSnapshot.postProcessing,
+        squashSystemMessages: presetSnapshot.squashSystemMessages,
     };
 }
 
@@ -7988,7 +8227,7 @@ async function refreshLongDreamTokenEstimate() {
 const scheduleLongDreamTokenEstimate = debounce(refreshLongDreamTokenEstimate, 220);
 
 async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
-    if (isGenerating) {
+    if (isGenerating || isPreparingGeneration) {
         toastr.warning('普通小剧场正在生成，请完成或停止后再续写长梦');
         return;
     }
@@ -8029,7 +8268,21 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
     const instruction = String($instructionInput.length ? ($instructionInput.val() || '') : (composerDraft.instruction || ''));
     const targetChars = Math.max(500, Math.min(8000, Math.round(Number($targetInput.length ? $targetInput.val() : composerDraft.targetChars) || 3000)));
     setLongDreamComposerDraft(dream.id, { chapterTitle, title: chapterTitle, instruction, targetChars });
-    const foundation = await resolveLongDreamRequestFoundation(dream);
+    let foundation;
+    isPreparingGeneration = true;
+    try {
+        foundation = await resolveLongDreamRequestFoundation(dream);
+    } catch (error) {
+        console.error('[Theater] Long dream preparation failed:', error);
+        toastr.error(error?.message || '长梦生成资料读取失败，请稍后重试');
+        return;
+    } finally {
+        isPreparingGeneration = false;
+    }
+    if (String(activeLongDreamId) !== String(dream.id) || !longDreamCache.some(item => String(item.id) === String(dream.id))) {
+        toastr.info('准备资料期间切换了长梦，本次没有开始生成');
+        return;
+    }
     const selectedMemoryCount = selectRelevantLongDreamMemoryItems(dream, { instruction, maxItems: 30 }).length;
     const activeMemoryCount = longDreamActiveMemoryCount(dream);
     lastRequestContext = {
@@ -8320,7 +8573,7 @@ function extractMesContent(mes) {
 }
 
 async function generateTheater() {
-    if (isGenerating) { toastr.warning('正在生成中，请等待完成或点击停止'); return; }
+    if (isGenerating || isPreparingGeneration) { toastr.warning('正在准备或生成中，请稍等'); return; }
     if (longDreamGenerationController?.active) { toastr.warning('长梦章节正在生成，请完成或停止后再生成普通小剧场'); return; }
     if (longDreamChapterEditController) { toastr.warning('长梦正式章节正在重新排版，请等待完成'); return; }
     if (longDreamCanonSuggestionState.controller) { toastr.warning('AI 定梦建议正在整理，请等待完成或先停止'); return; }
@@ -8339,12 +8592,17 @@ async function generateTheater() {
     const sourceTags = continueContext
         ? continuationSourceTags
         : (typedInstruction && typedInstruction === activeInstructionContent ? activeInstructionTags : []);
-    await runGeneration(instruction, false, sourceTags);
+    try {
+        await runGeneration(instruction, false, sourceTags);
+    } catch (error) {
+        console.error('[Theater] Generation preparation failed:', error);
+        toastr.error(error?.message || '生成资料读取失败，请稍后重试');
+    }
 }
 
 // 生成核心。isAuto = 自动模式触发（弹窗可能根本没开，所有 UI 操作都已有 popupAlive 保护）
 async function runGeneration(instruction, isAuto, sourceTags = []) {
-    if (isGenerating) return;
+    if (isGenerating || isPreparingGeneration) return false;
     const contCtx = isAuto ? '' : continueContext;  // 自动生成永远是全新的，不掺手动的续写上下文
     const plannedTargetWordCount = resolveTargetWordCount(instruction, {
         manualEnabled: settings.manualTargetEnabled,
@@ -8357,11 +8615,17 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     const separateRenderMode = stagedRenderMode || adaptiveRenderMode;
     const stagedMultiRoundMode = stagedRenderMode && settings.autoContinue && configuredMaxRounds >= 2;
     const longFormMode = stagedMultiRoundMode && isLongFormTarget(plannedTargetWordCount);
-    const payload = await assembleGenerationPayload(instruction, {
-        continuationText: contCtx,
-        forcePlainText: separateRenderMode,
-        longFormPlan: stagedMultiRoundMode,
-    });
+    isPreparingGeneration = true;
+    let payload;
+    try {
+        payload = await assembleGenerationPayload(instruction, {
+            continuationText: contCtx,
+            forcePlainText: separateRenderMode,
+            longFormPlan: stagedMultiRoundMode,
+        });
+    } finally {
+        isPreparingGeneration = false;
+    }
     lastRequestContext = {
         ...payload.diagnosticContext,
         kind: isAuto ? '自动小剧场' : (contCtx ? '普通续写' : '普通小剧场'),
@@ -8699,6 +8963,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         abortController = null;
         currentGenerationJob = null;
     }
+    return true;
 }
 
 // ============================================================
@@ -8730,7 +8995,7 @@ function pickAutoInstruction() {
 // 删楼把楼数删到锚点以下时，锚点自动下移到当前楼数——
 // 既不会"永远凑不够"，也不会"一删楼就连环触发"。swipe 不加楼数，天然不计。
 async function autoTick() {
-    if (!settings.autoMode || isGenerating || longDreamGenerationController?.active || longDreamChapterEditController || longDreamCanonSuggestionState.controller) return;
+    if (!settings.autoMode || isGenerating || isPreparingGeneration || longDreamGenerationController?.active || longDreamChapterEditController || longDreamCanonSuggestionState.controller) return;
     const ctx = SillyTavern.getContext();
     const chatId = String(ctx.chatId ?? '');
     if (!chatId || chatId === 'undefined' || chatId === 'null') return;
@@ -8785,11 +9050,21 @@ async function autoTick() {
     runtimeLog('info', '自动模式触发', { chat: 'current', ai_floors: floors, interval: Math.max(1, Number(settings.autoInterval) || 10) });
     console.log(`[Theater] 自动生成触发：${chatId} @ ${floors} 层 AI 楼`);
 
-    // 弹窗从没打开过的话世界书条目还没加载，先静默读一遍
-    if (!wbEntries.length && (settings.selectedWorldBooks || []).length) {
-        try { await reloadWorldBooks({ silent: true }); } catch { }
+    // 弹窗未打开或切过角色卡时，也要确认缓存属于当前书单与读取模式。
+    try {
+        const started = await runGeneration(instruction, true, autoInstruction.tags);
+        if (started === false && settings.autoAnchors[chatId] === floors) {
+            settings.autoAnchors[chatId] = anchor;
+            save();
+        }
+    } catch (error) {
+        if (settings.autoAnchors[chatId] === floors) {
+            settings.autoAnchors[chatId] = anchor;
+            save();
+        }
+        console.warn('[Theater] Auto generation preparation failed:', error);
+        toastr.warning(`自动模式未发起请求：${error?.message || '生成资料读取失败'}`);
     }
-    await runGeneration(instruction, true, autoInstruction.tags);
 }
 
 // 悬浮球小红点：自动生成完成后亮起，打开面板就熄灭
@@ -8999,7 +9274,7 @@ function buildDiagnostics() {
 
     const rows = [
         diagnosticLine('ok', '诊断范围', '这份报告只检查小剧场插件，不检查酒馆正文生成链路'),
-        diagnosticLine('ok', '插件版本', `本地 v${VERSION}${latestRemoteVersion ? `，远端 v${latestRemoteVersion}` : '，还没有拿到远端版本'}`),
+        diagnosticLine('ok', '插件版本', `本地 v${VERSION}${latestRemoteVersion ? `，正式版 v${latestRemoteVersion}` : ''}${installedBranchStatusKnown && installedBranchName ? `，当前分支 ${installedBranchName}${installedBranchHasUpdate ? ' 有新更新' : ' 已是最新'}` : '，还没有拿到分支状态'}`),
         diagnosticLine('ok', 'API 模式', apiMode === 'main' ? '酒馆主 API（实验）' : '独立 API'),
         diagnosticLine('ok', '独立 API 协议', apiMode === 'main' ? '不适用' : `${settings.apiProtocol || 'auto'}（实际：${resolveProtocol(settings.apiProtocol, apiUrl)}）`),
         diagnosticLine('ok', '最大输出 Token', apiMode === 'main' ? '遵循酒馆当前设置' : String(normalizeMaxTokens(settings.maxOutputTokens))),

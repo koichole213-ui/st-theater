@@ -54,6 +54,55 @@ export async function fetchLatestRemoteVersion() {
     });
 }
 
+export async function fetchInstalledExtensionStatus({
+    extensionName = 'st-theater',
+    headers = { 'Content-Type': 'application/json' },
+    fetchImpl = fetch,
+    timeoutMs = 7000,
+} = {}) {
+    const controller = new AbortController();
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+            controller.abort();
+            reject(new Error(`installed branch check timeout ${timeoutMs}ms`));
+        }, timeoutMs);
+    });
+    const check = (async () => {
+        const request = global => fetchImpl('/api/extensions/version', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ extensionName, global }),
+            signal: controller.signal,
+        });
+
+        let response = await request(false);
+        if (!response.ok && (response.status === 400 || response.status === 404)) {
+            response = await request(true);
+        }
+        if (!response.ok) {
+            let detail = '';
+            try { detail = await response.text(); } catch {}
+            throw new Error(`installed branch check failed (${response.status || 0})${detail ? `: ${detail.slice(0, 160)}` : ''}`);
+        }
+        const data = await response.json();
+        if (!data?.currentBranchName || !data?.currentCommitHash || typeof data?.isUpToDate !== 'boolean') {
+            throw new Error('installed branch check returned invalid data');
+        }
+        return {
+            branch: String(data.currentBranchName),
+            commit: String(data.currentCommitHash),
+            isUpToDate: data.isUpToDate,
+        };
+    })();
+
+    try {
+        return await Promise.race([check, timeout]);
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
 export function formatVersionCheckError(error) {
     return Array.isArray(error?.errors)
         ? error.errors.map(er => er?.message || String(er)).join(' | ')

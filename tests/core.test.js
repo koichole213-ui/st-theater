@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection, validateAdaptiveRenderHtml } from '../adaptive-render.js';
@@ -39,6 +40,7 @@ import { createRequestTrace, formatRequestTrace } from '../request-trace.js';
 import { migrateLegacyPresetEntryStates, normalizePresetEntryStatesByPreset, presetEntryStateStorageKey, presetEntryStatesForPreset } from '../preset-entry-states.js';
 import { TAG_UNCATEGORIZED, matchesTagFilter, migrateLegacyTagSettings } from '../tag-system.js';
 import { waitForPopupElements } from '../popup-lifecycle.js';
+import { fetchInstalledExtensionStatus } from '../version-check.js';
 
 test('弹窗会等待预设和世界书容器真正挂载后再继续初始化', async () => {
     let elapsed = 0;
@@ -132,6 +134,221 @@ test('主弹窗事件命名空间不互相覆盖，历史操作保持完整绑�
         '#theater-hist-delete-selected',
     ];
     requiredHistorySelectors.forEach(selector => assert.ok(bindSource.includes(`'${selector}'`), `${selector} 没有绑定`));
+});
+
+test('插件按当前安装分支检查更新，并兼容全局安装位置', async () => {
+    const calls = [];
+    const status = await fetchInstalledExtensionStatus({
+        headers: { 'X-Test': 'yes' },
+        fetchImpl: async (_url, options) => {
+            calls.push(JSON.parse(options.body));
+            if (calls.length === 1) return { ok: false, status: 404, text: async () => 'missing' };
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ currentBranchName: 'codex/long-dream-preview', currentCommitHash: 'abc', isUpToDate: false }),
+            };
+        },
+    });
+    assert.deepEqual(calls, [
+        { extensionName: 'st-theater', global: false },
+        { extensionName: 'st-theater', global: true },
+    ]);
+    assert.deepEqual(status, { branch: 'codex/long-dream-preview', commit: 'abc', isUpToDate: false });
+});
+
+test('当前分支检查会拒绝坏响应，并在酒馆接口卡住时及时回退', async () => {
+    await assert.rejects(() => fetchInstalledExtensionStatus({
+        fetchImpl: async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({ currentBranchName: 'preview', currentCommitHash: 'abc' }),
+        }),
+    }), /invalid data/);
+    await assert.rejects(() => fetchInstalledExtensionStatus({
+        timeoutMs: 15,
+        fetchImpl: async () => await new Promise(() => {}),
+    }), /timeout 15ms/);
+});
+
+test('预设、世界书缓存只接受当前选择，启动后立即后台检查更新', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const presetLoader = source.match(/async function loadPresetEntries[\s\S]*?async function ensureSelectedPresetLoaded/)?.[0] || '';
+    const worldBookLoader = source.match(/function reloadWorldBooks[\s\S]*?async function ensureWorldBooksCurrent/)?.[0] || '';
+    const foundation = source.match(/async function assembleGenerationPayload[\s\S]*?async function refreshTokenEstimate/)?.[0] || '';
+    const updateCheck = source.match(/async function checkRemoteVersion[\s\S]*?function hasRemoteUpdate/)?.[0] || '';
+
+    assert.match(presetLoader, /const requestId = \+\+presetLoadSequence/);
+    assert.match(presetLoader, /requestId !== presetLoadSequence \|\| String\(settings\.selectedPresetName \|\| ''\) !== sel/);
+    assert.match(source, /loadPreset \? await ensureSelectedPresetLoaded\(\) : currentPresetSnapshot\(\)/);
+    assert.match(source, /async function resolveLongDreamRequestFoundation[\s\S]*?const presetSnapshot = await ensureSelectedPresetLoaded\(\)/);
+
+    assert.match(worldBookLoader, /const books = \[\.\.\.\(settings\.selectedWorldBooks \|\| \[\]\)\]/);
+    assert.match(worldBookLoader, /const requestId = \+\+wbReloadSequence/);
+    assert.match(worldBookLoader, /requestId !== wbReloadSequence \|\| cacheKey !== worldBookCacheKey\(\)/);
+    assert.match(foundation, /await ensureWorldBooksCurrent\(\{ silent: true \}\)/);
+    assert.match(foundation, /entry\.manual \|\| selectedBookNames\.has\(entry\.book\)/);
+    assert.match(source, /即使弹窗关闭也刷新缓存[\s\S]*?await reloadWorldBooks\(\{ silent: true \}\)/);
+    assert.doesNotMatch(source, /if \(names\.length < 2\) \{\s*try \{\s*const r = await fetch\('\/api\/worldinfo\/list'/);
+
+    assert.match(source, /void checkRemoteVersion\(\)/);
+    assert.doesNotMatch(source, /setTimeout\(\(\) => \{ checkRemoteVersion\(\); \}, 3000\)/);
+    assert.match(updateCheck, /if \(updateCheckPromise\) return updateCheckPromise/);
+    assert.match(updateCheck, /fetchInstalledExtensionStatus\(\{ headers \}\)/);
+    assert.match(updateCheck, /installedBranchCheckPending = true/);
+    assert.match(source, /if \(installedBranchCheckPending && !installedBranchStatusKnown\) return false/);
+    assert.match(source, /if \(installedBranchStatusKnown\) return installedBranchHasUpdate/);
+    assert.match(source, /\.theater-update-notice[\s\S]*?\.prop\('hidden', !hasUpdate\)/);
+    assert.match(source, /let isPreparingGeneration = false/);
+    assert.match(source, /if \(preparationKey !== generationPreparationKey\(\)\)/);
+    assert.match(source, /async function generateNextLongDreamChapter[\s\S]*?isPreparingGeneration = true;[\s\S]*?Long dream preparation failed:[\s\S]*?finally \{\s*isPreparingGeneration = false/);
+    assert.match(source, /catch \(error\) \{\s*if \(settings\.autoAnchors\[chatId\] === floors\)[\s\S]*?Auto generation preparation failed:/);
+});
+
+test('较慢的旧预设请求不能覆盖新选择或重新填回已清空的选择', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const start = source.indexOf('function setPresetEntryControlsEnabled');
+    const functions = source.slice(start, source.indexOf('function renderPresetEntries', start));
+    const settings = { selectedPresetName: 'A', presetEntryStatesByPreset: {} };
+    const pending = new Map();
+    const ui = { html() { return this; }, hide() { return this; }, show() { return this; }, toggleClass() { return this; }, attr() { return this; } };
+    const harness = runInNewContext(`
+        let cachedPresetEntries = [], cachedPresetPostProcessing = '', cachedPresetSquashSystemMessages = false;
+        let cachedPresetName = '', cachedPresetLoadState = 'default', presetLoadSequence = 0, presetLoadInFlight = null;
+        ${functions}
+        ({ loadPresetEntries, ensureSelectedPresetLoaded, state: () => ({ name: cachedPresetName, entries: cachedPresetEntries, post: cachedPresetPostProcessing, squash: cachedPresetSquashSystemMessages }) });
+    `, {
+        settings, $: () => ui, toastr: { warning() {} }, console: { log() {} },
+        fetchPresetByName: name => new Promise(resolve => pending.set(name, resolve)),
+        extractPromptsFromData: data => data.entries,
+        noToolsPostProcessingMode: value => value,
+        presetEntryStatesForPreset, hasOwn: (object, key) => Object.prototype.hasOwnProperty.call(object, key),
+        renderPresetEntries: () => '', scheduleTokenEstimate() {}, esc: value => value,
+    });
+    const loadA = harness.loadPresetEntries('A');
+    settings.selectedPresetName = 'B';
+    const loadB = harness.loadPresetEntries('B');
+    pending.get('B')({ entries: [{ id: 'B', content: 'B', enabledInST: true }], custom_prompt_post_processing: 'B-mode', squash_system_messages: true });
+    await loadB;
+    pending.get('A')({ entries: [{ id: 'A', content: 'A', enabledInST: true }], custom_prompt_post_processing: 'A-mode' });
+    await loadA;
+    assert.deepEqual(JSON.parse(JSON.stringify(harness.state())), {
+        name: 'B', entries: [{ id: 'B', content: 'B', enabledInST: true }], post: 'B-mode', squash: true,
+    });
+    settings.selectedPresetName = 'A';
+    const lateA = harness.loadPresetEntries('A');
+    settings.selectedPresetName = '';
+    await harness.loadPresetEntries('');
+    pending.get('A')({ entries: [{ id: 'A', content: 'A', enabledInST: true }] });
+    await lateA;
+    assert.equal(harness.state().name, '');
+    assert.equal(harness.state().entries.length, 0);
+
+    settings.selectedPresetName = 'C';
+    const ensureC1 = harness.ensureSelectedPresetLoaded();
+    const ensureC2 = harness.ensureSelectedPresetLoaded();
+    pending.get('C')({ entries: [{ id: 'C', content: 'C', enabledInST: true }] });
+    const [snapshotC1, snapshotC2] = await Promise.all([ensureC1, ensureC2]);
+    assert.equal(snapshotC1.status, 'ready');
+    assert.equal(snapshotC2.status, 'ready');
+    assert.equal(snapshotC1.prompt, 'C');
+
+    settings.selectedPresetName = 'D';
+    const ensureD = harness.ensureSelectedPresetLoaded();
+    pending.get('D')(null);
+    await assert.rejects(ensureD, /预设「D」读取失败/);
+});
+
+test('世界书旧请求不能覆盖新书单，失败回退不会跨读取模式复用缓存', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const keyStart = source.indexOf('function worldBookCacheKey');
+    const keyFunctions = source.slice(keyStart, source.indexOf('// 每本书一个节点', keyStart));
+    const loadStart = source.indexOf('function reloadWorldBooks');
+    const loadFunctions = source.slice(loadStart, source.indexOf('// ---- 跟随角色卡 ----', loadStart));
+    const settings = { selectedWorldBooks: ['A'], worldBookReadMode: 'all', worldBookStatesByBook: {}, worldBookKnownEntriesByBook: {} };
+    const pending = new Map();
+    const harness = runInNewContext(`
+        let wbEntries = [], wbStates = [], wbLoadedCacheKey = '', wbLoadedReadMode = '', wbReloadSequence = 0, wbReloadInFlight = null;
+        ${keyFunctions}
+        ${loadFunctions}
+        ({ reloadWorldBooks, ensureWorldBooksCurrent, state: () => ({ books: wbEntries.map(entry => entry.book), states: [...wbStates], loadedKey: wbLoadedCacheKey }) });
+    `, {
+        settings, SillyTavern: { getContext: () => ({}) },
+        fetch: (_url, options) => new Promise(resolve => pending.set(JSON.parse(options.body).name, resolve)),
+        shouldReadWorldBookEntry, rememberWorldBookEntryStates, worldBookEntryStrategy,
+        normalizePromptRole: role => role || 'system', entryKey: entry => String(entry.uid),
+        console: { error() {} }, toastr: { error() {}, success() {} },
+        syncManualIntoWB() {}, save() {}, refreshWBUI() {}, scheduleTokenEstimate() {},
+    });
+    const response = book => ({ ok: true, json: async () => ({ entries: { 1: { uid: 1, content: book } } }) });
+    const loadA = harness.reloadWorldBooks();
+    settings.selectedWorldBooks = ['B'];
+    const loadB = harness.reloadWorldBooks();
+    pending.get('B')(response('B'));
+    await loadB;
+    pending.get('A')(response('A'));
+    await loadA;
+    assert.deepEqual(Array.from(harness.state().books), ['B']);
+
+    settings.selectedWorldBooks = ['C'];
+    const ensureC = harness.ensureWorldBooksCurrent();
+    settings.selectedWorldBooks = ['D'];
+    const loadD = harness.reloadWorldBooks();
+    pending.get('D')(response('D'));
+    await loadD;
+    pending.get('C')(response('C'));
+    await ensureC;
+    assert.deepEqual(Array.from(harness.state().books), ['D']);
+
+    const failedSameMode = harness.reloadWorldBooks();
+    pending.get('D')({ ok: false, status: 500 });
+    await failedSameMode;
+    assert.deepEqual(Array.from(harness.state().books), ['D']);
+    settings.worldBookReadMode = 'lights';
+    const failedNewMode = harness.reloadWorldBooks();
+    pending.get('D')({ ok: false, status: 500 });
+    await failedNewMode;
+    assert.equal(harness.state().books.length, 0);
+    assert.equal(harness.state().loadedKey, '');
+
+    settings.selectedWorldBooks = ['E'];
+    const malformed = harness.reloadWorldBooks();
+    pending.get('E')({ ok: true, status: 200, json: async () => ({}) });
+    assert.equal(await malformed, false);
+    assert.equal(harness.state().loadedKey, '');
+});
+
+test('世界书慢读取提交时保留用户刚修改的条目开关', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const keyStart = source.indexOf('function worldBookCacheKey');
+    const keyFunctions = source.slice(keyStart, source.indexOf('// 每本书一个节点', keyStart));
+    const loadStart = source.indexOf('function reloadWorldBooks');
+    const loadFunctions = source.slice(loadStart, source.indexOf('// ---- 跟随角色卡 ----', loadStart));
+    const settings = { selectedWorldBooks: ['A', 'B'], worldBookReadMode: 'all', worldBookStatesByBook: {}, worldBookKnownEntriesByBook: {} };
+    const pending = new Map();
+    const harness = runInNewContext(`
+        let wbEntries = [], wbStates = [], wbLoadedCacheKey = '', wbLoadedReadMode = '', wbReloadSequence = 0, wbReloadInFlight = null;
+        ${keyFunctions}
+        ${loadFunctions}
+        ({ reloadWorldBooks, state: () => ({ books: wbEntries.map(entry => entry.book), states: [...wbStates] }) });
+    `, {
+        settings, SillyTavern: { getContext: () => ({}) },
+        fetch: (_url, options) => new Promise(resolve => pending.set(JSON.parse(options.body).name, resolve)),
+        shouldReadWorldBookEntry, rememberWorldBookEntryStates, worldBookEntryStrategy,
+        normalizePromptRole: role => role || 'system', entryKey: entry => String(entry.uid),
+        console: { error() {} }, toastr: { error() {}, success() {} },
+        syncManualIntoWB() {}, save() {}, refreshWBUI() {}, scheduleTokenEstimate() {},
+    });
+    const response = book => ({ ok: true, json: async () => ({ entries: { 1: { uid: 1, content: book } } }) });
+    const loading = harness.reloadWorldBooks();
+    pending.get('A')(response('A'));
+    while (!pending.has('B')) await new Promise(resolve => setImmediate(resolve));
+    settings.worldBookStatesByBook.A = { 1: false };
+    pending.get('B')(response('B'));
+    await loading;
+    assert.deepEqual(Array.from(harness.state().books), ['A', 'B']);
+    assert.deepEqual(Array.from(harness.state().states), [false, true]);
+    assert.equal(settings.worldBookStatesByBook.A['1'], false);
 });
 
 test('每个酒馆预设会分别记住自己的条目勾选状态', () => {

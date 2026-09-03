@@ -1964,6 +1964,11 @@
     opacity: .45;
     pointer-events: none;
 }
+.theater-wb-action-link.disabled {
+    opacity: .45;
+    cursor: not-allowed;
+    pointer-events: none;
+}
 .theater-btn.generate {
     flex: 1;
     justify-content: center;
@@ -4412,6 +4417,10 @@ body.theater-reader-open {
     color: var(--t-fg);
     font-size: var(--t-text-sm);
     font-weight: 600;
+}
+
+.theater-update-notice[hidden] {
+    display: none;
 }
 
 .theater-update-notice i {
