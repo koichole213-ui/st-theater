@@ -2614,7 +2614,7 @@ body dialog.popup:has(.theater-compact-popup) :is(.popup-controls, .popup-button
 .theater-tag-create-row .theater-btn {
     min-width: 76px;
     min-height: 38px;
-    border-radius: var(--t-radius-sm);
+    border-radius: var(--t-radius-md);
 }
 .theater-tag-create-box > small { color: var(--t-fg-mute); font-size: var(--t-text-xs); }
 .theater-bulk-tag-mode { margin-bottom: var(--t-space-3); }
@@ -4379,7 +4379,7 @@ body.theater-reader-open {
     min-width: 0;
     min-height: 38px;
     padding: 6px var(--t-space-2);
-    border-radius: var(--t-radius-sm);
+    border-radius: var(--t-radius-md);
     font-size: var(--t-text-xs);
     touch-action: manipulation;
 }
@@ -4498,7 +4498,7 @@ body.theater-reader-open {
     cursor: pointer;
     color: var(--t-fg-soft);
     padding: 5px 3px;
-    border-radius: 6px;
+    border-radius: var(--t-radius-md);
     border: 1px solid transparent;
     background: var(--t-surface-2);
     touch-action: manipulation;
@@ -4962,7 +4962,7 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     color: #FFF8EE !important;
     min-height: 38px !important;
     border: 1px solid transparent !important;
-    border-radius: 8px !important;
+    border-radius: var(--t-radius-md, 12px) !important;
     padding: 7px 18px !important;
     font-weight: 600 !important;
     letter-spacing: .4px !important;
@@ -4982,7 +4982,7 @@ body dialog.popup:has(.theater-popup) .popup-button-close {
     width: auto !important;
     min-width: 112px !important;
     min-height: 38px !important;
-    border-radius: 8px !important;
+    border-radius: var(--t-radius-md, 12px) !important;
     padding: 7px 18px !important;
 }
 body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-ok:hover,

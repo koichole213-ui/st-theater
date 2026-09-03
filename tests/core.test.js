@@ -177,7 +177,8 @@ test('历史卡片按标题标签、时间、操作三层排列，并提供即�
     assert.match(styles, /\.theater-history-top-bar \{[\s\S]*?grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
     assert.match(styles, /\.theater-history-top-bar \.theater-label \{[\s\S]*?text-align: left !important/);
     assert.match(styles, /\.theater-history-actions \{[\s\S]*?grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
-    assert.match(styles, /\.theater-history-actions > button \{[\s\S]*?border-radius: 6px/);
+    assert.match(styles, /\.theater-history-top-bar > \.theater-btn \{[\s\S]*?border-radius: var\(--t-radius-md\)/);
+    assert.match(styles, /\.theater-history-actions > button \{[\s\S]*?border-radius: var\(--t-radius-md\)/);
     assert.match(renderer, /theater-history-export[^>]*title="导出 HTML"[\s\S]*?<span>导出<\/span>/);
     assert.match(styles, /\.theater-history-title-row \{[\s\S]*?flex-wrap: nowrap/);
     assert.match(styles, /\.theater-history-title \{[\s\S]*?text-overflow: ellipsis[\s\S]*?white-space: nowrap/);
@@ -2512,7 +2513,7 @@ test('生成结果使用可关闭的页边书签，并保留安全退出编辑�
     assert.match(styles, /data-skin="custom"\] \.theater-result-actions[\s\S]*?Canvas/);
 });
 
-test('手机端主弹窗铺满可用屏幕，保留扁平关闭键并让内容独立滚动', () => {
+test('手机端主弹窗铺满可用屏幕，保留紧凑圆角关闭键并让内容独立滚动', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const tabHandler = source.match(/\/\/ Tabs[\s\S]*?\/\/ ---- Generate ----/)?.[0] || '';
@@ -2535,7 +2536,7 @@ test('手机端主弹窗铺满可用屏幕，保留扁平关闭键并让内容�
     assert.match(mobileShell, /:is\(\.popup-controls, \.popup-buttons\)[\s\S]*?flex:\s*0 0 auto !important/);
     assert.match(mobileShell, /:is\(\.popup-controls, \.popup-buttons\) \{\s*min-height:\s*0 !important;\s*margin:\s*0 !important;\s*padding:\s*4px 10px !important;/);
     assert.match(mobileShell, /:is\(\.popup-button-close, \.popup-button-ok, \.popup-button-cancel\)[\s\S]*?min-height:\s*38px !important/);
-    assert.match(styles, /\.popup-button-close[\s\S]*?min-width:\s*112px !important[\s\S]*?border-radius:\s*8px !important/);
+    assert.match(styles, /\.popup-button-close[\s\S]*?min-width:\s*112px !important[\s\S]*?border-radius:\s*var\(--t-radius-md, 12px\) !important/);
     assert.match(mobileShell, /#theater-instruction[\s\S]*?min-height:\s*120px/);
     assert.match(mobileShell, /#theater-dream-next-instruction[\s\S]*?min-height:\s*183px/);
     assert.doesNotMatch(styles, /max-width:\s*96vw !important/);
