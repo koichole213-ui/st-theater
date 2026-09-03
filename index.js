@@ -2135,7 +2135,7 @@ function historyItemHTML(h) {
         <div class="theater-history-actions">
             <button type="button" class="theater-history-view" data-id="${h.id}"><i class="fa-solid fa-eye"></i><span>查看</span></button>
             <button type="button" class="theater-history-continue" data-id="${h.id}"><i class="fa-solid fa-forward"></i><span>续写</span></button>
-            <button type="button" class="theater-history-export" data-id="${h.id}"><i class="fa-solid fa-download"></i><span>导出 HTML</span></button>
+            <button type="button" class="theater-history-export" data-id="${h.id}" title="导出 HTML"><i class="fa-solid fa-download"></i><span>导出</span></button>
             <button type="button" class="theater-history-tags-edit" data-id="${h.id}"><i class="fa-solid fa-tags"></i><span>标签</span></button>
             <button type="button" class="theater-history-delete" data-id="${h.id}"><i class="fa-solid fa-trash"></i><span>删除</span></button>
         </div>
@@ -4142,7 +4142,7 @@ async function openTheaterPopup() {
         ? 'long-dream'
         : normalizeTheaterTab(settings.lastTheaterTab);
     const { Popup, POPUP_TYPE } = SillyTavern.getContext();
-    const popup = new Popup(buildPopupHTML(initialTab), POPUP_TYPE.TEXT, '', { wide: true, okButton: 'Close', allowVerticalScrolling: true });
+    const popup = new Popup(buildPopupHTML(initialTab), POPUP_TYPE.TEXT, '', { wide: true, okButton: '关闭', allowVerticalScrolling: true });
     const session = {};
     activeTheaterPopupSession = session;
     let closed = false;
@@ -5869,24 +5869,9 @@ function bindEvents() {
             autoScrollFrame: null,
         };
         histSelectionGesture.timer = setTimeout(activateHistorySelectionGesture, 420);
+        // 只在卡片空白处开始一次长按候选时接入触摸移动；按钮点击不再经过整页阻塞监听。
+        attachHistoryTouchMoveHandler();
     });
-    $d.off('touchmove.thhistgesture');
-    detachHistoryTouchMoveHandler();
-    histTouchMoveHandler = function (event) {
-        const gesture = histSelectionGesture;
-        if (!gesture || typeof gesture.pointerId !== 'string' || !gesture.pointerId.startsWith('touch:')) return;
-        const identifier = Number(gesture.pointerId.slice(6));
-        const touch = Array.from(event.touches || []).find(item => item.identifier === identifier);
-        if (!touch) return;
-        if (!gesture.active) {
-            if (Math.hypot(touch.clientX - gesture.startX, touch.clientY - gesture.startY) > 10) resetHistorySelectionGesture();
-            return;
-        }
-        event.preventDefault();
-        applyHistorySelectionGestureAt(touch.clientX, touch.clientY);
-        updateHistorySelectionAutoScroll(touch.clientX, touch.clientY);
-    };
-    document.addEventListener('touchmove', histTouchMoveHandler, { passive: false });
     $d.off('touchend.thhistgesture touchcancel.thhistgesture').on('touchend.thhistgesture touchcancel.thhistgesture', function (event) {
         const gesture = histSelectionGesture;
         if (!gesture || typeof gesture.pointerId !== 'string' || !gesture.pointerId.startsWith('touch:')) return;
@@ -6365,11 +6350,31 @@ function detachHistoryTouchMoveHandler() {
     histTouchMoveHandler = null;
 }
 
+function attachHistoryTouchMoveHandler() {
+    detachHistoryTouchMoveHandler();
+    histTouchMoveHandler = function (event) {
+        const gesture = histSelectionGesture;
+        if (!gesture || typeof gesture.pointerId !== 'string' || !gesture.pointerId.startsWith('touch:')) return;
+        const identifier = Number(gesture.pointerId.slice(6));
+        const touch = Array.from(event.touches || []).find(item => item.identifier === identifier);
+        if (!touch) return;
+        if (!gesture.active) {
+            if (Math.hypot(touch.clientX - gesture.startX, touch.clientY - gesture.startY) > 10) resetHistorySelectionGesture();
+            return;
+        }
+        event.preventDefault();
+        applyHistorySelectionGestureAt(touch.clientX, touch.clientY);
+        updateHistorySelectionAutoScroll(touch.clientX, touch.clientY);
+    };
+    document.addEventListener('touchmove', histTouchMoveHandler, { passive: false });
+}
+
 function resetHistorySelectionGesture() {
     if (histSelectionGesture?.timer) clearTimeout(histSelectionGesture.timer);
     if (histSelectionGesture?.autoScrollFrame) cancelAnimationFrame(histSelectionGesture.autoScrollFrame);
     $('.theater-history-item.is-selection-dragging').removeClass('is-selection-dragging');
     histSelectionGesture = null;
+    detachHistoryTouchMoveHandler();
 }
 
 function activateHistorySelectionGesture() {
@@ -7224,25 +7229,57 @@ async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已
     const known = knownInstructionTags();
     const current = normalizeTagFilter(selected, known);
     const rows = known.map(tag => `<label class="theater-tag-choice"><input type="checkbox" value="${esc(tag)}" ${current.includes(tag) ? 'checked' : ''}><span><i class="fa-solid fa-tag"></i><b>${esc(tag)}</b></span></label>`).join('');
-    const emptyHint = known.length ? '' : '<p class="theater-empty">还没有已有标签，可以在下方直接新建。</p>';
-    const html = `<div class="theater-popup" data-skin="${settings.skinMode || 'default'}">
-        <div class="theater-popup-header"><p class="theater-title">${esc(title)}</p><p class="theater-subtitle">${esc(subtitle)}</p></div>
-        <div class="theater-section">
+    const emptyHint = known.length ? '' : '<p class="theater-empty theater-tag-choice-empty">还没有标签，可以在下方直接添加。</p>';
+    const html = `<div class="theater-popup theater-compact-popup" data-skin="${settings.skinMode || 'default'}">
+        <div class="theater-popup-header"><p class="theater-title">${esc(title)}</p></div>
+        <div class="theater-section theater-compact-tag-body">
             ${templateName === null ? '' : `<div class="theater-tag-template-name-field">
                 <label for="theater-tag-template-name"><i class="fa-solid fa-file-signature"></i> 模板名称</label>
                 <input id="theater-tag-template-name" class="theater-input" maxlength="60" autocomplete="off" value="${esc(templateName)}" placeholder="给这个模板起个名字">
             </div>`}
+            <div class="theater-compact-tag-heading"><b>选择标签</b><small>可多选 · 也可以不选</small></div>
             <div class="theater-tag-choice-list is-compact">${rows}${emptyHint}</div>
             <div class="theater-tag-create-box">
-                <label for="theater-tag-create-input"><i class="fa-solid fa-plus"></i> 新建并选中标签</label>
-                <input id="theater-tag-create-input" class="theater-input" maxlength="30" autocomplete="off" placeholder="例如：角色甲">
-                <small>留空则只使用上面勾选的已有标签</small>
+                <div class="theater-tag-create-row">
+                    <input id="theater-tag-create-input" class="theater-input" maxlength="30" autocomplete="off" placeholder="新标签名称">
+                    <button type="button" class="theater-tag-create-confirm theater-btn"><i class="fa-solid fa-plus"></i><span>添加</span></button>
+                </div>
+                <small>${esc(subtitle)}；添加后会自动选中。</small>
             </div>
         </div>
     </div>`;
     const popup = new Popup(html, POPUP_TYPE.CONFIRM, '', { wide: false, okButton, cancelButton: '取消', allowVerticalScrolling: true });
     const showPromise = popup.show();
     const $body = $(popup.dlg);
+    const selectOrAppendTag = raw => {
+        const tag = cleanTagName(raw);
+        if (!tag) return null;
+        if (tag.toLocaleLowerCase() === TAG_UNCATEGORIZED.toLocaleLowerCase()) {
+            toastr.warning('这个名称是系统保留值，请换一个标签名');
+            return null;
+        }
+        const inputs = $body.find('.theater-tag-choice input').get();
+        const existingInput = inputs.find(input => String(input.value).toLocaleLowerCase() === tag.toLocaleLowerCase());
+        if (existingInput) {
+            existingInput.checked = true;
+            return existingInput.value;
+        }
+        $body.find('.theater-tag-choice-empty').remove();
+        $body.find('.theater-tag-choice-list').append(`<label class="theater-tag-choice is-new"><input type="checkbox" value="${esc(tag)}" checked><span><i class="fa-solid fa-tag"></i><b>${esc(tag)}</b></span></label>`);
+        return tag;
+    };
+    const addEnteredTag = () => {
+        const $input = $body.find('#theater-tag-create-input');
+        if (!selectOrAppendTag($input.val())) return false;
+        $input.val('').trigger('focus');
+        return true;
+    };
+    $body.on('click', '.theater-tag-create-confirm', addEnteredTag);
+    $body.on('keydown', '#theater-tag-create-input', function (event) {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        addEnteredTag();
+    });
     const result = await showPromise;
     if (!result) return null;
 
@@ -7258,10 +7295,11 @@ async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已
         return null;
     }
     const existing = known.find(tag => tag.toLocaleLowerCase() === entered.toLocaleLowerCase());
-    const newTags = entered && !existing ? [entered] : [];
+    const tags = normalizeTagList([...checked, existing || entered]);
+    const newTags = tags.filter(tag => !known.some(item => item.toLocaleLowerCase() === tag.toLocaleLowerCase()));
     return {
         name,
-        tags: normalizeTagList([...checked, existing || entered]),
+        tags,
         newTags,
     };
 }

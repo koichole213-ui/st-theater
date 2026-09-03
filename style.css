@@ -2506,14 +2506,17 @@
     align-items: stretch;
     gap: var(--t-space-2);
     margin-top: 0;
+    max-height: 116px;
+    overflow-y: auto;
+    padding: 1px 2px 5px 1px;
 }
 .theater-tag-choice-list.is-compact .theater-tag-choice {
     flex: 0 1 auto;
     width: auto;
     max-width: 100%;
-    min-height: 36px;
-    padding: 6px 10px;
-    border-radius: var(--t-radius-pill);
+    min-height: 32px;
+    padding: 5px 9px;
+    border-radius: var(--t-radius-sm);
 }
 .theater-tag-choice-list.is-compact .theater-tag-choice > span,
 .theater-tag-choice-list.is-compact .theater-tag-choice > span b {
@@ -2544,24 +2547,76 @@
     font-weight: 650;
 }
 .theater-tag-template-name-field label i { color: var(--t-accent); }
+.theater-compact-popup {
+    min-height: 0;
+    padding-top: 0;
+    border-radius: var(--t-radius-lg);
+    box-shadow: none;
+}
+.theater-compact-popup .theater-popup-header {
+    margin: 0;
+    padding: var(--t-space-4) var(--t-space-5) var(--t-space-3);
+    text-align: left;
+    border-bottom: 1px solid var(--t-border);
+}
+.theater-compact-popup .theater-popup-header .theater-title { font-size: var(--t-text-lg); }
+body .popup:has(.theater-compact-popup),
+body dialog.popup:has(.theater-compact-popup) {
+    width: min(430px, calc(100vw - 28px)) !important;
+    max-width: min(430px, calc(100vw - 28px)) !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: calc(100dvh - 28px) !important;
+    margin: auto !important;
+    border-radius: 18px !important;
+    overflow: hidden !important;
+}
+body .popup:has(.theater-compact-popup) :is(.popup-content, .popup-body),
+body dialog.popup:has(.theater-compact-popup) :is(.popup-content, .popup-body) {
+    min-height: 0 !important;
+    max-height: calc(100dvh - 112px) !important;
+    overflow-y: auto !important;
+}
+body .popup:has(.theater-compact-popup) :is(.popup-controls, .popup-buttons),
+body dialog.popup:has(.theater-compact-popup) :is(.popup-controls, .popup-buttons) {
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 10px 16px !important;
+}
+.theater-compact-tag-body {
+    padding: var(--t-space-4) var(--t-space-5);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.theater-compact-tag-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--t-space-3);
+    margin: 0 0 var(--t-space-2);
+}
+.theater-compact-tag-heading b { font-size: var(--t-text-sm); }
+.theater-compact-tag-heading small { color: var(--t-fg-mute); font-size: var(--t-text-xs); }
 .theater-tag-create-box {
     display: grid;
     gap: var(--t-space-2);
-    margin-top: var(--t-space-4);
-    padding: var(--t-space-3);
-    border: 1px dashed color-mix(in srgb, var(--t-accent) 38%, var(--t-border));
-    border-radius: var(--t-radius-sm);
-    background: color-mix(in srgb, var(--t-accent) 6%, var(--t-surface-2));
+    margin-top: var(--t-space-3);
+    padding-top: var(--t-space-3);
+    border-top: 1px dashed var(--t-border-strong);
 }
-.theater-tag-create-box label {
-    display: flex;
-    align-items: center;
+.theater-tag-create-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: var(--t-space-2);
-    color: var(--t-fg);
-    font-weight: 650;
 }
-.theater-tag-create-box label i { color: var(--t-accent); }
-.theater-tag-create-box small { color: var(--t-fg-mute); }
+.theater-tag-create-row .theater-btn {
+    min-width: 76px;
+    min-height: 38px;
+    border-radius: var(--t-radius-sm);
+}
+.theater-tag-create-box > small { color: var(--t-fg-mute); font-size: var(--t-text-xs); }
 .theater-bulk-tag-mode { margin-bottom: var(--t-space-3); }
 .theater-active-instruction-tags {
     display: flex;
@@ -4306,26 +4361,31 @@ body.theater-reader-open {
  * History
  * ============================================================ */
 .theater-history-top-bar {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: var(--t-space-2);
     align-items: center;
     margin-bottom: var(--t-space-3);
 }
 .theater-history-top-bar .theater-label {
-    flex: 0 0 100%;
+    grid-column: 1 / -1;
+    width: 100%;
     margin-bottom: var(--t-space-1) !important;
+    text-align: left !important;
 }
 .theater-history-top-bar > .theater-btn {
-    flex: 1 1 calc(50% - var(--t-space-2));
+    width: 100%;
     justify-content: center;
-    min-width: 118px;
-    min-height: 40px;
+    min-width: 0;
+    min-height: 38px;
+    padding: 6px var(--t-space-2);
+    border-radius: var(--t-radius-sm);
+    font-size: var(--t-text-xs);
     touch-action: manipulation;
 }
 #theater-hist-batch-bar {
     display: flex;
-    flex: 0 0 100%;
+    grid-column: 1 / -1;
     flex-wrap: wrap;
     gap: var(--t-space-2);
     align-items: center;
@@ -4370,8 +4430,10 @@ body.theater-reader-open {
 .theater-history-heading {
     display: grid;
     flex: 1 1 auto;
+    width: 100%;
     min-width: 0;
     gap: var(--t-space-1);
+    text-align: left;
 }
 .theater-history-title-row {
     display: flex;
@@ -4386,6 +4448,7 @@ body.theater-reader-open {
     font-weight: 600;
     font-size: var(--t-text-base);
     color: var(--t-fg);
+    text-align: left;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -4406,9 +4469,11 @@ body.theater-reader-open {
     align-items: center;
 }
 .theater-history-actions {
-    display: flex;
-    gap: var(--t-space-2);
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--t-space-1);
+    padding-top: var(--t-space-2);
+    border-top: 1px solid var(--t-border);
 }
 .theater-history-tags {
     display: inline-flex;
@@ -4425,16 +4490,17 @@ body.theater-reader-open {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: var(--t-space-1);
+    gap: 3px;
+    min-width: 0;
     min-height: 36px;
-    font-size: var(--t-text-xs);
+    font-size: 11px;
     font-family: inherit;
     cursor: pointer;
     color: var(--t-fg-soft);
-    padding: var(--t-space-1) var(--t-space-3);
-    border-radius: var(--t-radius-pill);
-    border: 1px solid var(--t-border);
-    background: var(--t-surface-1);
+    padding: 5px 3px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: var(--t-surface-2);
     touch-action: manipulation;
     user-select: none;
     transition: color var(--t-dur-fast) var(--t-ease),
@@ -4442,7 +4508,7 @@ body.theater-reader-open {
                 border-color var(--t-dur-fast) var(--t-ease);
 }
 .theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-history-actions > button {
-    background: #FFFFFF;
+    background: #F8F6F2;
 }
 .theater-history-actions > button:hover {
     color: var(--t-fg);
@@ -4454,6 +4520,10 @@ body.theater-reader-open {
     color: var(--t-danger);
     background: var(--t-danger-soft);
     border-color: color-mix(in srgb, var(--t-danger) 32%, transparent);
+}
+.theater-history-actions > .theater-history-delete {
+    color: color-mix(in srgb, var(--t-danger) 72%, var(--t-fg-soft));
+    background: color-mix(in srgb, var(--t-danger-soft) 48%, var(--t-surface-1));
 }
 
 .theater-btn:disabled {
@@ -4844,9 +4914,9 @@ body.theater-reader-open {
     .theater-tab { padding: 6px var(--t-space-2); }
     .theater-history-actions { gap: var(--t-space-1); }
     .theater-history-actions > button {
-        min-height: 42px;
+        min-height: 36px;
         font-size: 11px;
-        padding: 5px var(--t-space-3);
+        padding: 5px 2px;
     }
     .theater-context-count-hint {
         flex-basis: 100%;
@@ -4890,25 +4960,42 @@ body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom
 body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-cancel {
     background: linear-gradient(135deg, #B07A4A 0%, #6B4423 100%) !important;
     color: #FFF8EE !important;
-    border: none !important;
-    border-radius: 999px !important;
-    padding: 8px 28px !important;
+    min-height: 38px !important;
+    border: 1px solid transparent !important;
+    border-radius: 8px !important;
+    padding: 7px 18px !important;
     font-weight: 600 !important;
     letter-spacing: .4px !important;
-    box-shadow: 0 2px 8px rgba(107, 68, 35, .18),
-                inset 0 1px 0 rgba(255, 255, 255, .15) !important;
+    box-shadow: 0 1px 3px rgba(107, 68, 35, .12) !important;
     transition: transform 120ms cubic-bezier(.2, .8, .2, 1),
                 box-shadow 120ms cubic-bezier(.2, .8, .2, 1),
                 background 120ms cubic-bezier(.2, .8, .2, 1) !important;
 }
-body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-close:hover,
-body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-close:hover,
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-button-close, .popup-button-cancel),
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-button-close, .popup-button-cancel) {
+    background: #FFFDF7 !important;
+    color: #6B4423 !important;
+    border-color: rgba(107, 68, 35, .38) !important;
+}
+body .popup:has(.theater-popup) .popup-button-close,
+body dialog.popup:has(.theater-popup) .popup-button-close {
+    width: auto !important;
+    min-width: 112px !important;
+    min-height: 38px !important;
+    border-radius: 8px !important;
+    padding: 7px 18px !important;
+}
 body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-ok:hover,
 body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) .popup-button-ok:hover {
     background: linear-gradient(135deg, #D9A877 0%, #B07A4A 100%) !important;
     box-shadow: 0 6px 18px rgba(107, 68, 35, .25),
                 inset 0 1px 0 rgba(255, 255, 255, .25) !important;
     transform: translateY(-1px);
+}
+body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-button-close, .popup-button-cancel):hover,
+body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-button-close, .popup-button-cancel):hover {
+    background: #F8EFDC !important;
+    box-shadow: 0 2px 6px rgba(107, 68, 35, .12) !important;
 }
 body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]))::backdrop,
 body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]))::backdrop {
@@ -4961,8 +5048,8 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 
 /* Mobile fullscreen shell: keep SillyTavern's bottom Close control, only remove the floating-card frame. */
 @media (max-width: 768px) {
-    body .popup:has(.theater-popup),
-    body dialog.popup:has(.theater-popup) {
+    body .popup:has(.theater-popup:not(.theater-compact-popup)),
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup)) {
         position: fixed !important;
         inset: 0 !important;
         display: flex !important;
@@ -4981,14 +5068,14 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
         transform: none !important;
         overflow: hidden !important;
     }
-    body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])),
-    body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) {
+    body .popup:has(.theater-popup:not(.theater-compact-popup):not([data-skin="theater"]):not([data-skin="custom"])),
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup):not([data-skin="theater"]):not([data-skin="custom"])) {
         border: 0 !important;
         border-radius: 0 !important;
         box-shadow: none !important;
     }
-    body .popup:has(.theater-popup) .popup-content,
-    body dialog.popup:has(.theater-popup) .popup-content {
+    body .popup:has(.theater-popup:not(.theater-compact-popup)) .popup-content,
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup)) .popup-content {
         display: flex !important;
         flex: 1 1 auto !important;
         flex-direction: column !important;
@@ -4999,8 +5086,8 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
         padding: 0 !important;
         overflow: hidden !important;
     }
-    body .popup:has(.theater-popup) .popup-body,
-    body dialog.popup:has(.theater-popup) .popup-body {
+    body .popup:has(.theater-popup:not(.theater-compact-popup)) .popup-body,
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup)) .popup-body {
         display: flex !important;
         flex: 1 1 auto !important;
         flex-direction: column !important;
@@ -5009,8 +5096,8 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
         padding: 0 !important;
         overflow: hidden !important;
     }
-    body .popup:has(.theater-popup) .theater-popup,
-    body dialog.popup:has(.theater-popup) .theater-popup {
+    body .popup:has(.theater-popup:not(.theater-compact-popup)) .theater-popup,
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup)) .theater-popup {
         display: flex;
         flex: 1 1 auto;
         flex-direction: column;
@@ -5020,39 +5107,39 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
         min-height: 0;
         border-radius: 0;
     }
-    body .popup:has(.theater-popup) .theater-popup-header,
-    body dialog.popup:has(.theater-popup) .theater-popup-header,
-    body .popup:has(.theater-popup) .theater-tabs,
-    body dialog.popup:has(.theater-popup) .theater-tabs,
-    body .popup:has(.theater-popup) :is(.popup-controls, .popup-buttons),
-    body dialog.popup:has(.theater-popup) :is(.popup-controls, .popup-buttons) {
+    body .popup:has(.theater-popup:not(.theater-compact-popup)) .theater-popup-header,
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup)) .theater-popup-header,
+    body .popup:has(.theater-popup:not(.theater-compact-popup)) .theater-tabs,
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup)) .theater-tabs,
+    body .popup:has(.theater-popup:not(.theater-compact-popup)) :is(.popup-controls, .popup-buttons),
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup)) :is(.popup-controls, .popup-buttons) {
         flex: 0 0 auto !important;
     }
-    body .popup:has(.theater-popup) :is(.popup-controls, .popup-buttons),
-    body dialog.popup:has(.theater-popup) :is(.popup-controls, .popup-buttons),
-    body .popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-controls, .popup-buttons),
-    body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-controls, .popup-buttons) {
+    body .popup:has(.theater-popup:not(.theater-compact-popup)) :is(.popup-controls, .popup-buttons),
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup)) :is(.popup-controls, .popup-buttons),
+    body .popup:has(.theater-popup:not(.theater-compact-popup):not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-controls, .popup-buttons),
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup):not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-controls, .popup-buttons) {
         min-height: 0 !important;
         margin: 0 !important;
         padding: 4px 10px !important;
     }
-    body .popup:has(.theater-popup) .theater-panels-wrapper,
-    body dialog.popup:has(.theater-popup) .theater-panels-wrapper {
+    body .popup:has(.theater-popup:not(.theater-compact-popup)) .theater-panels-wrapper,
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup)) .theater-panels-wrapper {
         flex: 1 1 auto;
         height: auto;
         min-height: 0;
         max-height: none;
     }
-    body .popup:has(.theater-popup) :is(.popup-button-close, .popup-button-ok, .popup-button-cancel),
-    body dialog.popup:has(.theater-popup) :is(.popup-button-close, .popup-button-ok, .popup-button-cancel) {
-        min-height: 44px !important;
+    body .popup:has(.theater-popup:not(.theater-compact-popup)) :is(.popup-button-close, .popup-button-ok, .popup-button-cancel),
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup)) :is(.popup-button-close, .popup-button-ok, .popup-button-cancel) {
+        min-height: 38px !important;
     }
-    body .popup:has(.theater-popup) #theater-instruction,
-    body dialog.popup:has(.theater-popup) #theater-instruction {
+    body .popup:has(.theater-popup:not(.theater-compact-popup)) #theater-instruction,
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup)) #theater-instruction {
         min-height: 120px;
     }
-    body .popup:has(.theater-popup) .theater-panel[data-panel="long-dream"] #theater-dream-next-instruction,
-    body dialog.popup:has(.theater-popup) .theater-panel[data-panel="long-dream"] #theater-dream-next-instruction {
+    body .popup:has(.theater-popup:not(.theater-compact-popup)) .theater-panel[data-panel="long-dream"] #theater-dream-next-instruction,
+    body dialog.popup:has(.theater-popup:not(.theater-compact-popup)) .theater-panel[data-panel="long-dream"] #theater-dream-next-instruction {
         min-height: 183px;
     }
 }

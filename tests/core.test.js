@@ -143,6 +143,7 @@ test('历史卡片按标题标签、时间、操作三层排列，并提供即�
     const bindStart = source.indexOf('function bindEvents() {');
     const bindEnd = source.indexOf('function refreshInstUI', bindStart);
     const bindings = source.slice(bindStart, bindEnd);
+    const touchAttachment = source.match(/function attachHistoryTouchMoveHandler[\s\S]*?function resetHistorySelectionGesture/)?.[0] || '';
     const titleRow = renderer.indexOf('theater-history-title-row');
     const tags = renderer.indexOf('theater-history-tags');
     const meta = renderer.indexOf('theater-history-meta');
@@ -159,8 +160,10 @@ test('历史卡片按标题标签、时间、操作三层排列，并提供即�
     assert.match(bindings, /pointerdown\.thhistgesture/);
     assert.match(bindings, /pointermove\.thhistgesture/);
     assert.match(bindings, /touchstart\.thhistgesture/);
-    assert.match(bindings, /histTouchMoveHandler = function[\s\S]*?event\.preventDefault\(\)[\s\S]*?updateHistorySelectionAutoScroll/);
-    assert.match(bindings, /document\.addEventListener\('touchmove', histTouchMoveHandler, \{ passive: false \}\)/);
+    assert.match(bindings, /touchstart\.thhistgesture[\s\S]*?attachHistoryTouchMoveHandler\(\)/);
+    assert.doesNotMatch(bindings, /document\.addEventListener\('touchmove', histTouchMoveHandler/);
+    assert.match(touchAttachment, /histTouchMoveHandler = function[\s\S]*?event\.preventDefault\(\)[\s\S]*?updateHistorySelectionAutoScroll/);
+    assert.match(touchAttachment, /document\.addEventListener\('touchmove', histTouchMoveHandler, \{ passive: false \}\)/);
     assert.match(source, /function detachHistoryTouchMoveHandler[\s\S]*?document\.removeEventListener\('touchmove', histTouchMoveHandler\)/);
     assert.match(source, /const onPopupClosed = \(\) => \{[\s\S]*?activeTheaterPopupSession !== session[\s\S]*?detachHistoryTouchMoveHandler\(\);[\s\S]*?resetHistorySelectionGesture\(\)/);
     assert.match(source, /Promise\.resolve\(p\)\.then\(onPopupClosed, onPopupClosed\)/);
@@ -171,6 +174,11 @@ test('历史卡片按标题标签、时间、操作三层排列，并提供即�
     assert.match(source, /function updateHistorySelectionAutoScroll[\s\S]*?rect\.top \+ edge[\s\S]*?rect\.bottom - edge/);
     assert.match(styles, /\.theater-history-top-bar > \.theater-btn[\s\S]*?touch-action: manipulation/);
     assert.match(styles, /\.theater-history-actions > button[\s\S]*?touch-action: manipulation/);
+    assert.match(styles, /\.theater-history-top-bar \{[\s\S]*?grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+    assert.match(styles, /\.theater-history-top-bar \.theater-label \{[\s\S]*?text-align: left !important/);
+    assert.match(styles, /\.theater-history-actions \{[\s\S]*?grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
+    assert.match(styles, /\.theater-history-actions > button \{[\s\S]*?border-radius: 6px/);
+    assert.match(renderer, /theater-history-export[^>]*title="导出 HTML"[\s\S]*?<span>导出<\/span>/);
     assert.match(styles, /\.theater-history-title-row \{[\s\S]*?flex-wrap: nowrap/);
     assert.match(styles, /\.theater-history-title \{[\s\S]*?text-overflow: ellipsis[\s\S]*?white-space: nowrap/);
     assert.doesNotMatch(bindings, /\$\('\.theater-inst-item'\)\.removeClass\('theater-inst-actions-open'\)/);
@@ -2504,7 +2512,7 @@ test('生成结果使用可关闭的页边书签，并保留安全退出编辑�
     assert.match(styles, /data-skin="custom"\] \.theater-result-actions[\s\S]*?Canvas/);
 });
 
-test('手机端主弹窗铺满可用屏幕，保留底部 Close 并让内容独立滚动', () => {
+test('手机端主弹窗铺满可用屏幕，保留扁平关闭键并让内容独立滚动', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const tabHandler = source.match(/\/\/ Tabs[\s\S]*?\/\/ ---- Generate ----/)?.[0] || '';
@@ -2513,7 +2521,7 @@ test('手机端主弹窗铺满可用屏幕，保留底部 Close 并让内容独�
     assert.match(tabHandler, /activateTheaterTab/);
     assert.match(tabActivator, /panels\.scrollTop = 0/);
     assert.doesNotMatch(source, /target\.scrollIntoView/);
-    assert.match(source, /okButton: 'Close'/);
+    assert.match(source, /okButton: '关闭'/);
     assert.match(source, /new Popup\(buildPopupHTML\(initialTab\)/);
     assert.match(source, /const activeTabClass = tab => initialTab === tab \? ' active' : ''/);
     assert.doesNotMatch(source, /class="theater-tab active" data-tab="generate"/);
@@ -2522,10 +2530,12 @@ test('手机端主弹窗铺满可用屏幕，保留底部 Close 并让内容独�
     assert.match(mobileShell, /width:\s*100vw !important/);
     assert.match(mobileShell, /height:\s*100dvh !important/);
     assert.match(mobileShell, /border-radius:\s*0 !important/);
+    assert.match(mobileShell, /\.theater-popup:not\(\.theater-compact-popup\)/);
     assert.match(mobileShell, /\.theater-panels-wrapper,[\s\S]*?flex:\s*1 1 auto;[\s\S]*?height:\s*auto;[\s\S]*?max-height:\s*none;/);
     assert.match(mobileShell, /:is\(\.popup-controls, \.popup-buttons\)[\s\S]*?flex:\s*0 0 auto !important/);
     assert.match(mobileShell, /:is\(\.popup-controls, \.popup-buttons\) \{\s*min-height:\s*0 !important;\s*margin:\s*0 !important;\s*padding:\s*4px 10px !important;/);
-    assert.match(mobileShell, /:is\(\.popup-button-close, \.popup-button-ok, \.popup-button-cancel\)[\s\S]*?min-height:\s*44px !important/);
+    assert.match(mobileShell, /:is\(\.popup-button-close, \.popup-button-ok, \.popup-button-cancel\)[\s\S]*?min-height:\s*38px !important/);
+    assert.match(styles, /\.popup-button-close[\s\S]*?min-width:\s*112px !important[\s\S]*?border-radius:\s*8px !important/);
     assert.match(mobileShell, /#theater-instruction[\s\S]*?min-height:\s*120px/);
     assert.match(mobileShell, /#theater-dream-next-instruction[\s\S]*?min-height:\s*183px/);
     assert.doesNotMatch(styles, /max-width:\s*96vw !important/);
@@ -4754,8 +4764,14 @@ test('标签界面、历史未分类、数字触发间隔和渲染模板删除�
     assert.match(source, /删除这个自定义模板/);
     assert.match(source, /内置模板不可删除/);
     assert.match(source, /async function chooseTagsWithNew/);
+    assert.match(source, /class="theater-popup theater-compact-popup"/);
     assert.match(source, /class="theater-tag-choice-list is-compact"/);
+    assert.match(source, /class="theater-tag-create-confirm theater-btn"/);
+    assert.match(source, /function \(event\)[\s\S]*?event\.key !== 'Enter'[\s\S]*?addEnteredTag\(\)/);
+    assert.match(source, /const newTags = tags\.filter\(tag => !known\.some/);
     assert.match(style, /\.theater-tag-choice-list\.is-compact\s*\{[\s\S]*?flex-wrap:\s*wrap/);
+    assert.match(style, /body \.popup:has\(\.theater-compact-popup\)[\s\S]*?width: min\(430px, calc\(100vw - 28px\)\) !important/);
+    assert.match(style, /\.theater-compact-popup \.theater-popup-header[\s\S]*?text-align: left/);
     const saveTemplateFlow = source.match(/async function saveInstructionTpl\(\)[\s\S]*?async function bulkEditSelectedTemplateTags/)?.[0] || '';
     assert.doesNotMatch(saveTemplateFlow, /Popup\.show\.input/);
     assert.match(saveTemplateFlow, /title: '保存指令模板'[\s\S]*?templateName: defaultName[\s\S]*?name: selection\.name[\s\S]*?settings\.instructionTemplates\.push\(tpl\)/);
