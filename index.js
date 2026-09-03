@@ -1427,7 +1427,9 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
     const configGroupEnd = '</div></section>';
     const inst = settings.instructionTemplates || [];
     const render = settings.renderTemplates || [];
-    const hist = historyCache;
+    const allHistory = historyCache;
+    const hist = filterHistoryAll(allHistory);
+    const historyEmptyText = allHistory.length ? '当前标签组合下没有历史' : '暂无';
     const selRender = settings.selectedRenderIndex || '__default__';
     const selectedAdaptiveRender = adaptiveRenderProfile(selRender);
     const runtimeEntries = getRuntimeLogEntries();
@@ -1698,7 +1700,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
         <div class="theater-section">
             <div class="theater-history-top-bar">
                 <label class="theater-label" style="margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> 保存的小剧场</label>
-                <div id="theater-export-all-history" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-download"></i><span>批量导出</span></div>
+                <div id="theater-export-all-history" class="theater-btn" ${allHistory.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-download"></i><span>批量导出</span></div>
                 <div id="theater-import-history-btn" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入备份</span></div>
                 <div id="theater-history-tag-filter" class="theater-btn"><i class="fa-solid fa-filter"></i><span>${esc(tagFilterSummary(settings.historyTagFilter))}</span></div>
                 <div id="theater-history-manage-tags" class="theater-btn"><i class="fa-solid fa-tags"></i><span>管理标签</span></div>
@@ -1711,7 +1713,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 </div>
             </div>
             <p class="theater-hint" style="margin:-2px 1px 10px;">批量导出的 ZIP 可直接从这里恢复；同时兼容旧版 ZIP 和 JSON 备份。</p>
-            <div id="theater-history-list">${hist.length === 0 ? '<p class="theater-empty">暂无</p>' : hist.map(h => historyItemHTML(h)).join('')}</div>
+            <div id="theater-history-list">${hist.length === 0 ? `<p class="theater-empty">${historyEmptyText}</p>` : hist.map(h => historyItemHTML(h)).join('')}</div>
         </div>
     </div>
 
@@ -5275,7 +5277,7 @@ function bindEvents() {
         refreshRenderSelectionControls();
     });
     $d.off('click.tsr').on('click.tsr', '#theater-save-render-btn', saveRenderTpl);
-    $d.off('click.tdr').on('click.tdr', '#theater-delete-render-btn', deleteRenderTpl);
+    $d.off('click.trenderdelete').on('click.trenderdelete', '#theater-delete-render-btn', deleteRenderTpl);
 
     $d.off('click.tactiveinstructiontags').on('click.tactiveinstructiontags', '#theater-edit-active-instruction-tags', async function () {
         const chosen = await chooseTags({ title: '修改本次生成标签', selected: activeInstructionTags, subtitle: '只影响这次生成结果以及之后保存的历史' });
@@ -5887,7 +5889,7 @@ function refreshHistList() {
     $('#theater-history-list').html(h.length === 0 ? `<p class="theater-empty">${empty}</p>` : h.map(item => historyItemHTML(item)).join(''));
     $('#theater-export-all-history').toggle(historyCache.length > 0);
     $('#theater-hist-select-all').toggle(h.length > 0);
-    $('#theater-hist-batch-enter').toggle(historyCache.length > 0 && !histBatchMode);
+    $('#theater-hist-batch-enter').toggle(h.length > 0 && !histBatchMode);
     updateHistBulkBar();
     refreshTagControls();
 }
@@ -5947,9 +5949,9 @@ function exitHistBatchMode() {
     $('#theater-hist-batch-bar').hide();
     $('.theater-hist-checkbox').hide().prop('checked', false);
     $('.theater-history-item').removeClass('theater-history-item-selected');
-    const h = historyCache;
+    const h = filterHistoryAll(historyCache);
     $('#theater-hist-batch-enter').toggle(h.length > 0);
-    $('#theater-export-all-history').toggle(h.length > 0);
+    $('#theater-export-all-history').toggle(historyCache.length > 0);
     $('.theater-history-actions').show();
     updateHistBulkBar();
 }
@@ -7049,6 +7051,8 @@ async function requestHistoryExport() {
 async function addHistoryItems(items) {
     const importedTags = normalizeTagList((Array.isArray(items) ? items : []).flatMap(item => normalizeTagList(item?.tags)));
     settings.instructionTags = normalizeTagList([...knownInstructionTags(), ...importedTags]);
+    // IndexedDB 只负责历史正文；共享标签库仍在扩展设置中，导入时必须单独持久化。
+    save();
     let added = 0;
     for (const item of items) {
         if (!item?.html) continue;

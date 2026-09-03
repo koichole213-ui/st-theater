@@ -109,6 +109,31 @@ test('主弹窗直接绑定的命名处理器都有真实实现', () => {
     assert.match(source, /try \{\s*bindEvents\(\);\s*\} catch \(error\) \{[\s\S]*?按钮初始化失败/);
 });
 
+test('主弹窗事件命名空间不互相覆盖，历史操作保持完整绑定', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const bindStart = source.indexOf('function bindEvents() {');
+    const bindEnd = source.indexOf('function refreshInstUI', bindStart);
+    assert.ok(bindStart >= 0 && bindEnd > bindStart);
+    const bindSource = source.slice(bindStart, bindEnd);
+    const namespaces = [...bindSource.matchAll(/\.off\(\s*'([^']+)'\s*\)/g)].map(match => match[1]);
+    const duplicates = [...new Set(namespaces.filter((name, index) => namespaces.indexOf(name) !== index))];
+    assert.deepEqual(duplicates, []);
+
+    const requiredHistorySelectors = [
+        '.theater-history-view',
+        '.theater-history-continue',
+        '.theater-history-export',
+        '.theater-history-tags-edit',
+        '.theater-history-delete',
+        '#theater-export-all-history',
+        '#theater-import-history-btn',
+        '#theater-hist-batch-enter',
+        '#theater-hist-select-all',
+        '#theater-hist-delete-selected',
+    ];
+    requiredHistorySelectors.forEach(selector => assert.ok(bindSource.includes(`'${selector}'`), `${selector} 没有绑定`));
+});
+
 test('每个酒馆预设会分别记住自己的条目勾选状态', () => {
     const statesByPreset = {};
     const presetA = presetEntryStatesForPreset(statesByPreset, '剧情预设 A', { create: true });
@@ -4415,6 +4440,17 @@ test('旧分组设置升级为同名多标签并保留抽取与自动来源', ()
     assert.equal(matchesTagFilter(settings.instructionTemplates[0], ['角色甲', '甜饼'], settings.instructionTags), false);
 });
 
+test('标签迁移会把大小写不同的模板标签归一到标签库名称', () => {
+    const settings = {
+        instructionTags: ['Sweet'],
+        instructionTemplates: [{ name: '模板', content: '内容', tags: ['sweet'] }],
+        tagSchemaVersion: 1,
+    };
+    migrateLegacyTagSettings(settings);
+    assert.deepEqual(settings.instructionTags, ['Sweet']);
+    assert.deepEqual(settings.instructionTemplates[0].tags, ['Sweet']);
+});
+
 test('标签界面、历史未分类、数字触发间隔和渲染模板删除入口都接入主面板', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     assert.match(source, /id="theater-inst-tag-filter"/);
@@ -4424,6 +4460,11 @@ test('标签界面、历史未分类、数字触发间隔和渲染模板删除�
     assert.doesNotMatch(source, /id="theater-auto-interval" type="range"/);
     assert.match(source, /删除这个自定义模板/);
     assert.match(source, /内置模板不可删除/);
+    const popupBuilder = source.match(/function buildPopupHTML[\s\S]*?function historyItemHTML/)?.[0] || '';
+    assert.match(popupBuilder, /const allHistory = historyCache;\s*const hist = filterHistoryAll\(allHistory\)/);
+    assert.match(popupBuilder, /allHistory\.length \? '当前标签组合下没有历史' : '暂无'/);
+    assert.match(source, /async function addHistoryItems[\s\S]*?settings\.instructionTags = normalizeTagList[\s\S]*?save\(\);[\s\S]*?let added = 0/);
+    assert.match(source, /#theater-hist-batch-enter'\)\.toggle\(h\.length > 0 && !histBatchMode\)/);
 });
 
 test('梦脉只保留一个明确标注的完善版内置预设', () => {

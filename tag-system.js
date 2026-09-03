@@ -68,10 +68,10 @@ export function migrateLegacyTagSettings(settings = {}) {
     templates.forEach(template => {
         const tags = normalizeTagList(template?.tags);
         const group = cleanTagName(template?.group);
-        template.tags = normalizeTagList([
+        template.tags = itemTags({ tags: [
             ...tags,
             ...(!alreadyMigrated && group && settings.instructionTags.includes(group) ? [group] : []),
-        ]).filter(tag => settings.instructionTags.includes(tag));
+        ] }, settings.instructionTags);
     });
 
     if (!alreadyMigrated) {
