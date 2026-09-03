@@ -3820,7 +3820,13 @@ async function openTheaterPopup() {
     // 搜索框是重建的空框，过滤词也要跟着清，不然看起来"列表少了一截"
     wbSearch = '';
     presetSearch = '';
-    bindEvents();
+    try {
+        bindEvents();
+    } catch (error) {
+        console.error('[Theater] Popup event initialization failed:', error);
+        runtimeLog('error', '小剧场按钮初始化失败', { message: String(error?.message || error) });
+        toastr.error('小剧场部分按钮初始化失败；更新入口仍可使用，请更新后刷新酒馆');
+    }
     decorateConfigLayout();
     applyResultToolboxMode();
     renderRuntimeLog();
@@ -4180,6 +4186,9 @@ function decorateConfigLayout() {
 
 function bindEvents() {
     const $d = $(document);
+    // 恢复入口最先绑定。即使后续某个功能按钮初始化异常，用户仍能拉取修复。
+    $d.off('click.tup').on('click.tup', '#theater-update-btn', updateExtension);
+    $d.off('click.treload').on('click.treload', '#theater-reload-after-update-btn', confirmReloadAfterUpdate);
     const tokenAffectingSelectors = '#theater-interactive-toggle,#theater-context-range,#theater-read-chat-context,#theater-render-select,#theater-preset-name-select,#theater-style-addon,#theater-nsfw-addon,.theater-preset-check,.theater-wb-check';
     $d.off('change.ttoken').on('change.ttoken', tokenAffectingSelectors, scheduleTokenEstimate);
 
@@ -5702,8 +5711,6 @@ function bindEvents() {
         runtimeLog('info', 'API 预设删除', { preset: current.name });
         toastr.success(`已删除「${current.name}」`);
     });
-    $d.off('click.tup').on('click.tup', '#theater-update-btn', updateExtension);
-    $d.off('click.treload').on('click.treload', '#theater-reload-after-update-btn', confirmReloadAfterUpdate);
     $d.off('click.tfm').on('click.tfm', '#theater-fetch-models-btn', fetchModelList);
     $d.off('click.ttest').on('click.ttest', '#theater-test-api-btn', testAPIConnection);
     $d.off('click.tdiag').on('click.tdiag', '#theater-run-diagnostics-btn', runDiagnostics);
@@ -6645,6 +6652,51 @@ async function bulkEditSelectedTemplateTags() {
     });
     instSelected.clear(); save(); refreshInstUI();
     toastr.success(`已更新 ${updated} 个模板的标签`);
+}
+
+async function bulkDeleteSelected() {
+    if (!instSelected.size) return;
+    const { Popup } = SillyTavern.getContext();
+    const count = instSelected.size;
+    const ok = await Popup.show.confirm(`确定删除选中的 ${count} 个模板？`, '删除后无法恢复');
+    if (!ok) return;
+    const templates = settings.instructionTemplates || [];
+    [...instSelected].sort((a, b) => b - a).forEach(index => templates.splice(index, 1));
+    instSelected.clear();
+    save();
+    refreshInstUI();
+    toastr.success(`已删除 ${count} 个模板`);
+}
+
+function selectAllVisible() {
+    const templates = settings.instructionTemplates || [];
+    const visible = filterInstAll(templates);
+    if (!visible.length) {
+        toastr.info('当前没有可选的模板');
+        return;
+    }
+    visible.forEach(({ i }) => instSelected.add(i));
+    $('#theater-instruction-list').html(renderInstList(templates));
+    updateBulkBar();
+}
+
+function clearInstSelection() {
+    instSelected.clear();
+    $('.theater-inst-checkbox').prop('checked', false);
+    $('.theater-inst-item').removeClass('theater-inst-item-selected');
+    updateBulkBar();
+}
+
+async function saveRenderTpl() {
+    const content = $('#theater-render-content').val().trim();
+    if (!content) return;
+    const name = await SillyTavern.getContext().Popup.show.input('保存渲染模板', '名字：');
+    if (!name) return;
+    settings.renderTemplates.push({ name, content });
+    settings.selectedRenderIndex = String(settings.renderTemplates.length - 1);
+    save();
+    refreshRenderSelectionControls({ refreshOptions: true });
+    toastr.success('已保存');
 }
 
 async function deleteRenderTpl() {

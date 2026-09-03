@@ -86,6 +86,29 @@ test('主弹窗不再固定等待，并独立读取预设和世界书列表', ()
     assert.doesNotMatch(source, /setTimeout\(r, 50\)/);
 });
 
+test('主弹窗直接绑定的命名处理器都有真实实现', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const bindStart = source.indexOf('function bindEvents() {');
+    const bindEnd = source.indexOf('function refreshInstUI', bindStart);
+    assert.ok(bindStart >= 0 && bindEnd > bindStart);
+    const bindSource = source.slice(bindStart, bindEnd);
+    const handlerNames = bindSource.split(/\r?\n/).flatMap(line => {
+        const threeArgs = line.match(/\.on\(\s*'[^']*'\s*,\s*(?:'[^']*'|[A-Za-z_$][\w$]*)\s*,\s*([A-Za-z_$][\w$]*)\s*\);\s*$/);
+        if (threeArgs) return [threeArgs[1]];
+        const twoArgs = line.match(/\.on\(\s*'[^']*'\s*,\s*([A-Za-z_$][\w$]*)\s*\);\s*$/);
+        return twoArgs ? [twoArgs[1]] : [];
+    });
+    const missing = [...new Set(handlerNames)].filter(name => {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return !new RegExp(`(?:async\\s+)?function\\s+${escaped}\\b|(?:const|let|var)\\s+${escaped}\\s*=`).test(source);
+    });
+    assert.deepEqual(missing, []);
+    const updateBinding = bindSource.indexOf("$d.off('click.tup')");
+    const ordinaryBindings = bindSource.indexOf('const tokenAffectingSelectors');
+    assert.ok(updateBinding >= 0 && updateBinding < ordinaryBindings);
+    assert.match(source, /try \{\s*bindEvents\(\);\s*\} catch \(error\) \{[\s\S]*?按钮初始化失败/);
+});
+
 test('每个酒馆预设会分别记住自己的条目勾选状态', () => {
     const statesByPreset = {};
     const presetA = presetEntryStatesForPreset(statesByPreset, '剧情预设 A', { create: true });
