@@ -2192,7 +2192,7 @@
 .theater-inst-item:last-child { margin-bottom: 0; }
 .theater-inst-info {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     align-items: center;
     gap: 5px;
     min-width: 0;
@@ -2212,13 +2212,6 @@
 }
 .theater-inst-name i { margin-right: var(--t-space-2); color: var(--t-fg-mute); }
 .theater-inst-name:hover { color: var(--t-fg); }
-.theater-inst-info > .theater-tag-badges,
-.theater-inst-info > .theater-tag-badge {
-    max-width: min(180px, 42%);
-    overflow: hidden;
-    white-space: nowrap;
-}
-.theater-inst-info > .theater-tag-badges { flex-wrap: nowrap; }
 .theater-inst-actions {
     display: flex;
     align-items: center;
@@ -2502,11 +2495,14 @@
 .theater-tag-choice > span small { color: var(--t-fg-mute); }
 .theater-tag-choice-list.is-compact {
     display: flex;
+    flex: 1 1 auto;
     flex-wrap: wrap;
     align-items: stretch;
+    align-content: flex-start;
     gap: var(--t-space-2);
     margin-top: 0;
-    max-height: 116px;
+    min-height: 0;
+    max-height: none;
     overflow-y: auto;
     padding: 1px 2px 5px 1px;
 }
@@ -2536,6 +2532,7 @@
 }
 .theater-tag-template-name-field {
     display: grid;
+    flex-shrink: 0;
     gap: var(--t-space-2);
     margin-bottom: var(--t-space-4);
 }
@@ -2547,13 +2544,17 @@
     font-weight: 650;
 }
 .theater-tag-template-name-field label i { color: var(--t-accent); }
-.theater-compact-popup {
+.theater-popup.theater-compact-popup {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
     min-height: 0;
-    padding-top: 0;
+    padding: 0;
     border-radius: var(--t-radius-lg);
     box-shadow: none;
 }
 .theater-compact-popup .theater-popup-header {
+    flex: 0 0 auto;
     margin: 0;
     padding: var(--t-space-4) var(--t-space-5) var(--t-space-3);
     text-align: left;
@@ -2564,26 +2565,42 @@ body .popup:has(.theater-compact-popup),
 body dialog.popup:has(.theater-compact-popup) {
     width: min(430px, calc(100vw - 28px)) !important;
     max-width: min(430px, calc(100vw - 28px)) !important;
-    height: auto !important;
+    height: min(680px, calc(100dvh - 32px)) !important;
     min-height: 0 !important;
-    max-height: calc(100dvh - 28px) !important;
+    max-height: calc(100dvh - 32px) !important;
+    padding: 0 !important;
     margin: auto !important;
     border-radius: 18px !important;
     overflow: hidden !important;
 }
 body .popup:has(.theater-compact-popup) :is(.popup-content, .popup-body),
 body dialog.popup:has(.theater-compact-popup) :is(.popup-content, .popup-body) {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
     min-height: 0 !important;
-    max-height: calc(100dvh - 112px) !important;
-    overflow-y: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
 }
 body .popup:has(.theater-compact-popup) :is(.popup-controls, .popup-buttons),
-body dialog.popup:has(.theater-compact-popup) :is(.popup-controls, .popup-buttons) {
+body dialog.popup:has(.theater-compact-popup) :is(.popup-controls, .popup-buttons),
+body .popup:has(.theater-popup.theater-compact-popup:not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-controls, .popup-buttons),
+body dialog.popup:has(.theater-popup.theater-compact-popup:not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-controls, .popup-buttons) {
+    flex: 0 0 auto !important;
+    align-self: stretch !important;
+    justify-content: center !important;
     min-height: 0 !important;
     margin: 0 !important;
     padding: 10px 16px !important;
 }
-.theater-compact-tag-body {
+.theater-compact-popup .theater-compact-tag-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-bottom: 0;
     padding: var(--t-space-4) var(--t-space-5);
     border: 0;
     border-radius: 0;
@@ -2592,6 +2609,7 @@ body dialog.popup:has(.theater-compact-popup) :is(.popup-controls, .popup-button
 }
 .theater-compact-tag-heading {
     display: flex;
+    flex-shrink: 0;
     align-items: baseline;
     justify-content: space-between;
     gap: var(--t-space-3);
@@ -2601,6 +2619,7 @@ body dialog.popup:has(.theater-compact-popup) :is(.popup-controls, .popup-button
 .theater-compact-tag-heading small { color: var(--t-fg-mute); font-size: var(--t-text-xs); }
 .theater-tag-create-box {
     display: grid;
+    flex-shrink: 0;
     gap: var(--t-space-2);
     margin-top: var(--t-space-3);
     padding-top: var(--t-space-3);
@@ -2618,25 +2637,23 @@ body dialog.popup:has(.theater-compact-popup) :is(.popup-controls, .popup-button
 }
 .theater-tag-create-box > small { color: var(--t-fg-mute); font-size: var(--t-text-xs); }
 .theater-bulk-tag-mode { margin-bottom: var(--t-space-3); }
-.theater-active-instruction-tags {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--t-space-2);
-    margin: 7px 1px 2px;
+
+/* Keep the action row visible when the phone keyboard leaves little height. */
+@media (max-height: 540px) {
+    body .popup:has(.theater-compact-popup) .popup-content,
+    body dialog.popup:has(.theater-compact-popup) .popup-content {
+        overflow-y: auto !important;
+    }
+    .theater-popup.theater-compact-popup {
+        flex: 0 0 auto;
+        min-height: 100%;
+    }
+    .theater-compact-popup .theater-tag-choice-list.is-compact {
+        flex: 0 0 auto;
+        min-height: 80px;
+        max-height: 35dvh;
+    }
 }
-.theater-active-instruction-tag-list { min-width: 0; }
-.theater-tag-link {
-    flex: 0 0 auto;
-    border: 0;
-    padding: 3px 0;
-    background: transparent;
-    color: var(--t-accent-deep, var(--t-accent));
-    font: inherit;
-    font-size: var(--t-text-xs);
-    cursor: pointer;
-}
-.theater-tag-link:hover { text-decoration: underline; }
 
 /* 管理分组弹窗每一行 */
 .theater-group-mgmt-row {
@@ -4808,11 +4825,9 @@ body.theater-reader-open {
     }
     .theater-inst-item.theater-inst-actions-open { z-index: 5; }
     .theater-inst-info {
-        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-columns: minmax(0, 1fr);
         gap: 6px;
     }
-    .theater-inst-info > .theater-tag-badges,
-    .theater-inst-info > .theater-tag-badge { max-width: min(108px, 38vw); }
     .theater-inst-name {
         flex: 1 1 auto;
         min-width: 0;

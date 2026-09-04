@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
-import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml } from '../generation-payload.js';
+import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml, recentGenerationRoundsContext } from '../generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection, validateAdaptiveRenderHtml } from '../adaptive-render.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, MESSAGE_COMPATIBILITY, applyIndependentOpenAICompatibility, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, hasReasoningContent, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { CUSTOM_STREAM_IDLE_TIMEOUT_MS, readNonStreamingResponse, readSSEStream, requestCustomApi, requestMainApi } from '../api-runtime.js';
@@ -39,8 +39,58 @@ import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing,
 import { createRequestTrace, formatRequestTrace } from '../request-trace.js';
 import { migrateLegacyPresetEntryStates, normalizePresetEntryStatesByPreset, presetEntryStateStorageKey, presetEntryStatesForPreset } from '../preset-entry-states.js';
 import { TAG_UNCATEGORIZED, matchesTagFilter, mergeTagLists, migrateLegacyTagSettings } from '../tag-system.js';
-import { waitForPopupElements } from '../popup-lifecycle.js';
+import { waitForPopupElements, withPreservedPopupViewport } from '../popup-lifecycle.js';
 import { fetchInstalledExtensionStatus } from '../version-check.js';
+
+test('子弹窗确认、取消或失败后恢复原滚动位置，并等待焦点布局完成', async () => {
+    for (const outcome of ['confirm', 'cancel', 'error']) {
+        const popup = { open: true };
+        const page = { isConnected: true, scrollTop: 15, scrollLeft: 3, parentElement: null };
+        const panels = { isConnected: true, scrollTop: 120, scrollLeft: 8, parentElement: page };
+        const focusCalls = [];
+        const anchor = {
+            isConnected: true, parentElement: panels, ownerDocument: { scrollingElement: page },
+            closest: () => popup,
+            focus: options => focusCalls.push(options),
+        };
+        const run = withPreservedPopupViewport(anchor, async () => {
+            panels.scrollTop = 900;
+            page.scrollTop = 200;
+            panels.scrollLeft = 40;
+            if (outcome === 'error') throw new Error('test failure');
+            return outcome === 'confirm';
+        }, { nextFrame: async () => {
+            assert.equal(panels.scrollTop, 120);
+            // Simulate layout moving again in the frame after the dialog closes.
+            panels.scrollTop = 650;
+        } });
+        if (outcome === 'error') await assert.rejects(run, /test failure/);
+        else assert.equal(await run, outcome === 'confirm');
+        assert.equal(panels.scrollTop, 120);
+        assert.equal(panels.scrollLeft, 8);
+        assert.equal(page.scrollTop, 15);
+        assert.deepEqual(focusCalls, [{ preventScroll: true }, { preventScroll: true }]);
+    }
+});
+
+test('主弹窗已关闭或控件已移除时，不抢回焦点或恢复旧页面滚动', async () => {
+    for (const detached of [false, true]) {
+        const popup = { open: true };
+        const panels = { isConnected: true, scrollTop: 10, scrollLeft: 0, parentElement: null };
+        let focused = 0;
+        const anchor = {
+            isConnected: true, parentElement: panels, closest: () => popup,
+            focus: () => focused++,
+        };
+        await withPreservedPopupViewport(anchor, async () => {
+            panels.scrollTop = 300;
+            if (detached) anchor.isConnected = false;
+            else popup.open = false;
+        }, { nextFrame: async () => assert.fail('closed popup must not schedule restoration') });
+        assert.equal(focused, 1);
+        assert.equal(panels.scrollTop, 300);
+    }
+});
 
 test('弹窗会等待预设和世界书容器真正挂载后再继续初始化', async () => {
     let elapsed = 0;
@@ -193,9 +243,10 @@ test('模板列表保持单行紧凑布局，手机菜单不被裁切并支持�
     const menu = source.match(/function positionInstructionActionMenu[\s\S]*?function bindInstructionSweepSelection/)?.[0] || '';
     const gesture = source.match(/function bindInstructionSweepSelection[\s\S]*?\/\/ ---- World Book/)?.[0] || '';
 
-    assert.match(renderer, /showUncategorized: true, limit: 1/);
+    assert.doesNotMatch(renderer, /itemTagBadgesHTML|tagBadges/);
+    assert.match(renderer, /class="theater-inst-tags"/);
     assert.match(source, /function itemTagBadgesHTML[\s\S]*?visibleTags[\s\S]*?hiddenCount[\s\S]*?is-count/);
-    assert.match(styles, /\.theater-inst-info \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto/);
+    assert.match(styles, /\.theater-inst-info \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/);
     assert.match(styles, /\.theater-inst-name \{[\s\S]*?text-overflow: ellipsis;[\s\S]*?white-space: nowrap/);
 
     assert.match(menu, /is-viewport-positioned/);
@@ -4377,7 +4428,8 @@ test('普通生成多轮复用首轮资料包而不是退回简化续写请求',
     assert.match(ordinaryGeneration, /stagedMultiRoundMode = stagedRenderMode && settings\.autoContinue && configuredMaxRounds >= 2/);
     assert.match(ordinaryGeneration, /minimumRounds: stagedMultiRoundMode \? 2 : 1/);
     assert.match(ordinaryGeneration, /requireTargetCompletion: stagedMultiRoundMode/);
-    assert.match(ordinaryGeneration, /draft: stagedMultiRoundMode \? continuationContextWindow\(accumulatedText\) : ''/);
+    assert.match(ordinaryGeneration, /draft: recentGenerationRoundsContext\(currentGenerationJob\.segments\)/);
+    assert.doesNotMatch(ordinaryGeneration, /continuationContextWindow\(|tailText\(/);
     assert.doesNotMatch(ordinaryGeneration, /\.\.\.buildContinuationPayload/);
 });
 
@@ -4465,6 +4517,40 @@ test('动态收束轮若被 Token 截断，仍可在轮数范围内继续', () =
     addGenerationSegment(job, '字'.repeat(300), 'length');
     assert.equal(shouldContinueJob(job, readableCharCount), true);
     assert.equal(job.completedBelowTarget, false);
+});
+
+test('第二至第五轮只携带最近两轮完整正文，长轮开头原话不被截断且时序不颠倒', () => {
+    const first = '第一轮开头：录音原话「明天见」。' + '第一轮正文'.repeat(1800) + '第一轮结尾。';
+    const second = '第二轮开头。' + '第二轮正文'.repeat(1800) + '第二轮结尾。';
+    const third = '第三轮开头。第三轮结尾。';
+    const fourth = '第四轮开头。第四轮结尾。';
+    const cases = [
+        { completed: [first], expected: first, excluded: [] },
+        { completed: [first, second], expected: first + '\n\n' + second, excluded: [] },
+        { completed: [first, second, third], expected: second + '\n\n' + third, excluded: ['第一轮开头', '第一轮结尾'] },
+        { completed: [first, second, third, fourth], expected: third + '\n\n' + fourth, excluded: ['第一轮开头', '第二轮开头'] },
+    ];
+    for (const { completed, expected, excluded } of cases) {
+        const before = [...completed];
+        const draft = recentGenerationRoundsContext(completed);
+        assert.equal(draft, expected);
+        assert.deepEqual(completed, before);
+        for (const manuscriptMode of [false, true]) {
+            const instruction = buildContinuationInstruction({
+                round: completed.length + 1, draft, manuscriptMode,
+                originalInstruction: 'INITIAL_TASK_MARKER', finishThisRound: true,
+            });
+            const payload = buildContinuationPayload({ instruction, manuscriptMode });
+            assert.ok(payload.userPrompt.includes(expected));
+            excluded.forEach(marker => assert.ok(!payload.userPrompt.includes(marker)));
+            assert.ok(payload.userPrompt.indexOf(expected) < payload.userPrompt.indexOf('请从已有正文') || !manuscriptMode);
+            // Preserve the pre-existing distinction; do not re-add the initial task to ordinary continuation.
+            assert.equal(payload.userPrompt.includes('INITIAL_TASK_MARKER'), manuscriptMode);
+            assert.match(payload.userPrompt, /原话时须保留原文/);
+            assert.doesNotMatch(payload.userPrompt, /更早内容已省略/);
+        }
+    }
+    assert.equal(recentGenerationRoundsContext([]), '');
 });
 
 test('5000 字起同一稿件补完轮未达到 90% 时不能提前交卷', () => {
@@ -4759,7 +4845,7 @@ test('标签界面、历史未分类、数字触发间隔和渲染模板删除�
     const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     assert.match(source, /id="theater-inst-tag-filter"/);
     assert.match(source, /id="theater-history-tag-filter"/);
-    assert.match(source, /showUncategorized: true/);
+    assert.match(source, /class="theater-history-tags">\$\{historyTagBadgesHTML\(h\)\}/);
     assert.match(source, /id="theater-auto-interval" type="number" min="1" max="50"/);
     assert.doesNotMatch(source, /id="theater-auto-interval" type="range"/);
     assert.match(source, /删除这个自定义模板/);

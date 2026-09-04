@@ -122,6 +122,13 @@ export function buildContinuationPayload({ instruction = '', manuscriptMode = fa
     };
 }
 
+// Each entry is one completed body round. Keep the last two whole rounds,
+// oldest first, so the final paragraph remains the continuation point.
+export function recentGenerationRoundsContext(segments = []) {
+    if (!Array.isArray(segments)) return '';
+    return segments.slice(-2).map(segment => String(segment || '').trim()).filter(Boolean).join('\n\n');
+}
+
 export function buildContinuationInstruction({
     round,
     tail,
@@ -143,20 +150,21 @@ export function buildContinuationInstruction({
     const lengthPlan = target
         ? `【本轮篇幅】程序已统计当前可读正文约 ${current} 字，目标约 ${target} 字，仍差约 ${remaining} 字。本轮请新增约 ${suggestedChars} 字的有效正文；不需要自行计算、报告或标注字数。`
         : '';
+    const currentDraft = String(draft || tail || '').trim();
+    const continuityRule = '已有正文中已经确定的人物状态、事件事实和物品信息必须延续；再次引用录音、信件、留言或约定中的原话时须保留原文，不得自行换词或改写其内容。';
     if (manuscriptMode) {
         const task = String(originalInstruction || '').trim();
-        const currentDraft = String(draft || tail || '').trim();
         return `这是同一份小剧场稿件的第 ${round} 个正文轮，不是新的续写任务或后日谈。
 
 ${task ? `【整篇作品任务｜只用于确认同一稿件的整体目标，不要重新执行已经写完的内容】\n${task}\n` : ''}
-【已有未完成正文｜属于本篇前半部分，只作承接依据，不要重复输出】
+【最近两轮已有正文（不足两轮则提供已有的一轮）｜按先后顺序排列，只作承接依据，不要重复输出】
 ${currentDraft}
 
 ${lengthPlan}
 
 请从已有正文的最后位置继续补完同一个作品：
 1. 所有正文轮合计必须构成一篇连续、完整的小剧场，不得把本轮写成续集、番外或新的事件；
-2. 已有正文中的人物、事实、动作和事件进度全部有效，不要复述、改写、推倒重来或再次执行；
+2. 已有正文中的人物、事实、动作和事件进度全部有效，不要复述、改写、推倒重来或再次执行；${continuityRule}
 3. 预设、人物、世界书和聊天前文只负责约束设定；已有正文的末尾才是唯一当前叙事位置；
 4. 只输出本轮新增的纯正文，不要输出已有正文、HTML、CSS、JavaScript、标题、创作说明或字数报告；
 5. 用新的动作、对白、心理变化和必要情节完成本篇尚未写完的部分，不要用总结、空话或重复情节填充；
@@ -166,14 +174,14 @@ ${lengthPlan}
     }
     return `这是同一篇小剧场的第 ${round} 次续写。
 
-上一段结尾：
-${tail}
+【最近两轮已有正文（不足两轮则提供已有的一轮）｜按先后顺序排列，从最后一段继续】
+${currentDraft}
 
 ${lengthPlan}
 
 请直接承接上一段结尾继续正文：
 1. 不要复述、改写或总结已经发生的内容；
-2. 保持相同人物语气、视角、时态和叙事风格；
+2. 保持相同人物语气、视角、时态和叙事风格；${continuityRule}
 3. 只输出新增正文片段，不要输出前文、HTML、CSS、JavaScript或标题；
 4. 用新的动作、对白、心理变化和情节推进继续展开，不要用复述、空话或重复情节填充；
 5. 如果上一段已经进入收尾，只能沿着同一个收尾补足余波、情绪和人物落点；不得撤销已经发生的结局、制造新的主要冲突或重新开启一条剧情；

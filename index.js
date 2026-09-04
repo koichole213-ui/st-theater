@@ -8,14 +8,14 @@ import { compareVersion, fetchInstalledExtensionStatus, fetchLatestRemoteVersion
 import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
-import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml } from './generation-payload.js';
+import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml, recentGenerationRoundsContext } from './generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection, validateAdaptiveRenderHtml } from './adaptive-render.js';
 import { debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, diagnosticSignalCatalog, diagnosticSignalInfo, signalForStopReason } from './request-diagnostics.js';
 import { autoSourceLabel, resolveAutoInstruction } from './auto-mode.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, generationTextWithLiveSegment, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from './generation-job.js';
-import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, readableCharCount, tailText } from './text-counter.js';
+import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, readableCharCount } from './text-counter.js';
 import { classifyLengthTier, firstRoundGuidance, isLongFormTarget, isStagedRenderTarget, longFormFirstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
 import { clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
 import { MAX_API_PRESETS, apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from './api-presets.js';
@@ -41,7 +41,7 @@ import { applyPromptPostProcessing, composeGenerationContinuationMessages, compo
 import { createRequestTrace, formatRequestTrace, requestTraceCompatibilityLabel, requestTraceMessageLabel } from './request-trace.js';
 import { migrateLegacyPresetEntryStates, presetEntryStatesForPreset } from './preset-entry-states.js';
 import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLists, migrateLegacyTagSettings, normalizeTagFilter, normalizeTagList, removeTagFromList, renameTagInList } from './tag-system.js';
-import { waitForPopupElements } from './popup-lifecycle.js';
+import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
 const VERSION = '4.2.0';
@@ -1516,10 +1516,6 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <label class="theater-label" for="theater-instruction">小剧场指令</label>
             </div>
             <textarea id="theater-instruction" class="theater-textarea" rows="4" placeholder="例如：生成一个角色们一起吃火锅的番外小剧场">${esc(settings.lastInstruction || '')}</textarea>
-            <div id="theater-active-instruction-tags" class="theater-active-instruction-tags" style="${activeInstructionTags.length ? '' : 'display:none;'}">
-                <span class="theater-active-instruction-tag-list">${itemTagBadgesHTML({ tags: activeInstructionTags })}</span>
-                <button type="button" id="theater-edit-active-instruction-tags" class="theater-tag-link"><i class="fa-solid fa-pen"></i> 修改本次标签</button>
-            </div>
             <details id="theater-manual-target-control" class="theater-target-details ${settings.manualTargetEnabled ? 'is-enabled' : ''}" ${settings.manualTargetPanelOpen ? 'open' : ''}>
                 <summary class="theater-target-summary">
                     <span><i class="fa-solid fa-bullseye"></i> 独立设置目标字数</span>
@@ -1546,8 +1542,8 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <span class="theater-hint-inline" id="theater-interactive-hint">${selectedAdaptiveRender ? '当前模板已自带剧情自适应设计，无需另开交互模式' : '生成可交互的小剧场'}</span>
             </div>
             <div class="theater-btn-row">
-                <div id="theater-save-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-floppy-disk"></i><span>存为模板</span></div>
-                <div id="theater-clear-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-eraser"></i><span>清空</span></div>
+                <button type="button" id="theater-save-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-floppy-disk"></i><span>存为模板</span></button>
+                <button type="button" id="theater-clear-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-eraser"></i><span>清空</span></button>
                 <div id="theater-random-btn" class="theater-btn generate" style="${settings.randomEnabled ? '' : 'display:none;'}"><i class="fa-solid fa-dice"></i><span>抽一个</span></div>
             </div>
             <div class="theater-btn-row">
@@ -3624,14 +3620,6 @@ function setActiveInstructionTags(tags, content = '') {
     if (activeInstructionContent && activeInstructionContent === String(settings.lastInstruction || '')) {
         settings.lastInstructionTags = [...activeInstructionTags];
     }
-    refreshActiveInstructionTags();
-}
-
-function refreshActiveInstructionTags() {
-    const $row = $('#theater-active-instruction-tags');
-    if (!$row.length) return;
-    $row.toggle(activeInstructionTags.length > 0);
-    $row.find('.theater-active-instruction-tag-list').html(itemTagBadgesHTML({ tags: activeInstructionTags }));
 }
 
 function filterInstAll(arr) {
@@ -3652,7 +3640,6 @@ function renderInstList(arr) {
         return `<p class="theater-empty">${q ? `没找到包含「${esc(q)}」的模板` : '当前标签组合下还没有模板'}</p>`;
     }
     return filtered.map(({ t: item, i }) => {
-        const tagBadges = itemTagBadgesHTML(item, { showUncategorized: true, limit: 1 });
         const checked = instSelected.has(i) ? 'checked' : '';
         const selClass = instSelected.has(i) ? ' theater-inst-item-selected' : '';
         return `
@@ -3660,7 +3647,6 @@ function renderInstList(arr) {
             <input type="checkbox" class="theater-inst-checkbox" data-index="${i}" ${checked}>
             <div class="theater-inst-info">
                 <span class="theater-inst-name" data-index="${i}" title="${esc(item.name || '未命名模板')}"><i class="fa-solid fa-file-lines"></i> ${esc(item.name)}</span>
-                ${tagBadges}
             </div>
             <button type="button" class="theater-inst-more" data-index="${i}" title="更多操作" aria-label="打开模板操作菜单" aria-expanded="false"><i class="fa-solid fa-ellipsis"></i></button>
             <div class="theater-inst-actions">
@@ -5517,17 +5503,21 @@ function bindEvents() {
     });
 
     // ---- Rules: Instruction templates ----
-    $d.off('click.tsi').on('click.tsi', '#theater-save-instruction-btn', saveInstructionTpl);
+    $d.off('click.tsi').on('click.tsi', '#theater-save-instruction-btn', function () {
+        return withPreservedPopupViewport(this, saveInstructionTpl);
+    });
     $d.off('click.tci').on('click.tci', '#theater-clear-instruction-btn', async function () {
-        if (!$('#theater-instruction').val().trim()) return;
-        const { Popup } = SillyTavern.getContext();
-        const ok = await Popup.show.confirm('确定清空指令输入框？');
-        if (!ok) return;
-        $('#theater-instruction').val('');
-        settings.lastInstruction = '';
-        settings.lastInstructionTags = [];
-        setActiveInstructionTags([], '');
-        save();
+        return withPreservedPopupViewport(this, async () => {
+            if (!$('#theater-instruction').val().trim()) return;
+            const { Popup } = SillyTavern.getContext();
+            const ok = await Popup.show.confirm('确定清空指令输入框？');
+            if (!ok) return;
+            $('#theater-instruction').val('');
+            settings.lastInstruction = '';
+            settings.lastInstructionTags = [];
+            setActiveInstructionTags([], '');
+            save();
+        });
     });
     $d.off('click.titog').on('click.titog', '#theater-inst-toggle', function () {
         $(this).next('.theater-drawer-body').slideToggle(150);
@@ -5636,12 +5626,6 @@ function bindEvents() {
     });
     $d.off('click.tsr').on('click.tsr', '#theater-save-render-btn', saveRenderTpl);
     $d.off('click.trenderdelete').on('click.trenderdelete', '#theater-delete-render-btn', deleteRenderTpl);
-
-    $d.off('click.tactiveinstructiontags').on('click.tactiveinstructiontags', '#theater-edit-active-instruction-tags', async function () {
-        const chosen = await chooseTags({ title: '修改本次生成标签', selected: activeInstructionTags, subtitle: '只影响这次生成结果以及之后保存的历史' });
-        if (chosen === null) return;
-        setActiveInstructionTags(chosen, $('#theater-instruction').val());
-    });
 
     // ---- History ----
     resetHistorySelectionGesture();
@@ -7368,7 +7352,7 @@ async function manageInstructionTags() {
         activeInstructionTags = renameTagInList(activeInstructionTags, oldName, newName);
         continuationSourceTags = renameTagInList(continuationSourceTags, oldName, newName);
         await updateAllHistoryTags(tags => renameTagInList(tags, oldName, newName));
-        save(); close(); refreshInstUI(); refreshHistList(); refreshActiveInstructionTags();
+        save(); close(); refreshInstUI(); refreshHistList();
         toastr.success(`已改名为「${newName}」`);
     });
     $body.on('click', '.theater-tag-mgmt-delete', async function (event) {
@@ -7387,7 +7371,7 @@ async function manageInstructionTags() {
         activeInstructionTags = removeTagFromList(activeInstructionTags, name);
         continuationSourceTags = removeTagFromList(continuationSourceTags, name);
         await updateAllHistoryTags(tags => removeTagFromList(tags, name));
-        save(); close(); refreshInstUI(); refreshHistList(); refreshActiveInstructionTags();
+        save(); close(); refreshInstUI(); refreshHistList();
         toastr.success(`标签「${name}」已删除，模板和历史都保留`);
     });
     popup.show();
@@ -7430,7 +7414,7 @@ async function saveInstructionTpl() {
     const suggested = currentFilter[0] === TAG_UNCATEGORIZED ? [] : currentFilter;
     const selection = await chooseTagsWithNew({
         title: '保存指令模板',
-        subtitle: '填写名称并选择标签；也可以在下方新建一个标签，都不选则归为“未分类”',
+        subtitle: '不选标签则归为“未分类”',
         selected: suggested,
         okButton: '保存模板',
         templateName: defaultName,
@@ -9142,7 +9126,6 @@ function startContinue(html, tags = []) {
     continuationSourceTags = itemTags({ tags }, knownInstructionTags());
     activeInstructionTags = [...continuationSourceTags];
     activeInstructionContent = '';
-    refreshActiveInstructionTags();
     if (readableCharCount(plainText) > MAX_CONTINUATION_CONTEXT_CHARS) {
         toastr.info('前情内容较长，已自动截取后半段', '', { timeOut: 3000 });
     }
@@ -9382,17 +9365,15 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             currentGenerationJob.round++;
             authorizeFinish(currentGenerationJob, shouldFinishThisRound);
             const finishThisRound = currentGenerationJob.finishAuthorized;
-            const accumulatedText = currentGenerationJob.segments.join('\n\n');
             const continuationInstruction = buildContinuationInstruction({
                 round: currentGenerationJob.round,
-                tail: tailText(accumulatedText, 1500),
                 finishThisRound,
                 currentChars: currentGenerationJob.actualChars,
                 targetChars: currentGenerationJob.targetChars,
                 roundsRemaining: currentGenerationJob.maxRounds - currentGenerationJob.round + 1,
                 manuscriptMode: stagedMultiRoundMode,
                 originalInstruction: payload.generationFoundation?.originalInstruction || '',
-                draft: stagedMultiRoundMode ? continuationContextWindow(accumulatedText) : '',
+                draft: recentGenerationRoundsContext(currentGenerationJob.segments),
             });
             roundPayload = buildGenerationContinuationRoundPayload({
                 foundation: payload.generationFoundation,
