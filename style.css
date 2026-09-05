@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.2.0
+/* 千夜浮梦 · 小剧场生成器 v4.2.1
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -309,7 +309,7 @@
 .theater-panel.active { display: block; }
 
 /* 普通续写：固定前情、同段版本与显式推进。 */
-#theater-continuation-result[hidden], #theater-continuation-direction-note[hidden], #theater-cont-exit-confirm[hidden] { display:none !important; }
+#theater-continuation-result[hidden], #theater-cont-exit-confirm[hidden] { display:none !important; }
 .theater-continuation-return { margin-top:8px; min-height:44px; }
 #theater-cont-exit-confirm { font-size:var(--t-text-sm); }
 .theater-continuation-session { margin:0 var(--t-space-3) var(--t-space-3); padding:10px 12px; border:1px solid var(--t-border-strong); border-radius:12px; background:var(--t-card-green, var(--t-surface-2)); color:var(--t-fg); }
@@ -4438,7 +4438,8 @@ body.theater-reader-open {
                 transform var(--t-dur-fast) var(--t-ease);
 }
 .theater-panel[data-panel="history"] .theater-hist-checkbox { display: none; }
-.theater-panel[data-panel="history"].is-batch-managing .theater-hist-checkbox { display: block; }
+/* 酒馆用 grid 中的 ::before 绘制勾号；block 会使它退回无尺寸的行内元素。 */
+.theater-panel[data-panel="history"].is-batch-managing .theater-hist-checkbox { display: grid; }
 .theater-panel[data-panel="history"].is-batch-managing .theater-history-actions { display: none; }
 .theater-history-item.is-selection-dragging {
     outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent);
@@ -5365,7 +5366,10 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     --dream-gemini-warning: var(--t-warning, #9b642a);
     --dream-gemini-danger: var(--t-danger);
     min-width: 0;
-    overflow-x: hidden;
+    /* hidden 会连带把纵向 visible 算成 auto，入场位移便产生第二条滚动条。
+       这里只裁横向；纵向滚动交给外层 theater-panels-wrapper。 */
+    overflow-x: clip;
+    overflow-y: visible;
     color: var(--dream-gemini-fg);
     background: var(--dream-gemini-bg);
 }

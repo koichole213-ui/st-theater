@@ -45,7 +45,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.2.0';
+const VERSION = '4.2.1';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -1518,7 +1518,6 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <label class="theater-label" id="theater-instruction-label" for="theater-instruction">${continuationSession ? '本段续写方向' : '小剧场指令'}</label>
             </div>
             <textarea id="theater-instruction" class="theater-textarea" rows="4" placeholder="${continuationSession ? '可留空自然续写，也可填写本段方向…' : '例如：生成一个角色们一起吃火锅的番外小剧场'}">${esc(continuationSession ? continuationSession.direction : (settings.lastInstruction || ''))}</textarea>
-            <p id="theater-continuation-direction-note" class="theater-hint-inline" ${continuationSession ? '' : 'hidden'}>重写时沿用本段前情，可调整本段方向。</p>
             <details id="theater-manual-target-control" class="theater-target-details ${settings.manualTargetEnabled ? 'is-enabled' : ''}" ${settings.manualTargetPanelOpen ? 'open' : ''}>
                 <summary class="theater-target-summary">
                     <span><i class="fa-solid fa-bullseye"></i> 独立设置目标字数</span>
@@ -1542,7 +1541,6 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
             <div id="theater-token-details" class="theater-hint-inline" style="display:none;margin:-2px 1px 8px;line-height:1.6;"></div>
             <div class="theater-toggle-row" id="theater-interactive-row">
                 <label class="theater-toggle-label"><input type="checkbox" id="theater-interactive-toggle" ${settings.interactiveMode ? 'checked' : ''}><span>交互模式</span></label>
-                <span class="theater-hint-inline" id="theater-interactive-hint">附加交互要求；关闭不取消模板自身的互动设计</span>
             </div>
             <div class="theater-btn-row">
                 <button type="button" id="theater-save-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-floppy-disk"></i><span>存为模板</span></button>
@@ -8375,7 +8373,6 @@ function updateContinueHint() {
     const details = document.querySelector('.theater-continuation-source');
     if (details && sourceOpen) details.open = true;
     $('#theater-instruction-label').text(continuationSession ? '本段续写方向' : '小剧场指令');
-    $('#theater-continuation-direction-note').prop('hidden', !continuationSession);
     const busy = isGenerating || isPreparingGeneration;
     $('#theater-instruction').prop('disabled', busy && !!continuationSession);
     const html = currentDisplayHtml || lastGeneratedHtml;
