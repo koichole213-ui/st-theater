@@ -298,6 +298,7 @@
     height: clamp(520px, 68vh, 720px);
     min-height: 520px;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     padding: 0 var(--t-space-3);
 }
 .theater-popup[data-skin="theater"] .theater-panels-wrapper,
@@ -306,6 +307,25 @@
 }
 .theater-panel { display: none; }
 .theater-panel.active { display: block; }
+
+/* 普通续写：固定前情、同段版本与显式推进。 */
+#theater-continuation-result[hidden], #theater-continuation-direction-note[hidden], #theater-cont-exit-confirm[hidden] { display:none !important; }
+.theater-continuation-return { margin-top:8px; min-height:44px; }
+#theater-cont-exit-confirm { font-size:var(--t-text-sm); }
+.theater-continuation-session { margin:0 var(--t-space-3) var(--t-space-3); padding:10px 12px; border:1px solid var(--t-border-strong); border-radius:12px; background:var(--t-card-green, var(--t-surface-2)); color:var(--t-fg); }
+.theater-continuation-session-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.theater-continuation-session-heading b { font-size:var(--t-text-base); }
+#theater-cancel-continue { border:0; min-height:44px; padding:8px; color:var(--t-fg-soft); background:transparent; cursor:pointer; font:inherit; font-size:var(--t-text-sm); }
+.theater-continuation-source { border-top:1px solid var(--t-border); padding-top:8px; color:var(--t-fg-soft); }
+.theater-continuation-source summary { cursor:pointer; min-height:32px; font-size:var(--t-text-sm); line-height:1.7; overflow-wrap:anywhere; }
+.theater-continuation-source p { max-height:180px; overflow:auto; margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.8; font-size:var(--t-text-sm); }
+.theater-continuation-versions { display:flex; align-items:center; gap:10px; margin:12px 0; }
+.theater-continuation-versions .theater-btn { min-width:44px; min-height:44px; padding:6px 10px; font-size:20px; }
+#theater-cont-version-label { flex:1; text-align:center; color:var(--t-fg-soft); font-size:var(--t-text-sm); }
+.theater-continuation-actions, .theater-continuation-actions-note { display:grid; grid-template-columns:1fr 1.35fr; gap:8px; }
+.theater-continuation-actions .theater-btn { min-width:0; min-height:44px; padding:9px 6px; border-radius:12px; white-space:normal; font-size:var(--t-text-sm); touch-action:manipulation; }
+.theater-continuation-actions-note { margin-top:6px; text-align:center; font-size:var(--t-text-xs); line-height:1.6; color:var(--t-fg-soft); }
+.theater-continuation-retention { margin:12px 0 0; text-align:center; }
 
 /* ============================================================
  * Section (card)
@@ -4417,6 +4437,9 @@ body.theater-reader-open {
                 background var(--t-dur-fast) var(--t-ease),
                 transform var(--t-dur-fast) var(--t-ease);
 }
+.theater-panel[data-panel="history"] .theater-hist-checkbox { display: none; }
+.theater-panel[data-panel="history"].is-batch-managing .theater-hist-checkbox { display: block; }
+.theater-panel[data-panel="history"].is-batch-managing .theater-history-actions { display: none; }
 .theater-history-item.is-selection-dragging {
     outline: 2px solid color-mix(in srgb, var(--t-accent) 55%, transparent);
     outline-offset: 2px;

@@ -10,6 +10,7 @@ import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiReq
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml, recentGenerationRoundsContext } from './generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection } from './adaptive-render.js';
+import { createContinuationSession, appendContinuationVersion, selectContinuationVersion, displayedContinuationVersion } from './continuation-session.js';
 import { debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, diagnosticSignalCatalog, diagnosticSignalInfo, signalForStopReason } from './request-diagnostics.js';
@@ -1510,12 +1511,14 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
 
     <!-- ===== 1. 生成 ===== -->
     <div class="theater-panel${activeTabClass('generate')}" data-panel="generate">
+        <div id="theater-continuation-session">${continuationSessionHTML()}</div>
         <div class="theater-section">
             <div class="theater-instruction-heading-row">
                 <button type="button" id="theater-quick-render-toggle" class="theater-quick-render-toggle${selectedAdaptiveRender ? ' is-adaptive' : ''}" title="在设置中指定的 A/B 两个模板之间切换" aria-label="切换生成模板">${quickRenderButtonContent()}</button>
-                <label class="theater-label" for="theater-instruction">小剧场指令</label>
+                <label class="theater-label" id="theater-instruction-label" for="theater-instruction">${continuationSession ? '本段续写方向' : '小剧场指令'}</label>
             </div>
-            <textarea id="theater-instruction" class="theater-textarea" rows="4" placeholder="例如：生成一个角色们一起吃火锅的番外小剧场">${esc(settings.lastInstruction || '')}</textarea>
+            <textarea id="theater-instruction" class="theater-textarea" rows="4" placeholder="${continuationSession ? '可留空自然续写，也可填写本段方向…' : '例如：生成一个角色们一起吃火锅的番外小剧场'}">${esc(continuationSession ? continuationSession.direction : (settings.lastInstruction || ''))}</textarea>
+            <p id="theater-continuation-direction-note" class="theater-hint-inline" ${continuationSession ? '' : 'hidden'}>重写时沿用本段前情，可调整本段方向。</p>
             <details id="theater-manual-target-control" class="theater-target-details ${settings.manualTargetEnabled ? 'is-enabled' : ''}" ${settings.manualTargetPanelOpen ? 'open' : ''}>
                 <summary class="theater-target-summary">
                     <span><i class="fa-solid fa-bullseye"></i> 独立设置目标字数</span>
@@ -1590,6 +1593,19 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <div id="theater-output-text-fallback" class="theater-output-text-fallback" role="document" style="display:none;"></div>
             </div>
             <textarea id="theater-result-text-editor" class="theater-textarea" rows="12" style="display:none;margin-top:8px;" placeholder="编辑小剧场正文…"></textarea>
+            <div id="theater-continuation-result" hidden>
+                <div class="theater-continuation-versions">
+                    <button type="button" class="theater-btn" id="theater-cont-version-prev" aria-label="查看本段上一版">‹</button>
+                    <span id="theater-cont-version-label"></span>
+                    <button type="button" class="theater-btn" id="theater-cont-version-next" aria-label="查看本段下一版">›</button>
+                </div>
+                <div class="theater-continuation-actions">
+                    <button type="button" class="theater-btn" id="theater-cont-rewrite">重写本段</button>
+                    <button type="button" class="theater-btn primary" id="theater-cont-next">接着这一版续写</button>
+                </div>
+                <div class="theater-continuation-actions-note"><span>沿用本段前情</span><span>以当前结果为新前情</span></div>
+                <p class="theater-hint-inline theater-continuation-retention">本段版本临时保留；接写下一段、退出或刷新前，请保存重要版本。</p>
+            </div>
         </div>
     </div>
 
@@ -1742,7 +1758,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
     </div>
 
     <!-- ===== 4. 历史 ===== -->
-    <div class="theater-panel${activeTabClass('history')}" data-panel="history">
+    <div class="theater-panel${activeTabClass('history')}${histBatchMode ? ' is-batch-managing' : ''}" data-panel="history">
         <div class="theater-section">
             <div class="theater-history-top-bar">
                 <label class="theater-label" style="margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> 保存的小剧场</label>
@@ -2119,7 +2135,7 @@ function historyItemHTML(h) {
     const title = h.title || '未命名小剧场';
     return `<div class="theater-history-item${selClass}" data-id="${h.id}">
         <div class="theater-history-header">
-            <input type="checkbox" class="theater-hist-checkbox" data-id="${h.id}" ${checked} style="display:none;">
+            <input type="checkbox" class="theater-hist-checkbox" data-id="${h.id}" ${checked} aria-label="选择这条历史">
             <div class="theater-history-heading">
                 <div class="theater-history-title-row">
                     <span class="theater-history-title" title="${esc(title)}">${esc(title)}</span>
@@ -3604,6 +3620,7 @@ function rollRandomInstruction() {
     const t = pool[Math.floor(Math.random() * pool.length)];
     $('#theater-instruction').val(t.content);
     settings.lastInstruction = t.content;
+    if (continuationSession) continuationSession.direction = t.content;
     setActiveInstructionTags(itemTags(t, knownInstructionTags()), t.content);
     save();
     scheduleTokenEstimate();
@@ -4188,6 +4205,8 @@ async function openTheaterPopup() {
         toastr.error('小剧场部分按钮初始化失败；更新入口仍可使用，请更新后刷新酒馆');
     }
     decorateConfigLayout();
+    updateContinueHint();
+    if (histBatchMode) enterHistBatchMode();
     applyResultToolboxMode();
     renderRuntimeLog();
     syncLongDreamPanel();
@@ -4237,7 +4256,7 @@ async function openTheaterPopup() {
         showInIframe(html, currentOutputMode);
         $('#theater-output-section').show();
         updateRecentNav();
-    } else if (recentCache.length) {
+    } else if (recentCache.length && !continuationSession) {
         // 没有当前生成但有最近记录，恢复最近一条
         recentIndex = Math.min(recentIndex, recentCache.length - 1);
         const item = recentCache[recentIndex];
@@ -4249,6 +4268,7 @@ async function openTheaterPopup() {
         }
     }
 
+    updateContinueHint();
     await p;
 }
 
@@ -4626,6 +4646,7 @@ function bindEvents() {
     $(window).off('resize.tra').on('resize.tra', positionResultToolbox);
     $d.off('change.ti').on('change.ti', '#theater-interactive-toggle', function () { settings.interactiveMode = $(this).is(':checked'); save(); });
     $d.off('input.tii').on('input.tii', '#theater-instruction', function () {
+        if (continuationSession) continuationSession.direction = String($(this).val() || '');
         settings.lastInstruction = $(this).val();
         if (!continueContext && String($(this).val()) !== activeInstructionContent) {
             settings.lastInstructionTags = [];
@@ -5528,6 +5549,7 @@ function bindEvents() {
             if (!ok) return;
             $('#theater-instruction').val('');
             settings.lastInstruction = '';
+            if (continuationSession) continuationSession.direction = '';
             settings.lastInstructionTags = [];
             setActiveInstructionTags([], '');
             save();
@@ -5700,6 +5722,8 @@ function bindEvents() {
             recentIndex = snapshot.recentIndex;
             recentPersist();
         }
+        const version = displayedContinuationVersion(continuationSession, snapshot.html);
+        if (version) Object.assign(version, { html: newHtml, text, mode: newMode });
         $('#theater-result-text-editor').hide();
         showInIframe(newHtml, newMode);
         resultEditSnapshot = null;
@@ -5718,7 +5742,11 @@ function bindEvents() {
             recentCache.splice(targetIndex, 1);
             recentPersist();
         }
-        if (targetIndex >= 0 && recentCache.length) {
+        const version = displayedContinuationVersion(continuationSession, html);
+        if (version) continuationSession.versions.splice(continuationSession.versions.indexOf(version), 1);
+        if (version && continuationSession.versions.length) {
+            showContinuationVersion(Math.min(continuationSession.selected, continuationSession.versions.length - 1));
+        } else if (targetIndex >= 0 && recentCache.length && !continuationSession) {
             showRecentResult(Math.min(targetIndex, recentCache.length - 1));
         } else {
             clearDisplayedResult();
@@ -5730,12 +5758,31 @@ function bindEvents() {
         const html = lastGeneratedHtml || currentDisplayHtml;
         if (!html) { toastr.warning('没有可续写的内容'); return; }
         const source = recentCache.find(item => item.html === html) || historyCache.find(item => item.html === html);
-        startContinue(html, source?.tags || activeInstructionTags);
+        startContinue(html, source?.tags || activeInstructionTags, { sourceLabel: source?.title || '当前结果' });
     });
     // 取消续写
     $d.off('click.tcc').on('click.tcc', '#theater-cancel-continue', function () {
+        if (isGenerating || isPreparingGeneration) return;
+        $('#theater-cont-exit-confirm').prop('hidden', false);
+    });
+    $d.off('click.tcce').on('click.tcce', '#theater-cont-confirm-exit', function () {
+        if (isGenerating || isPreparingGeneration) return;
         clearContinueMode();
     });
+    $d.off('click.tccs').on('click.tccs', '#theater-cont-stay', () => $('#theater-cont-exit-confirm').prop('hidden', true));
+    $d.off('click.tcrtn').on('click.tcrtn', '#theater-cont-return', () => showContinuationVersion(continuationSession?.selected));
+    $d.off('click.tcrw').on('click.tcrw', '#theater-cont-rewrite', generateTheater);
+    $d.off('click.tcnx').on('click.tcnx', '#theater-cont-next', function () {
+        if (isGenerating || isPreparingGeneration || resultEditSnapshot) return;
+        const version = displayedContinuationVersion(continuationSession, currentDisplayHtml || lastGeneratedHtml);
+        if (!version) return;
+        startContinue(version.html, version.tags || continuationSourceTags, {
+            segment: continuationSession.segment + 1,
+            sourceLabel: `第 ${continuationSession.segment} 段 · 第 ${continuationSession.versions.indexOf(version) + 1} 版`,
+        });
+    });
+    $d.off('click.tcvp').on('click.tcvp', '#theater-cont-version-prev', () => showContinuationVersion(continuationSession?.selected - 1));
+    $d.off('click.tcvn').on('click.tcvn', '#theater-cont-version-next', () => showContinuationVersion(continuationSession?.selected + 1));
     $d.off('click.thv').on('click.thv', '.theater-history-view', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
         lastGeneratedHtml = item.html;
@@ -5745,8 +5792,7 @@ function bindEvents() {
     // 续写：从历史记录
     $d.off('click.thc').on('click.thc', '.theater-history-continue', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
-        lastGeneratedHtml = item.html;
-        startContinue(item.html, item.tags);
+        startContinue(item.html, item.tags, { sourceLabel: item.title || '保存的小剧场' });
     });
     $d.off('click.the').on('click.the', '.theater-history-export', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
@@ -6494,19 +6540,19 @@ function enterHistBatchMode() {
     $('#theater-hist-batch-enter').hide();
     $('#theater-export-all-history').hide();
     $('#theater-hist-batch-bar').show();
-    $('.theater-hist-checkbox').show();
-    $('.theater-history-actions').hide();
+    document.querySelector('.theater-panel[data-panel="history"]')?.classList.add('is-batch-managing');
     updateHistBulkBar();
 }
 
 function exitHistBatchMode() {
     $('#theater-hist-batch-bar').hide();
-    $('.theater-hist-checkbox').hide().prop('checked', false);
-    $('.theater-history-item').removeClass('theater-history-item-selected');
+    const panel = document.querySelector('.theater-panel[data-panel="history"]');
+    panel?.classList.remove('is-batch-managing');
+    panel?.querySelectorAll('.theater-hist-checkbox:checked').forEach(input => { input.checked = false; });
+    panel?.querySelectorAll('.theater-history-item-selected').forEach(item => item.classList.remove('theater-history-item-selected'));
     const h = filterHistoryAll(historyCache);
     $('#theater-hist-batch-enter').toggle(h.length > 0);
     $('#theater-export-all-history').toggle(historyCache.length > 0);
-    $('.theater-history-actions').show();
     updateHistBulkBar();
 }
 
@@ -7330,6 +7376,7 @@ async function updateAllHistoryTags(transform) {
         if (await histPut({ ...item, tags })) updated++;
     }
     recentCache.forEach(item => { item.tags = transform(normalizeTagList(item.tags)); });
+    continuationSession?.versions.forEach(item => { item.tags = transform(normalizeTagList(item.tags)); });
     if (recentCache.length) await recentPersist();
     return updated;
 }
@@ -7662,7 +7709,7 @@ async function saveToHistory() {
     const t = await SillyTavern.getContext().Popup.show.input('保存', '标题：', `小剧场 ${count}`);
     if (!t) return;
     const now = new Date(), pad = n => String(n).padStart(2, '0');
-    const sourceMeta = recentCache.find(item => item.html === html)
+    const sourceMeta = displayedContinuationVersion(continuationSession, html) || recentCache.find(item => item.html === html)
         || historyCache.slice().reverse().find(item => item.html === html)
         || null;
     const item = {
@@ -7967,6 +8014,7 @@ let isPreparingGeneration = false;
 let bgStreamText = '';         // 后台生成时保存的流式文本
 let bgError = '';              // 后台生成时的错误信息
 let continueContext = '';      // 续写时的前情内容
+let continuationSession = null;
 let resultEditSnapshot = null; // 退出编辑时用于无损恢复原结果与排版
 
 // 从HTML中提取纯文本（去掉标签，只留故事内容）
@@ -8310,18 +8358,66 @@ function updateLengthHint(target, actual, { completedBelowTarget = false } = {})
     $hint.text(text).toggleClass('theater-length-hint-short', !enough).show();
 }
 
+function continuationSessionHTML() {
+    const session = continuationSession;
+    if (!session) return '';
+    return `<section id="theater-continue-hint" class="theater-continuation-session">
+        <div class="theater-continuation-session-heading"><b>普通续写 · 第 ${session.segment} 段</b><button type="button" id="theater-cancel-continue" ${isGenerating || isPreparingGeneration ? 'disabled' : ''}>退出续写</button></div>
+        <details class="theater-continuation-source"><summary>前情：${esc(session.source.label)}（约 ${readableCharCount(session.source.text)} 字）</summary><p>${esc(session.source.text)}</p></details>
+        ${session.versions.length && !displayedContinuationVersion(session, currentDisplayHtml || lastGeneratedHtml) ? '<button type="button" class="theater-btn theater-continuation-return" id="theater-cont-return">回到本段结果</button>' : ''}
+        <div id="theater-cont-exit-confirm" hidden><p>退出后结束本次续写，重要版本请先保存到历史。</p><div class="theater-continuation-actions"><button type="button" class="theater-btn" id="theater-cont-stay">留在续写</button><button type="button" class="theater-btn" id="theater-cont-confirm-exit">退出</button></div></div>
+    </section>`;
+}
+
 function updateContinueHint() {
-    $('#theater-continue-hint').remove();
-    if (!continueContext) return;
-    const contextChars = readableCharCount(continueContext);
-    $('#theater-instruction').before(`<div id="theater-continue-hint" style="font-size:.78em;opacity:.6;margin-bottom:6px;padding:6px 10px;border-radius:8px;background:rgba(128,128,128,.08);"><i class="fa-solid fa-forward" style="margin-right:4px;"></i>续写模式：已加载前情内容（约 ${contextChars} 字）<span id="theater-cancel-continue" style="margin-left:8px;cursor:pointer;opacity:.5;text-decoration:underline;">取消</span></div>`);
+    const sourceOpen = document.querySelector('.theater-continuation-source')?.open;
+    $('#theater-continuation-session').html(continuationSessionHTML());
+    const details = document.querySelector('.theater-continuation-source');
+    if (details && sourceOpen) details.open = true;
+    $('#theater-instruction-label').text(continuationSession ? '本段续写方向' : '小剧场指令');
+    $('#theater-continuation-direction-note').prop('hidden', !continuationSession);
+    const busy = isGenerating || isPreparingGeneration;
+    $('#theater-instruction').prop('disabled', busy && !!continuationSession);
+    const html = currentDisplayHtml || lastGeneratedHtml;
+    const version = displayedContinuationVersion(continuationSession, html);
+    const hasVersion = !!version && !resultEditSnapshot;
+    const index = version ? continuationSession.versions.indexOf(version) : -1;
+    if (version) continuationSession.selected = index;
+    $('#theater-continuation-result').prop('hidden', !hasVersion || busy);
+    $('#theater-cont-version-label').text(version ? `第 ${index + 1} 版 / 共 ${continuationSession.versions.length} 版${version.complete ? '' : ' · 未完成'}` : '');
+    $('#theater-cont-version-prev').prop('disabled', busy || index <= 0);
+    $('#theater-cont-version-next').prop('disabled', busy || !version || index >= continuationSession.versions.length - 1);
+    $('#theater-cont-rewrite, #theater-cont-next').prop('disabled', busy || !hasVersion);
+    $('#theater-cont-return').prop('disabled', busy);
+    $('#theater-continue-btn').toggle(!resultEditSnapshot && !hasVersion);
+    $('#theater-generate-btn').toggle(!busy && !hasVersion);
+    $('#theater-generate-btn span').last().text(continuationSession ? (continuationSession.versions.length ? '重写本段' : '开始续写') : '生成');
+}
+
+function showContinuationVersion(index) {
+    if (isGenerating || isPreparingGeneration || resultEditSnapshot) return false;
+    const version = selectContinuationVersion(continuationSession, index);
+    if (!version) return false;
+    lastGeneratedHtml = version.html;
+    lastGeneratedText = version.text;
+    currentOutputMode = version.mode;
+    $('#theater-instruction').val(continuationSession.direction);
+    setActiveInstructionTags(version.tags || continuationSourceTags, version.instruction || '');
+    showInIframe(version.html, version.mode);
+    $('#theater-output-section').show();
+    updateRecentNav();
+    updateContinueHint();
+    scheduleTokenEstimate();
+    return true;
 }
 
 function clearContinueMode({ silent = false } = {}) {
     continueContext = '';
+    continuationSession = null;
     continuationSourceTags = [];
-    $('#theater-continue-hint').remove();
     $('#theater-instruction').attr('placeholder', '输入指令…');
+    updateContinueHint();
+    updateRecentNav();
     scheduleTokenEstimate();
     if (!silent) toastr.info('已取消续写');
 }
@@ -9126,12 +9222,14 @@ async function changeLongDreamDraftCandidate(step) {
 }
 
 // 设置续写上下文并跳转到生成面板
-function startContinue(html, tags = []) {
+function startContinue(html, tags = [], { sourceLabel = '当前小剧场', segment = 1 } = {}) {
+    if (isGenerating || isPreparingGeneration || resultEditSnapshot) { toastr.warning('请先完成当前生成或文字编辑'); return; }
     const plainText = htmlToPlainText(html);
     if (!plainText) { toastr.warning('没有可续写的内容'); return; }
 
     // 只读取当前结果的纯正文；不携带 HTML，也不累计更早的续写结果。
     continueContext = prepareContinuationContext(plainText);
+    continuationSession = createContinuationSession({ sourceText: continueContext, sourceLabel, segment });
     continuationSourceTags = itemTags({ tags }, knownInstructionTags());
     activeInstructionTags = [...continuationSourceTags];
     activeInstructionContent = '';
@@ -9141,6 +9239,7 @@ function startContinue(html, tags = []) {
 
     // 跳转到生成面板
     $('.theater-tab[data-tab="generate"]').click();
+    clearDisplayedResult();
     $('#theater-instruction').val('').attr('placeholder', '可留空直接自然续写，也可填写本次方向…');
     updateContinueHint();
     scheduleTokenEstimate();
@@ -9167,8 +9266,10 @@ async function generateTheater() {
     if (longDreamGenerationController?.active) { toastr.warning('长梦章节正在生成，请完成或停止后再生成普通小剧场'); return; }
     if (longDreamChapterEditController) { toastr.warning('长梦正式章节正在重新排版，请等待完成'); return; }
     if (longDreamCanonSuggestionState.controller) { toastr.warning('AI 定梦建议正在整理，请等待完成或先停止'); return; }
-    if (continueContext && !$('#theater-continue-hint').length) clearContinueMode({ silent: true });
+    if (resultEditSnapshot) { toastr.warning('请先应用修改或退出文字编辑'); return; }
+    if (continuationSession) continueContext = continuationSession.source.text;
     const typedInstruction = $('#theater-instruction').val().trim();
+    if (continuationSession) continuationSession.direction = typedInstruction;
     const instruction = typedInstruction || (continueContext
         ? '请承接已有正文自然续写，保持人物、视角与语气一致，推进新的情节，不要重复前文。'
         : '');
@@ -9194,6 +9295,8 @@ async function generateTheater() {
 async function runGeneration(instruction, isAuto, sourceTags = []) {
     if (isGenerating || isPreparingGeneration) return false;
     const contCtx = isAuto ? '' : continueContext;  // 自动生成永远是全新的，不掺手动的续写上下文
+    const continuationRun = !isAuto && contCtx ? continuationSession : null;
+    const continuationDirection = continuationRun?.direction || '';
     const plannedTargetWordCount = resolveTargetWordCount(instruction, {
         manualEnabled: settings.manualTargetEnabled,
         manualTarget: settings.manualTargetChars,
@@ -9204,6 +9307,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     const stagedMultiRoundMode = stagedRenderMode && settings.autoContinue && configuredMaxRounds >= 2;
     const longFormMode = stagedMultiRoundMode && isLongFormTarget(plannedTargetWordCount);
     isPreparingGeneration = true;
+    updateContinueHint();
     let payload;
     try {
         payload = await assembleGenerationPayload(instruction, {
@@ -9213,6 +9317,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         });
     } finally {
         isPreparingGeneration = false;
+        updateContinueHint();
     }
     lastRequestContext = {
         ...payload.diagnosticContext,
@@ -9267,6 +9372,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     $('#theater-generate-btn').hide();
     $('#theater-stop-btn').show();
     $('#theater-quick-render-toggle').prop('disabled', true);
+    updateContinueHint();
     abortController = new AbortController();
     let firstChunkShown = false;
     const streamRenderer = createCumulativeStreamRenderer(
@@ -9436,10 +9542,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         }
         runtimeLog('info', '渲染路径', { path: currentOutputMode === 'html' ? '正常 HTML' : '纯文字' });
         lastGeneratedText = newText;
-        if (contCtx) {
-            // 下一次只承接本轮新增正文；保留上面已经生成好的 HTML 展示。
-            continueContext = prepareContinuationContext(newText);
-        } else {
+        if (!contCtx) {
             const finalVisibleChars = readableCharCount(htmlToPlainText(lastGeneratedHtml));
             if (finalVisibleChars) currentGenerationJob.actualChars = finalVisibleChars;
         }
@@ -9447,6 +9550,12 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             completedBelowTarget: currentGenerationJob.completedBelowTarget,
         });
         generationSucceeded = true;
+        if (continuationRun && continuationSession === continuationRun) {
+            appendContinuationVersion(continuationRun, {
+                html: lastGeneratedHtml, text: newText, mode: currentOutputMode,
+                direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig,
+            });
+        }
 
         // 自动保留到最近生成（最多 3 条）
         if (lastGeneratedHtml) {
@@ -9502,6 +9611,12 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             lastGeneratedText = partialText;
             lastGeneratedHtml = textFallbackHtml(partialText);
             currentOutputMode = 'text';
+            if (continuationRun && continuationSession === continuationRun) {
+                appendContinuationVersion(continuationRun, {
+                    html: lastGeneratedHtml, text: partialText, mode: currentOutputMode,
+                    direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig, complete: false,
+                });
+            }
             if (popupAlive()) {
                 showInIframe(lastGeneratedHtml, 'text');
                 $('#theater-stream-section').hide();
@@ -9527,7 +9642,19 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     } finally {
         isGenerating = false;
         streamRenderer.reset({ flushPending: true });
-        if (!isAuto && !contCtx) {
+        if (!generationSucceeded && !lastGeneratedHtml && continuationRun && continuationSession === continuationRun) {
+            const previous = continuationRun.versions[continuationRun.selected];
+            if (previous) {
+                lastGeneratedHtml = previous.html;
+                lastGeneratedText = previous.text;
+                currentOutputMode = previous.mode;
+                if (popupAlive()) {
+                    showInIframe(previous.html, previous.mode);
+                    $('#theater-output-section').show();
+                }
+            }
+        }
+        if (!isAuto && !contCtx && !continuationSession) {
             continueContext = '';
             $('#theater-continue-hint').remove();
             $('#theater-instruction').attr('placeholder', '输入指令…');
@@ -9540,6 +9667,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             $('#theater-stop-btn').hide();
             $('#theater-quick-render-toggle').prop('disabled', false);
         }
+        updateContinueHint();
         abortController = null;
         currentGenerationJob = null;
     }
@@ -9974,6 +10102,8 @@ function showInIframe(html, mode = 'html', allowTextFallback = true) {
     $(f).show();
     currentDisplayHtml = html;
     currentOutputMode = mode;
+    updateContinueHint();
+    updateRecentNav();
     const sourceText = htmlToPlainText(html);
     if (textMode) lastGeneratedText = sourceText;
     $('#theater-copy-html-btn span').text(textMode ? '复制文字' : '复制HTML');
@@ -10115,7 +10245,11 @@ function openFullscreenReader(overridePayload = null) {
 
 function updateRecentNav() {
     const $nav = $('#theater-recent-nav');
+    if (displayedContinuationVersion(continuationSession, currentDisplayHtml || lastGeneratedHtml)) { $nav.hide(); return; }
     if (!recentCache.length) { $nav.hide(); return; }
+    const displayed = displayedRecentIndex();
+    if (displayed < 0) { $nav.hide(); return; }
+    recentIndex = displayed;
     $nav.show();
     const item = recentCache[recentIndex];
     const timeStr = item?.time || '';
@@ -10150,6 +10284,7 @@ function showRecentResult(index) {
 function setResultEditControls(editing) {
     $('#theater-edit-result-btn, #theater-delete-result-btn, #theater-continue-btn').toggle(!editing);
     $('#theater-save-edit-btn, #theater-cancel-edit-btn').toggle(editing);
+    updateContinueHint();
 }
 
 function cancelResultEdit() {
@@ -10179,6 +10314,7 @@ function clearDisplayedResult() {
     resultEditSnapshot = null;
     setResultEditControls(false);
     updateRecentNav();
+    updateContinueHint();
 }
 
 // ============================================================

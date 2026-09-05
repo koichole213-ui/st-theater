@@ -41,6 +41,98 @@ import { migrateLegacyPresetEntryStates, normalizePresetEntryStatesByPreset, pre
 import { TAG_UNCATEGORIZED, matchesTagFilter, mergeTagLists, migrateLegacyTagSettings } from '../tag-system.js';
 import { waitForPopupElements, withPreservedPopupViewport } from '../popup-lifecycle.js';
 import { fetchInstalledExtensionStatus } from '../version-check.js';
+import { createContinuationSession, appendContinuationVersion, selectContinuationVersion, displayedContinuationVersion } from '../continuation-session.js';
+
+test('普通续写重写保留前情和所有候选，选回旧版恢复其方向，接写须显式创建下一段', () => {
+    const session = createContinuationSession({ sourceText: '原始前情', sourceLabel: '原篇', direction: '去车站' });
+    const first = appendContinuationVersion(session, { html: '<p>第一版</p>', text: '第一版', mode: 'html' });
+    session.direction = '留在原地';
+    const second = appendContinuationVersion(session, { html: '<p>第二版</p>', text: '第二版', complete: false });
+    assert.equal(session.source.text, '原始前情');
+    assert.throws(() => { session.source.text = '第二版'; }, TypeError);
+    assert.equal(session.versions.length, 2);
+    assert.equal(second.complete, false);
+    assert.equal(selectContinuationVersion(session, 0), first);
+    assert.equal(session.direction, '去车站');
+    assert.equal(displayedContinuationVersion(session, '<p>第二版</p>'), second);
+    assert.equal(displayedContinuationVersion(session, '<p>别的历史</p>'), null);
+    assert.equal(selectContinuationVersion(session, 9), null);
+    assert.equal(session.selected, 0);
+    assert.equal(appendContinuationVersion(session, { html: '' }), null);
+    const next = createContinuationSession({ sourceText: first.text, segment: session.segment + 1 });
+    assert.equal(next.source.text, '第一版');
+    assert.equal(next.segment, 2);
+    assert.equal(next.direction, '');
+    assert.equal(next.versions.length, 0);
+    assert.equal(session.versions.length, 2);
+});
+
+test('普通续写入口不依赖弹窗标记，重写重复使用原始前情并允许空方向', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const generate = source.match(/async function generateTheater\([^]*?^}/m)[0];
+    const session = createContinuationSession({ sourceText: '固定前情' });
+    let input = '第一次方向';
+    const calls = [];
+    const context = {
+        isGenerating: false, isPreparingGeneration: false,
+        longDreamGenerationController: null, longDreamChapterEditController: null,
+        longDreamCanonSuggestionState: {}, resultEditSnapshot: null,
+        continuationSession: session, continueContext: '', continuationSourceTags: ['原标签'],
+        settings: {}, activeInstructionContent: '', activeInstructionTags: [],
+        $: selector => ({ length: 0, val: () => input }),
+        save() {}, toastr: { warning: assert.fail, error: assert.fail }, console,
+        runGeneration: async (instruction, auto, tags) => calls.push({ instruction, auto, tags, source: context.continueContext }),
+    };
+    runInNewContext(generate + '\nglobalThis.generate = generateTheater;', context);
+    await context.generate();
+    appendContinuationVersion(session, { html: '<p>新结果</p>', text: '新结果' });
+    input = '';
+    context.continueContext = '模拟已丢失的旧状态';
+    await context.generate();
+    assert.deepEqual(calls.map(call => call.source), ['固定前情', '固定前情']);
+    assert.equal(calls[0].instruction, '第一次方向');
+    assert.match(calls[1].instruction, /自然续写/);
+    assert.equal(session.direction, '');
+    assert.deepEqual(calls[1].tags, ['原标签']);
+});
+
+test('历史批量管理只切换父面板，退出清掉选中展示且不逐条测量样式', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const extract = name => source.match(new RegExp(`function ${name}\\([^]*?^}`, 'm'))[0];
+    const classes = new Set();
+    const checked = { checked: true };
+    const selected = new Set(['theater-history-item-selected']);
+    const selectors = [];
+    const panel = { classList: { add: v => classes.add(v), remove: v => classes.delete(v) }, querySelectorAll: s => {
+        selectors.push(s);
+        return s.endsWith(':checked') ? [checked] : [{ classList: { remove: v => selected.delete(v) } }];
+    } };
+    const toolbar = { hide() {}, show() {}, toggle() {} };
+    runInNewContext(extract('enterHistBatchMode') + extract('exitHistBatchMode') + '\nenterHistBatchMode();', {
+        $: s => { assert.ok(!s.startsWith('.')); return toolbar; },
+        document: { querySelector: s => { assert.equal(s, '.theater-panel[data-panel="history"]'); return panel; } },
+        updateHistBulkBar() {}, filterHistoryAll: x => x, historyCache: [],
+    });
+    assert.ok(classes.has('is-batch-managing'));
+    runInNewContext(extract('exitHistBatchMode') + '\nexitHistBatchMode();', {
+        $: () => toolbar, document: { querySelector: () => panel },
+        updateHistBulkBar() {}, filterHistoryAll: x => x, historyCache: [],
+    });
+    assert.equal(classes.size, 0);
+    assert.equal(checked.checked, false);
+    assert.equal(selected.size, 0);
+    assert.deepEqual(selectors, ['.theater-hist-checkbox:checked', '.theater-history-item-selected']);
+});
+
+test('三个 HTML 规则保持紧凑预算，不给正文新增长度上限', () => {
+    for (const profile of adaptiveRenderProfiles()) {
+        assert.ok(estimateTokenCount(profile.rules) <= 1100, profile.name);
+        assert.match(profile.rules, /原样保留/);
+        assert.match(profile.rules, /主线按原顺序/);
+        assert.match(profile.rules, /长文\/短屏均可滚动到底/);
+        assert.match(profile.rules, /首次发声必须由读者明确点击开启/);
+    }
+});
 
 test('子弹窗确认、取消或失败后恢复原滚动位置，并等待焦点布局完成', async () => {
     for (const outcome of ['confirm', 'cancel', 'error']) {
@@ -444,6 +536,7 @@ test('长梦首帧使用当前页面，慢资料完成后不重建输入或抢�
         } }) },
         normalizeTheaterTab: value => value, restoreLongDreamNavigation() {}, waitForPopupElements: async () => true,
         setBallDot() {}, bindEvents() {}, decorateConfigLayout() {}, applyResultToolboxMode() {}, renderRuntimeLog() {},
+        updateContinueHint() {}, histBatchMode: false, continuationSession: null,
         loadWorldBookList: async () => {}, loadPresetNameList: () => materials,
         reloadWorldBooks: async () => {}, refreshTokenEstimate: async () => { finishEstimate(); },
         refreshLongDreamCreateWorldBookState() {}, queueLongDreamMemoryWeave() {},
@@ -2875,7 +2968,7 @@ test('内置、自定义与默认模板的普通、自动、历史续写和长�
                     const settings = { manualTargetEnabled: true, manualTargetChars: target, maxAutoRounds: 3, autoContinue: true };
                     const evaluate = runInNewContext('(async () => {' + plan + '\nlet payload;\n' + assembly
                         + '\nreturn { stagedRenderMode, stagedMultiRoundMode, longFormMode, payload }; })', {
-                        settings, isAuto, continueContext, instruction: '合成任务',
+                        settings, isAuto, continueContext, continuationSession: null, instruction: '合成任务',
                         resolveTargetWordCount, isStagedRenderTarget, isLongFormTarget,
                         resolveRenderSelection: () => ({ selectedRender: selection, adaptiveProfile: adaptiveRenderProfile(selection) }),
                         assembleGenerationPayload: async (_instruction, options) => options,
