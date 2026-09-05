@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml, recentGenerationRoundsContext } from '../generation-payload.js';
-import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection, validateAdaptiveRenderHtml } from '../adaptive-render.js';
+import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection } from '../adaptive-render.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, MESSAGE_COMPATIBILITY, applyIndependentOpenAICompatibility, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, hasReasoningContent, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { CUSTOM_STREAM_IDLE_TIMEOUT_MS, readNonStreamingResponse, readSSEStream, requestCustomApi, requestMainApi } from '../api-runtime.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, generationTextWithLiveSegment, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
@@ -332,20 +332,30 @@ test('预设、世界书缓存只接受当前选择，启动后立即后台检�
     assert.match(source, /catch \(error\) \{\s*if \(settings\.autoAnchors\[chatId\] === floors\)[\s\S]*?Auto generation preparation failed:/);
 });
 
-test('较慢的旧预设请求不能覆盖新选择或重新填回已清空的选择', async () => {
+test('预设读取保留收起或展开状态，旧请求不能覆盖新选择或填回已清空的选择', async () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const start = source.indexOf('function setPresetEntryControlsEnabled');
     const functions = source.slice(start, source.indexOf('function renderPresetEntries', start));
     const settings = { selectedPresetName: 'A', presetEntryStatesByPreset: {} };
     const pending = new Map();
-    const ui = { html() { return this; }, hide() { return this; }, show() { return this; }, toggleClass() { return this; }, attr() { return this; } };
+    const elements = new Map();
+    const element = selector => {
+        if (!elements.has(selector)) elements.set(selector, {
+            visible: false, content: '',
+            html(value) { this.content = value; return this; },
+            hide() { this.visible = false; return this; },
+            show() { this.visible = true; return this; },
+            toggleClass() { return this; }, attr() { return this; },
+        });
+        return elements.get(selector);
+    };
     const harness = runInNewContext(`
         let cachedPresetEntries = [], cachedPresetPostProcessing = '', cachedPresetSquashSystemMessages = false;
         let cachedPresetName = '', cachedPresetLoadState = 'default', presetLoadSequence = 0, presetLoadInFlight = null;
         ${functions}
         ({ loadPresetEntries, ensureSelectedPresetLoaded, state: () => ({ name: cachedPresetName, entries: cachedPresetEntries, post: cachedPresetPostProcessing, squash: cachedPresetSquashSystemMessages }) });
     `, {
-        settings, $: () => ui, toastr: { warning() {} }, console: { log() {} },
+        settings, $: element, toastr: { warning() {} }, console: { log() {} },
         fetchPresetByName: name => new Promise(resolve => pending.set(name, resolve)),
         extractPromptsFromData: data => data.entries,
         noToolsPostProcessingMode: value => value,
@@ -353,6 +363,7 @@ test('较慢的旧预设请求不能覆盖新选择或重新填回已清空的�
         renderPresetEntries: () => '', scheduleTokenEstimate() {}, esc: value => value,
     });
     const loadA = harness.loadPresetEntries('A');
+    assert.equal(element('#theater-preset-entries').visible, false, '默认收起的列表在加载中不能自动展开');
     settings.selectedPresetName = 'B';
     const loadB = harness.loadPresetEntries('B');
     pending.get('B')({ entries: [{ id: 'B', content: 'B', enabledInST: true }], custom_prompt_post_processing: 'B-mode', squash_system_messages: true });
@@ -370,20 +381,119 @@ test('较慢的旧预设请求不能覆盖新选择或重新填回已清空的�
     await lateA;
     assert.equal(harness.state().name, '');
     assert.equal(harness.state().entries.length, 0);
+    assert.equal(element('#theater-preset-entries').visible, false);
 
     settings.selectedPresetName = 'C';
+    element('#theater-preset-entries').show(); // 用户主动展开后刷新。
     const ensureC1 = harness.ensureSelectedPresetLoaded();
+    assert.equal(element('#theater-preset-entries').visible, true);
     const ensureC2 = harness.ensureSelectedPresetLoaded();
     pending.get('C')({ entries: [{ id: 'C', content: 'C', enabledInST: true }] });
     const [snapshotC1, snapshotC2] = await Promise.all([ensureC1, ensureC2]);
     assert.equal(snapshotC1.status, 'ready');
     assert.equal(snapshotC2.status, 'ready');
     assert.equal(snapshotC1.prompt, 'C');
+    assert.equal(element('#theater-preset-entries').visible, true);
 
     settings.selectedPresetName = 'D';
     const ensureD = harness.ensureSelectedPresetLoaded();
+    element('#theater-preset-entries').hide(); // 慢请求期间用户收起，失败也不应抢回展开状态。
     pending.get('D')(null);
     await assert.rejects(ensureD, /预设「D」读取失败/);
+    assert.equal(element('#theater-preset-entries').visible, false);
+});
+
+test('长梦首帧使用当前页面，慢资料完成后不重建输入或抢回已切换的标签', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const extract = name => source.match(new RegExp(`(?:async )?function ${name}\\([^]*?^}`, 'm'))?.[0] || '';
+    let finishMaterials;
+    const materials = new Promise(resolve => { finishMaterials = resolve; });
+    let closePopup;
+    const closed = new Promise(resolve => { closePopup = resolve; });
+    let finishEstimate;
+    const estimated = new Promise(resolve => { finishEstimate = resolve; });
+    const screen = { html: '', tab: 'long-dream', input: '', writes: 0 };
+    const ui = { length: 1, val() { return ''; }, text() { return this; }, html(value) { screen.html = value; screen.writes++; return this; } };
+    // 使用真实主弹窗的长梦插槽，而不是预先假定它应调用哪一个构建函数。
+    const rootMarkup = source.match(/<div id="theater-long-dream-root">[^\n]+/)?.[0]?.trim();
+    assert.ok(rootMarkup);
+    const harness = runInNewContext(`
+        let longDreamWorkspaceSection = 'definition', longDreamView = 'detail', activeLongDreamId = 'dream';
+        let longDreamWorkLevel = 'list', activeLongDreamChapterId = null;
+        let activeTheaterPopupSession = null, instructionSweepCleanup = null, wbSearch = '', presetSearch = '';
+        const longDreamCache = [{ id: 'dream', chapters: [] }];
+        const longDreamGenerationController = null, longDreamChapterEditController = null;
+        const isGenerating = false, lastGeneratedHtml = '', currentDisplayHtml = '', recentCache = [];
+        ${extract('longDreamWorkspaceHTML')}
+        ${extract('longDreamPanelHTML')}
+        ${extract('syncLongDreamPanel')}
+        ${extract('renderLongDreamPanel')}
+        function buildPopupHTML() { return \`${rootMarkup}\`; }
+        ${extract('openTheaterPopup')}
+        ({ openTheaterPopup, navigate() {
+            longDreamWorkspaceSection = 'definition';
+            longDreamView = 'create'; activeLongDreamId = null;
+            renderLongDreamPanel();
+        } });
+    `, {
+        settings: { lastTheaterTab: 'long-dream' }, $: () => ui, esc: value => value,
+        document: { getElementById: () => ({}) },
+        SillyTavern: { getContext: () => ({ POPUP_TYPE: { TEXT: 1 }, Popup: class {
+            constructor(html) { screen.html = html; screen.writes++; }
+            show() { return closed; }
+        } }) },
+        normalizeTheaterTab: value => value, restoreLongDreamNavigation() {}, waitForPopupElements: async () => true,
+        setBallDot() {}, bindEvents() {}, decorateConfigLayout() {}, applyResultToolboxMode() {}, renderRuntimeLog() {},
+        loadWorldBookList: async () => {}, loadPresetNameList: () => materials,
+        reloadWorldBooks: async () => {}, refreshTokenEstimate: async () => { finishEstimate(); },
+        refreshLongDreamCreateWorldBookState() {}, queueLongDreamMemoryWeave() {},
+        longDreamDetailState: () => ({ currentCheckedEntries: 0 }),
+        longDreamDefinitionHTML: () => '<input id="definition" value="saved">',
+        longDreamCreateHTML: () => '<input id="create" value="">', longDreamListHTML: () => '<div>作品列表</div>',
+        activateTheaterTab(tab) { screen.tab = tab; screen.input = ''; screen.writes++; },
+        closeInstructionActionMenus() {}, detachHistoryTouchMoveHandler() {}, resetHistorySelectionGesture() {},
+        resetLongDreamCanonSuggestions() {}, closeFullscreenReader() {},
+    });
+    const opening = harness.openTheaterPopup();
+    assert.match(screen.html, /id="definition"/);
+    assert.match(screen.html, /theater-dream-workspace/);
+    assert.doesNotMatch(screen.html, /作品列表/);
+    await Promise.resolve();
+    harness.navigate();
+    screen.input = '加载期间刚填写的定梦内容';
+    screen.tab = 'setting';
+    const writesBeforeCompletion = screen.writes;
+    finishMaterials();
+    await estimated;
+    await Promise.resolve();
+    assert.equal(screen.writes, writesBeforeCompletion, '资料完成不能重新构建长梦页面');
+    assert.equal(screen.input, '加载期间刚填写的定梦内容');
+    assert.equal(screen.tab, 'setting');
+    closePopup();
+    await opening;
+});
+
+test('资料完成只更新长梦计数和进度，已展示的候选正文不重复载入', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const sync = source.match(/function syncLongDreamPanel\([^]*?^}/m)?.[0];
+    const calls = { review: 0, candidate: 0, progress: 0, estimate: 0, label: '' };
+    const harness = runInNewContext(`
+        let longDreamWorkspaceSection = 'continue';
+        const longDreamCache = [{id: 'dream'}], activeLongDreamId = 'dream';
+        ${sync}
+        ({ syncLongDreamPanel, definition() { longDreamWorkspaceSection = 'definition'; } });
+    `, {
+        $: () => ({ text(value) { calls.label = value; } }),
+        longDreamDetailState: () => ({ currentCheckedEntries: 7 }),
+        renderLongDreamReviewDraft() { calls.review++; }, renderLongDreamProgressCandidate() { calls.candidate++; },
+        syncLongDreamProgressDisplay() { calls.progress++; }, scheduleLongDreamTokenEstimate() { calls.estimate++; },
+    });
+    harness.syncLongDreamPanel();
+    harness.syncLongDreamPanel({ renderDrafts: false });
+    assert.deepEqual(calls, { review: 1, candidate: 1, progress: 2, estimate: 2, label: '' });
+    harness.definition();
+    harness.syncLongDreamPanel({ renderDrafts: false });
+    assert.equal(calls.label, '用素材页当前勾选更新冻结资料（7 条）');
 });
 
 test('世界书旧请求不能覆盖新书单，失败回退不会跨读取模式复用缓存', async () => {
@@ -2705,70 +2815,144 @@ test('final HTML payload tells the model to return layout tokens exactly once', 
     assert.match(payload.userPrompt, /输出完整 HTML/);
 });
 
-test('三种剧情自适应模板共用详细设计方法，并按创意强度区分', () => {
+test('三份 HTML 规则按阅读、参与、探索区分，不要求插件标记', () => {
     const profiles = adaptiveRenderProfiles();
     assert.deepEqual(profiles.map(profile => profile.id), Object.values(ADAPTIVE_RENDER_SELECTIONS));
-    assert.equal(profiles.length, 3);
     for (const profile of profiles) {
         assert.equal(isAdaptiveRenderSelection(profile.id), true);
-        assert.match(profile.rules, /核心物件/);
-        assert.match(profile.rules, /核心结构/);
-        assert.match(profile.rules, /只选择一个最贴题的主隐喻/);
-        assert.match(profile.rules, /data-theater-direct-read/);
-        assert.match(profile.rules, /体检报告/);
-        assert.match(profile.rules, /不同年龄阶段/);
-        assert.match(profile.rules, /禁止照抄题材或固定外观/);
+        assert.match(profile.rules, /主线按原顺序推进/);
+        assert.match(profile.rules, /不设置跳过整套体验/);
+        assert.match(profile.rules, /首次发声必须由读者明确点击开启声音/);
+        assert.match(profile.rules, /如果提供了待排版正文，必须原样保留/);
+        assert.doesNotMatch(profile.rules, /data-theater-|THEATER_P\d|只设计一个|两到三个/);
     }
-    assert.match(adaptiveRenderProfile(ADAPTIVE_RENDER_SELECTIONS.lively).rules, /轻量、直观/);
-    assert.match(adaptiveRenderProfile(ADAPTIVE_RENDER_SELECTIONS.immersive).rules, /一个有叙事意义的主要互动/);
-    assert.match(adaptiveRenderProfile(ADAPTIVE_RENDER_SELECTIONS.experimental).rules, /两到三个相互配合的交互/);
+    assert.match(profiles[0].rules, /阅读为主，细节灵巧/);
+    assert.match(profiles[1].rules, /参与情境，动作贯穿体验/);
+    assert.match(profiles[2].rules, /主动探索，发现有意义的惊喜/);
 });
 
-test('剧情自适应排版只把原始指令作为设计意图，不重新执行故事任务', () => {
-    const payload = buildFinalRenderPayload({
-        sourceText: '报告封面被轻轻翻开。\n\n他终于看见了结果。',
-        rules: adaptiveRenderProfile(ADAPTIVE_RENDER_SELECTIONS.immersive).rules,
-        originalInstruction: 'user 偷偷给 char 做了一份体检报告。',
-    });
-    assert.match(payload.userPrompt, /原始小剧场指令：仅作为设计意图参考/);
-    assert.match(payload.userPrompt, /不能被重新执行、续写或抄进页面/);
-    assert.match(payload.userPrompt, /偷偷给 char 做了一份体检报告/);
-    assert.deepEqual(payload.placeholderPlan.paragraphs.map(item => item.text), [
-        '报告封面被轻轻翻开。',
-        '他终于看见了结果。',
-    ]);
-});
-
-test('剧情自适应 HTML 必须具备设计、主要互动与阅读全文标记，并拒绝外部资源', () => {
-    const selection = ADAPTIVE_RENDER_SELECTIONS.immersive;
-    const valid = '<html><body><main data-theater-adaptive-root data-theater-concept="翻阅体检报告"><button data-theater-primary-action>翻开</button><button data-theater-direct-read>展开全文</button></main></body></html>';
-    assert.equal(validateAdaptiveRenderHtml(valid, selection), true);
-    assert.throws(
-        () => validateAdaptiveRenderHtml('<html><body><main>普通卡片</main></body></html>', selection),
-        error => error?.code === 'THEATER_ADAPTIVE_RENDER_VALIDATION',
-    );
-    assert.throws(
-        () => validateAdaptiveRenderHtml(valid.replace('</main>', '<script>fetch("https://example.com")</script></main>'), selection),
-        error => error?.code === 'THEATER_ADAPTIVE_RENDER_VALIDATION',
-    );
-    assert.equal(validateAdaptiveRenderHtml('<html></html>', '__default__'), true);
-});
-
-test('生成页双模板切换和自适应独立排版都接入真实生成流程', () => {
+test('相同规则在内置和自定义模板中传递一致，交互开关和纯文字沿用公共行为', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const resolve = source.match(/function resolveRenderSelection\([^]*?^}/m)?.[0];
+    assert.ok(resolve);
+    for (const profile of adaptiveRenderProfiles()) {
+        for (const interactiveMode of [false, true]) {
+            const settings = {
+                selectedRenderIndex: profile.id, interactiveMode,
+                renderTemplates: [{ name: profile.name, content: profile.rules }],
+            };
+            const select = runInNewContext(resolve + '; resolveRenderSelection', {
+                settings, adaptiveRenderProfile, isPlainTextSelection, plainTextThemeForSelection,
+                normalizeRenderSelection: value => value,
+                DEFAULT_RENDER_TEMPLATE: '默认 HTML', DEFAULT_RENDER_TEMPLATE_PC: 'PC HTML',
+                DEFAULT_RENDER_TEMPLATE_TEXT: '仅正文', INTERACTIVE_ADDON: '附加交互要求',
+            });
+            const builtin = select();
+            settings.selectedRenderIndex = '0';
+            const custom = select();
+            assert.equal(builtin.rules, custom.rules);
+            assert.equal(builtin.isPlainTextRender, false);
+            assert.equal(builtin.rules, profile.rules + (interactiveMode ? '附加交互要求' : ''));
+            assert.deepEqual(buildGenerationPayload({ instruction: '写一段雨夜故事', rules: builtin.rules }),
+                buildGenerationPayload({ instruction: '写一段雨夜故事', rules: custom.rules }));
+            settings.selectedRenderIndex = profile.id;
+            assert.equal(select(true).rules, '仅正文');
+            assert.equal(select(true).isPlainTextRender, true);
+        }
+    }
+});
+
+test('内置、自定义与默认模板的普通、自动、历史续写和长文计划一致', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const runSource = source.slice(source.indexOf('async function runGeneration('));
+    const plan = runSource.slice(runSource.indexOf('    const contCtx ='), runSource.indexOf('    isPreparingGeneration = true;'));
+    const assembly = runSource.match(/payload = await assembleGenerationPayload\(instruction, \{[^]*?\n        \}\);/)?.[0];
+    assert.ok(assembly);
+    for (const selection of ['__default__', '0', ...Object.values(ADAPTIVE_RENDER_SELECTIONS)]) {
+        for (const target of [1000, 5000, 12000]) {
+            for (const isAuto of [false, true]) {
+                for (const continueContext of ['', '已有前情']) {
+                    const settings = { manualTargetEnabled: true, manualTargetChars: target, maxAutoRounds: 3, autoContinue: true };
+                    const evaluate = runInNewContext('(async () => {' + plan + '\nlet payload;\n' + assembly
+                        + '\nreturn { stagedRenderMode, stagedMultiRoundMode, longFormMode, payload }; })', {
+                        settings, isAuto, continueContext, instruction: '合成任务',
+                        resolveTargetWordCount, isStagedRenderTarget, isLongFormTarget,
+                        resolveRenderSelection: () => ({ selectedRender: selection, adaptiveProfile: adaptiveRenderProfile(selection) }),
+                        assembleGenerationPayload: async (_instruction, options) => options,
+                    });
+                    const result = await evaluate();
+                    const expectedStaged = (isAuto || !continueContext) && target >= 5000;
+                    assert.equal(result.stagedRenderMode, expectedStaged);
+                    assert.equal(result.payload.forcePlainText, expectedStaged);
+                    assert.equal(result.payload.longFormPlan, expectedStaged);
+                    assert.equal(result.payload.continuationText, isAuto ? '' : continueContext);
+                }
+            }
+        }
+    }
+});
+
+test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在失败时保留全文', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const runSource = source.slice(source.indexOf('async function runGeneration('));
+    const dispatch = runSource.slice(runSource.indexOf('        if (selectedPlainTextRender) {'), runSource.indexOf("        runtimeLog('info', '渲染路径'"));
+    const request = source.match(/async function requestFinalRenderedHtml\([^]*?^}\r?$/m)?.[0];
+    const validate = source.match(/function validateFinalRenderedHtml\([^]*?^}/m)?.[0];
+    assert.ok(dispatch && request && validate);
+    for (const profile of adaptiveRenderProfiles()) {
+        for (const scenario of ['single', 'multiple', 'staged', 'failure']) {
+            const calls = [];
+            const initialHtml = '<html><body><button>翻开</button><p>第一段。</p><p>第二段。</p></body></html>';
+            const harness = runInNewContext('(async () => {'
+                + "let lastGeneratedHtml = '', currentOutputMode = 'html';"
+                + 'let activeRound, firstChunkShown, bgStreamText, retainStreamAsBody, currentRoundStreamText, lastRequestContext;\n'
+                + validate + '\n' + request + '\n' + dispatch
+                + '\nreturn { html: lastGeneratedHtml, mode: currentOutputMode }; })', {
+                selectedPlainTextRender: false, selectedTextTheme: 'light',
+                stagedRenderMode: scenario === 'staged',
+                currentGenerationJob: { segments: Array(scenario === 'single' || scenario === 'staged' ? 1 : 2).fill({}) },
+                plannedRenderSelection: { rules: profile.rules }, renderTemplate: profile.name,
+                newText: '第一段。\n\n第二段。', firstHtml: initialHtml,
+                ctx: {}, apiRoute: {}, abortController: null, onChunk() {},
+                popupAlive: () => false, runtimeLog() {}, markCompleted() {}, recordRequestMetrics() {},
+                lastRequestMetrics: {}, streamRenderer: { reset() {} },
+                buildFinalRenderPayload, hydrateFinalRenderHtml, readableCharCount,
+                extractHtml: value => value,
+                htmlToPlainText: html => html.replace(/<[^>]*>/g, ''),
+                textFallbackHtml: text => '<article>' + text + '</article>',
+                captureRequestIssue: () => ({ signal: 'TEST-FAILED' }), toastr: { warning() {} },
+                requestConfiguredGenerationApi: async args => {
+                    calls.push(args);
+                    if (scenario === 'failure') return { text: '<html><body>{{THEATER_P0001}}</body></html>' };
+                    return { text: '<html><body><button>翻开</button><p>{{THEATER_P0001}}</p><p>{{THEATER_P0002}}</p></body></html>' };
+                },
+            });
+            const result = await harness();
+            if (scenario === 'single') {
+                assert.equal(calls.length, 0, '普通单轮直接使用模型 HTML，不新增排版请求');
+                assert.equal(result.html, initialHtml);
+            } else {
+                assert.equal(calls.length, scenario === 'failure' ? 2 : 1);
+                assert.ok(calls[0].userPrompt.includes(profile.rules));
+                assert.doesNotMatch(calls[0].userPrompt, /原始小剧场指令：仅作为设计意图参考/);
+                assert.match(result.html, /第一段。/);
+                assert.match(result.html, /第二段。/);
+                assert.equal(result.mode, scenario === 'failure' ? 'text' : 'html');
+            }
+        }
+    }
+});
+
+test('生成页双模板切换保留，交互开关不再被模板强制勾选或禁用', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     assert.match(source, /id="theater-quick-render-toggle"/);
     assert.match(source, /id="theater-quick-render-a"/);
     assert.match(source, /id="theater-quick-render-b"/);
-    assert.doesNotMatch(source, /toastr\.info\(`本次使用：/);
-    assert.match(source, /const separateRenderMode = stagedRenderMode \|\| adaptiveRenderMode/);
-    assert.match(source, /forcePlainText: separateRenderMode/);
-    assert.match(source, /!separateRenderMode && currentGenerationJob\.segments\.length === 1/);
-    assert.match(source, /originalInstruction: adaptiveRenderMode/);
-    assert.match(source, /adaptiveSelection: adaptiveRenderMode/);
-    assert.match(source, /settings\.interactiveMode && !isPlainTextRender && !adaptiveProfile/);
-    assert.match(styles, /\.theater-instruction-heading-row/);
-    assert.match(styles, /\.theater-config-quick-render-grid/);
+    assert.doesNotMatch(source, /validateAdaptiveRenderHtml|adaptiveSelection|adaptiveRenderMode|adaptiveRenderPlan/);
+    assert.doesNotMatch(source, /is-template-managed|额外进行一次独立 HTML|另有自适应排版请求/);
+    const toggle = source.match(/<input[^>]*id="theater-interactive-toggle"[^>]*>/)?.[0];
+    assert.ok(toggle);
+    assert.doesNotMatch(toggle, /disabled|selectedAdaptiveRender/);
 });
 
 test('iframe 没有回报渲染状态时会触发正文兜底', async () => {

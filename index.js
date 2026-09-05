@@ -9,7 +9,7 @@ import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js'
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml, recentGenerationRoundsContext } from './generation-payload.js';
-import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection, validateAdaptiveRenderHtml } from './adaptive-render.js';
+import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection } from './adaptive-render.js';
 import { debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, diagnosticSignalCatalog, diagnosticSignalInfo, signalForStopReason } from './request-diagnostics.js';
@@ -303,7 +303,7 @@ function renderTemplateOptions(selected, customTemplates = []) {
 function renderSelectionHint(selection) {
     const adaptive = adaptiveRenderProfile(selection);
     return adaptive
-        ? `${adaptive.description} 会先完成纯正文，再增加一次独立 HTML 设计请求。`
+        ? adaptive.description
         : (isPlainTextSelection(selection)
             ? '纯文字亮色与暗色都只让模型输出正文；夜间配色由插件在本地显示。'
             : '普通美化模板沿用现有生成方式；5000 字起仍会在正文完成后独立排版。');
@@ -1537,9 +1537,9 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <span id="theater-token-summary-value">正在估算…</span><span>明细 ▾</span>
             </div>
             <div id="theater-token-details" class="theater-hint-inline" style="display:none;margin:-2px 1px 8px;line-height:1.6;"></div>
-            <div class="theater-toggle-row${selectedAdaptiveRender ? ' is-template-managed' : ''}" id="theater-interactive-row">
-                <label class="theater-toggle-label"><input type="checkbox" id="theater-interactive-toggle" ${settings.interactiveMode || selectedAdaptiveRender ? 'checked' : ''} ${selectedAdaptiveRender ? 'disabled' : ''}><span>交互模式</span></label>
-                <span class="theater-hint-inline" id="theater-interactive-hint">${selectedAdaptiveRender ? '当前模板已自带剧情自适应设计，无需另开交互模式' : '生成可交互的小剧场'}</span>
+            <div class="theater-toggle-row" id="theater-interactive-row">
+                <label class="theater-toggle-label"><input type="checkbox" id="theater-interactive-toggle" ${settings.interactiveMode ? 'checked' : ''}><span>交互模式</span></label>
+                <span class="theater-hint-inline" id="theater-interactive-hint">附加交互要求；关闭不取消模板自身的互动设计</span>
             </div>
             <div class="theater-btn-row">
                 <button type="button" id="theater-save-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-floppy-disk"></i><span>存为模板</span></button>
@@ -1595,7 +1595,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
 
     <!-- ===== 长梦续章 ===== -->
     <div class="theater-panel${activeTabClass('long-dream')}" data-panel="long-dream">
-        <div id="theater-long-dream-root">${longDreamListHTML()}</div>
+        <div id="theater-long-dream-root">${longDreamPanelHTML()}</div>
     </div>
 
     <!-- ===== 2. 设定 ===== -->
@@ -1950,7 +1950,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                     <label><span>模板 A</span><select id="theater-quick-render-a" class="theater-select">${renderTemplateOptions(settings.quickRenderA, render)}</select></label>
                     <label><span>模板 B</span><select id="theater-quick-render-b" class="theater-select">${renderTemplateOptions(settings.quickRenderB, render)}</select></label>
                 </div>
-                <small>可以选择任意内置或自定义模板；三个剧情自适应模板会额外进行一次独立 HTML 设计请求。</small>
+                <small>可以选择任意内置或自定义模板；三个剧情自适应模板分别侧重阅读、参与和探索。</small>
             </div>
             <div class="theater-config-setting-row">
                 <span class="theater-config-setting-copy"><b>流式实时显示</b><small>逐字生成正文，可实时查看效果</small></span>
@@ -3422,9 +3422,7 @@ function longDreamUnavailableHTML(section) {
     </div>`;
 }
 
-function renderLongDreamPanel() {
-    const $root = $('#theater-long-dream-root');
-    if (!$root.length) return;
+function longDreamPanelHTML() {
     const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
     let content = '';
 
@@ -3464,13 +3462,30 @@ function renderLongDreamPanel() {
         }
     }
 
-    $root.html(longDreamWorkspaceHTML(content, longDreamWorkspaceSection));
+    return longDreamWorkspaceHTML(content, longDreamWorkspaceSection);
+}
+
+function syncLongDreamPanel({ renderDrafts = true } = {}) {
+    const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+    if (longDreamWorkspaceSection === 'definition' && dream) {
+        const state = longDreamDetailState(dream);
+        $('#theater-dream-refresh-world-book span').text(`用素材页当前勾选更新冻结资料${state.currentCheckedEntries ? `（${state.currentCheckedEntries} 条）` : ''}`);
+    }
     if (longDreamWorkspaceSection === 'continue' && dream) {
-        renderLongDreamReviewDraft(dream);
-        renderLongDreamProgressCandidate(dream);
+        if (renderDrafts) {
+            renderLongDreamReviewDraft(dream);
+            renderLongDreamProgressCandidate(dream);
+        }
         syncLongDreamProgressDisplay();
         scheduleLongDreamTokenEstimate();
     }
+}
+
+function renderLongDreamPanel() {
+    const $root = $('#theater-long-dream-root');
+    if (!$root.length) return;
+    $root.html(longDreamPanelHTML());
+    syncLongDreamPanel();
 }
 
 function renderLongDreamProgressCandidate(dream) {
@@ -4175,6 +4190,7 @@ async function openTheaterPopup() {
     decorateConfigLayout();
     applyResultToolboxMode();
     renderRuntimeLog();
+    syncLongDreamPanel();
     const [worldBookListResult, presetListResult] = await Promise.allSettled([
         loadWorldBookList(),
         loadPresetNameList(),
@@ -4204,7 +4220,9 @@ async function openTheaterPopup() {
     if (!isCurrentPopup()) return;
     await refreshTokenEstimate();
     if (!isCurrentPopup()) return;
-    activateTheaterTab(initialTab, { persist: false, resetScroll: false });
+    // 首帧已按当前导航构建长梦；资料读取完成只更新状态，不重建页面或切回旧标签。
+    refreshLongDreamCreateWorldBookState();
+    syncLongDreamPanel({ renderDrafts: false });
     longDreamCache.forEach(dream => queueLongDreamMemoryWeave(dream.id));
 
     // === 恢复后台生成状态 ===
@@ -4459,11 +4477,7 @@ function refreshRenderSelectionControls({ refreshOptions = false } = {}) {
         .html(quickRenderButtonContent())
         .toggleClass('is-adaptive', !!adaptive)
         .prop('disabled', isGenerating);
-    $('#theater-interactive-toggle').prop('disabled', !!adaptive).prop('checked', adaptive ? true : !!settings.interactiveMode);
-    $('#theater-interactive-row').toggleClass('is-template-managed', !!adaptive);
-    $('#theater-interactive-hint').text(adaptive
-        ? '当前模板已自带剧情自适应设计，无需另开交互模式'
-        : '生成可交互的小剧场');
+    $('#theater-interactive-toggle').prop('checked', !!settings.interactiveMode);
     scheduleTokenEstimate();
 }
 
@@ -6803,7 +6817,8 @@ async function loadPresetEntries(expectedName = settings.selectedPresetName) {
     }
 
     $('#theater-preset-current').show();
-    $('#theater-preset-entries').show().html('<p class="theater-empty">正在读取预设…</p>');
+    // 读取资料不改变用户的展开选择；新弹窗里的条目列表默认保持收起。
+    $('#theater-preset-entries').html('<p class="theater-empty">正在读取预设…</p>');
     setPresetEntryControlsEnabled(false);
 
     const promise = (async () => {
@@ -7999,7 +8014,7 @@ function resolveRenderSelection(forcePlainText = false) {
     if (!isPlainTextRender && selectedRender === '__default_pc__') rules = DEFAULT_RENDER_TEMPLATE_PC;
     else if (!isPlainTextRender && adaptiveProfile) rules = adaptiveProfile.rules;
     else if (!isPlainTextRender && selectedRender !== '__default__' && customRender) rules = customRender.content;
-    if (settings.interactiveMode && !isPlainTextRender && !adaptiveProfile) rules += INTERACTIVE_ADDON;
+    if (settings.interactiveMode && !isPlainTextRender) rules += INTERACTIVE_ADDON;
     const label = isPlainTextRender
         ? (textTheme === 'dark' ? '纯文字·暗色夜读' : '纯文字·亮色')
         : (adaptiveProfile?.name || (selectedRender === '__default_pc__' ? '内置 PC' : (selectedRender === '__default__' ? '内置默认' : (customRender?.name || `自定义 ${selectedRender}`))));
@@ -8260,19 +8275,17 @@ async function refreshTokenEstimate() {
         });
         const configuredRounds = Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3));
         const stagedRenderPlan = !continueContext && isStagedRenderTarget(targetWordCount);
-        const adaptiveRenderPlan = !!resolveRenderSelection(false).adaptiveProfile;
-        const separateRenderPlan = stagedRenderPlan || adaptiveRenderPlan;
         const stagedMultiRoundPlan = stagedRenderPlan && settings.autoContinue && configuredRounds >= 2;
         const payload = await assembleGenerationPayload(instruction, {
             continuationText: continueContext,
-            forcePlainText: separateRenderPlan,
+            forcePlainText: stagedRenderPlan,
             longFormPlan: stagedMultiRoundPlan,
             loadPreset: false,
             evaluateWorldBook: false,
         });
         const estimate = estimateTokenBreakdown(payload.tokenParts);
-        $('#theater-token-summary-value').text(`预计正文输入约 ${formatTokenCount(estimate.total)} Token${adaptiveRenderPlan ? ' · 另有自适应排版请求' : ''}`);
-        $('#theater-token-details').text(`预设 ${formatTokenCount(estimate.preset)} · 角色/人设 ${formatTokenCount(estimate.role)} · 世界书 ${formatTokenCount(estimate.worldBook)} · 上下文 ${formatTokenCount(estimate.context)} · 续写 ${formatTokenCount(estimate.continuation)} · 规则 ${formatTokenCount(estimate.rules)} · 当前指令 ${formatTokenCount(estimate.instruction)}${adaptiveRenderPlan ? ' · 完整正文生成后会另发一次 HTML 设计请求' : ''}`);
+        $('#theater-token-summary-value').text(`预计正文输入约 ${formatTokenCount(estimate.total)} Token`);
+        $('#theater-token-details').text(`预设 ${formatTokenCount(estimate.preset)} · 角色/人设 ${formatTokenCount(estimate.role)} · 世界书 ${formatTokenCount(estimate.worldBook)} · 上下文 ${formatTokenCount(estimate.context)} · 续写 ${formatTokenCount(estimate.continuation)} · 规则 ${formatTokenCount(estimate.rules)} · 当前指令 ${formatTokenCount(estimate.instruction)}`);
     } catch (error) {
         console.warn('[Theater] Token estimate failed:', error);
         $('#theater-token-summary-value').text('Token 预估暂不可用');
@@ -8332,14 +8345,13 @@ function revealContinuationInput() {
     else reveal();
 }
 
-function validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText, adaptiveSelection = '') {
+function validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText) {
     if (!/<(?:!doctype|html|head|body|style|main|section|article|div)\b/i.test(String(renderText || ''))) {
         const invalidHtml = new Error('最终渲染未返回完整 HTML 页面');
         invalidHtml.code = 'THEATER_RENDER_VALIDATION';
         throw invalidHtml;
     }
     const templateHtml = extractHtml(renderText);
-    validateAdaptiveRenderHtml(templateHtml, adaptiveSelection);
     const finalHtml = hydrateFinalRenderHtml(templateHtml, finalRenderPayload.placeholderPlan);
     const sourceChars = readableCharCount(sourceText);
     const renderedChars = readableCharCount(htmlToPlainText(finalHtml));
@@ -8361,8 +8373,6 @@ function validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText, a
 async function requestFinalRenderedHtml({
     sourceText,
     rules,
-    originalInstruction = '',
-    adaptiveSelection = '',
     ctx,
     signal,
     apiRoute,
@@ -8371,12 +8381,11 @@ async function requestFinalRenderedHtml({
     renderLabel = '所选模板',
     metricScope = 'final-render',
 } = {}) {
-    const finalRenderPayload = buildFinalRenderPayload({ sourceText, rules, originalInstruction });
+    const finalRenderPayload = buildFinalRenderPayload({ sourceText, rules });
     lastRequestContext = {
         kind: '最终 HTML 排版',
         sourceChars: readableCharCount(sourceText),
         renderLabel,
-        designBrief: !!String(originalInstruction || '').trim(),
     };
     runtimeLog('info', '最终 HTML 渲染开始', {
         scope: metricScope,
@@ -8407,7 +8416,7 @@ async function requestFinalRenderedHtml({
             if (!renderText) throw new Error('最终渲染未返回内容');
             markCompleted(lastRequestMetrics);
             recordRequestMetrics(lastRequestMetrics);
-            const validated = validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText, adaptiveSelection);
+            const validated = validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText);
             runtimeLog(result?.stopReason === 'length' ? 'warn' : 'info', '最终 HTML 渲染完成', {
                 scope: metricScope,
                 attempt: renderAttempt,
@@ -9192,8 +9201,6 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     const configuredMaxRounds = Math.min(10, Math.max(1, Number(settings.maxAutoRounds) || 3));
     const stagedRenderMode = !contCtx && isStagedRenderTarget(plannedTargetWordCount);
     const plannedRenderSelection = resolveRenderSelection(false);
-    const adaptiveRenderMode = !!plannedRenderSelection.adaptiveProfile;
-    const separateRenderMode = stagedRenderMode || adaptiveRenderMode;
     const stagedMultiRoundMode = stagedRenderMode && settings.autoContinue && configuredMaxRounds >= 2;
     const longFormMode = stagedMultiRoundMode && isLongFormTarget(plannedTargetWordCount);
     isPreparingGeneration = true;
@@ -9201,7 +9208,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     try {
         payload = await assembleGenerationPayload(instruction, {
             continuationText: contCtx,
-            forcePlainText: separateRenderMode,
+            forcePlainText: stagedRenderMode,
             longFormPlan: stagedMultiRoundMode,
         });
     } finally {
@@ -9238,8 +9245,6 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         target_chars: targetWordCount || null,
         length_tier: classifyLengthTier(targetWordCount),
         staged_render_mode: stagedRenderMode,
-        separate_render_mode: separateRenderMode,
-        adaptive_render_mode: adaptiveRenderMode,
         staged_multi_round_mode: stagedMultiRoundMode,
         long_form_mode: longFormMode,
     });
@@ -9391,13 +9396,11 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         if (selectedPlainTextRender) {
             lastGeneratedHtml = textFallbackHtml(newText, selectedTextTheme);
             currentOutputMode = textOutputModeForTheme(selectedTextTheme);
-        } else if (!separateRenderMode && currentGenerationJob.segments.length === 1) {
+        } else if (!stagedRenderMode && currentGenerationJob.segments.length === 1) {
             lastGeneratedHtml = firstHtml || textFallbackHtml(newText);
         } else {
             const { rules } = plannedRenderSelection;
-            if (popupAlive()) $('#theater-stream-text').text(adaptiveRenderMode
-                ? '正文创作已结束，正在根据本篇内容设计互动 HTML……'
-                : '正文创作已结束，正在套用所选 HTML 模板……');
+            if (popupAlive()) $('#theater-stream-text').text('正文创作已结束，正在套用所选 HTML 模板……');
             activeRound = 'render';
             firstChunkShown = false;
             bgStreamText = '';
@@ -9407,8 +9410,6 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 const rendered = await requestFinalRenderedHtml({
                     sourceText: newText,
                     rules,
-                    originalInstruction: adaptiveRenderMode ? (payload.generationFoundation?.originalInstruction || instruction) : '',
-                    adaptiveSelection: adaptiveRenderMode ? selectedRenderProfile : '',
                     ctx,
                     signal: abortController?.signal,
                     apiRoute,
