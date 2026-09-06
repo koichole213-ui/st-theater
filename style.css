@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.2.1
+/* 千夜浮梦 · 小剧场生成器 v4.2.2
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -4397,6 +4397,57 @@ body.theater-reader-open {
 /* ============================================================
  * History
  * ============================================================ */
+.theater-context-exclusions .theater-addon-summary {
+    flex-wrap: wrap;
+}
+.theater-exclusion-field-label {
+    display: block;
+    margin: var(--t-space-3) 0 var(--t-space-2);
+    font-size: var(--t-text-sm);
+}
+.theater-exclusion-rule {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--t-space-2);
+    padding: var(--t-space-3) 0;
+    border-bottom: 1px solid var(--t-border);
+}
+.theater-exclusion-rule-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    min-height: 44px;
+    font-size: var(--t-text-sm);
+}
+.theater-exclusion-rule-value {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: var(--t-text-xs);
+    font-family: inherit;
+    max-height: 5em;
+    overflow: auto;
+    line-height: 1.6;
+}
+.theater-context-exclusions .theater-btn {
+    min-height: 44px;
+}
+.theater-exclusion-preview {
+    margin-top: var(--t-space-4);
+}
+#theater-exclusion-preview-output {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 260px;
+    overflow: auto;
+    padding: var(--t-space-3);
+    border: 1px solid var(--t-border);
+    border-radius: var(--t-radius-sm);
+    font: inherit;
+    line-height: 1.6;
+    text-align: left;
+}
 .theater-history-top-bar {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

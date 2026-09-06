@@ -16,6 +16,26 @@ export function estimateTokenBreakdown(parts = {}) {
     return { ...result, total };
 }
 
+// 仅保留每一项的最近文本和计数；输入指令时不重复扫描未变的长资料。
+export function createTokenBreakdownEstimator(countTokens = estimateTokenCount) {
+    let previous = new Map();
+    return (parts = {}) => {
+        const next = new Map();
+        const result = {};
+        let total = 0;
+        for (const [key, value] of Object.entries(parts)) {
+            const text = String(value || '');
+            const old = previous.get(key);
+            const count = old?.text === text ? old.count : countTokens(text);
+            next.set(key, { text, count });
+            result[key] = count;
+            total += count;
+        }
+        previous = next;
+        return { ...result, total };
+    };
+}
+
 export function formatTokenCount(value) {
     const n = Math.max(0, Number(value) || 0);
     return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 1 : 1)}k` : String(Math.round(n));

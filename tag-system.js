@@ -71,7 +71,7 @@ export function migrateLegacyTagSettings(settings = {}) {
     ]);
     settings.instructionTags = normalizeTagList([
         ...normalizeTagList(settings.instructionTags),
-        ...legacyGroups,
+        ...(!alreadyMigrated ? legacyGroups : []),
         ...discovered,
     ]);
 

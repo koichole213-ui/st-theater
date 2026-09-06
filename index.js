@@ -11,7 +11,7 @@ import { requestCustomApi, requestMainApi } from './api-runtime.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml, recentGenerationRoundsContext } from './generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection } from './adaptive-render.js';
 import { createContinuationSession, appendContinuationVersion, selectContinuationVersion, displayedContinuationVersion } from './continuation-session.js';
-import { debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
+import { createTokenBreakdownEstimator, debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, diagnosticSignalCatalog, diagnosticSignalInfo, signalForStopReason } from './request-diagnostics.js';
 import { autoSourceLabel, resolveAutoInstruction } from './auto-mode.js';
@@ -27,6 +27,7 @@ import { rememberWorldBookEntryStates, shouldReadWorldBookEntry, syncFollowedWor
 import { buildProtagonistAnchor } from './protagonist-anchor.js';
 import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
+import { MAX_CONTEXT_EXCLUSION_LENGTH, MAX_CONTEXT_EXCLUSION_RULES, createChatContextReader, normalizeContextExclusionRules, previewChatContext, validateContextExclusionRule } from './context-exclusions.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from './plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from './history-backup.js';
 import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_MEMORY_TYPES, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamBranch, createLongDreamRecord, createLongDreamWorldBookSnapshot, deleteLongDreamFrom, discardLongDreamWritingAttempt, latestLongDreamChapter, normalizeLongDreamRecord, prepareLongDreamMemoryRegeneration, recoverInterruptedLongDreamMemory, rejectLongDreamMemoryV2RecordItem, resolveLongDreamMemoryV2RecordConflict, selectLongDreamDraftCandidate, setLongDreamMemoryCardStatus, setLongDreamMemoryStatus, setLongDreamMemoryV2RecordItemHidden, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition, updateLongDreamMemoryCard, updateLongDreamMemoryV2RecordItem } from './long-dream.js';
@@ -45,7 +46,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.2.1';
+const VERSION = '4.2.2';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -336,6 +337,7 @@ let settings = {};
 const defaultSettings = Object.freeze({
     contextRange: 10,
     readChatContext: true,
+    contextExclusionRules: [],
     instructionTemplates: [],
     instructionGroups: [],            // 用户创建的分组名列表
     instructionGroupFilter: '__all__', // 当前筛选：'__all__' | '__none__'(未分组) | 组名
@@ -788,6 +790,7 @@ async function init() {
     }
     settings = extensionSettings[MODULE_NAME];
     const tagSettingsMigrated = migrateLegacyTagSettings(settings);
+    settings.contextExclusionRules = normalizeContextExclusionRules(settings.contextExclusionRules);
     settings.historyTagFilter = normalizeTagFilter(settings.historyTagFilter, settings.instructionTags);
     settings.lastInstructionTags = itemTags({ tags: settings.lastInstructionTags }, settings.instructionTags);
     activeInstructionTags = [...settings.lastInstructionTags];
@@ -1479,7 +1482,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
     const inst = settings.instructionTemplates || [];
     const render = settings.renderTemplates || [];
     const allHistory = historyCache;
-    const hist = filterHistoryAll(allHistory);
+    const hist = initialTab === 'history' ? filterHistoryAll(allHistory) : [];
     const historyEmptyText = allHistory.length ? '当前标签组合下没有历史' : '暂无';
     const selRender = settings.selectedRenderIndex || '__default__';
     const selectedAdaptiveRender = adaptiveRenderProfile(selRender);
@@ -1701,6 +1704,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <span class="theater-hint-inline theater-context-count-hint">填 0 表示不读取聊天消息，最多 ${MAX_CONTEXT_MESSAGES} 条</span>
             </div>
         </div>
+        ${contextExclusionSettingsHTML()}
     </div>
 
     <!-- ===== 3. 规则 ===== -->
@@ -1735,7 +1739,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                             <div id="theater-inst-bulk-clear-btn" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>取消</span></div>
                         </div>
                     </div>
-                    <div id="theater-instruction-list">${renderInstList(inst)}</div>
+                    <div id="theater-instruction-list" data-pending-list="true"></div>
                 </div>
             </div>
         </div>
@@ -1762,7 +1766,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <label class="theater-label" style="margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> 保存的小剧场</label>
                 <button type="button" id="theater-export-all-history" class="theater-btn" ${allHistory.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-download"></i><span>批量导出</span></button>
                 <button type="button" id="theater-import-history-btn" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入备份</span></button>
-                <button type="button" id="theater-history-tag-filter" class="theater-btn"><i class="fa-solid fa-filter"></i><span>${esc(tagFilterSummary(settings.historyTagFilter))}</span></button>
+                <button type="button" id="theater-history-tag-filter" class="theater-btn"><i class="fa-solid fa-filter"></i><span>${esc(historyTagFilterLabel())}</span></button>
                 <button type="button" id="theater-history-manage-tags" class="theater-btn"><i class="fa-solid fa-tags"></i><span>管理标签</span></button>
                 <button type="button" id="theater-hist-batch-enter" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-list-check"></i><span>批量管理</span></button>
                 <div id="theater-hist-batch-bar" style="display:none;">
@@ -1773,7 +1777,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 </div>
             </div>
             <p class="theater-hint" style="margin:-2px 1px 10px;">批量导出的 ZIP 可直接从这里恢复；同时兼容旧版 ZIP 和 JSON 备份。</p>
-            <div id="theater-history-list">${hist.length === 0 ? `<p class="theater-empty">${historyEmptyText}</p>` : hist.map(h => historyItemHTML(h)).join('')}</div>
+            <div id="theater-history-list"${initialTab === 'history' ? '' : ' data-pending-list="true"'}>${initialTab !== 'history' ? '' : hist.length === 0 ? `<p class="theater-empty">${historyEmptyText}</p>` : hist.map(h => historyItemHTML(h)).join('')}</div>
         </div>
     </div>
 
@@ -3579,6 +3583,80 @@ function tagFilterSummary(filter, allLabel = '全部标签') {
     return selected.join(' ＋ ');
 }
 
+function historyTagFilterLabel() {
+    const summary = tagFilterSummary(settings.historyTagFilter, '');
+    return summary ? `筛选标签：${summary}` : '筛选标签';
+}
+
+function contextExclusionSettingsHTML() {
+    return `<div class="theater-section theater-context-exclusions">
+        <details class="theater-addon-details" id="theater-context-exclusions">
+            <summary class="theater-addon-summary"><i class="fa-solid fa-filter" aria-hidden="true"></i> 前文排除规则 <span id="theater-exclusion-count">${normalizeContextExclusionRules(settings.contextExclusionRules).filter(rule => rule.enabled).length} 条启用</span></summary>
+            <p class="theater-hint">排除小剧场读取的聊天内容，原消息不变。添加后自动保存，可随时停用或删除。</p>
+            <div id="theater-exclusion-list">${contextExclusionRulesHTML()}</div>
+            <label class="theater-label" for="theater-exclusion-type">添加规则</label>
+            <select id="theater-exclusion-type" class="theater-select"><option value="literal">固定内容</option><option value="tag">标签区块</option></select>
+            <label class="theater-exclusion-field-label" for="theater-exclusion-value" id="theater-exclusion-value-label">要排除的完整内容</label>
+            <textarea id="theater-exclusion-value" class="theater-textarea" rows="3" maxlength="${MAX_CONTEXT_EXCLUSION_LENGTH}" aria-describedby="theater-exclusion-help" placeholder="粘贴固定收尾文字或完整 HTML…"></textarea>
+            <p class="theater-hint" id="theater-exclusion-help">精确匹配，包括空格和换行；有 HTML 时请连同标签一起粘贴。</p>
+            <div class="theater-btn-row"><button type="button" id="theater-exclusion-add" class="theater-btn primary"><i class="fa-solid fa-plus" aria-hidden="true"></i><span>添加规则</span></button></div>
+            <p class="theater-hint" id="theater-exclusion-feedback" role="status" hidden></p>
+            <details class="theater-addon-details theater-exclusion-preview">
+                <summary class="theater-addon-summary">过滤预览</summary>
+                <label class="theater-exclusion-field-label" for="theater-exclusion-preview-input">测试消息</label>
+                <textarea id="theater-exclusion-preview-input" class="theater-textarea" rows="4" placeholder="粘贴一段带标签或收尾标记的消息，仅在本地测试，不会保存…"></textarea>
+                <p class="theater-hint">只应用上方已添加且启用的规则，再按生成时相同方式读取正文。</p>
+                <div class="theater-btn-row"><button type="button" id="theater-exclusion-preview-run" class="theater-btn"><i class="fa-solid fa-eye" aria-hidden="true"></i><span>过滤预览</span></button></div>
+                <p class="theater-hint" id="theater-exclusion-preview-status" role="status" hidden></p>
+                <pre id="theater-exclusion-preview-output" aria-label="过滤后读取的正文" hidden></pre>
+            </details>
+        </details>
+    </div>`;
+}
+
+function contextExclusionRulesHTML() {
+    const rules = normalizeContextExclusionRules(settings.contextExclusionRules);
+    if (!rules.length) return '<p class="theater-empty">尚未添加，按原方式读取聊天前文。</p>';
+    return rules.map((rule, index) => `<div class="theater-exclusion-rule">
+        <label class="theater-exclusion-rule-toggle"><input type="checkbox" data-exclusion-toggle="${index}" ${rule.enabled ? 'checked' : ''} aria-label="启用第 ${index + 1} 条排除规则"><span>${rule.type === 'tag' ? '标签区块' : '固定内容'}</span></label>
+        <code class="theater-exclusion-rule-value">${esc(rule.value)}</code>
+        <button type="button" class="theater-btn danger-soft" data-exclusion-delete="${index}" aria-label="删除第 ${index + 1} 条排除规则">删除</button>
+    </div>`).join('');
+}
+
+function refreshContextExclusionRules() {
+    $('#theater-exclusion-list').html(contextExclusionRulesHTML());
+    $('#theater-exclusion-count').text(`${settings.contextExclusionRules.filter(rule => rule.enabled).length} 条启用`);
+    $('#theater-exclusion-preview-output').empty().prop('hidden', true);
+    $('#theater-exclusion-preview-status').text('规则已变化，请重新预览。').prop('hidden', false);
+    save();
+    scheduleTokenEstimate();
+}
+
+function addContextExclusionRule() {
+    const { rule, error } = validateContextExclusionRule({
+        type: $('#theater-exclusion-type').val(), value: $('#theater-exclusion-value').val(),
+    });
+    const rules = normalizeContextExclusionRules(settings.contextExclusionRules);
+    const duplicate = rule && rules.some(item => item.type === rule.type && item.value === rule.value);
+    const problem = error || (duplicate ? '这条规则已经存在，可在上方启用。' : '')
+        || (rules.length >= MAX_CONTEXT_EXCLUSION_RULES ? `最多添加 ${MAX_CONTEXT_EXCLUSION_RULES} 条规则。` : '');
+    if (problem) { $('#theater-exclusion-feedback').text(problem).prop('hidden', false); return; }
+    settings.contextExclusionRules = [...rules, rule];
+    $('#theater-exclusion-value').val('');
+    $('#theater-exclusion-feedback').text('已添加并保存。').prop('hidden', false);
+    refreshContextExclusionRules();
+}
+
+function previewContextExclusions() {
+    const source = $('#theater-exclusion-preview-input').val() || '';
+    const { text, removed, unclosed } = previewChatContext(source, settings.contextExclusionRules);
+    const status = !source ? '请先粘贴测试消息。'
+        : `已排除 ${removed} 处。${unclosed ? '存在未闭合的匹配标签，相关区块已保留。' : ''}${text.trim() ? '下方为读取结果。' : '过滤后没有正文。'}`;
+    $('#theater-exclusion-preview-status').text(status).prop('hidden', false);
+    $('#theater-exclusion-preview-output').text(text).prop('hidden', !source);
+}
+
 function itemTagBadgesHTML(item, { showUncategorized = false, limit = Infinity } = {}) {
     const tags = itemTags(item, knownInstructionTags());
     if (!tags.length) {
@@ -4140,6 +4218,7 @@ function activateTheaterTab(tabName, { persist = true, resetScroll = true } = {}
     $(`.theater-tab[data-tab="${tab}"]`).addClass('active');
     $('.theater-panel').removeClass('active');
     $(`.theater-panel[data-panel="${tab}"]`).addClass('active');
+    if (tab === 'history' && document.getElementById('theater-history-list')?.hasAttribute('data-pending-list')) refreshHistList();
     if (persist) {
         settings.lastTheaterTab = tab;
         save();
@@ -5554,6 +5633,7 @@ function bindEvents() {
         });
     });
     $d.off('click.titog').on('click.titog', '#theater-inst-toggle', function () {
+        if (document.getElementById('theater-instruction-list')?.hasAttribute('data-pending-list')) refreshInstUI();
         $(this).next('.theater-drawer-body').slideToggle(150);
         $(this).find('.theater-drawer-arrow').toggleClass('open');
     });
@@ -6098,6 +6178,40 @@ function bindEvents() {
         this.value = settings.maxAutoRounds;
         save();
     });
+
+    // 前文排除仅修改读取规则；预览文本不写入设置或聊天。
+    $d.off('click.texcladd').on('click.texcladd', '#theater-exclusion-add', addContextExclusionRule);
+    $d.off('click.texclpreview').on('click.texclpreview', '#theater-exclusion-preview-run', previewContextExclusions);
+    $d.off('change.texcltype').on('change.texcltype', '#theater-exclusion-type', function () {
+        const tag = this.value === 'tag';
+        $('#theater-exclusion-value-label').text(tag ? '要排除的标签名' : '要排除的完整内容');
+        $('#theater-exclusion-value').attr('placeholder', tag ? '例如 anti_cut（无需填写正则）' : '粘贴固定收尾文字或完整 HTML…');
+        $('#theater-exclusion-help').text(tag
+            ? '排除成对标签及其内部内容。p、span 等通用标签可能包含正文，请谨慎选择。未闭合区块会保留。'
+            : '精确匹配，包括空格和换行；有 HTML 时请连同标签一起粘贴。');
+        $('#theater-exclusion-feedback').prop('hidden', true);
+    });
+    $d.off('change.texcltoggle').on('change.texcltoggle', '[data-exclusion-toggle]', function () {
+        const rules = normalizeContextExclusionRules(settings.contextExclusionRules);
+        const index = Number(this.dataset.exclusionToggle);
+        if (!Number.isInteger(index) || !rules[index]) return;
+        rules[index].enabled = this.checked;
+        settings.contextExclusionRules = rules;
+        refreshContextExclusionRules();
+    });
+    $d.off('click.texcldelete').on('click.texcldelete', '[data-exclusion-delete]', function () {
+        const rules = normalizeContextExclusionRules(settings.contextExclusionRules);
+        const index = Number(this.dataset.exclusionDelete);
+        if (!Number.isInteger(index) || !rules[index]) return;
+        rules.splice(index, 1);
+        settings.contextExclusionRules = rules;
+        refreshContextExclusionRules();
+        $('#theater-exclusion-feedback').text('已删除规则。').prop('hidden', false);
+    });
+    $d.off('input.texclpreview').on('input.texclpreview', '#theater-exclusion-preview-input', function () {
+        $('#theater-exclusion-preview-output').empty().prop('hidden', true);
+        $('#theater-exclusion-preview-status').prop('hidden', true);
+    });
     $d.off('change.tquickrendera').on('change.tquickrendera', '#theater-quick-render-a', function () {
         updateQuickRenderSetting('A', $(this).val());
     });
@@ -6366,7 +6480,7 @@ function bindEvents() {
 function refreshInstUI() {
     const inst = settings.instructionTemplates || [];
     closeInstructionActionMenus();
-    $('#theater-instruction-list').html(renderInstList(inst));
+    $('#theater-instruction-list').html(renderInstList(inst)).removeAttr('data-pending-list');
     $('#theater-inst-count').text(inst.length);
     $('#theater-inst-drawer').toggleClass('empty', !inst.length);
     updateBulkBar();
@@ -6484,8 +6598,8 @@ function updateHistorySelectionAutoScroll(clientX, clientY) {
 function refreshHistList() {
     const h = filterHistoryAll(historyCache);
     const empty = historyCache.length ? '当前标签组合下没有历史' : '暂无';
-    $('#theater-history-list').html(h.length === 0 ? `<p class="theater-empty">${empty}</p>` : h.map(item => historyItemHTML(item)).join(''));
-    $('#theater-export-all-history').toggle(historyCache.length > 0);
+    $('#theater-history-list').html(h.length === 0 ? `<p class="theater-empty">${empty}</p>` : h.map(item => historyItemHTML(item)).join('')).removeAttr('data-pending-list');
+    $('#theater-export-all-history').toggle(historyCache.length > 0 && !histBatchMode);
     $('#theater-hist-select-all').toggle(h.length > 0);
     $('#theater-hist-batch-enter').toggle(h.length > 0 && !histBatchMode);
     updateHistBulkBar();
@@ -6494,7 +6608,7 @@ function refreshHistList() {
 
 function refreshTagControls() {
     $('#theater-inst-tag-filter span').text(tagFilterSummary(settings.instructionTagFilter));
-    $('#theater-history-tag-filter span').text(tagFilterSummary(settings.historyTagFilter));
+    $('#theater-history-tag-filter span').text(historyTagFilterLabel());
     const randomTags = tagFilterSummary(settings.randomTagFilter, '选择');
     $('#theater-random-tag-picker').prop('hidden', settings.randomScope !== '__tags__').attr('title', tagFilterSummary(settings.randomTagFilter)).find('span').text(randomTags);
     const autoTags = tagFilterSummary(settings.autoTagFilter, '选择');
@@ -8129,7 +8243,7 @@ function buildGenerationContinuationRoundPayload({ foundation, instruction, ctx,
     };
 }
 
-async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, longFormPlan = false, loadPreset = true, evaluateWorldBook = true } = {}) {
+async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, longFormPlan = false, loadPreset = true, evaluateWorldBook = true, estimateOnly = false } = {}) {
     const ctx = SillyTavern.getContext();
     const preparationKey = generationPreparationKey(ctx);
     const { chat = [] } = ctx;
@@ -8137,16 +8251,17 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     const { character, description, personality, scenario, creatorNotes, currentPersona, role, persona, name1, name2 } = identity;
     const contextCount = normalizeContextRange(settings.contextRange);
     const readChatContext = settings.readChatContext !== false;
+    const readContextMessage = createChatContextReader(settings.contextExclusionRules);
     const recentChatMessages = readChatContext ? takeRecentMessages(chat, contextCount) : [];
     const structuredChatMessages = recentChatMessages.map((message, index) => ({
         role: message.is_user ? 'user' : 'assistant',
-        content: extractMesContent(message.mes),
+        content: readContextMessage(message.mes),
         name: message.is_user ? (name1 || 'User') : (message.name || name2 || 'Char'),
         source: 'chat-history',
         sourceId: `chat-${index + 1}`,
     })).filter(message => message.content.trim());
-    const chatCtx = recentChatMessages.map(m =>
-        `${m.is_user ? (name1 || 'User') : (m.name || name2 || 'Char')}: ${extractMesContent(m.mes)}`
+    const chatCtx = structuredChatMessages.map(message =>
+        `${message.name}: ${message.content}`
     ).join('\n\n');
     const context = readChatContext && contextCount > 0
         ? `以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}`
@@ -8167,11 +8282,13 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         try {
             const instructionForScan = stripTargetWordCountRequirement(instruction) || String(instruction || '');
             const reverseChat = [...chat].reverse();
+            const scanContents = reverseChat.map(message => readContextMessage(message.mes));
             const chatWithNames = [
                 `${name1 || 'User'}: ${instructionForScan}`,
-                ...reverseChat.map(message => `${message.is_user ? (name1 || 'User') : (message.name || name2 || 'Char')}: ${extractMesContent(message.mes)}`),
+                ...reverseChat.map((message, index) => scanContents[index].trim()
+                    ? `${message.is_user ? (name1 || 'User') : (message.name || name2 || 'Char')}: ${scanContents[index]}` : ''),
             ];
-            const chatWithoutNames = [instructionForScan, ...reverseChat.map(message => extractMesContent(message.mes))];
+            const chatWithoutNames = [instructionForScan, ...scanContents];
             const maxContext = ctx?.getMaxContextSize?.() || (ctx?.oai_settings || globalThis.oai_settings)?.openai_max_context || 65536;
             const activated = await scanWithCurrentSillyTavern({
                 entries: rawEntries,
@@ -8243,6 +8360,8 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         fixed,
         instruction: `用户指令：${cleanInstruction}`,
     });
+    // 预估仅使用同一份 tokenParts，不需要编排请求或复制冻结续写资料。
+    if (estimateOnly) return { tokenParts: payload.tokenParts };
     const selectedPresetEntries = presetSnapshot.selectedEntries;
     const presetEntriesForLayout = selectedPresetEntries.length
         ? selectedPresetEntries
@@ -8311,6 +8430,8 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     };
 }
 
+const estimateInputTokens = createTokenBreakdownEstimator();
+
 async function refreshTokenEstimate() {
     if (!$('#theater-token-summary-value').length) return;
     try {
@@ -8328,8 +8449,9 @@ async function refreshTokenEstimate() {
             longFormPlan: stagedMultiRoundPlan,
             loadPreset: false,
             evaluateWorldBook: false,
+            estimateOnly: true,
         });
-        const estimate = estimateTokenBreakdown(payload.tokenParts);
+        const estimate = estimateInputTokens(payload.tokenParts);
         $('#theater-token-summary-value').text(`预计正文输入约 ${formatTokenCount(estimate.total)} Token`);
         $('#theater-token-details').text(`预设 ${formatTokenCount(estimate.preset)} · 角色/人设 ${formatTokenCount(estimate.role)} · 世界书 ${formatTokenCount(estimate.worldBook)} · 上下文 ${formatTokenCount(estimate.context)} · 续写 ${formatTokenCount(estimate.continuation)} · 规则 ${formatTokenCount(estimate.rules)} · 当前指令 ${formatTokenCount(estimate.instruction)}`);
     } catch (error) {
@@ -9250,12 +9372,6 @@ function stopGeneration() {
     if (abortController) { abortController.abort(); abortController = null; }
     isGenerating = false;
     bgStreamText = '';
-}
-
-// 提取消息正文：优先取 <content> 标签内的内容，没有就用完整消息
-function extractMesContent(mes) {
-    const match = mes.match(/<content>([\s\S]*?)<\/content>/i);
-    return match ? match[1].trim() : mes;
 }
 
 async function generateTheater() {

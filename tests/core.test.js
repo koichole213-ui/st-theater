@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
+import { createTokenBreakdownEstimator, estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml, recentGenerationRoundsContext } from '../generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection } from '../adaptive-render.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, MESSAGE_COMPATIBILITY, applyIndependentOpenAICompatibility, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, hasReasoningContent, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
@@ -25,6 +25,7 @@ import { WORLD_BOOK_STRATEGIES, rememberWorldBookEntryStates, shouldReadWorldBoo
 import { buildProtagonistAnchor } from '../protagonist-anchor.js';
 import { scanWorldBookEntriesWithSillyTavern } from '../world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from '../context-policy.js';
+import { createChatContextReader, normalizeContextExclusionRules, previewChatContext, validateContextExclusionRule } from '../context-exclusions.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from '../plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from '../history-backup.js';
 import { LONG_DREAM_DRAFT_RESUME_STAGE, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_SCHEMA_VERSION, LONG_DREAM_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION, appendLongDreamChapter, applyLongDreamMemoryPatch, clearLongDreamDraft, createLongDreamBranch, createLongDreamRecord, createLongDreamWorldBookSnapshot, deleteLongDreamFrom, discardLongDreamWritingAttempt, latestLongDreamChapter, migrateLongDreamRecord, normalizeLongDreamRecord, prepareLongDreamMemoryRegeneration, promoteLongDreamDraft, recoverInterruptedLongDreamMemory, rejectLongDreamMemoryV2RecordItem, resolveLongDreamMemoryV2RecordConflict, saveLongDreamDraft, selectLongDreamDraftCandidate, setLongDreamMemoryCardStatus, setLongDreamMemoryStatus, setLongDreamStatus, truncateLongDreamAfter, updateLongDreamChapter, updateLongDreamDefinition, updateLongDreamMemoryCard, updateLongDreamMemoryV2RecordItem } from '../long-dream.js';
@@ -38,7 +39,7 @@ import { LONG_DREAM_MEMORY_OUTPUT_CONTRACT, builtinLongDreamMemoryPreset, export
 import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing, composeGenerationContinuationMessages, composePresetMessages, normalizeRequestMessages, normalizeWorldInfoEntry, squashAdjacentSystemMessages } from '../request-layout.js';
 import { createRequestTrace, formatRequestTrace } from '../request-trace.js';
 import { migrateLegacyPresetEntryStates, normalizePresetEntryStatesByPreset, presetEntryStateStorageKey, presetEntryStatesForPreset } from '../preset-entry-states.js';
-import { TAG_UNCATEGORIZED, matchesTagFilter, mergeTagLists, migrateLegacyTagSettings } from '../tag-system.js';
+import { TAG_UNCATEGORIZED, matchesTagFilter, mergeTagLists, migrateLegacyTagSettings, removeTagFromList, renameTagInList } from '../tag-system.js';
 import { waitForPopupElements, withPreservedPopupViewport } from '../popup-lifecycle.js';
 import { fetchInstalledExtensionStatus } from '../version-check.js';
 import { createContinuationSession, appendContinuationVersion, selectContinuationVersion, displayedContinuationVersion } from '../continuation-session.js';
@@ -132,6 +133,182 @@ test('三个 HTML 规则保持紧凑预算，不给正文新增长度上限', ()
         assert.match(profile.rules, /长文\/短屏均可滚动到底/);
         assert.match(profile.rules, /首次发声必须由读者明确点击开启/);
     }
+});
+
+test('输入预估只重新计数变化项，删除资料或切换资料时不会沿用旧计数', () => {
+    const scanned = [];
+    const estimate = createTokenBreakdownEstimator(text => { scanned.push(text); return estimateTokenCount(text); });
+    const parts = { worldBook: '合成设定'.repeat(1000), context: '前文', instruction: '一' };
+    assert.deepEqual(estimate(parts), estimateTokenBreakdown(parts));
+    scanned.length = 0;
+    parts.instruction = '一二';
+    assert.deepEqual(estimate(parts), estimateTokenBreakdown(parts));
+    assert.deepEqual(scanned, ['一二']);
+    parts.worldBook = '替换后的设定';
+    delete parts.context;
+    assert.deepEqual(estimate(parts), estimateTokenBreakdown(parts));
+    assert.deepEqual(estimate({}), { total: 0 });
+    scanned.length = 0;
+    estimate(parts);
+    assert.deepEqual(scanned, Object.values(parts));
+});
+
+test('延迟进入历史会加载一次，批量恢复与刷新不显示全部导出，退出后恢复', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const extract = name => source.match(new RegExp(`function ${name}\\([^]*?^}`, 'm'))[0];
+    const pending = new Set(['data-pending-list']);
+    const visible = new Map();
+    let renders = 0;
+    const list = { hasAttribute: name => pending.has(name) };
+    const context = {
+        settings: {}, historyCache: [{ id: '合成历史' }], histBatchMode: true,
+        normalizeTheaterTab: tab => tab, filterHistoryAll: items => items,
+        historyItemHTML: () => { renders++; return '<p>合成历史</p>'; },
+        updateHistBulkBar() {}, refreshTagControls() {}, save() {},
+        document: {
+            getElementById: id => id === 'theater-history-list' ? list : null,
+            querySelector: () => ({ classList: { add() {}, remove() {} }, querySelectorAll: () => [] }),
+        },
+        $: selector => {
+            const api = {
+                addClass: () => api, removeClass: () => api,
+                html: () => api, removeAttr: name => { pending.delete(name); return api; },
+                hide: () => visible.set(selector, false), show: () => visible.set(selector, true),
+                toggle: value => visible.set(selector, value),
+            };
+            return api;
+        },
+    };
+    runInNewContext(['activateTheaterTab', 'refreshHistList', 'enterHistBatchMode', 'exitHistBatchMode'].map(extract).join('\n')
+        + '\nenterHistBatchMode(); activateTheaterTab("history"); activateTheaterTab("history");', context);
+    assert.equal(renders, 1);
+    assert.equal(pending.size, 0);
+    assert.equal(visible.get('#theater-export-all-history'), false);
+    runInNewContext('refreshHistList();', context);
+    assert.equal(renders, 2);
+    assert.equal(visible.get('#theater-export-all-history'), false);
+    runInNewContext('histBatchMode = false; exitHistBatchMode();', context);
+    assert.equal(visible.get('#theater-export-all-history'), true);
+    assert.equal(visible.get('#theater-hist-batch-enter'), true);
+});
+
+test('模板规则区分绘画范围并要求开场可达、音效失败不阻断正文', () => {
+    for (const profile of adaptiveRenderProfiles()) {
+        assert.match(profile.rules, /禁止赛博朋克元素/);
+        assert.match(profile.rules, /短交互音效/);
+        assert.match(profile.rules, /不生成BGM\/循环背景声/);
+        assert.match(profile.rules, /DOM就绪绑定后才启用/);
+        assert.match(profile.rules, /装饰层pointer-events:none/);
+        assert.match(profile.rules, /异常不得阻断进入/);
+        assert.match(profile.rules, /初始化失败保留正常阅读/);
+        if (profile.id === ADAPTIVE_RENDER_SELECTIONS.lively) assert.doesNotMatch(profile.rules, /CSS绘画/);
+        else assert.match(profile.rules, /优先用CSS绘画/);
+    }
+});
+
+test('删除或改名旧分类标签后，多次初始化不再把旧分组名补回', () => {
+    for (const rename of [false, true]) {
+        const settings = {
+            instructionGroups: ['旧分类', '未使用旧组'],
+            instructionTemplates: [{ name: '合成模板', content: '合成内容', group: '旧分类' }],
+        };
+        migrateLegacyTagSettings(settings);
+        const transform = tags => rename ? renameTagInList(tags, '旧分类', '新分类') : removeTagFromList(tags, '旧分类');
+        settings.instructionTags = removeTagFromList(transform(settings.instructionTags), '未使用旧组');
+        settings.instructionTemplates.forEach(item => { item.tags = transform(item.tags); });
+        for (let i = 0; i < 3; i++) migrateLegacyTagSettings(settings);
+        assert.deepEqual(settings.instructionTags, rename ? ['新分类'] : []);
+        assert.deepEqual(settings.instructionTemplates[0].tags, rename ? ['新分类'] : []);
+        assert.equal(settings.instructionTemplates[0].content, '合成内容');
+        assert.deepEqual(settings.instructionGroups, ['旧分类', '未使用旧组']);
+    }
+});
+
+const EXCLUSION_TEST_FOOTER = '<p><span style="display:block; text-align:center; color:#999999; font-size:0.9em;">✦ 人间藏万相 · 灯火照众生 ✦</span></p>';
+
+test('固定收尾只精确排除目标 HTML，保留正常 p/span、重复匹配、标点和原消息', () => {
+    const story = '<p>故事第一段</p><span>正常正文</span>';
+    const original = story + EXCLUSION_TEST_FOOTER + EXCLUSION_TEST_FOOTER;
+    const rules = [{ type: 'literal', value: EXCLUSION_TEST_FOOTER }];
+    const result = previewChatContext(original, rules);
+    assert.equal(result.text, story);
+    assert.equal(result.removed, 2);
+    assert.equal(original, story + EXCLUSION_TEST_FOOTER + EXCLUSION_TEST_FOOTER);
+    assert.equal(createChatContextReader(rules)(original), result.text);
+    assert.equal(previewChatContext('甲.*乙', [{ type: 'literal', value: '.*' }]).text, '甲乙');
+    assert.equal(previewChatContext('甲.乙', [{ type: 'literal', value: '.*' }]).text, '甲.乙');
+    assert.equal(previewChatContext('甲 x 乙 x', [{ type: 'literal', value: ' x ' }]).text, '甲乙 x');
+});
+
+test('标签排除支持属性、同名嵌套、重复、自闭合和大小写，保留未闭合与相似名字', () => {
+    const rules = [{ type: 'tag', value: '<anti_cut>' }];
+    const input = '甲<ANTI_CUT data-note="a > b">外<anti_cut>内</anti_cut>尾</ANTI_CUT>乙<anti_cut />丙<anti_cut-other>留</anti_cut-other><anti_cut>未闭合';
+    const result = previewChatContext(input, rules);
+    assert.equal(result.text, '甲乙丙<anti_cut-other>留</anti_cut-other><anti_cut>未闭合');
+    assert.equal(result.removed, 2);
+    assert.equal(result.unclosed, 1);
+    const embedded = '<!-- <anti_cut>注释</anti_cut> --><script>const s="<anti_cut>字符串</anti_cut>";</script>';
+    assert.equal(previewChatContext(embedded + '<anti_cut>排除</anti_cut>', rules).text, embedded);
+});
+
+test('空规则和停用保持旧正文读取；排除先于 content 选取，规则读取使用快照', () => {
+    const input = '<content> 正文 </content><p>原有尾部</p>';
+    assert.equal(createChatContextReader()(input), '正文');
+    assert.equal(createChatContextReader()('普通消息'), '普通消息');
+    const rules = [{ type: 'tag', value: 'anti_cut', enabled: false }];
+    const body = '甲<anti_cut>噪声</anti_cut>乙';
+    assert.equal(createChatContextReader(rules)(body), body);
+    rules[0].enabled = true;
+    const read = createChatContextReader(rules);
+    rules[0].value = 'p';
+    assert.equal(read(body), '甲乙');
+    assert.equal(read('<anti_cut><content>假正文</content></anti_cut><content>真正文</content>'), '真正文');
+    assert.equal(previewChatContext(EXCLUSION_TEST_FOOTER, [{ type: 'literal', value: EXCLUSION_TEST_FOOTER }]).text, '');
+    assert.ok(validateContextExclusionRule({ type: 'tag', value: 'p|span' }).error);
+    assert.ok(validateContextExclusionRule({ type: 'literal', value: '   ' }).error);
+    assert.deepEqual(normalizeContextExclusionRules([null, {}, { type: 'unknown', value: 'x' }]), []);
+});
+
+test('前文排除同时进入预估、正式消息和世界书扫描，不改角色、世界书、指令或续写', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const assembly = source.match(/async function assembleGenerationPayload\([^]*?^}/m)[0];
+    const chat = [{ mes: '<p>正常段落</p>' + EXCLUSION_TEST_FOOTER, is_user: false }, { mes: EXCLUSION_TEST_FOOTER, is_user: true }];
+    const before = JSON.stringify(chat);
+    let scans = [];
+    const snapshot = { prompt: '预设' + EXCLUSION_TEST_FOOTER, selectedEntries: [], name: '合成' };
+    const context = {
+        settings: { contextRange: 10, selectedWorldBooks: ['合成书'], worldBookReadMode: 'lights', contextExclusionRules: [{ type: 'literal', value: EXCLUSION_TEST_FOOTER }] },
+        SillyTavern: { getContext: () => ({ chat, name1: 'User', name2: 'Char' }) },
+        generationPreparationKey: () => 'stable',
+        resolveGenerationIdentity: () => ({ character: {}, role: '角色' + EXCLUSION_TEST_FOOTER, persona: '人设', name1: 'User', name2: 'Char' }),
+        normalizeContextRange, takeRecentMessages, createChatContextReader,
+        wbEntries: [{ book: '合成书', uid: 1, content: '世界书' + EXCLUSION_TEST_FOOTER, raw: { world: '合成书', uid: 1 } }], wbStates: {},
+        ensureWorldBooksCurrent: async () => {},
+        scanWithCurrentSillyTavern: async args => { scans.push(args); return [{ world: '合成书', uid: 1 }]; },
+        stripTargetWordCountRequirement: value => value,
+        resolveRenderSelection: () => ({ isPlainTextRender: false, textTheme: 'light', rules: '规则' }),
+        currentPresetSnapshot: () => snapshot, ensureSelectedPresetLoaded: async () => snapshot,
+        DEFAULT_SYSTEM_PROMPT: '默认', prepareContinuationContext: value => value || '', continueContext: '续写' + EXCLUSION_TEST_FOOTER,
+        resolveTargetWordCount: () => 0, buildProtagonistAnchor: () => '人物锚点', firstRoundGuidance: () => '节奏',
+        buildGenerationPayload, generationIdentitySlots: () => ({}),
+        composePresetMessages: options => [...options.chatMessages, ...options.tailMessages],
+        freezeGenerationFoundationList: items => Object.freeze(items.map(item => Object.freeze({ ...item }))),
+        runtimeLog() {},
+    };
+    const assemble = runInNewContext(assembly + '\nassembleGenerationPayload;', context);
+    const instruction = '指令' + EXCLUSION_TEST_FOOTER;
+    const full = await assemble(instruction);
+    const estimate = await assemble(instruction, { loadPreset: false, evaluateWorldBook: false, estimateOnly: true });
+    assert.deepEqual(estimate.tokenParts, full.tokenParts);
+    assert.equal(full.generationFoundation.chatMessages.length, 1);
+    assert.equal(full.generationFoundation.chatMessages[0].content, '<p>正常段落</p>');
+    assert.doesNotMatch(full.tokenParts.context, /人间藏万相/);
+    for (const key of ['preset', 'role', 'worldBook', 'instruction', 'continuation']) assert.ok(full.tokenParts[key].includes(EXCLUSION_TEST_FOOTER), key);
+    assert.ok(scans[0].chatWithNames[0].includes(EXCLUSION_TEST_FOOTER));
+    assert.ok(scans[0].chatWithoutNames[0].includes(EXCLUSION_TEST_FOOTER));
+    assert.deepEqual(Array.from(scans[0].chatWithoutNames.slice(1)), ['', '<p>正常段落</p>']);
+    assert.ok(scans[0].chatWithNames.slice(1).every(text => !text.includes('人间藏万相')));
+    assert.equal(JSON.stringify(chat), before);
 });
 
 test('子弹窗确认、取消或失败后恢复原滚动位置，并等待焦点布局完成', async () => {
@@ -2603,13 +2780,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.2.1 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.2.2 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.2\.1'/);
-    assert.equal(manifest.version, '4.2.1');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.1/);
+    assert.match(source, /const VERSION = '4\.2\.2'/);
+    assert.equal(manifest.version, '4.2.2');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.2/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -5141,7 +5318,7 @@ test('标签界面、历史未分类、数字触发间隔和渲染模板删除�
     assert.match(saveTemplateFlow, /title: '保存指令模板'[\s\S]*?templateName: defaultName[\s\S]*?name: selection\.name[\s\S]*?settings\.instructionTemplates\.push\(tpl\)/);
     assert.match(source, /给这 \$\{imported\.length\} 条导入模板统一加标签[\s\S]*?if \(target === null\) return;[\s\S]*?mergeTagLists\(item\.tags, target\.tags/);
     const popupBuilder = source.match(/function buildPopupHTML[\s\S]*?function historyItemHTML/)?.[0] || '';
-    assert.match(popupBuilder, /const allHistory = historyCache;\s*const hist = filterHistoryAll\(allHistory\)/);
+    assert.match(popupBuilder, /const allHistory = historyCache;\s*const hist = initialTab === 'history' \? filterHistoryAll\(allHistory\) : \[\]/);
     assert.match(popupBuilder, /allHistory\.length \? '当前标签组合下没有历史' : '暂无'/);
     assert.match(source, /async function addHistoryItems[\s\S]*?settings\.instructionTags = normalizeTagList[\s\S]*?save\(\);[\s\S]*?let added = 0/);
     assert.match(source, /#theater-hist-batch-enter'\)\.toggle\(h\.length > 0 && !histBatchMode\)/);
