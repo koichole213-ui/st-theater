@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.2.2
+/* 千夜浮梦 · 小剧场生成器 v4.2.3
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -4399,6 +4399,11 @@ body.theater-reader-open {
  * ============================================================ */
 .theater-context-exclusions .theater-addon-summary {
     flex-wrap: wrap;
+}
+.theater-context-exclusions .theater-hint,
+.theater-context-exclusions .theater-empty {
+    text-align: justify;
+    text-align-last: left;
 }
 .theater-exclusion-field-label {
     display: block;
