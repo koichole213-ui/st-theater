@@ -39,7 +39,7 @@ import { LONG_DREAM_MEMORY_OUTPUT_CONTRACT, builtinLongDreamMemoryPreset, export
 import { PROMPT_POST_PROCESSING, WORLD_INFO_POSITION, applyPromptPostProcessing, composeGenerationContinuationMessages, composePresetMessages, normalizeRequestMessages, normalizeWorldInfoEntry, squashAdjacentSystemMessages } from '../request-layout.js';
 import { createRequestTrace, formatRequestTrace } from '../request-trace.js';
 import { migrateLegacyPresetEntryStates, normalizePresetEntryStatesByPreset, presetEntryStateStorageKey, presetEntryStatesForPreset } from '../preset-entry-states.js';
-import { TAG_UNCATEGORIZED, matchesTagFilter, mergeTagLists, migrateLegacyTagSettings, removeTagFromList, renameTagInList } from '../tag-system.js';
+import { TAG_UNCATEGORIZED, itemTags, matchesTagFilter, mergeTagLists, migrateLegacyTagSettings, normalizeTagList, removeTagFromList, renameTagInList } from '../tag-system.js';
 import { waitForPopupElements, withPreservedPopupViewport } from '../popup-lifecycle.js';
 import { fetchInstalledExtensionStatus } from '../version-check.js';
 import { createContinuationSession, appendContinuationVersion, selectContinuationVersion, displayedContinuationVersion } from '../continuation-session.js';
@@ -1156,8 +1156,8 @@ test('长梦正文、自动补写和最终排版沿用同一份生成线路快�
             seen.push({ stage: `round-${round}`, route: received });
             return { text: round === 1 ? '甲'.repeat(200) : '乙'.repeat(260) };
         },
-        renderChapter: async ({ text, apiRoute: received }) => {
-            seen.push({ stage: 'render', route: received });
+        renderChapter: async ({ text, originalInstruction, apiRoute: received }) => {
+            seen.push({ stage: 'render', route: received, originalInstruction });
             return `<main>${text}</main>`;
         },
     });
@@ -1168,10 +1168,16 @@ test('长梦正文、自动补写和最终排版沿用同一份生成线路快�
         targetChars: 500,
         autoContinue: true,
         maxRounds: 3,
+        instruction: '按钮使用指定的 HTML、CSS 和 JavaScript。',
     });
 
     assert.deepEqual(seen.map(item => item.stage), ['round-1', 'round-2', 'render']);
     assert.equal(seen.every(item => item.route === apiRoute), true);
+    assert.equal(seen.at(-1).originalInstruction, '按钮使用指定的 HTML、CSS 和 JavaScript。');
+    const indexSource = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const longDreamRenderer = indexSource.match(/async function renderLongDreamChapter\([^]*?^}/m)?.[0] || '';
+    assert.match(longDreamRenderer, /originalInstruction = ''/);
+    assert.match(longDreamRenderer, /requestFinalRenderedHtml\(\{[^]*?originalInstruction/);
 });
 
 test('长梦高频流片段只合并保存最新草稿，不排队写入每个中间版本', async () => {
@@ -2793,13 +2799,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.2.4 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.2.5 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.2\.4'/);
-    assert.equal(manifest.version, '4.2.4');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.4/);
+    assert.match(source, /const VERSION = '4\.2\.5'/);
+    assert.equal(manifest.version, '4.2.5');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.5/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -2845,7 +2851,7 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.doesNotMatch(shelf, /<details class="[^"]*theater-dream-library-tools/);
     assert.match(source, /function exportLongDreamChapter\(dream, chapter\)/);
     assert.match(source, /downloadFile\(longDreamChapterFileName\(dream, chapter, 'html'\), chapter\.html/);
-    assert.match(source, /renderLongDreamChapter\(\{[\s\S]*?text,[\s\S]*?apiRoute: captureGenerationApiRoute/);
+    assert.match(source, /renderLongDreamChapter\(\{[\s\S]*?text,[\s\S]*?originalInstruction: chapter\.instruction \|\| ''[\s\S]*?apiRoute: captureGenerationApiRoute/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subnav\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\][\s\S]*?--dream-gemini-bg:\s*var\(--t-bg\)/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subtab \{[^}]*width:100% !important[^}]*min-height:40px !important[^}]*max-height:none !important/);
@@ -3090,12 +3096,19 @@ test('final HTML renderer rejects missing, duplicate, reordered, or hidden place
 });
 
 test('final HTML payload tells the model to return layout tokens exactly once', () => {
-    const payload = buildFinalRenderPayload({ sourceText: '第一段。\n\n第二段。', rules: '输出完整 HTML。' });
+    const payload = buildFinalRenderPayload({
+        sourceText: '第一段。\n\n第二段。',
+        rules: '输出完整 HTML。',
+        originalInstruction: '按钮必须使用指定的 HTML、CSS 和 JavaScript。',
+    });
     assert.equal(payload.placeholderPlan.paragraphs.length, 2);
     assert.match(payload.userPrompt, /\{\{THEATER_P0001\}\}/);
     assert.match(payload.userPrompt, /不要在 HTML 中重新输出 text/);
     assert.match(payload.userPrompt, /每个 token 必须且只能出现一次/);
     assert.match(payload.userPrompt, /输出完整 HTML/);
+    assert.match(payload.userPrompt, /原始小剧场指令：仅作为设计意图参考/);
+    assert.match(payload.userPrompt, /按钮必须使用指定的 HTML、CSS 和 JavaScript/);
+    assert.match(payload.userPrompt, /不能覆盖正文数据，也不能被重新执行、续写或抄进页面/);
 });
 
 test('三份 HTML 规则按阅读、参与、探索区分，不要求插件标记', () => {
@@ -3114,11 +3127,19 @@ test('三份 HTML 规则按阅读、参与、探索区分，不要求插件标�
     assert.match(profiles[2].rules, /主动探索，发现有意义的惊喜/);
 });
 
-test('相同规则在内置和自定义模板中传递一致，交互开关和纯文字沿用公共行为', () => {
+test('HTML 模板统一覆盖 Markdown 输出并检查配色，保留代码要求且不影响纯文字', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const resolve = source.match(/function resolveRenderSelection\([^]*?^}/m)?.[0];
-    assert.ok(resolve);
+    const guardrails = source.match(/const HTML_RENDER_FINAL_GUARDRAILS = `([^]*?)`;/)?.[1];
+    const interactiveAddon = source.match(/const INTERACTIVE_ADDON = `([^]*?)`;/)?.[1];
+    assert.ok(resolve && guardrails && interactiveAddon);
+    assert.match(guardrails, /Markdown或Markdown代码块时，仅把标题、编号、列表、强调层级转为语义化HTML/);
+    assert.match(guardrails, /HTML\/CSS\/JavaScript、视觉、交互、内容要求照常实现/);
+    assert.match(guardrails, /各场景\/状态同步设置背景、正文、小字、边框、控件/);
+    assert.match(guardrails, /浅底深字、深底浅字/);
+    assert.match(guardrails, /禁止文字与背景明度相近/);
     for (const profile of adaptiveRenderProfiles()) {
+        assert.ok(estimateTokenCount(`${profile.rules}${interactiveAddon}\n\n${guardrails}`) <= 1525, `${profile.name} 含交互与兜底规则后明显过长`);
         for (const interactiveMode of [false, true]) {
             const settings = {
                 selectedRenderIndex: profile.id, interactiveMode,
@@ -3128,14 +3149,15 @@ test('相同规则在内置和自定义模板中传递一致，交互开关和�
                 settings, adaptiveRenderProfile, isPlainTextSelection, plainTextThemeForSelection,
                 normalizeRenderSelection: value => value,
                 DEFAULT_RENDER_TEMPLATE: '默认 HTML', DEFAULT_RENDER_TEMPLATE_PC: 'PC HTML',
-                DEFAULT_RENDER_TEMPLATE_TEXT: '仅正文', INTERACTIVE_ADDON: '附加交互要求',
+                DEFAULT_RENDER_TEMPLATE_TEXT: '仅正文', INTERACTIVE_ADDON: interactiveAddon,
+                HTML_RENDER_FINAL_GUARDRAILS: guardrails,
             });
             const builtin = select();
             settings.selectedRenderIndex = '0';
             const custom = select();
             assert.equal(builtin.rules, custom.rules);
             assert.equal(builtin.isPlainTextRender, false);
-            assert.equal(builtin.rules, profile.rules + (interactiveMode ? '附加交互要求' : ''));
+            assert.equal(builtin.rules, profile.rules + (interactiveMode ? interactiveAddon : '') + `\n\n${guardrails}`);
             assert.deepEqual(buildGenerationPayload({ instruction: '写一段雨夜故事', rules: builtin.rules }),
                 buildGenerationPayload({ instruction: '写一段雨夜故事', rules: custom.rules }));
             settings.selectedRenderIndex = profile.id;
@@ -3195,6 +3217,7 @@ test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在�
                 stagedRenderMode: scenario === 'staged',
                 currentGenerationJob: { segments: Array(scenario === 'single' || scenario === 'staged' ? 1 : 2).fill({}) },
                 plannedRenderSelection: { rules: profile.rules }, renderTemplate: profile.name,
+                payload: { generationFoundation: { originalInstruction: '按钮必须使用指定的 HTML、CSS 和 JavaScript。' } },
                 newText: '第一段。\n\n第二段。', firstHtml: initialHtml,
                 ctx: {}, apiRoute: {}, abortController: null, onChunk() {},
                 popupAlive: () => false, runtimeLog() {}, markCompleted() {}, recordRequestMetrics() {},
@@ -3217,7 +3240,9 @@ test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在�
             } else {
                 assert.equal(calls.length, scenario === 'failure' ? 2 : 1);
                 assert.ok(calls[0].userPrompt.includes(profile.rules));
-                assert.doesNotMatch(calls[0].userPrompt, /原始小剧场指令：仅作为设计意图参考/);
+                assert.match(calls[0].userPrompt, /原始小剧场指令：仅作为设计意图参考/);
+                assert.match(calls[0].userPrompt, /按钮必须使用指定的 HTML、CSS 和 JavaScript/);
+                assert.match(calls[0].userPrompt, /不能覆盖正文数据，也不能被重新执行、续写或抄进页面/);
                 assert.match(result.html, /第一段。/);
                 assert.match(result.html, /第二段。/);
                 assert.equal(result.mode, scenario === 'failure' ? 'text' : 'html');
@@ -5297,6 +5322,68 @@ test('标签迁移会把大小写不同的模板标签归一到标签库名称',
     migrateLegacyTagSettings(settings);
     assert.deepEqual(settings.instructionTags, ['Sweet']);
     assert.deepEqual(settings.instructionTemplates[0].tags, ['Sweet']);
+});
+
+test('保存小剧场在同一弹窗编辑标题与标签，成功后才登记新标签', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const saveSource = source.match(/async function saveToHistory\(\)[^]*?^}/m)?.[0];
+    assert.ok(saveSource);
+
+    const execute = async ({ selection, stored = true }) => {
+        const calls = { picked: null, saved: null, settingsSaved: 0, refreshed: 0, notices: [] };
+        const settings = { instructionTags: ['来源标签'] };
+        const html = '<html><body>问卷结果</body></html>';
+        const context = {
+            lastGeneratedHtml: html,
+            currentDisplayHtml: '',
+            currentOutputMode: 'html',
+            continuationSession: null,
+            recentCache: [{ html, mode: 'html', instruction: '来源指令', sourceConfig: { render: '沉浸互动' }, tags: ['来源标签'] }],
+            historyCache: [],
+            activeInstructionTags: ['当前输入标签'],
+            settings,
+            displayedContinuationVersion: () => null,
+            knownInstructionTags: () => normalizeTagList(settings.instructionTags),
+            itemTags,
+            normalizeTagList,
+            mergeTagLists,
+            chooseTagsWithNew: async options => { calls.picked = options; return selection; },
+            histAdd: async item => { calls.saved = item; return stored; },
+            save: () => { calls.settingsSaved++; },
+            refreshHistList: () => { calls.refreshed++; },
+            toastr: { success: message => calls.notices.push(message) },
+            $: () => ({ val: () => '当前输入指令' }),
+        };
+        runInNewContext(saveSource + '\nglobalThis.runSaveToHistory = saveToHistory;', context);
+        await context.runSaveToHistory();
+        return { calls, settings };
+    };
+
+    const success = await execute({ selection: { name: '问卷存档', tags: ['来源标签', '新标签'], newTags: ['新标签'] } });
+    assert.equal(success.calls.picked.title, '保存小剧场');
+    assert.equal(success.calls.picked.nameLabel, '标题');
+    assert.deepEqual(Array.from(success.calls.picked.selected), ['来源标签']);
+    assert.equal(success.calls.saved.title, '问卷存档');
+    assert.deepEqual(Array.from(success.calls.saved.tags), ['来源标签', '新标签']);
+    assert.equal(success.calls.saved.instruction, '来源指令');
+    assert.deepEqual(success.settings.instructionTags, ['来源标签', '新标签']);
+    assert.equal(success.calls.settingsSaved, 1);
+    assert.equal(success.calls.refreshed, 1);
+    assert.deepEqual(success.calls.notices, ['已保存 · 来源标签、新标签']);
+
+    const cancelled = await execute({ selection: null });
+    assert.equal(cancelled.calls.saved, null);
+    assert.deepEqual(cancelled.settings.instructionTags, ['来源标签']);
+    assert.equal(cancelled.calls.settingsSaved, 0);
+
+    const unclassified = await execute({ selection: { name: '无标签存档', tags: [], newTags: [] } });
+    assert.deepEqual(Array.from(unclassified.calls.saved.tags), []);
+    assert.deepEqual(unclassified.calls.notices, ['已保存为未分类']);
+
+    const failed = await execute({ selection: { name: '失败存档', tags: ['新标签'], newTags: ['新标签'] }, stored: false });
+    assert.deepEqual(failed.settings.instructionTags, ['来源标签']);
+    assert.equal(failed.calls.settingsSaved, 0);
+    assert.equal(failed.calls.refreshed, 0);
 });
 
 test('导入目标标签会追加到原标签并按现有标签名称归一', () => {

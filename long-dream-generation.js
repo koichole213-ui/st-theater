@@ -320,6 +320,7 @@ export function createLongDreamGenerationController({
             });
             const rendered = normalizeRenderedChapter(await renderChapter({
                 text: finalText,
+                originalInstruction: normalizedInstruction,
                 chapterTitle: normalizedTitle,
                 targetChars: target,
                 signal: controller.signal,

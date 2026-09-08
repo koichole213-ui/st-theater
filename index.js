@@ -46,7 +46,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.2.4';
+const VERSION = '4.2.5';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -240,6 +240,9 @@ const DEFAULT_RENDER_TEMPLATE_TEXT = `小剧场输出规范（纯文字版）：
 
 输出格式：
 直接从小剧场正文开始，不要使用 Markdown 代码块包裹。`;
+
+const HTML_RENDER_FINAL_GUARDRAILS = `【HTML格式】用户要求Markdown或Markdown代码块时，仅把标题、编号、列表、强调层级转为语义化HTML，直接输出完整HTML；其HTML/CSS/JavaScript、视觉、交互、内容要求照常实现。
+【配色】各场景/状态同步设置背景、正文、小字、边框、控件；浅底深字、深底浅字，逐状态检查，禁止文字与背景明度相近。`;
 
 const BUILTIN_RENDER_SELECTIONS = new Set([
     '__default__',
@@ -2638,6 +2641,7 @@ async function saveLongDreamChapterEdits() {
         try {
             const rendered = await renderLongDreamChapter({
                 text,
+                originalInstruction: chapter.instruction || '',
                 signal: longDreamChapterEditController.signal,
                 apiRoute: captureGenerationApiRoute(SillyTavern.getContext()),
             });
@@ -7381,7 +7385,7 @@ async function chooseTags({ title = '选择标签', subtitle = '可多选；多�
     return normalizeTagFilter($body.find('.theater-tag-choice input:checked').map((_, input) => input.value).get(), knownInstructionTags());
 }
 
-async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已有标签，也可以同时新建一个标签', selected = [], okButton = '确认', templateName = null } = {}) {
+async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已有标签，也可以同时新建一个标签', selected = [], okButton = '确认', templateName = null, nameLabel = '模板名称', namePlaceholder = '给这个模板起个名字' } = {}) {
     const { Popup, POPUP_TYPE } = SillyTavern.getContext();
     const known = knownInstructionTags();
     const current = normalizeTagFilter(selected, known);
@@ -7391,8 +7395,8 @@ async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已
         <div class="theater-popup-header"><p class="theater-title">${esc(title)}</p></div>
         <div class="theater-section theater-compact-tag-body">
             ${templateName === null ? '' : `<div class="theater-tag-template-name-field">
-                <label for="theater-tag-template-name"><i class="fa-solid fa-file-signature"></i> 模板名称</label>
-                <input id="theater-tag-template-name" class="theater-input" maxlength="60" autocomplete="off" value="${esc(templateName)}" placeholder="给这个模板起个名字">
+                <label for="theater-tag-template-name"><i class="fa-solid fa-file-signature"></i> ${esc(nameLabel)}</label>
+                <input id="theater-tag-template-name" class="theater-input" maxlength="60" autocomplete="off" value="${esc(templateName)}" placeholder="${esc(namePlaceholder)}">
             </div>`}
             <div class="theater-compact-tag-heading"><b>选择标签</b><small>可多选 · 也可以不选</small></div>
             <div class="theater-tag-choice-list is-compact">${rows}${emptyHint}</div>
@@ -7442,7 +7446,7 @@ async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已
 
     const name = templateName === null ? null : String($body.find('#theater-tag-template-name').val() || '').trim();
     if (templateName !== null && !name) {
-        toastr.warning('模板名称不能为空');
+        toastr.warning(`${nameLabel}不能为空`);
         return null;
     }
     const checked = $body.find('.theater-tag-choice input:checked').map((_, input) => input.value).get();
@@ -7818,23 +7822,40 @@ async function saveToHistory() {
     const html = lastGeneratedHtml || currentDisplayHtml;
     if (!html) return;
     const count = historyCache.length + 1;
-    const t = await SillyTavern.getContext().Popup.show.input('保存', '标题：', `小剧场 ${count}`);
-    if (!t) return;
-    const now = new Date(), pad = n => String(n).padStart(2, '0');
     const sourceMeta = displayedContinuationVersion(continuationSession, html) || recentCache.find(item => item.html === html)
         || historyCache.slice().reverse().find(item => item.html === html)
         || null;
+    const sourceTags = sourceMeta
+        ? itemTags(sourceMeta, knownInstructionTags())
+        : itemTags({ tags: activeInstructionTags }, knownInstructionTags());
+    const selection = await chooseTagsWithNew({
+        title: '保存小剧场',
+        subtitle: '默认沿用这篇结果的来源标签；可以增减或全部取消',
+        selected: sourceTags,
+        okButton: '保存',
+        templateName: `小剧场 ${count}`,
+        nameLabel: '标题',
+        namePlaceholder: '给这个小剧场起个标题',
+    });
+    if (selection === null) return;
+    const now = new Date(), pad = n => String(n).padStart(2, '0');
+    const tags = mergeTagLists([], selection.tags, [...knownInstructionTags(), ...selection.newTags]);
     const item = {
-        title: t,
+        title: selection.name,
         html,
         mode: sourceMeta?.mode || currentOutputMode,
         // 优先跟随这篇结果生成时的元数据，避免把保存当下输入框里的另一条指令错配给它。
         instruction: sourceMeta ? (sourceMeta.instruction || '') : ($('#theater-instruction').val() || ''),
         sourceConfig: sourceMeta?.sourceConfig || null,
-        tags: sourceMeta ? itemTags(sourceMeta, knownInstructionTags()) : itemTags({ tags: activeInstructionTags }, knownInstructionTags()),
+        tags,
         date: `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
     };
-    if (await histAdd(item)) { refreshHistList(); toastr.success('已保存'); }
+    if (await histAdd(item)) {
+        settings.instructionTags = normalizeTagList([...knownInstructionTags(), ...selection.newTags]);
+        save();
+        refreshHistList();
+        toastr.success(tags.length ? `已保存 · ${tags.join('、')}` : '已保存为未分类');
+    }
 }
 
 function copyHtml() {
@@ -8175,6 +8196,7 @@ function resolveRenderSelection(forcePlainText = false) {
     else if (!isPlainTextRender && adaptiveProfile) rules = adaptiveProfile.rules;
     else if (!isPlainTextRender && selectedRender !== '__default__' && customRender) rules = customRender.content;
     if (settings.interactiveMode && !isPlainTextRender) rules += INTERACTIVE_ADDON;
+    if (!isPlainTextRender) rules += `\n\n${HTML_RENDER_FINAL_GUARDRAILS}`;
     const label = isPlainTextRender
         ? (textTheme === 'dark' ? '纯文字·暗色夜读' : '纯文字·亮色')
         : (adaptiveProfile?.name || (selectedRender === '__default_pc__' ? '内置 PC' : (selectedRender === '__default__' ? '内置默认' : (customRender?.name || `自定义 ${selectedRender}`))));
@@ -8588,6 +8610,7 @@ function validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText) {
 async function requestFinalRenderedHtml({
     sourceText,
     rules,
+    originalInstruction = '',
     ctx,
     signal,
     apiRoute,
@@ -8596,7 +8619,7 @@ async function requestFinalRenderedHtml({
     renderLabel = '所选模板',
     metricScope = 'final-render',
 } = {}) {
-    const finalRenderPayload = buildFinalRenderPayload({ sourceText, rules });
+    const finalRenderPayload = buildFinalRenderPayload({ sourceText, rules, originalInstruction });
     lastRequestContext = {
         kind: '最终 HTML 排版',
         sourceChars: readableCharCount(sourceText),
@@ -8813,7 +8836,7 @@ async function generateLongDreamCanonSuggestions() {
     }
 }
 
-async function renderLongDreamChapter({ text, signal, apiRoute }) {
+async function renderLongDreamChapter({ text, originalInstruction = '', signal, apiRoute }) {
     const selection = resolveRenderSelection(false);
     if (selection.isPlainTextRender) {
         return {
@@ -8824,6 +8847,7 @@ async function renderLongDreamChapter({ text, signal, apiRoute }) {
     return requestFinalRenderedHtml({
         sourceText: text,
         rules: selection.rules,
+        originalInstruction,
         ctx: SillyTavern.getContext(),
         signal,
         apiRoute,
@@ -9629,6 +9653,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 const rendered = await requestFinalRenderedHtml({
                     sourceText: newText,
                     rules,
+                    originalInstruction: payload.generationFoundation?.originalInstruction || '',
                     ctx,
                     signal: abortController?.signal,
                     apiRoute,
