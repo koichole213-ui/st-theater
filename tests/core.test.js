@@ -131,7 +131,7 @@ test('三个 HTML 规则保持紧凑预算，不给正文新增长度上限', ()
         assert.match(profile.rules, /原样保留/);
         assert.match(profile.rules, /主线按原顺序/);
         assert.match(profile.rules, /长文\/短屏均可滚动到底/);
-        assert.match(profile.rules, /首次操作手势内创建\/恢复AudioContext并触发声音/);
+        assert.match(profile.rules, /首次操作手势内创建AudioContext并调用resume/);
     }
 });
 
@@ -192,24 +192,29 @@ test('延迟进入历史会加载一次，批量恢复与刷新不显示全部�
     assert.equal(visible.get('#theater-hist-batch-enter'), true);
 });
 
-test('模板规则区分绘画范围并要求开场可达、音效失败不阻断正文', () => {
+test('模板以具体代码约定动作音效、状态推进、绘画范围与失败阅读', () => {
     for (const profile of adaptiveRenderProfiles()) {
-        assert.match(profile.rules, /禁止赛博朋克元素/);
-        assert.match(profile.rules, /短交互音效直接绑定有意义的模块操作/);
-        assert.match(profile.rules, /不设独立开启\/试听步骤或固定声音图标/);
-        assert.match(profile.rules, /辅助操作静音，关闭停声/);
-        assert.match(profile.rules, /说明小字左对齐/);
-        assert.match(profile.rules, /不生成BGM\/循环背景声/);
-        assert.match(profile.rules, /DOM就绪绑定后才启用/);
-        assert.match(profile.rules, /装饰层pointer-events:none/);
-        assert.match(profile.rules, /异常不得阻断进入/);
+        assert.match(profile.rules, /禁止外部资源\/网络请求、赛博朋克元素/);
+        assert.match(profile.rules, /物件click就是发声入口/);
+        assert.match(profile.rules, /响完回到安静/);
+        assert.match(profile.rules, /OscillatorNode.*GainNode.*destination/);
+        assert.match(profile.rules, /source\.stop\(ctx\.currentTime\+duration\)/);
+        assert.match(profile.rules, /onended释放连接/);
+        assert.match(profile.rules, /静音并停止现有声源/);
+        assert.match(profile.rules, /禁止背景音乐、循环声及独立播放\/开启声音按钮/);
+        assert.match(profile.rules, /视图推进独立于音频Promise/);
+        assert.match(profile.rules, /说明text-align:left/);
         assert.match(profile.rules, /初始化失败保留正常阅读/);
-        if (profile.id === ADAPTIVE_RENDER_SELECTIONS.lively) assert.doesNotMatch(profile.rules, /CSS绘画/);
-        else assert.match(profile.rules, /优先用CSS绘画/);
-        if (profile.id === ADAPTIVE_RENDER_SELECTIONS.lively) assert.match(profile.rules, /默认无声/);
-        else {
-            assert.match(profile.rules, /体验几乎不变，应重设计/);
-            assert.match(profile.rules, /音效回应/);
+        assert.match(profile.rules, /装饰层pointer-events:none/);
+        assert.match(profile.rules, /重复点击同一完成动作保持当前状态/);
+        if (profile.id === ADAPTIVE_RENDER_SELECTIONS.lively) {
+            assert.doesNotMatch(profile.rules, /CSS绘画/);
+            assert.match(profile.rules, /默认无声/);
+        } else {
+            assert.match(profile.rules, /优先用CSS绘画/);
+            assert.match(profile.rules, /::before\/::after/);
+            assert.match(profile.rules, /state/);
+            assert.match(profile.rules, /短音效回应动作/);
         }
     }
 });
@@ -2788,13 +2793,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.2.3 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.2.4 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.2\.3'/);
-    assert.equal(manifest.version, '4.2.3');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.3/);
+    assert.match(source, /const VERSION = '4\.2\.4'/);
+    assert.equal(manifest.version, '4.2.4');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.4/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -3100,7 +3105,7 @@ test('三份 HTML 规则按阅读、参与、探索区分，不要求插件标�
         assert.equal(isAdaptiveRenderSelection(profile.id), true);
         assert.match(profile.rules, /主线按原顺序推进/);
         assert.match(profile.rules, /不设置跳过整套体验/);
-        assert.match(profile.rules, /首次操作手势内创建\/恢复AudioContext并触发声音/);
+        assert.match(profile.rules, /首次操作手势内创建AudioContext并调用resume/);
         assert.match(profile.rules, /如果提供了待排版正文，必须原样保留/);
         assert.doesNotMatch(profile.rules, /data-theater-|THEATER_P\d|只设计一个|两到三个/);
     }

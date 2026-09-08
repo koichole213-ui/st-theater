@@ -5,16 +5,13 @@ export const ADAPTIVE_RENDER_SELECTIONS = Object.freeze({
     experimental: '__adaptive_experimental__',
 });
 
-const SHARED_ADAPTIVE_RULES = `【HTML规则】
-0 输出：按创作任务生成完整HTML（HTML+CSS+JS）；仅交付成品，无分析/Markdown。三模式同等精致，只区分参与方式。
-1 设计：从物件/空间/情绪选统一概念，布局、材质、配色、字体、动效服务正文；不套固定卡片/手机/信封，不照搬参考，禁止赛博朋克元素。长文不挤成小框。
-2 正文：创作遵循原任务；如果提供了待排版正文，必须原样保留，不删改/概括/重复；有占位符才使用。主线按原顺序推进，探索限当前阶段，可回看已读内容。
-3 边界：允许翻开、光影等表现动作和简短操作/状态提示；不另添台词、心声、评论、数值、线索、分支、结局。附加交互要求也不得新增剧情。
-4 过程：进入/操作/阅读/收束按内容组织，反馈与完成状态可辨；长段留连续阅读空间，不反复解锁段落凑交互。不设置跳过整套体验的直接阅读全文入口；局部展开、正常导航可用。
-5 音效：按需将可听辨的短交互音效直接绑定有意义的模块操作，Web Audio按物件/动作合成，不同动作不用统一提示音。首次操作手势内创建/恢复AudioContext并触发声音，不设独立开启/试听步骤或固定声音图标。有音效时可从辅助操作静音，关闭停声；无适合音效则不放声音控件。不生成BGM/循环背景声，无声也可完成。
-6 技术：仅本页HTML/CSS/JS、内联SVG；无外部资源/依赖/网络请求/iframe。入口原生button/click，DOM就绪绑定后才启用、隐藏后文；目标须存在，装饰层pointer-events:none。推进不等待音频/动画，异常不得阻断进入；初始化失败保留正常阅读，操作失败可重试；连点不重复推进/正文/音源。
-7 手机：弹性窄屏、无横向溢出，长文/短屏均可滚动到底；正文≥16px，行高≥1.6，触控≥44px，说明小字左对齐。支持触摸/键盘，拖动有点击等价操作。
-8 自检：完整顺序、入口实际可达后文、返回/连点、首次模块音效、静音/音频异常、窄屏。动画不拖延阅读，遵循prefers-reduced-motion，离场停循环，避免闪烁与密集粒子。检查不输出，无专用标记。`;
+const SHARED_ADAPTIVE_RULES = `【成品与实现】
+输出独立完整HTML：<!doctype html>，html内含head/style、body/内容/script；直接交付代码。视觉取自本篇物件、空间与情绪，三模式保持同等精致。
+正文：创作遵循原任务；如果提供了待排版正文，必须原样保留。主线按原顺序推进，探索限当前阶段，回看限已读内容；长段连续阅读。交互新增内容限操作/状态提示，剧情由原任务决定，不另添台词、线索或结局。不设置跳过整套体验的直接阅读全文入口。
+布局：body{margin:0;background:transparent;height:auto;overflow:auto}；容器width:100%;max-width按场景选择；全局box-sizing:border-box。正文font-size>=16px;line-height>=1.6;overflow-wrap:anywhere；说明text-align:left；操作区min-height/min-width>=44px。用弹性布局让长文/短屏均可滚动到底。
+操作：物件用button type="button"绑定click；script置正文后，先检查目标存在、绑定事件，成功后启用入口并隐藏待进入内容。初始化失败保留正常阅读。装饰层pointer-events:none；状态保存在JS对象，用classList/hidden/aria-expanded同步外观与可见正文。单次操作先更新状态和视图，再独立触发反馈；重复点击同一完成动作保持当前状态。拖动提供点击等价操作。
+音效（按需）：物件click就是发声入口；一次动作对应一次短声，响完回到安静。首次操作手势内创建AudioContext并调用resume()；恢复成功后播放，catch处理失败，视图推进独立于音频Promise。Web Audio连接：OscillatorNode或短噪声AudioBufferSourceNode → GainNode → destination；按材质设置音色，增益短暂起伏后降至0，source.stop(ctx.currentTime+duration)，onended释放连接。duration按动作选择短时值；用状态检查丢弃已过时的播放。辅助设置可静音并停止现有声源，离场也清理声源。声音入口属于故事物件，禁止背景音乐、循环声及独立播放/开启声音按钮。
+检查：逐个验证click→状态变化→对应正文可见；静音/音频异常仍能完成。用prefers-reduced-motion减少动效，反馈及时，关闭清理定时器；返回与连点保持正文完整。资源限本页HTML/CSS/JS、内联SVG与合成音效；禁止外部资源/网络请求、赛博朋克元素。检查过程不输出。`;
 
 const PROFILES = Object.freeze([
     Object.freeze({
@@ -24,7 +21,7 @@ const PROFILES = Object.freeze([
         icon: 'fa-wand-magic-sparkles',
         description: '偏阅读：贴合故事的精致排版与轻巧反馈，顺畅读完。',
         rules: `${SHARED_ADAPTIVE_RULES}\n\n【灵动排版｜阅读为主，细节灵巧】
-默认无声，自然滚动/简单翻页；主线直接可读，不逐段点开、不解谜。物件翻开/局部展开/章节定位融入阅读。重构图、材质、文字节奏；不因轻量降成普通文章卡，不强加结尾仪式。`,
+默认无声，主线以自然滚动/简单翻页直接可读。用字体层级、留白、渐变和材质细节组织阅读；章节定位用页内锚点，补充细节可用details/summary。交互用于局部查看，长段保持连续展示，结尾随正文自然收束。`,
     }),
     Object.freeze({
         id: ADAPTIVE_RENDER_SELECTIONS.immersive,
@@ -33,7 +30,9 @@ const PROFILES = Object.freeze([
         icon: 'fa-compass-drafting',
         description: '偏参与：亲手操作故事中的物件与场景，经历完整过程。',
         rules: `${SHARED_ADAPTIVE_RULES}\n\n【沉浸互动｜参与情境，动作贯穿体验】
-围绕本篇有意义的动作组织场景。优先用CSS绘画把故事物件做成操作对象，不拿emoji当插画、不挡正文。读者操作改变物件状态/位置/组合，带出对应正文；动作前后有可见变化，音效回应这次动作。若去掉操作体验几乎不变，应重设计；不做文章加按钮，不靠“下一段”堆参与感。长段安静阅读，收尾承接情绪、不补感言。`,
+体验：亲手改变故事物件，物件变化带出对应正文。
+实现：优先用CSS绘画，::before/::after、linear-gradient、border-radius、box-shadow、clip-path组合形体，文字和操作区独立保留。以适合本篇的状态名组织state；click更新状态→classList切换物件形态/位置→显示对应section→短音效回应动作。各阶段连续展示相关长段；用材质、动作和情绪组织收束。
+验收：物件变化与正文有明确关系，读者看得懂动作结果；参与感来自物件的变化，而非逐段点“下一段”。状态名与外观按本篇设计。`,
     }),
     Object.freeze({
         id: ADAPTIVE_RENDER_SELECTIONS.experimental,
@@ -42,7 +41,9 @@ const PROFILES = Object.freeze([
         icon: 'fa-flask',
         description: '偏探索：通过空间、物件与分层揭示主动发现故事。',
         rules: `${SHARED_ADAPTIVE_RULES}\n\n【大胆实验｜主动探索，发现有意义的惊喜】
-让空间关系、物件组合或层次揭示帮助理解已有故事。优先用CSS绘画构建可探索物件/空间，不拿emoji当插画、不挡正文。尝试后改变可见状态、发现对应内容，音效回应动作；若去掉探索体验几乎不变，应重设计。谜题仅用当前内容/中性图形，无外部知识/虚构线索；不强塞小游戏或增加点击次数凑趣味。提示清楚，回看/取消/重试可用，发现后留阅读空间。`,
+体验：通过空间、物件组合或层次揭示，发现已有故事内容。
+实现：优先用CSS绘画组合::before/::after、渐变、clip-path与box-shadow构建物件；用Grid/Flex安排可探索位置。以state记录当前选择/已发现内容，事件更新state，再由render(state)同步物件、提示和section；成功发现时短音效回应动作。探索限当前阶段，谜题依据当前内容或中性图形；提供回看、取消、重试和点击替代拖动。
+验收：尝试有可见反馈，发现帮助理解正文；布局与操作随本篇设计，发现后留连续阅读空间。`,
     }),
 ]);
 
