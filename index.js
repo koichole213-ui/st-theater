@@ -46,7 +46,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.2.5';
+const VERSION = '4.2.6';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -391,6 +391,7 @@ const defaultSettings = Object.freeze({
     followUserPersona: false,   // 生成时自动读取当前 user 人设
     floatingBall: false,
     floatingBallTuck: true,
+    floatingBallPosition: null,
     resultBookmarkEnabled: true,
     resultBookmarkSide: 'right',
     resultBookmarkYRatio: 0.55,
@@ -1216,8 +1217,17 @@ function createFloatingBall() {
         ball.title = '打开千夜浮梦';
         ball.innerHTML = LAMP_SVG_HTML;
 
-        const initLeft = window.innerWidth - 66;
-        const initTop = window.innerHeight - 126;
+        const savedPosition = settings.floatingBallPosition;
+        const hasSavedPosition = savedPosition
+            && ['left', 'right'].includes(savedPosition.side)
+            && typeof savedPosition.yRatio === 'number'
+            && Number.isFinite(savedPosition.yRatio);
+        const maxTop = () => Math.max(0, window.innerHeight - 48);
+        let yRatio = hasSavedPosition
+            ? clamp(savedPosition.yRatio, 0, 1)
+            : (maxTop() ? clamp(window.innerHeight - 126, 0, maxTop()) / maxTop() : 0);
+        const initLeft = hasSavedPosition && savedPosition.side === 'left' ? 6 : window.innerWidth - 54;
+        const initTop = yRatio * maxTop();
 
         // 贴边收纳：拖完吸附到最近的左/右边，闲置一会儿缩进边里半个身子
         const BASE_TRANSITION = 'transform 0.18s cubic-bezier(.2,.8,.2,1), opacity 0.18s, box-shadow 0.18s';
@@ -1251,7 +1261,7 @@ function createFloatingBall() {
                 ball.style.opacity = '0.45';
             }, TUCK_DELAY);
         }
-        function snapToEdge() {
+        function snapToEdge(rememberPosition = false) {
             const w = window.innerWidth;
             const cur = parseInt(ball.style.left) || 0;
             const onLeft = cur + 24 < w / 2;
@@ -1259,6 +1269,11 @@ function createFloatingBall() {
             ball.dataset.tucked = 'false';
             ball.style.transition = SNAP_TRANSITION;
             ball.style.left = untuckedLeft(ball.dataset.side) + 'px';
+            if (rememberPosition) {
+                yRatio = maxTop() ? clamp(parseFloat(ball.style.top) / maxTop(), 0, 1) : yRatio;
+                settings.floatingBallPosition = { side: ball.dataset.side, yRatio };
+                save();
+            }
             if (settings.floatingBallTuck) scheduleTuck();
         }
         function isExternalCaptureModeActive() {
@@ -1375,7 +1390,7 @@ function createFloatingBall() {
             if (!isDragging) return;
             if (e.cancelable) e.preventDefault();
             ball.style.left = clamp(startLeft + dx, 0, window.innerWidth - 46) + 'px';
-            ball.style.top = clamp(startTop + dy, 0, window.innerHeight - 46) + 'px';
+            ball.style.top = clamp(startTop + dy, 0, maxTop()) + 'px';
         }
 
         function onTouchMove(e) {
@@ -1387,7 +1402,7 @@ function createFloatingBall() {
             if (Math.abs(dx) > 5 || Math.abs(dy) > 5) isDragging = true;
             if (!isDragging) return;
             ball.style.left = clamp(startLeft + dx, 0, window.innerWidth - 46) + 'px';
-            ball.style.top = clamp(startTop + dy, 0, window.innerHeight - 46) + 'px';
+            ball.style.top = clamp(startTop + dy, 0, maxTop()) + 'px';
         }
 
         function onPointerCancel(e) {
@@ -1397,7 +1412,7 @@ function createFloatingBall() {
             removeGestureListeners();
             isDragging = false;
             startedTucked = false;
-            if (wasDragging) snapToEdge();
+            if (wasDragging) snapToEdge(true);
             else scheduleTuck();
         }
 
@@ -1427,7 +1442,7 @@ function createFloatingBall() {
             }
             isDragging = false;
             startedTucked = false;
-            snapToEdge();
+            snapToEdge(true);
         }
 
         if (window.PointerEvent) {
@@ -1454,7 +1469,7 @@ function createFloatingBall() {
             if (!ball.isConnected) return;
             const side = ball.dataset.side || 'right';
             const tucked = ball.dataset.tucked === 'true';
-            ball.style.top = clamp(parseInt(ball.style.top), 0, window.innerHeight - 46) + 'px';
+            ball.style.top = (yRatio * maxTop()) + 'px';
             ball.style.left = (tucked ? tuckedLeft(side) : untuckedLeft(side)) + 'px';
         }
 

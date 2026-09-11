@@ -2799,13 +2799,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.2.5 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.2.6 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.2\.5'/);
-    assert.equal(manifest.version, '4.2.5');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.5/);
+    assert.match(source, /const VERSION = '4\.2\.6'/);
+    assert.equal(manifest.version, '4.2.6');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.6/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -5463,4 +5463,94 @@ test('运行日志只保留最近 200 条且不写入外部设置', () => {
     assert.equal(entries[0].message, 'entry-5');
     assert.equal(entries.at(-1).message, `entry-${MAX_RUNTIME_LOGS + 4}`);
     clearRuntimeLogs();
+});
+
+test('悬浮球拖动后跨重建恢复位置，缩屏不覆盖偏好，点击与收纳不改位置', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const createSource = source.match(/function createFloatingBall\(\) \{[\s\S]*?\n\}/)[0];
+    const settings = { floatingBall: true, floatingBallTuck: true, floatingBallPosition: null };
+    let saves = 0;
+    function launch(width = 390, height = 844) {
+        let ball;
+        const gestures = new Map();
+        const windowEvents = new Map();
+        const timers = new Map();
+        let timerId = 0;
+        const doc = {
+            querySelectorAll: () => [], querySelector: () => null,
+            addEventListener: (type, fn) => gestures.set(type, fn),
+            removeEventListener: type => gestures.delete(type),
+            createElement: () => {
+                ball = {
+                    style: {}, dataset: {}, events: new Map(), isConnected: false,
+                    setAttribute(name, text) {
+                        if (name === 'style') for (const part of text.split(';')) {
+                            const [key, value] = part.split(':'); this.style[key] = value;
+                        }
+                    },
+                    addEventListener(type, fn) { this.events.set(type, fn); },
+                    remove() { this.isConnected = false; },
+                };
+                return ball;
+            },
+            documentElement: { appendChild: node => { node.isConnected = true; } },
+        };
+        const win = {
+            innerWidth: width, innerHeight: height, PointerEvent: true,
+            addEventListener: (type, fn) => windowEvents.set(type, fn),
+            removeEventListener: type => windowEvents.delete(type),
+        };
+        runInNewContext(`let floatingBallCleanup = null; ${createSource}; createFloatingBall();`, {
+            settings, document: doc, window: win, LAMP_SVG_HTML: '',
+            save: () => { saves++; }, refreshUpdateBadges() {}, openTheaterPopupFromFloatingBall() {},
+            setTimeout: fn => { timers.set(++timerId, fn); return timerId; },
+            clearTimeout: id => timers.delete(id), console: { warn: (...args) => { throw new Error(args.join(' ')); } },
+        });
+        const event = (x, y) => ({ pointerId: 1, clientX: x, clientY: y, cancelable: true, preventDefault() {} });
+        return {
+            ball, win,
+            drag(left, top) {
+                const x = parseFloat(ball.style.left), y = parseFloat(ball.style.top);
+                ball.events.get('pointerdown')(event(x, y));
+                gestures.get('pointermove')(event(left, top));
+                gestures.get('pointerup')(event(left, top));
+            },
+            resize(w, h) { win.innerWidth = w; win.innerHeight = h; windowEvents.get('resize')(); },
+            tuck() { for (const fn of [...timers.values()]) fn(); },
+            tap() {
+                const x = parseFloat(ball.style.left), y = parseFloat(ball.style.top);
+                ball.events.get('pointerdown')(event(x, y));
+                gestures.get('pointerup')(event(x, y));
+            },
+        };
+    }
+    const first = launch();
+    assert.equal(parseFloat(first.ball.style.top), 718);
+    assert.equal(saves, 0);
+    first.drag(0, 398);
+    assert.equal(settings.floatingBallPosition.side, 'left');
+    assert.equal(settings.floatingBallPosition.yRatio, 0.5);
+    assert.equal(saves, 1);
+    const reloaded = launch();
+    assert.equal(parseFloat(reloaded.ball.style.left), 6);
+    assert.equal(parseFloat(reloaded.ball.style.top), 398);
+    reloaded.resize(844, 390);
+    assert.equal(parseFloat(reloaded.ball.style.top), 171);
+    reloaded.resize(390, 30);
+    assert.equal(parseFloat(reloaded.ball.style.top), 0);
+    reloaded.resize(390, 844);
+    assert.equal(parseFloat(reloaded.ball.style.top), 398);
+    reloaded.tuck();
+    assert.equal(parseFloat(reloaded.ball.style.left), -22);
+    reloaded.tap();
+    assert.equal(parseFloat(reloaded.ball.style.left), 6);
+    assert.equal(saves, 1);
+    reloaded.drag(340, 597);
+    assert.equal(settings.floatingBallPosition.side, 'right');
+    assert.equal(settings.floatingBallPosition.yRatio, 0.75);
+    assert.equal(parseFloat(launch().ball.style.top), 597);
+    settings.floatingBallPosition = { side: 'right', yRatio: NaN };
+    assert.equal(parseFloat(launch().ball.style.top), 718);
+    settings.floatingBallPosition = { side: 'left', yRatio: 5 };
+    assert.equal(parseFloat(launch().ball.style.top), 796);
 });
