@@ -2799,13 +2799,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.2.7 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.2.8 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.2\.7'/);
-    assert.equal(manifest.version, '4.2.7');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.7/);
+    assert.match(source, /const VERSION = '4\.2\.8'/);
+    assert.equal(manifest.version, '4.2.8');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.8/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -3192,6 +3192,54 @@ test('内置、自定义与默认模板的普通、自动、历史续写和长�
                     assert.equal(result.payload.longFormPlan, expectedStaged);
                     assert.equal(result.payload.continuationText, isAuto ? '' : continueContext);
                 }
+            }
+        }
+    }
+});
+
+test('普通、自动和续写连续执行生成启动流程，完成日志和任务初始化', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+    const start = source.indexOf('async function runGeneration(');
+    const end = source.indexOf("    try {\n        let firstHtml = '';", start);
+    // 保留入口到任务创建之间的全部代码，包括日志、界面状态和流式初始化。
+    assert.ok(start >= 0 && end > start);
+    const startup = source.slice(start, end);
+    for (const target of [0, 4999, 5000, 8000, 20000]) {
+        for (const mode of ['manual', 'auto', 'continue']) {
+            for (const autoContinue of [false, true]) {
+                const logs = [];
+                const assemblies = [];
+                const ui = { length: 0, hide() { return this; }, show() { return this; },
+                    text() { return this; }, empty() { return this; }, prop() { return this; } };
+                const context = {
+                    settings: { manualTargetEnabled: true, manualTargetChars: target, maxAutoRounds: 4, autoContinue },
+                    isGenerating: false, isPreparingGeneration: false,
+                    continueContext: mode === 'manual' ? '' : '合成前情',
+                    continuationSession: { direction: '合成方向', source: { rounds: ['合成前情'] } },
+                    resolveTargetWordCount, isStagedRenderTarget, classifyLengthTier,
+                    normalizeContextRange, itemTags, createGenerationJob, textOutputModeForTheme,
+                    resolveRenderSelection: () => ({ selectedRender: '__default__', label: '合成模板', isPlainTextRender: false }),
+                    assembleGenerationPayload: async (_instruction, options) => {
+                        assemblies.push(options);
+                        return { targetWordCount: target, ctx: {}, diagnosticContext: {},
+                            systemPrompt: '合成系统', userPrompt: '合成任务', isPlainTextRender: options.forcePlainText };
+                    },
+                    updateContinueHint() {}, clearRequestIssue() {}, knownInstructionTags: () => [],
+                    captureGenerationApiRoute: () => ({ protocol: 'test', model: 'synthetic' }),
+                    runtimeLog: (...args) => logs.push(args),
+                    $: () => ui, AbortController,
+                    createCumulativeStreamRenderer: () => ({ update() {}, reset() {} }),
+                };
+                const run = runInNewContext('(' + startup + '\nreturn currentGenerationJob;\n})', context);
+                const job = await run('合成任务', mode === 'auto', []);
+                assert.equal(context.isPreparingGeneration, false);
+                assert.equal(context.isGenerating, true);
+                assert.equal(logs.filter(([, message]) => message === '生成开始').length, 1);
+                assert.equal(assemblies.length, 1);
+                assert.equal(assemblies[0].continuationText, mode === 'continue' ? '合成前情' : '');
+                assert.equal(job.maxRounds, target >= 5000 && autoContinue ? 4 : 1);
+                assert.equal(job.autoContinue, target >= 5000 && autoContinue);
+                assert.equal(job.minimumRounds, target >= 5000 && autoContinue && mode !== 'continue' ? 2 : 1);
             }
         }
     }

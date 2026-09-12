@@ -46,7 +46,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.2.7';
+const VERSION = '4.2.8';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -9539,7 +9539,6 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         length_tier: classifyLengthTier(targetWordCount),
         staged_render_mode: stagedRenderMode,
         staged_multi_round_mode: stagedMultiRoundMode,
-        long_form_mode: longFormMode,
     });
 
     // 标记开始生成
