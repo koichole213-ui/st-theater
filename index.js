@@ -10,14 +10,14 @@ import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiReq
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml, recentGenerationRoundsContext } from './generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection } from './adaptive-render.js';
-import { createContinuationSession, appendContinuationVersion, selectContinuationVersion, displayedContinuationVersion } from './continuation-session.js';
+import { normalizeContinuationRounds, continuationRoundHistory, createContinuationSession, appendContinuationVersion, selectContinuationVersion, displayedContinuationVersion } from './continuation-session.js';
 import { createTokenBreakdownEstimator, debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, diagnosticSignalCatalog, diagnosticSignalInfo, signalForStopReason } from './request-diagnostics.js';
 import { autoSourceLabel, resolveAutoInstruction } from './auto-mode.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, generationTextWithLiveSegment, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from './generation-job.js';
-import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, readableCharCount } from './text-counter.js';
-import { classifyLengthTier, firstRoundGuidance, isLongFormTarget, isStagedRenderTarget, longFormFirstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
+import { readableCharCount } from './text-counter.js';
+import { classifyLengthTier, firstRoundGuidance, isStagedRenderTarget, longFormFirstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
 import { clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
 import { MAX_API_PRESETS, apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from './api-presets.js';
 import { splitInstructionTextFile } from './instruction-import.js';
@@ -46,7 +46,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.2.6';
+const VERSION = '4.2.7';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -1747,7 +1747,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                     </div>
                     <div class="theater-inst-search-row">
                         <input type="text" id="theater-inst-search" class="theater-input theater-inst-search-input" placeholder="搜索模板名…" value="${esc(instSearch || '')}">
-                        <div id="theater-inst-select-all-btn" class="theater-btn theater-inst-select-all-btn" title="全选当前可见"><i class="fa-solid fa-list-check"></i><span>全选</span></div>
+                        <div id="theater-inst-select-all-btn" class="theater-btn theater-inst-select-all-btn" title="全选本页模板"><i class="fa-solid fa-list-check"></i><span>全选本页</span></div>
                     </div>
                     <div id="theater-inst-bulk-bar" class="theater-inst-bulk-bar" style="display:none;">
                         <span class="theater-inst-bulk-label">已选 <b id="theater-inst-bulk-count">0</b> 个</span>
@@ -2168,6 +2168,7 @@ function historyItemHTML(h) {
             <button type="button" class="theater-history-view" data-id="${h.id}"><i class="fa-solid fa-eye"></i><span>查看</span></button>
             <button type="button" class="theater-history-continue" data-id="${h.id}"><i class="fa-solid fa-forward"></i><span>续写</span></button>
             <button type="button" class="theater-history-export" data-id="${h.id}" title="导出 HTML"><i class="fa-solid fa-download"></i><span>导出</span></button>
+            <button type="button" class="theater-history-rename" data-id="${h.id}"><i class="fa-solid fa-pen"></i><span>改名</span></button>
             <button type="button" class="theater-history-tags-edit" data-id="${h.id}"><i class="fa-solid fa-tags"></i><span>标签</span></button>
             <button type="button" class="theater-history-delete" data-id="${h.id}"><i class="fa-solid fa-trash"></i><span>删除</span></button>
         </div>
@@ -3730,6 +3731,8 @@ let histSelectionGesture = null;
 let histTouchMoveHandler = null;
 let suppressHistoryCardClickUntil = 0;
 let instSearch = '';
+let instPage = 0;
+const INST_PAGE_SIZE = 10;
 let activeInstructionTags = [];
 let activeInstructionContent = '';
 let continuationSourceTags = [];
@@ -3760,13 +3763,21 @@ function filterInstAll(arr) {
 }
 
 function renderInstList(arr) {
-    if (!arr || !arr.length) return '<p class="theater-empty">暂无</p>';
+    if (!arr || !arr.length) { instPage = 0; return '<p class="theater-empty">暂无</p>'; }
     const filtered = filterInstAll(arr);
     if (!filtered.length) {
+        instPage = 0;
         const q = (instSearch || '').trim();
         return `<p class="theater-empty">${q ? `没找到包含「${esc(q)}」的模板` : '当前标签组合下还没有模板'}</p>`;
     }
-    return filtered.map(({ t: item, i }) => {
+    const pageCount = Math.ceil(filtered.length / INST_PAGE_SIZE);
+    instPage = Math.max(0, Math.min(instPage, pageCount - 1));
+    const pager = `<nav class="theater-inst-pagination" aria-label="模板分页">
+        <button type="button" class="theater-btn theater-inst-page" data-step="-1" ${instPage === 0 ? 'disabled' : ''}>上一页</button>
+        <span>第 ${instPage + 1} / ${pageCount} 页 · 共 ${filtered.length} 条</span>
+        <button type="button" class="theater-btn theater-inst-page" data-step="1" ${instPage === pageCount - 1 ? 'disabled' : ''}>下一页</button>
+    </nav>`;
+    return filtered.slice(instPage * INST_PAGE_SIZE, (instPage + 1) * INST_PAGE_SIZE).map(({ t: item, i }) => {
         const checked = instSelected.has(i) ? 'checked' : '';
         const selClass = instSelected.has(i) ? ' theater-inst-item-selected' : '';
         return `
@@ -3783,7 +3794,7 @@ function renderInstList(arr) {
             </div>
         </div>
     `;
-    }).join('');
+    }).join('') + pager;
 }
 
 function updateBulkBar() {
@@ -5730,7 +5741,7 @@ function bindEvents() {
     $d.off('click.titf').on('click.titf', '#theater-inst-tag-filter', async function () {
         const chosen = await chooseTags({ title: '筛选指令模板', selected: settings.instructionTagFilter, allowUncategorized: true });
         if (chosen === null) return;
-        settings.instructionTagFilter = chosen; instSelected.clear(); save(); refreshInstUI(); refreshTagControls();
+        settings.instructionTagFilter = chosen; instPage = 0; instSelected.clear(); save(); refreshInstUI(); refreshTagControls();
     });
     $d.off('click.titnew').on('click.titnew', '#theater-inst-new-tag-btn', async function () { await newInstructionTag(); refreshTagControls(); });
     $d.off('click.titmanage').on('click.titmanage', '#theater-inst-manage-tag-btn, #theater-history-manage-tags', manageInstructionTags);
@@ -5738,7 +5749,13 @@ function bindEvents() {
     // ---- Search & Bulk ----
     $d.off('input.tis').on('input.tis', '#theater-inst-search', function () {
         instSearch = $(this).val() || '';
+        instPage = 0;
+        closeInstructionActionMenus();
         $('#theater-instruction-list').html(renderInstList(settings.instructionTemplates || []));
+    });
+    $d.off('click.tipage').on('click.tipage', '.theater-inst-page', function () {
+        instPage += Number($(this).data('step')) || 0;
+        refreshInstUI();
     });
     $d.off('change.ticb').on('change.ticb', '.theater-inst-checkbox', function (e) {
         e.stopPropagation();
@@ -5816,11 +5833,13 @@ function bindEvents() {
         if (snapshot.recentIndex >= 0 && recentCache[snapshot.recentIndex]?.html === snapshot.html) {
             recentCache[snapshot.recentIndex].html = newHtml;
             recentCache[snapshot.recentIndex].mode = newMode;
+            recentCache[snapshot.recentIndex].continuationRounds = [text];
             recentIndex = snapshot.recentIndex;
             recentPersist();
         }
         const version = displayedContinuationVersion(continuationSession, snapshot.html);
-        if (version) Object.assign(version, { html: newHtml, text, mode: newMode });
+        if (version) Object.assign(version, { html: newHtml, text, mode: newMode, continuationRounds: [text] });
+        if (retainedResultSource?.html === snapshot.html) retainedResultSource = { ...retainedResultSource, html: newHtml, mode: newMode, continuationRounds: [text] };
         $('#theater-result-text-editor').hide();
         showInIframe(newHtml, newMode);
         resultEditSnapshot = null;
@@ -5854,8 +5873,8 @@ function bindEvents() {
     $d.off('click.tcont').on('click.tcont', '#theater-continue-btn', function () {
         const html = lastGeneratedHtml || currentDisplayHtml;
         if (!html) { toastr.warning('没有可续写的内容'); return; }
-        const source = recentCache.find(item => item.html === html) || historyCache.find(item => item.html === html);
-        startContinue(html, source?.tags || activeInstructionTags, { sourceLabel: source?.title || '当前结果' });
+        const source = displayedContinuationVersion(continuationSession, html) || recentCache.find(item => item.html === html) || historyCache.find(item => item.html === html) || (retainedResultSource?.html === html ? retainedResultSource : null);
+        startContinue(html, source?.tags || activeInstructionTags, { sourceLabel: source?.title || '当前结果', sourceRounds: source?.continuationRounds });
     });
     // 取消续写
     $d.off('click.tcc').on('click.tcc', '#theater-cancel-continue', function () {
@@ -5875,6 +5894,7 @@ function bindEvents() {
         if (!version) return;
         startContinue(version.html, version.tags || continuationSourceTags, {
             segment: continuationSession.segment + 1,
+            sourceRounds: version.continuationRounds,
             sourceLabel: `第 ${continuationSession.segment} 段 · 第 ${continuationSession.versions.indexOf(version) + 1} 版`,
         });
     });
@@ -5889,7 +5909,7 @@ function bindEvents() {
     // 续写：从历史记录
     $d.off('click.thc').on('click.thc', '.theater-history-continue', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
-        startContinue(item.html, item.tags, { sourceLabel: item.title || '保存的小剧场' });
+        startContinue(item.html, item.tags, { sourceLabel: item.title || '保存的小剧场', sourceRounds: item.continuationRounds });
     });
     $d.off('click.the').on('click.the', '.theater-history-export', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
@@ -5902,6 +5922,7 @@ function bindEvents() {
         if (!ok) return;
         if (await histDelete([id])) refreshHistList();
     });
+    $d.off('click.threname').on('click.threname', '.theater-history-rename', function () { renameHistoryItem($(this).data('id'), this); });
     $d.off('click.thetags').on('click.thetags', '.theater-history-tags-edit', function () { editHistoryTags($(this).data('id')); });
     $d.off('click.thfilter').on('click.thfilter', '#theater-history-tag-filter', async function () {
         const chosen = await chooseTags({ title: '筛选保存的小剧场', selected: settings.historyTagFilter, allowUncategorized: true });
@@ -6632,6 +6653,22 @@ function refreshTagControls() {
     $('#theater-random-tag-picker').prop('hidden', settings.randomScope !== '__tags__').attr('title', tagFilterSummary(settings.randomTagFilter)).find('span').text(randomTags);
     const autoTags = tagFilterSummary(settings.autoTagFilter, '选择');
     $('#theater-auto-tag-picker').prop('hidden', settings.autoSource !== '__tags__').attr('title', tagFilterSummary(settings.autoTagFilter)).find('span').text(autoTags);
+}
+
+async function renameHistoryItem(id, anchor = null) {
+    const item = historyCache.find(history => history.id === id);
+    if (!item) return;
+    const { Popup } = SillyTavern.getContext();
+    const input = await withPreservedPopupViewport(anchor, () => Popup.show.input('小剧场改名', '输入新的作品名称', item.title || ''));
+    if (input === null || input === undefined || input === false) return;
+    const title = String(input).trim();
+    if (!title) { toastr.warning('名称不能为空'); return; }
+    const current = historyCache.find(history => history.id === id);
+    if (!current || title === current.title) return;
+    if (await histPut({ ...current, title })) {
+        refreshHistList();
+        toastr.success('小剧场已改名');
+    }
 }
 
 async function editHistoryTags(id) {
@@ -7655,7 +7692,7 @@ async function bulkDeleteSelected() {
 
 function selectAllVisible() {
     const templates = settings.instructionTemplates || [];
-    const visible = filterInstAll(templates);
+    const visible = filterInstAll(templates).slice(instPage * INST_PAGE_SIZE, (instPage + 1) * INST_PAGE_SIZE);
     if (!visible.length) {
         toastr.info('当前没有可选的模板');
         return;
@@ -7839,7 +7876,7 @@ async function saveToHistory() {
     const count = historyCache.length + 1;
     const sourceMeta = displayedContinuationVersion(continuationSession, html) || recentCache.find(item => item.html === html)
         || historyCache.slice().reverse().find(item => item.html === html)
-        || null;
+        || (retainedResultSource?.html === html ? retainedResultSource : null);
     const sourceTags = sourceMeta
         ? itemTags(sourceMeta, knownInstructionTags())
         : itemTags({ tags: activeInstructionTags }, knownInstructionTags());
@@ -7862,6 +7899,7 @@ async function saveToHistory() {
         // 优先跟随这篇结果生成时的元数据，避免把保存当下输入框里的另一条指令错配给它。
         instruction: sourceMeta ? (sourceMeta.instruction || '') : ($('#theater-instruction').val() || ''),
         sourceConfig: sourceMeta?.sourceConfig || null,
+        continuationRounds: normalizeContinuationRounds(sourceMeta?.continuationRounds),
         tags,
         date: `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
     };
@@ -8074,6 +8112,7 @@ async function addHistoryItems(items) {
             mode: item.mode || 'html',
             instruction: item.instruction || '',
             sourceConfig: item.sourceConfig || null,
+            continuationRounds: normalizeContinuationRounds(item.continuationRounds),
             tags: itemTags(item, knownInstructionTags()),
             date: item.date || new Date().toLocaleString('zh-CN', { hour12: false }),
         });
@@ -8155,6 +8194,7 @@ function downloadFile(filename, content, type) {
 // ============================================================
 let lastGeneratedHtml = '';
 let lastGeneratedText = '';
+let retainedResultSource = null; // 中断结果的轮次元数据，不改变最近生成列表。
 let currentOutputMode = 'html';
 let abortController = null;
 let isGenerating = false;      // 是否正在生成
@@ -8187,7 +8227,7 @@ function prepareContinuationContext(value) {
     if (!raw) return '';
     const containsHtml = /<(?:!doctype|\/?[a-z][^>]*)>/i.test(raw);
     const plainText = containsHtml ? htmlToPlainText(raw) : raw;
-    return continuationContextWindow(plainText);
+    return plainText.trim();
 }
 
 function generationPreparationKey(ctx = SillyTavern.getContext()) {
@@ -8520,7 +8560,7 @@ function continuationSessionHTML() {
     if (!session) return '';
     return `<section id="theater-continue-hint" class="theater-continuation-session">
         <div class="theater-continuation-session-heading"><b>普通续写 · 第 ${session.segment} 段</b><button type="button" id="theater-cancel-continue" ${isGenerating || isPreparingGeneration ? 'disabled' : ''}>退出续写</button></div>
-        <details class="theater-continuation-source"><summary>前情：${esc(session.source.label)}（约 ${readableCharCount(session.source.text)} 字）</summary><p>${esc(session.source.text)}</p></details>
+        <details class="theater-continuation-source"><summary>前情：${esc(session.source.label)} · 最近 ${session.source.rounds.length} 轮完整正文（约 ${readableCharCount(session.source.text)} 字）</summary><p>${esc(session.source.text)}</p></details>
         ${session.versions.length && !displayedContinuationVersion(session, currentDisplayHtml || lastGeneratedHtml) ? '<button type="button" class="theater-btn theater-continuation-return" id="theater-cont-return">回到本段结果</button>' : ''}
         <div id="theater-cont-exit-confirm" hidden><p>退出后结束本次续写，重要版本请先保存到历史。</p><div class="theater-continuation-actions"><button type="button" class="theater-btn" id="theater-cont-stay">留在续写</button><button type="button" class="theater-btn" id="theater-cont-confirm-exit">退出</button></div></div>
     </section>`;
@@ -9380,20 +9420,17 @@ async function changeLongDreamDraftCandidate(step) {
 }
 
 // 设置续写上下文并跳转到生成面板
-function startContinue(html, tags = [], { sourceLabel = '当前小剧场', segment = 1 } = {}) {
+function startContinue(html, tags = [], { sourceLabel = '当前小剧场', segment = 1, sourceRounds = [] } = {}) {
     if (isGenerating || isPreparingGeneration || resultEditSnapshot) { toastr.warning('请先完成当前生成或文字编辑'); return; }
     const plainText = htmlToPlainText(html);
     if (!plainText) { toastr.warning('没有可续写的内容'); return; }
 
-    // 只读取当前结果的纯正文；不携带 HTML，也不累计更早的续写结果。
-    continueContext = prepareContinuationContext(plainText);
-    continuationSession = createContinuationSession({ sourceText: continueContext, sourceLabel, segment });
+    const rounds = normalizeContinuationRounds(sourceRounds).map(prepareContinuationContext).filter(Boolean);
+    continuationSession = createContinuationSession({ sourceText: plainText, sourceRounds: rounds, sourceLabel, segment });
+    continueContext = continuationSession.source.text;
     continuationSourceTags = itemTags({ tags }, knownInstructionTags());
     activeInstructionTags = [...continuationSourceTags];
     activeInstructionContent = '';
-    if (readableCharCount(plainText) > MAX_CONTINUATION_CONTEXT_CHARS) {
-        toastr.info('前情内容较长，已自动截取后半段', '', { timeOut: 3000 });
-    }
 
     // 跳转到生成面板
     $('.theater-tab[data-tab="generate"]').click();
@@ -9457,7 +9494,6 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     const stagedRenderMode = !contCtx && isStagedRenderTarget(plannedTargetWordCount);
     const plannedRenderSelection = resolveRenderSelection(false);
     const stagedMultiRoundMode = stagedRenderMode && settings.autoContinue && configuredMaxRounds >= 2;
-    const longFormMode = stagedMultiRoundMode && isLongFormTarget(plannedTargetWordCount);
     isPreparingGeneration = true;
     updateContinueHint();
     let payload;
@@ -9478,7 +9514,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     clearRequestIssue();
     if (isAuto) lastAutoIssue = null;
     const targetWordCount = payload.targetWordCount;
-    const autoTargetContinue = !!targetWordCount && settings.autoContinue;
+    const autoTargetContinue = isStagedRenderTarget(targetWordCount) && settings.autoContinue;
     let { ctx, systemPrompt, userPrompt: prompt, isPlainTextRender } = payload;
     const { selectedRender: selectedRenderProfile, label: renderTemplate, isPlainTextRender: selectedPlainTextRender, textTheme: selectedTextTheme } = plannedRenderSelection;
     const apiRoute = captureGenerationApiRoute(ctx);
@@ -9555,7 +9591,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     let generationSucceeded = false;
     currentGenerationJob = createGenerationJob({
         targetChars: targetWordCount,
-        maxRounds: longFormMode ? 2 : configuredMaxRounds,
+        maxRounds: autoTargetContinue ? configuredMaxRounds : 1,
         minimumRounds: stagedMultiRoundMode ? 2 : 1,
         autoContinue: autoTargetContinue,
         requireTargetCompletion: stagedMultiRoundMode,
@@ -9636,7 +9672,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 roundsRemaining: currentGenerationJob.maxRounds - currentGenerationJob.round + 1,
                 manuscriptMode: stagedMultiRoundMode,
                 originalInstruction: payload.generationFoundation?.originalInstruction || '',
-                draft: recentGenerationRoundsContext(currentGenerationJob.segments),
+                draft: recentGenerationRoundsContext(continuationRoundHistory(continuationRun?.source.rounds, currentGenerationJob.segments.map(prepareContinuationContext))),
             });
             roundPayload = buildGenerationContinuationRoundPayload({
                 foundation: payload.generationFoundation,
@@ -9702,10 +9738,12 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         updateLengthHint(targetWordCount, currentGenerationJob.actualChars, {
             completedBelowTarget: currentGenerationJob.completedBelowTarget,
         });
+        const continuationRounds = continuationRoundHistory(continuationRun?.source.rounds, currentGenerationJob.segments.map(prepareContinuationContext));
+        retainedResultSource = null;
         generationSucceeded = true;
         if (continuationRun && continuationSession === continuationRun) {
             appendContinuationVersion(continuationRun, {
-                html: lastGeneratedHtml, text: newText, mode: currentOutputMode,
+                html: lastGeneratedHtml, text: newText, mode: currentOutputMode, continuationRounds,
                 direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig,
             });
         }
@@ -9715,6 +9753,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             recentCache.unshift({
                 html: lastGeneratedHtml,
                 mode: currentOutputMode,
+                continuationRounds,
                 time: new Date().toLocaleString('zh-CN', { hour12: false }),
                 instruction: instruction || '',
                 sourceConfig: generationSourceConfig,
@@ -9764,9 +9803,15 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             lastGeneratedText = partialText;
             lastGeneratedHtml = textFallbackHtml(partialText);
             currentOutputMode = 'text';
+            retainedResultSource = {
+                html: lastGeneratedHtml, mode: currentOutputMode, instruction,
+                tags: [...sourceTags], sourceConfig: generationSourceConfig,
+                continuationRounds: continuationRoundHistory(continuationRun?.source.rounds, [...currentGenerationJob.segments, liveBodyText].map(prepareContinuationContext)),
+            };
             if (continuationRun && continuationSession === continuationRun) {
                 appendContinuationVersion(continuationRun, {
                     html: lastGeneratedHtml, text: partialText, mode: currentOutputMode,
+                    continuationRounds: continuationRoundHistory(continuationRun.source.rounds, [...currentGenerationJob.segments, liveBodyText].map(prepareContinuationContext)),
                     direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig, complete: false,
                 });
             }

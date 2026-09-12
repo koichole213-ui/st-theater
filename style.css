@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.2.6
+/* 千夜浮梦 · 小剧场生成器 v4.2.7
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -4567,7 +4567,7 @@ body.theater-reader-open {
 }
 .theater-history-actions {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: var(--t-space-1);
     padding-top: var(--t-space-2);
     border-top: 1px solid var(--t-border);
@@ -6979,3 +6979,9 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     margin-inline:auto;
     text-align:center;
 }
+
+/* 模板列表分页：窄屏可换行，辅助文字保持左对齐。 */
+.theater-inst-pagination { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:10px 0; }
+.theater-inst-pagination > span { text-align:left; font-size:var(--t-text-xs); color:var(--t-fg-soft); }
+.theater-inst-pagination > button { min-height:36px; }
+.theater-inst-pagination > button:disabled { opacity:.4; cursor:default; }

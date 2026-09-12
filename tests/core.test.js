@@ -42,7 +42,7 @@ import { migrateLegacyPresetEntryStates, normalizePresetEntryStatesByPreset, pre
 import { TAG_UNCATEGORIZED, itemTags, matchesTagFilter, mergeTagLists, migrateLegacyTagSettings, normalizeTagList, removeTagFromList, renameTagInList } from '../tag-system.js';
 import { waitForPopupElements, withPreservedPopupViewport } from '../popup-lifecycle.js';
 import { fetchInstalledExtensionStatus } from '../version-check.js';
-import { createContinuationSession, appendContinuationVersion, selectContinuationVersion, displayedContinuationVersion } from '../continuation-session.js';
+import { normalizeContinuationRounds, continuationRoundHistory, createContinuationSession, appendContinuationVersion, selectContinuationVersion, displayedContinuationVersion } from '../continuation-session.js';
 
 test('普通续写重写保留前情和所有候选，选回旧版恢复其方向，接写须显式创建下一段', () => {
     const session = createContinuationSession({ sourceText: '原始前情', sourceLabel: '原篇', direction: '去车站' });
@@ -508,7 +508,7 @@ test('历史卡片按标题标签、时间、操作三层排列，并提供即�
     assert.match(styles, /\.theater-history-actions > button[\s\S]*?touch-action: manipulation/);
     assert.match(styles, /\.theater-history-top-bar \{[\s\S]*?grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
     assert.match(styles, /\.theater-history-top-bar \.theater-label \{[\s\S]*?text-align: left !important/);
-    assert.match(styles, /\.theater-history-actions \{[\s\S]*?grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
+    assert.match(styles, /\.theater-history-actions \{[\s\S]*?grid-template-columns: repeat\(6, minmax\(0, 1fr\)\)/);
     assert.match(styles, /\.theater-history-top-bar > \.theater-btn \{[\s\S]*?border-radius: var\(--t-radius-md\)/);
     assert.match(styles, /\.theater-history-actions > button \{[\s\S]*?border-radius: var\(--t-radius-md\)/);
     assert.match(renderer, /theater-history-export[^>]*title="导出 HTML"[\s\S]*?<span>导出<\/span>/);
@@ -637,7 +637,7 @@ test('预设读取保留收起或展开状态，旧请求不能覆盖新选择�
         ${functions}
         ({ loadPresetEntries, ensureSelectedPresetLoaded, state: () => ({ name: cachedPresetName, entries: cachedPresetEntries, post: cachedPresetPostProcessing, squash: cachedPresetSquashSystemMessages }) });
     `, {
-        settings, $: element, toastr: { warning() {} }, console: { log() {} },
+        settings, $: element, toastr: { warning() {}, info() {} }, console: { log() {} },
         fetchPresetByName: name => new Promise(resolve => pending.set(name, resolve)),
         extractPromptsFromData: data => data.entries,
         noToolsPostProcessingMode: value => value,
@@ -2799,13 +2799,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.2.6 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.2.7 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.2\.6'/);
-    assert.equal(manifest.version, '4.2.6');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.6/);
+    assert.match(source, /const VERSION = '4\.2\.7'/);
+    assert.equal(manifest.version, '4.2.7');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.7/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -3179,7 +3179,7 @@ test('内置、自定义与默认模板的普通、自动、历史续写和长�
                 for (const continueContext of ['', '已有前情']) {
                     const settings = { manualTargetEnabled: true, manualTargetChars: target, maxAutoRounds: 3, autoContinue: true };
                     const evaluate = runInNewContext('(async () => {' + plan + '\nlet payload;\n' + assembly
-                        + '\nreturn { stagedRenderMode, stagedMultiRoundMode, longFormMode, payload }; })', {
+                        + '\nreturn { stagedRenderMode, stagedMultiRoundMode, payload }; })', {
                         settings, isAuto, continueContext, continuationSession: null, instruction: '合成任务',
                         resolveTargetWordCount, isStagedRenderTarget, isLongFormTarget,
                         resolveRenderSelection: () => ({ selectedRender: selection, adaptiveProfile: adaptiveRenderProfile(selection) }),
@@ -3226,7 +3226,7 @@ test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在�
                 extractHtml: value => value,
                 htmlToPlainText: html => html.replace(/<[^>]*>/g, ''),
                 textFallbackHtml: text => '<article>' + text + '</article>',
-                captureRequestIssue: () => ({ signal: 'TEST-FAILED' }), toastr: { warning() {} },
+                captureRequestIssue: () => ({ signal: 'TEST-FAILED' }), toastr: { warning() {}, info() {} },
                 requestConfiguredGenerationApi: async args => {
                     calls.push(args);
                     if (scenario === 'failure') return { text: '<html><body>{{THEATER_P0001}}</body></html>' };
@@ -4260,7 +4260,7 @@ test('酒馆主 API 的内容策略错误不会降级重发到 TavernHelper', as
     assert.equal(helperCalls, 0);
 });
 
-test('连续续写只携带上一轮正文，并限制为最近 8000 字', () => {
+test('旧截取工具仍兼容8000字窗口（已不用于普通续写入口）', () => {
     const previousRound = 'B'.repeat(MAX_CONTINUATION_CONTEXT_CHARS + 200);
     const context = continuationContextWindow(previousRound);
     assert.equal(context.endsWith('B'.repeat(MAX_CONTINUATION_CONTEXT_CHARS)), true);
@@ -4920,7 +4920,7 @@ test('普通生成多轮复用首轮资料包而不是退回简化续写请求',
     assert.match(ordinaryGeneration, /stagedMultiRoundMode = stagedRenderMode && settings\.autoContinue && configuredMaxRounds >= 2/);
     assert.match(ordinaryGeneration, /minimumRounds: stagedMultiRoundMode \? 2 : 1/);
     assert.match(ordinaryGeneration, /requireTargetCompletion: stagedMultiRoundMode/);
-    assert.match(ordinaryGeneration, /draft: recentGenerationRoundsContext\(currentGenerationJob\.segments\)/);
+    assert.match(ordinaryGeneration, /draft: recentGenerationRoundsContext\(continuationRoundHistory\(continuationRun\?\.source.rounds, currentGenerationJob.segments.map\(prepareContinuationContext\)\)\)/);
     assert.doesNotMatch(ordinaryGeneration, /continuationContextWindow\(|tailText\(/);
     assert.doesNotMatch(ordinaryGeneration, /\.\.\.buildContinuationPayload/);
 });
@@ -4938,7 +4938,7 @@ test('四档分诊边界保留，首轮明确告诉模型目标正文字数', ()
     assert.doesNotMatch(firstRoundGuidance(8000), /写满|统计注释/);
 });
 
-test('5000 字起正文与 HTML 分离并规划多轮同一稿件，8000 字起限制为上下篇', () => {
+test('5000 字起正文与 HTML 分离，旧长度分类工具不再决定轮数上限', () => {
     assert.equal(STAGED_RENDER_THRESHOLD, 5000);
     assert.equal(LONG_FORM_SPLIT_THRESHOLD, 8000);
     assert.equal(isStagedRenderTarget(4999), false);
@@ -5338,6 +5338,7 @@ test('保存小剧场在同一弹窗编辑标题与标签，成功后才登记�
             currentDisplayHtml: '',
             currentOutputMode: 'html',
             continuationSession: null,
+            retainedResultSource: null,
             recentCache: [{ html, mode: 'html', instruction: '来源指令', sourceConfig: { render: '沉浸互动' }, tags: ['来源标签'] }],
             historyCache: [],
             activeInstructionTags: ['当前输入标签'],
@@ -5354,6 +5355,7 @@ test('保存小剧场在同一弹窗编辑标题与标签，成功后才登记�
             toastr: { success: message => calls.notices.push(message) },
             $: () => ({ val: () => '当前输入指令' }),
         };
+        context.normalizeContinuationRounds = normalizeContinuationRounds;
         runInNewContext(saveSource + '\nglobalThis.runSaveToHistory = saveToHistory;', context);
         await context.runSaveToHistory();
         return { calls, settings };
@@ -5553,4 +5555,155 @@ test('悬浮球拖动后跨重建恢复位置，缩屏不覆盖偏好，点击�
     assert.equal(parseFloat(launch().ball.style.top), 718);
     settings.floatingBallPosition = { side: 'left', yRatio: 5 };
     assert.equal(parseFloat(launch().ball.style.top), 796);
+});
+
+test('短稿只写一轮，5000起不再按8000阈值降低用户轮数上限', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const autoLine = source.match(/const autoTargetContinue = .*;/)[0];
+    const config = source.match(/currentGenerationJob = createGenerationJob\(\{[\s\S]*?\}\);/)[0];
+    for (const target of [0, 4999, 5000, 7000, 8000, 9000, 20000]) {
+        for (const enabled of [false, true]) for (const max of [1, 3, 5]) {
+            const job = runInNewContext(`${autoLine}\nlet currentGenerationJob; ${config}; currentGenerationJob`, {
+                targetWordCount: target, settings: { autoContinue: enabled }, isStagedRenderTarget,
+                configuredMaxRounds: max, stagedMultiRoundMode: target >= 5000 && enabled && max >= 2,
+                createGenerationJob,
+            });
+            assert.equal(job.maxRounds, target >= 5000 && enabled ? max : 1);
+            assert.equal(job.minimumRounds, target >= 5000 && enabled && max >= 2 ? 2 : 1);
+            addGenerationSegment(job, '短稿', 'stop');
+            assert.equal(shouldContinueJob(job, readableCharCount), target >= 5000 && enabled && max > 1);
+        }
+    }
+    for (const target of [5000, 7000, 8000, 9000]) {
+        const job = createGenerationJob({ targetChars: target, maxRounds: 5, minimumRounds: 2, autoContinue: true, requireTargetCompletion: true });
+        addGenerationSegment(job, '字'.repeat(1000), 'stop'); job.round = 2;
+        assert.equal(shouldContinueJob(job, readableCharCount), true);
+        authorizeFinish(job); addGenerationSegment(job, '字'.repeat(target), 'stop');
+        assert.equal(shouldContinueJob(job, readableCharCount), false);
+    }
+});
+
+test('模板分页每页10条，跨页筛选保持原索引和勾选，删除末页可回退', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const render = source.match(/function renderInstList\(arr\) \{[\s\S]*?\n\}/)[0];
+    const filter = source.match(/function filterInstAll\(arr\) \{[\s\S]*?\n\}/)[0];
+    const templates = Array.from({ length: 23 }, (_, i) => ({ name: `模板${i}`, tags: [i % 2 ? '奇数' : '偶数'] }));
+    const scope = { settings: { instructionTagFilter: [] }, instSearch: '', instPage: 0, INST_PAGE_SIZE: 10,
+        instSelected: new Set([0, 10]), knownInstructionTags: () => ['奇数', '偶数'], matchesTagFilter, esc: value => String(value), templates };
+    const renderPage = (code = '') => runInNewContext(`${filter}\n${render}\n${code}\nrenderInstList(templates);`, scope);
+    const count = html => (html.match(/class="theater-inst-item/g) || []).length;
+    const first = renderPage(); assert.equal(count(first), 10); assert.match(first, /data-index="0" checked/);
+    const second = renderPage('instPage = 1;'); assert.equal(count(second), 10); assert.match(second, /data-index="10" checked/);
+    assert.doesNotMatch(second, /data-index="0"/);
+    assert.equal(count(renderPage('instPage = 2;')), 3);
+    scope.templates = templates.slice(0, 20);
+    const clamped = renderPage(); assert.equal(scope.instPage, 1); assert.equal(count(clamped), 10);
+    scope.templates = templates; scope.instSearch = '模板22';
+    assert.match(renderPage('instPage = 0;'), /data-index="22"/);
+    scope.instSearch = ''; scope.settings.instructionTagFilter = ['奇数'];
+    const tagged = renderPage('instPage = 1;'); assert.equal(count(tagged), 1); assert.match(tagged, /data-index="21"/);
+    assert.deepEqual([...scope.instSelected], [0, 10]);
+});
+
+test('历史改名只更新最新记录标题，取消、空名、写入失败与期间删除不报成功', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const rename = source.match(/async function renameHistoryItem\(id, anchor = null\) \{[\s\S]*?\n\}/)[0];
+    for (const scenario of ['ok', 'cancel', 'blank', 'fail', 'deleted']) {
+        const record = { id: 1, title: '旧名称', html: '<main>原正文</main>', tags: ['旧标签'], date: '原日期' };
+        const cache = [record]; let writes = 0, refreshes = 0, success = 0;
+        await runInNewContext(`${rename}\nrenameHistoryItem(1);`, {
+            historyCache: cache, withPreservedPopupViewport,
+            SillyTavern: { getContext: () => ({ Popup: { show: { input: async () => {
+                if (scenario === 'deleted') cache.splice(0);
+                else cache[0] = { ...record, tags: ['新标签'] };
+                return scenario === 'cancel' ? null : scenario === 'blank' ? '  ' : ' 新名称 ';
+            } } } }) },
+            histPut: async item => {
+                writes++; assert.equal(item.title, '新名称'); assert.equal(item.html, record.html);
+                assert.equal(item.date, record.date); assert.equal(item.tags[0], '新标签'); return scenario !== 'fail';
+            },
+            refreshHistList: () => refreshes++, toastr: { warning() {}, success: () => success++ },
+        });
+        assert.equal(writes, ['ok', 'fail'].includes(scenario) ? 1 : 0);
+        assert.equal(refreshes, scenario === 'ok' ? 1 : 0); assert.equal(success, scenario === 'ok' ? 1 : 0);
+        assert.equal(record.title, '旧名称');
+    }
+});
+
+test('手动续写与内部补写沿同一两轮窗口滚动，重写候选不串入前情', () => {
+    const a = '第一轮信件原文' + '甲'.repeat(9000);
+    const b = '第二轮对白' + '乙'.repeat(12000);
+    const c = '第三轮正文';
+    const initial = createContinuationSession({ sourceText: a });
+    assert.equal(initial.source.text, a);
+    assert.equal(initial.source.rounds.length, 1);
+    const first = appendContinuationVersion(initial, { html: '<main>B</main>', text: b,
+        continuationRounds: continuationRoundHistory(initial.source.rounds, [b]) });
+    appendContinuationVersion(initial, { html: '<main>另一版</main>', text: '不应带入的另一版',
+        continuationRounds: continuationRoundHistory(initial.source.rounds, ['不应带入的另一版']) });
+    const next = createContinuationSession({ sourceText: first.text, sourceRounds: first.continuationRounds });
+    assert.deepEqual(next.source.rounds, [a, b]);
+    assert.equal(next.source.text, a + '\n\n' + b);
+    assert.ok(next.source.text.length > 20000);
+    assert.deepEqual(continuationRoundHistory(next.source.rounds, [c]), [b, c]);
+    assert.deepEqual(continuationRoundHistory(next.source.rounds, [c, '第四轮']), [c, '第四轮']);
+    assert.deepEqual(initial.source.rounds, [a]);
+    assert.ok(Object.isFrozen(next.source.rounds));
+    assert.deepEqual(normalizeContinuationRounds([null, 123, {}, '', a, b, c]), [b, c]);
+});
+
+test('普通续写入口直接携带两轮完整纯正文，不再截断8000字', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const prepare = source.match(/function prepareContinuationContext\(value\) \{[\s\S]*?\n\}/)[0];
+    const start = source.match(/function startContinue\(html,[\s\S]*?\n\}/)[0];
+    const a = '甲'.repeat(9500), b = '乙'.repeat(11000);
+    const jq = { click() { return this; }, val() { return this; }, attr() { return this; }, text() { return this; }, show() { return this; }, hide() { return this; } };
+    const context = { isGenerating: false, isPreparingGeneration: false, resultEditSnapshot: null,
+        htmlToPlainText: html => html.replace(/<[^>]*>/g, ''), normalizeContinuationRounds, createContinuationSession,
+        itemTags: ({tags}) => tags, knownInstructionTags: () => [], clearDisplayedResult() {}, updateContinueHint() {},
+        revealContinuationInput() {}, scheduleTokenEstimate() {}, $: () => jq, toastr: { warning() {}, info() {} },
+        inputHtml: `<main>${b}</main>`, prior: [a, b],
+    };
+    const result = runInNewContext(`${prepare}\n${start}\nstartContinue(inputHtml, [], {sourceRounds: prior}); continuationSession`, context);
+    assert.equal(result.source.text, a + '\n\n' + b);
+    assert.equal(result.source.rounds.length, 2);
+    assert.doesNotMatch(result.source.text, /更早内容已省略/);
+});
+
+test('两轮完整正文通过JSON及ZIP历史备份恢复，旧作品不虚构前轮', () => {
+    const rounds = ['前轮' + '甲'.repeat(9000), '当前轮' + '乙'.repeat(11000)];
+    const record = { title: '续写作品', html: '<main>当前作品</main>', continuationRounds: rounds, tags: ['标签'] };
+    const json = normalizeHistoryBackup(JSON.parse(JSON.stringify(createHistoryJsonBackup([record]))));
+    assert.deepEqual(json[0].continuationRounds, rounds);
+    const archive = createHistoryArchive([record]);
+    const restored = historyItemsFromArchive(JSON.parse(JSON.stringify(archive.manifest)), archive.files);
+    assert.deepEqual(restored[0].continuationRounds, rounds);
+    const old = normalizeHistoryBackup([{html:'<main>旧作品</main>'}])[0];
+    assert.deepEqual(old.continuationRounds, []);
+    assert.deepEqual(createContinuationSession({sourceText:'旧作品',sourceRounds:old.continuationRounds}).source.rounds, ['旧作品']);
+});
+
+test('普通新稿第三轮中断后保存再续写只带第二轮和未完成第三轮', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const retain = source.match(/retainedResultSource = \{\s*html: lastGeneratedHtml, mode: currentOutputMode, instruction,[\s\S]*?\n            \};/)[0];
+    const saveSource = source.match(/async function saveToHistory\(\)[^]*?^}/m)[0];
+    const rounds = ['第一轮' + '甲'.repeat(9000), '第二轮' + '乙'.repeat(9000)];
+    const live = '第三轮未完成' + '丙'.repeat(4000);
+    let saved;
+    const context = { lastGeneratedHtml: '<main>中断保留正文</main>', currentDisplayHtml: '', currentOutputMode:'text',
+        retainedResultSource:null, instruction:'创作指令', sourceTags:['标签'], generationSourceConfig:{},
+        continuationRun:null, currentGenerationJob:{segments:rounds}, liveBodyText:live,
+        continuationRoundHistory, prepareContinuationContext:value=>value.trim(), normalizeContinuationRounds,
+        continuationSession:null, displayedContinuationVersion:()=>null, recentCache:[], historyCache:[],
+        activeInstructionTags:[], knownInstructionTags:()=>['标签'], itemTags, mergeTagLists, normalizeTagList,
+        chooseTagsWithNew:async()=>({name:'中断作品',tags:['标签'],newTags:[]}),
+        histAdd:async item=>{saved=item;return true;},settings:{instructionTags:['标签']},
+        save(){},refreshHistList(){},toastr:{success(){}},$:()=>({val:()=>''}),
+    };
+    await runInNewContext(`${retain}\n${saveSource}\nsaveToHistory();`,context);
+    assert.deepEqual(Array.from(saved.continuationRounds),[rounds[1],live]);
+    const restored=normalizeHistoryBackup(createHistoryJsonBackup([saved]))[0];
+    const session=createContinuationSession({sourceText:'整篇旧正文',sourceRounds:restored.continuationRounds});
+    assert.equal(session.source.text,rounds[1]+'\n\n'+live);
+    assert.doesNotMatch(session.source.text,/第一轮/);
 });

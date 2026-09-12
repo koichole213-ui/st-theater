@@ -1,10 +1,22 @@
+// 两轮按时间排列；没有可恢复的轮次记录时，由调用方提供当前完整正文。
+export function normalizeContinuationRounds(values) {
+    return (Array.isArray(values) ? values : []).filter(value => typeof value === 'string')
+        .map(value => value.trim()).filter(Boolean).slice(-2);
+}
+
+export function continuationRoundHistory(sourceRounds = [], newRounds = []) {
+    return normalizeContinuationRounds([...normalizeContinuationRounds(sourceRounds), ...normalizeContinuationRounds(newRounds)]);
+}
+
 // 普通续写的临时会话：关弹窗不销毁，退出续写或刷新酒馆后结束。
 // 前情在创建会话时固定；重写只追加候选，只有显式“接着这一版”才建下一段。
-export function createContinuationSession({ sourceText, sourceLabel = '当前小剧场', segment = 1, direction = '' } = {}) {
-    const text = String(sourceText || '').trim();
+export function createContinuationSession({ sourceText, sourceRounds = [], sourceLabel = '当前小剧场', segment = 1, direction = '' } = {}) {
+    const rounds = normalizeContinuationRounds(sourceRounds);
+    if (!rounds.length && String(sourceText || '').trim()) rounds.push(String(sourceText).trim());
+    const text = rounds.join('\n\n');
     if (!text) return null;
     return {
-        source: Object.freeze({ text, label: String(sourceLabel || '当前小剧场') }),
+        source: Object.freeze({ text, rounds: Object.freeze(rounds), label: String(sourceLabel || '当前小剧场') }),
         segment: Math.max(1, Number(segment) || 1),
         direction: String(direction || ''),
         versions: [],

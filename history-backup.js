@@ -1,3 +1,5 @@
+import { normalizeContinuationRounds } from './continuation-session.js';
+
 export const HISTORY_BACKUP_FORMAT = 'st-theater-history';
 export const HISTORY_BACKUP_VERSION = 3;
 export const HISTORY_ARCHIVE_MANIFEST = 'theater-history.json';
@@ -28,6 +30,7 @@ function normalizeHistoryItem(item, fallbackTitle = '导入的小剧场') {
                 textTheme: cleanText(item.sourceConfig.textTheme),
             }
             : null,
+        continuationRounds: normalizeContinuationRounds(item?.continuationRounds),
         html,
         mode: cleanText(item?.mode) || 'html',
     };
@@ -91,6 +94,7 @@ export function createHistoryArchive(items = []) {
             instruction: item.instruction,
             tags: item.tags,
             sourceConfig: item.sourceConfig,
+            continuationRounds: item.continuationRounds,
             mode: item.mode,
             file,
         };
