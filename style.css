@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.2.8
+/* 千夜浮梦 · 小剧场生成器 v4.2.9
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -6985,3 +6985,13 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-inst-pagination > span { text-align:left; font-size:var(--t-text-xs); color:var(--t-fg-soft); }
 .theater-inst-pagination > button { min-height:36px; }
 .theater-inst-pagination > button:disabled { opacity:.4; cursor:default; }
+.theater-inst-pagination .theater-page-summary { flex:1 0 100%; text-align:left; }
+.theater-page-navigation { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; width:100%; }
+.theater-page-navigation .theater-btn { min-width:0; min-height:40px; padding:6px 4px; white-space:nowrap; font-size:var(--t-text-xs); }
+.theater-inst-pagination button:disabled { opacity:.4; cursor:default; }
+.theater-page-jump { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.theater-page-jump label { display:flex; align-items:center; gap:6px; text-align:left; color:var(--t-fg-soft); font-size:var(--t-text-xs); }
+.theater-page-jump .theater-page-number { width:64px; min-width:0; min-height:40px; margin:0; }
+.theater-page-jump .theater-btn { min-height:40px; }
+.theater-default-name::placeholder { color:var(--t-fg-soft, #888); opacity:.7; }
+.theater-default-name:focus::placeholder { color:transparent; }

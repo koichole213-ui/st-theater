@@ -2,6 +2,7 @@
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
 import { theaterError as notifyTheaterError } from './notify.js';
+import { listPage, listPaginationHTML, requestedListPage } from './pagination.js';
 import { playSoundFile } from './notification-sound.js';
 import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follow.js';
 import { compareVersion, fetchInstalledExtensionStatus, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
@@ -46,7 +47,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.2.8';
+const VERSION = '4.2.9';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -491,9 +492,11 @@ function setLongDreamComposerDraft(dreamId, draft = {}) {
     save();
 }
 
-function clearLongDreamComposerDraft(dreamId) {
+function clearLongDreamComposerDraft(dreamId, { forgetTarget = false } = {}) {
     if (dreamId === null || dreamId === undefined) return;
-    delete longDreamComposerDrafts()[String(dreamId)];
+    const targetChars = getLongDreamComposerDraft(dreamId).targetChars;
+    if (forgetTarget) delete longDreamComposerDrafts()[String(dreamId)];
+    else longDreamComposerDrafts()[String(dreamId)] = { targetChars };
     save();
 }
 
@@ -1788,14 +1791,14 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <button type="button" id="theater-history-manage-tags" class="theater-btn"><i class="fa-solid fa-tags"></i><span>管理标签</span></button>
                 <button type="button" id="theater-hist-batch-enter" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-list-check"></i><span>批量管理</span></button>
                 <div id="theater-hist-batch-bar" style="display:none;">
-                    <div id="theater-hist-select-all" class="theater-btn"><i class="fa-solid fa-check-double"></i><span>全选</span></div>
+                    <div id="theater-hist-select-all" class="theater-btn"><i class="fa-solid fa-check-double"></i><span>全选本页</span></div>
                     <div id="theater-hist-tag-selected" class="theater-btn primary"><i class="fa-solid fa-tags"></i><span>改标签</span></div>
                     <div id="theater-hist-delete-selected" class="theater-btn danger"><i class="fa-solid fa-trash-can"></i><span>删除选中 (<span id="theater-hist-sel-count">0</span>)</span></div>
                     <div id="theater-hist-batch-cancel" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>取消</span></div>
                 </div>
             </div>
             <p class="theater-hint" style="margin:-2px 1px 10px;">批量导出的 ZIP 可直接从这里恢复；同时兼容旧版 ZIP 和 JSON 备份。</p>
-            <div id="theater-history-list"${initialTab === 'history' ? '' : ' data-pending-list="true"'}>${initialTab !== 'history' ? '' : hist.length === 0 ? `<p class="theater-empty">${historyEmptyText}</p>` : hist.map(h => historyItemHTML(h)).join('')}</div>
+            <div id="theater-history-list"${initialTab === 'history' ? '' : ' data-pending-list="true"'}>${initialTab !== 'history' ? '' : hist.length === 0 ? `<p class="theater-empty">${historyEmptyText}</p>` : renderHistoryList()}</div>
         </div>
     </div>
 
@@ -2845,7 +2848,7 @@ function longDreamCreateHTML() {
             </section>
             <section class="ui-card theater-dream-form-card">
                 <div class="ui-title"><span><i class="fa-solid fa-pen-nib"></i> 此梦设定 (Canon)</span></div>
-                <label class="ia-field" for="theater-dream-title"><span>长卷名字</span><input id="theater-dream-title" class="ui-input theater-input" maxlength="80" value="${esc(first?.title || '未命名长梦')}"></label>
+                <label class="ia-field" for="theater-dream-title"><span>长卷名字</span><input id="theater-dream-title" class="ui-input theater-input theater-default-name" maxlength="80" value="" placeholder="${esc(first?.title || '未命名长梦')}"></label>
                 <label class="ia-field" for="theater-dream-canon"><span>必须遵守的硬设定</span><textarea id="theater-dream-canon" class="ui-textarea theater-textarea" rows="7" placeholder="填写这场梦必须遵守的硬设定...">${esc(first?.instruction || '')}</textarea></label>
                 <p id="theater-dream-source-hint" class="theater-hint ${longDreamSourceInstructionState(first).className}">${esc(longDreamSourceInstructionState(first).hint)}</p>
             </section>
@@ -3269,7 +3272,7 @@ function longDreamDetailState(dream) {
     const controlsDisabled = isGeneratingThisDream || !!longDreamChapterEditController || hasReviewDraft || dream.status === 'complete';
     const statusControlDisabled = isGeneratingThisDream || !!longDreamChapterEditController || !!draft;
     const composerDraft = getLongDreamComposerDraft(dream.id);
-    const nextTitle = draft?.title || composerDraft.title || `第 ${nextNumber} 章`;
+    const nextTitle = draft?.title || composerDraft.title || '';
     const nextInstruction = draft ? draft.instruction : composerDraft.instruction;
     const nextTarget = Math.max(500, Math.min(8000, Math.round(Number(draft?.targetChars || composerDraft.targetChars) || 3000)));
     const generationHint = hasReviewDraft
@@ -3350,7 +3353,7 @@ function longDreamDetailHTML(dream) {
         <section id="theater-dream-continuation-options" class="ui-card ia-options-card theater-dream-next-options">
             <div class="ui-title"><span><i class="fa-solid fa-pen"></i> 本章选项与上下文</span></div>
             <div class="ia-grid-2 theater-dream-next-grid">
-                <label class="ia-field"><span>可选章名</span><input id="theater-dream-next-title" class="ui-input theater-input" maxlength="80" value="${esc(state.nextTitle)}" ${state.controlsDisabled ? 'disabled' : ''}></label>
+                <label class="ia-field"><span>可选章名</span><input id="theater-dream-next-title" class="ui-input theater-input theater-default-name" maxlength="80" value="${esc(state.nextTitle)}" placeholder="第 ${state.nextNumber} 章" ${state.controlsDisabled ? 'disabled' : ''}></label>
                 <label class="ia-field"><span>目标字数</span><input id="theater-dream-next-target" class="ui-input theater-input" type="number" min="500" max="8000" step="500" value="${state.nextTarget}" ${state.controlsDisabled ? 'disabled' : ''}></label>
             </div>
             <div class="theater-dream-context-window">${dream.chapters.slice(-LONG_DREAM_RECENT_CHAPTER_COUNT).reverse().map(chapter => `<div class="ia-context-row"><div class="ia-context-copy"><div class="ia-line-title">第 ${chapter.number} 章 · ${esc(chapter.title)}</div><div class="ia-line-sub">最近完整章节 · ${readableCharCount(chapter.text || htmlToPlainText(chapter.html || ''))} 字 · 已注入全文</div></div><span class="memory-v2-tag">近期</span></div>`).join('')}${dream.chapters.length > LONG_DREAM_RECENT_CHAPTER_COUNT ? `<div class="ia-context-row"><div class="ia-context-copy"><div class="ia-line-title">更早章节索引</div><div class="ia-line-sub">第 1–${dream.chapters.length - LONG_DREAM_RECENT_CHAPTER_COUNT} 章旧章索引继续参与检索</div></div><span class="memory-v2-tag">索引</span></div>` : ''}</div>
@@ -3732,6 +3735,7 @@ let histTouchMoveHandler = null;
 let suppressHistoryCardClickUntil = 0;
 let instSearch = '';
 let instPage = 0;
+let histPage = 0;
 const INST_PAGE_SIZE = 10;
 let activeInstructionTags = [];
 let activeInstructionContent = '';
@@ -3770,13 +3774,9 @@ function renderInstList(arr) {
         const q = (instSearch || '').trim();
         return `<p class="theater-empty">${q ? `没找到包含「${esc(q)}」的模板` : '当前标签组合下还没有模板'}</p>`;
     }
-    const pageCount = Math.ceil(filtered.length / INST_PAGE_SIZE);
-    instPage = Math.max(0, Math.min(instPage, pageCount - 1));
-    const pager = `<nav class="theater-inst-pagination" aria-label="模板分页">
-        <button type="button" class="theater-btn theater-inst-page" data-step="-1" ${instPage === 0 ? 'disabled' : ''}>上一页</button>
-        <span>第 ${instPage + 1} / ${pageCount} 页 · 共 ${filtered.length} 条</span>
-        <button type="button" class="theater-btn theater-inst-page" data-step="1" ${instPage === pageCount - 1 ? 'disabled' : ''}>下一页</button>
-    </nav>`;
+    const pageState = listPage(filtered, instPage);
+    instPage = pageState.page;
+    const pager = listPaginationHTML('inst', pageState);
     return filtered.slice(instPage * INST_PAGE_SIZE, (instPage + 1) * INST_PAGE_SIZE).map(({ t: item, i }) => {
         const checked = instSelected.has(i) ? 'checked' : '';
         const selClass = instSelected.has(i) ? ' theater-inst-item-selected' : '';
@@ -4841,7 +4841,7 @@ function bindEvents() {
         if (!source) return;
         resetLongDreamCanonSuggestions();
         const instructionState = longDreamSourceInstructionState(source);
-        $('#theater-dream-title').val(source.title || '未命名长梦');
+        $('#theater-dream-title').attr('placeholder', source.title || '未命名长梦');
         $('#theater-dream-canon').val(instructionState.instruction);
         $('#theater-dream-source-preview').html(longDreamSourcePreviewHTML(source));
         $('#theater-dream-source-hint')
@@ -4915,7 +4915,7 @@ function bindEvents() {
         }
         const source = resolveLongDreamSource($('#theater-dream-source').val());
         if (!source) { toastr.warning('请选择一场小剧场作为第一章'); return; }
-        const title = ($('#theater-dream-title').val() || '').trim();
+        const title = ($('#theater-dream-title').val() || '').trim() || source.title || '未命名长梦';
         if (!title) { toastr.warning('请给这部长梦起一个名字'); return; }
         const worldLineRelation = $('input[name="theater-dream-world-line-relation"]:checked').val() || LONG_DREAM_WORLD_LINE_RELATION.ISOLATED;
         const worldBookPolicy = worldLineRelation === LONG_DREAM_WORLD_LINE_RELATION.ISOLATED
@@ -5390,7 +5390,7 @@ function bindEvents() {
         const ok = await SillyTavern.getContext().Popup.show.confirm(`删除《${dream.title}》？`, '整部长卷和其中的章节都会删除，普通历史不会受影响。');
         if (!ok) return;
         if (!(await longDreamDelete(dream.id))) return;
-        clearLongDreamComposerDraft(dream.id);
+        clearLongDreamComposerDraft(dream.id, { forgetTarget: true });
         longDreamView = 'list';
         activeLongDreamId = null;
         longDreamWorkspaceSection = 'works';
@@ -5753,9 +5753,18 @@ function bindEvents() {
         closeInstructionActionMenus();
         $('#theater-instruction-list').html(renderInstList(settings.instructionTemplates || []));
     });
-    $d.off('click.tipage').on('click.tipage', '.theater-inst-page', function () {
-        instPage += Number($(this).data('step')) || 0;
-        refreshInstUI();
+    $d.off('click.tipage').on('click.tipage', '.theater-list-page', function () {
+        const nav = this.closest('[data-list-kind]');
+        const kind = nav.dataset.listKind;
+        const next = requestedListPage(this.dataset.pageAction, kind === 'inst' ? instPage : histPage,
+            Number(nav.dataset.pageCount), nav.querySelector('.theater-page-number').value);
+        if (kind === 'inst') { instPage = next; refreshInstUI(); }
+        else { resetHistorySelectionGesture(); histPage = next; refreshHistList(); }
+    });
+    $d.off('keydown.tipage').on('keydown.tipage', '.theater-page-number', function (event) {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        this.closest('[data-list-kind]').querySelector('[data-page-action="jump"]').click();
     });
     $d.off('change.ticb').on('change.ticb', '.theater-inst-checkbox', function (e) {
         e.stopPropagation();
@@ -5928,6 +5937,7 @@ function bindEvents() {
         const chosen = await chooseTags({ title: '筛选保存的小剧场', selected: settings.historyTagFilter, allowUncategorized: true });
         if (chosen === null) return;
         settings.historyTagFilter = chosen;
+        histPage = 0;
         histSelected.clear();
         save(); refreshHistList(); refreshTagControls();
         if (histBatchMode) enterHistBatchMode();
@@ -6044,13 +6054,11 @@ function bindEvents() {
         resetHistorySelectionGesture();
     });
     $d.off('click.thsa').on('click.thsa', '#theater-hist-select-all', function () {
-        const visible = filterHistoryAll(historyCache);
+        const visible = listPage(filterHistoryAll(historyCache), histPage).items;
         if (visible.length && visible.every(item => histSelected.has(item.id))) {
-            histSelected.clear();
-            $(this).find('span').text('全选');
+            visible.forEach(item => histSelected.delete(item.id));
         } else {
             visible.forEach(h => histSelected.add(h.id));
-            $(this).find('span').text('取消全选');
         }
         refreshHistList();
         if (histBatchMode) enterHistBatchMode();
@@ -6146,9 +6154,9 @@ function bindEvents() {
         settings.longDreamMemoryPrompt = focusPrompt;
         save();
     });
-    $d.off('click.tdmemorypresetcopy').on('click.tdmemorypresetcopy', '#theater-copy-dream-memory-preset', function () {
+    $d.off('click.tdmemorypresetcopy').on('click.tdmemorypresetcopy', '#theater-copy-dream-memory-preset', async function () {
         const source = selectedLongDreamMemoryAnalysisPreset();
-        const name = prompt('给新的梦脉分析预设起个名字：', source.builtin ? '我的梦脉侧重点' : `${source.name} 副本`);
+        const name = await askNewItemName('给新的梦脉分析预设起个名字：', source.builtin ? '我的梦脉侧重点' : `${source.name} 副本`);
         if (name === null || !String(name).trim()) return;
         const author = prompt('作者名（可留空）：', source.author || '') ?? '';
         const preset = createLongDreamMemoryPreset({ name, author, description: source.description, focusPrompt: source.focusPrompt });
@@ -6299,7 +6307,7 @@ function bindEvents() {
         const config = readApiFormConfig();
         if (!validateApiPresetConfig(config)) return;
         const { Popup } = SillyTavern.getContext();
-        const input = await Popup.show.input('保存 API 预设', '给这套 API 配置起个名字：', apiPresetDefaultName(config));
+        const input = await askNewItemName('保存 API 预设', apiPresetDefaultName(config), 40);
         const name = String(input || '').trim().slice(0, 40);
         if (!name) return;
         const duplicate = normalizeApiPresetList(settings.apiPresets).find(preset => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase());
@@ -6637,13 +6645,19 @@ function updateHistorySelectionAutoScroll(clientX, clientY) {
 
 function refreshHistList() {
     const h = filterHistoryAll(historyCache);
-    const empty = historyCache.length ? '当前标签组合下没有历史' : '暂无';
-    $('#theater-history-list').html(h.length === 0 ? `<p class="theater-empty">${empty}</p>` : h.map(item => historyItemHTML(item)).join('')).removeAttr('data-pending-list');
+    $('#theater-history-list').html(renderHistoryList()).removeAttr('data-pending-list');
     $('#theater-export-all-history').toggle(historyCache.length > 0 && !histBatchMode);
     $('#theater-hist-select-all').toggle(h.length > 0);
     $('#theater-hist-batch-enter').toggle(h.length > 0 && !histBatchMode);
     updateHistBulkBar();
     refreshTagControls();
+}
+
+function renderHistoryList() {
+    const state = listPage(filterHistoryAll(historyCache), histPage);
+    histPage = state.page;
+    if (!state.total) return `<p class="theater-empty">${historyCache.length ? '当前标签组合下没有历史' : '暂无'}</p>`;
+    return state.items.map(item => historyItemHTML(item)).join('') + listPaginationHTML('hist', state);
 }
 
 function refreshTagControls() {
@@ -7437,6 +7451,13 @@ async function chooseTags({ title = '选择标签', subtitle = '可多选；多�
     return normalizeTagFilter($body.find('.theater-tag-choice input:checked').map((_, input) => input.value).get(), knownInstructionTags());
 }
 
+async function askNewItemName(title, defaultName, maxLength = 80) {
+    const { Popup, POPUP_TYPE } = SillyTavern.getContext();
+    const popup = new Popup(`<div class="theater-popup"><label>${esc(title)}<input class="theater-input theater-default-name" data-new-item-name maxlength="${maxLength}" value="" placeholder="${esc(defaultName)}" autocomplete="off"></label></div>`, POPUP_TYPE.CONFIRM, '', { okButton: '保存', cancelButton: '取消' });
+    if (!(await popup.show())) return null;
+    return (String($(popup.dlg).find('[data-new-item-name]').val() || '').trim() || String(defaultName).trim()).slice(0, maxLength);
+}
+
 async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已有标签，也可以同时新建一个标签', selected = [], okButton = '确认', templateName = null, nameLabel = '模板名称', namePlaceholder = '给这个模板起个名字' } = {}) {
     const { Popup, POPUP_TYPE } = SillyTavern.getContext();
     const known = knownInstructionTags();
@@ -7448,7 +7469,7 @@ async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已
         <div class="theater-section theater-compact-tag-body">
             ${templateName === null ? '' : `<div class="theater-tag-template-name-field">
                 <label for="theater-tag-template-name"><i class="fa-solid fa-file-signature"></i> ${esc(nameLabel)}</label>
-                <input id="theater-tag-template-name" class="theater-input" maxlength="60" autocomplete="off" value="${esc(templateName)}" placeholder="${esc(namePlaceholder)}">
+                <input id="theater-tag-template-name" class="theater-input theater-default-name" maxlength="60" autocomplete="off" value="" placeholder="${esc(templateName || namePlaceholder)}">
             </div>`}
             <div class="theater-compact-tag-heading"><b>选择标签</b><small>可多选 · 也可以不选</small></div>
             <div class="theater-tag-choice-list is-compact">${rows}${emptyHint}</div>
@@ -7496,7 +7517,7 @@ async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已
     const result = await showPromise;
     if (!result) return null;
 
-    const name = templateName === null ? null : String($body.find('#theater-tag-template-name').val() || '').trim();
+    const name = templateName === null ? null : String($body.find('#theater-tag-template-name').val() || '').trim() || String(templateName).trim();
     if (templateName !== null && !name) {
         toastr.warning(`${nameLabel}不能为空`);
         return null;
@@ -7712,7 +7733,7 @@ function clearInstSelection() {
 async function saveRenderTpl() {
     const content = $('#theater-render-content').val().trim();
     if (!content) return;
-    const name = await SillyTavern.getContext().Popup.show.input('保存渲染模板', '名字：');
+    const name = await askNewItemName('保存渲染模板', `渲染模板 ${settings.renderTemplates.length + 1}`);
     if (!name) return;
     settings.renderTemplates.push({ name, content });
     settings.selectedRenderIndex = String(settings.renderTemplates.length - 1);

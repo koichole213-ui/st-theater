@@ -2,6 +2,87 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { listPage, listPaginationHTML, requestedListPage } from '../pagination.js';
+
+test('历史分页跳转、跨页全选和删除末页回退不丢其他页的选择', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const render = source.match(/function renderHistoryList\([^]*?^}/m)[0];
+    const select = source.match(/'#theater-hist-select-all', function \(\) \{([^]*?)\n    \}\);/)[1];
+    const scope = { historyCache: Array.from({length:23}, (_,id) => ({id})), histPage:0,
+        histSelected:new Set(), histBatchMode:true, listPage, listPaginationHTML,
+        filterHistoryAll:items=>items, historyItemHTML:item=>`<article data-id="${item.id}"></article>`,
+        refreshHistList(){}, enterHistBatchMode(){} };
+    const page = () => runInNewContext(render + '\nrenderHistoryList()', scope);
+    assert.equal((page().match(/<article/g)||[]).length, 10);
+    runInNewContext('{'+select+'}',scope);
+    scope.histPage = requestedListPage('jump', 0, 3, '2'); page(); runInNewContext('{'+select+'}',scope);
+    assert.equal(scope.histSelected.size,20);
+    runInNewContext('{'+select+'}',scope);
+    assert.deepEqual([...scope.histSelected],Array.from({length:10},(_,i)=>i));
+    scope.histPage = requestedListPage('last', 1, 3); assert.match(page(), /data-id="22"/);
+    scope.historyCache = scope.historyCache.slice(0,20); page(); assert.equal(scope.histPage,1);
+    scope.histPage = requestedListPage('jump', 1, 2, '999'); page(); assert.equal(scope.histPage,1);
+    for(const value of ['', 'abc', '-1', '1.5']) assert.equal(requestedListPage('jump',1,2,value),1);
+    scope.histPage = requestedListPage('first',1,2); assert.match(page(), /data-id="0"/);
+    scope.historyCache=[]; assert.match(page(),/暂无/); assert.equal(scope.histPage,0);
+    for(const kind of ['hist','inst']) {
+        const html=listPaginationHTML(kind,listPage(Array(23),1));
+        for(const title of ['首页','上一页','下一页','末页','跳转']) assert.ok(html.includes(title));
+    }
+});
+
+test('长梦输入清空保留每部目标字数，删除长梦才移除，重新读取设置仍有效', () => {
+    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
+    const functions=['longDreamComposerDrafts','getLongDreamComposerDraft','setLongDreamComposerDraft','clearLongDreamComposerDraft']
+        .map(name=>source.match(new RegExp(`function ${name}\\([^]*?^}`, 'm'))[0]).join('\n');
+    const scope={settings:{},save(){}};
+    runInNewContext(functions + '\nsetLongDreamComposerDraft(1,{title:"旧章",instruction:"旧指令",targetChars:5000});setLongDreamComposerDraft(2,{targetChars:7000});clearLongDreamComposerDraft(1);',scope);
+    scope.settings=JSON.parse(JSON.stringify(scope.settings));
+    assert.equal(runInNewContext('getLongDreamComposerDraft(1).targetChars',scope),5000);
+    assert.equal(runInNewContext('getLongDreamComposerDraft(1).instruction',scope),'');
+    assert.equal(runInNewContext('getLongDreamComposerDraft(1).title',scope),'');
+    assert.equal(runInNewContext('getLongDreamComposerDraft(2).targetChars',scope),7000);
+    assert.equal(runInNewContext('getLongDreamComposerDraft(3).targetChars',scope),3000);
+    runInNewContext('clearLongDreamComposerDraft(1,{forgetTarget:true})',scope);
+    assert.equal(scope.settings.longDreamComposerDrafts['1'],undefined);
+});
+
+test('新建长梦来源切换只更新默认提示，空名保存采用来源标题', () => {
+    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
+    const change=source.match(/'#theater-dream-source', function \(\) \{([^]*?)\n    \}\);/)[1];
+    const create=source.match(/'#theater-dream-create-confirm', async function \(\) \{([^]*?)const worldLineRelation/)[1];
+    for(const input of ['', '  ', '自己的长梦']) {
+        let value=input, placeholder='旧来源';
+        const nameField={val(next){if(arguments.length){value=next;return this;}return value;},attr(_key,next){placeholder=next;return this;}};
+        const noop={val:()=>'', html(){return this;},removeClass(){return this;},addClass(){return this;},text(){return this;}};
+        const context={longDreamCanonSuggestionState:{}, resolveLongDreamSource:()=>({title:'新来源',key:'source'}),
+            resetLongDreamCanonSuggestions(){},longDreamSourceInstructionState:()=>({}),longDreamSourcePreviewHTML:()=>'',
+            refreshLongDreamCreateWorldBookState(){},renderLongDreamCanonSuggestions(){},
+            $:selector=>selector==='#theater-dream-title'?nameField:noop,
+            toastr:{warning(){throw Error('unexpected warning');}}};
+        runInNewContext('(function(){'+change+'})()',context);
+        assert.equal(value,input); assert.equal(placeholder,'新来源');
+        assert.equal(runInNewContext('(function(){'+create+'return title;})()',context),input.trim()||'新来源');
+    }
+});
+
+test('新建名称是空输入和默认提示，留空或空格采用默认，取消不保存', async () => {
+    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
+    for(const fn of ['askNewItemName','chooseTagsWithNew']) {
+        const code=source.match(new RegExp(`async function ${fn}\\([^]*?^}`, 'm'))[0];
+        for(const [input,confirmed,expected] of [['',true,'默认名称'],['  ',true,'默认名称'],[' 我的名字 ',true,'我的名字'],['',false,null]]) {
+            let html='';
+            const scope={settings:{},esc:s=>String(s),knownInstructionTags:()=>[], normalizeTagFilter:()=>[],
+                cleanTagName:s=>String(s||'').trim(), normalizeTagList:a=>a.filter(Boolean), TAG_UNCATEGORIZED:'__uncategorized__',
+                SillyTavern:{getContext:()=>({POPUP_TYPE:{CONFIRM:1},Popup:class {constructor(markup){html=markup;this.dlg={};} async show(){return confirmed;}}})},
+                $:()=>({on(){},find:selector=>({val:()=>selector.includes('name')?input:'',map:()=>({get:()=>[]})})}),
+                toastr:{warning(){throw Error('unexpected validation');}}};
+            const result=await runInNewContext(code+ (fn==='askNewItemName' ? '\naskNewItemName("保存","默认名称")' : '\nchooseTagsWithNew({templateName:"默认名称"})'),scope);
+            assert.equal(fn==='askNewItemName'?result:result?.name??null,expected);
+            assert.match(html,/value="" placeholder="默认名称"/);
+        }
+    }
+});
 import { createTokenBreakdownEstimator, estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
 import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml, recentGenerationRoundsContext } from '../generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection } from '../adaptive-render.js';
@@ -161,7 +242,7 @@ test('延迟进入历史会加载一次，批量恢复与刷新不显示全部�
     let renders = 0;
     const list = { hasAttribute: name => pending.has(name) };
     const context = {
-        settings: {}, historyCache: [{ id: '合成历史' }], histBatchMode: true,
+        settings: {}, historyCache: [{ id: '合成历史' }], histBatchMode: true, histPage: 0, listPage, listPaginationHTML,
         normalizeTheaterTab: tab => tab, filterHistoryAll: items => items,
         historyItemHTML: () => { renders++; return '<p>合成历史</p>'; },
         updateHistBulkBar() {}, refreshTagControls() {}, save() {},
@@ -179,7 +260,7 @@ test('延迟进入历史会加载一次，批量恢复与刷新不显示全部�
             return api;
         },
     };
-    runInNewContext(['activateTheaterTab', 'refreshHistList', 'enterHistBatchMode', 'exitHistBatchMode'].map(extract).join('\n')
+    runInNewContext(['activateTheaterTab', 'renderHistoryList', 'refreshHistList', 'enterHistBatchMode', 'exitHistBatchMode'].map(extract).join('\n')
         + '\nenterHistBatchMode(); activateTheaterTab("history"); activateTheaterTab("history");', context);
     assert.equal(renders, 1);
     assert.equal(pending.size, 0);
@@ -2799,13 +2880,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.2.8 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.2.9 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.2\.8'/);
-    assert.equal(manifest.version, '4.2.8');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.8/);
+    assert.match(source, /const VERSION = '4\.2\.9'/);
+    assert.equal(manifest.version, '4.2.9');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.2\.9/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -3204,7 +3285,11 @@ test('普通、自动和续写连续执行生成启动流程，完成日志和�
     // 保留入口到任务创建之间的全部代码，包括日志、界面状态和流式初始化。
     assert.ok(start >= 0 && end > start);
     const startup = source.slice(start, end);
-    for (const target of [0, 4999, 5000, 8000, 20000]) {
+    const scenarios = [0, 4999, 5000, 8000, 20000].map(target => ({ target, instruction: '合成任务', manual: true }));
+    for (const instruction of ['不得少于7000字', '不能少于七千字', '不超过7000字', '约7千字', '7000字左右', '7k字', '7,000字', '字数要求：7000']) {
+        scenarios.push({ target: 7000, instruction, manual: false });
+    }
+    for (const { target, instruction, manual } of scenarios) {
         for (const mode of ['manual', 'auto', 'continue']) {
             for (const autoContinue of [false, true]) {
                 const logs = [];
@@ -3212,7 +3297,7 @@ test('普通、自动和续写连续执行生成启动流程，完成日志和�
                 const ui = { length: 0, hide() { return this; }, show() { return this; },
                     text() { return this; }, empty() { return this; }, prop() { return this; } };
                 const context = {
-                    settings: { manualTargetEnabled: true, manualTargetChars: target, maxAutoRounds: 4, autoContinue },
+                    settings: { manualTargetEnabled: manual, manualTargetChars: target, maxAutoRounds: 3, autoContinue },
                     isGenerating: false, isPreparingGeneration: false,
                     continueContext: mode === 'manual' ? '' : '合成前情',
                     continuationSession: { direction: '合成方向', source: { rounds: ['合成前情'] } },
@@ -3221,7 +3306,7 @@ test('普通、自动和续写连续执行生成启动流程，完成日志和�
                     resolveRenderSelection: () => ({ selectedRender: '__default__', label: '合成模板', isPlainTextRender: false }),
                     assembleGenerationPayload: async (_instruction, options) => {
                         assemblies.push(options);
-                        return { targetWordCount: target, ctx: {}, diagnosticContext: {},
+                        return { targetWordCount: resolveTargetWordCount(_instruction, { manualEnabled: manual, manualTarget: target }), ctx: {}, diagnosticContext: {},
                             systemPrompt: '合成系统', userPrompt: '合成任务', isPlainTextRender: options.forcePlainText };
                     },
                     updateContinueHint() {}, clearRequestIssue() {}, knownInstructionTags: () => [],
@@ -3231,13 +3316,13 @@ test('普通、自动和续写连续执行生成启动流程，完成日志和�
                     createCumulativeStreamRenderer: () => ({ update() {}, reset() {} }),
                 };
                 const run = runInNewContext('(' + startup + '\nreturn currentGenerationJob;\n})', context);
-                const job = await run('合成任务', mode === 'auto', []);
+                const job = await run(instruction, mode === 'auto', []);
                 assert.equal(context.isPreparingGeneration, false);
                 assert.equal(context.isGenerating, true);
                 assert.equal(logs.filter(([, message]) => message === '生成开始').length, 1);
                 assert.equal(assemblies.length, 1);
                 assert.equal(assemblies[0].continuationText, mode === 'continue' ? '合成前情' : '');
-                assert.equal(job.maxRounds, target >= 5000 && autoContinue ? 4 : 1);
+                assert.equal(job.maxRounds, target >= 5000 && autoContinue ? 3 : 1);
                 assert.equal(job.autoContinue, target >= 5000 && autoContinue);
                 assert.equal(job.minimumRounds, target >= 5000 && autoContinue && mode !== 'continue' ? 2 : 1);
             }
@@ -5025,6 +5110,27 @@ test('独立目标字数默认不接管，开启后覆盖指令中的目标', ()
     assert.equal(resolveTargetWordCount('没有字数要求', { manualEnabled: true, manualTarget: 2000 }), 2000);
 });
 
+test('常见篇幅说法统一为近似目标，清理完整要求且不误取故事数字', () => {
+    for (const phrase of ['不得少于7000字', '不能少于7000字', '不可少于7000字', '不可低于7000字', '不低于7000字',
+        '不得超过7000字', '不超过7000字', '最多7000字', '至少7000字', '大约7000字',
+        '七千字左右', '7千字左右', '7k字左右', '7,000字左右', '0.7万字左右',
+        '字数要求：7000', '篇幅：7000字']) {
+        const instruction = `描写雨夜重逢。${phrase}。保持人物性格。`;
+        assert.equal(resolveTargetWordCount(instruction), 7000, phrase);
+        const cleaned = stripTargetWordCountRequirement(instruction);
+        assert.match(cleaned, /描写雨夜重逢/);
+        assert.match(cleaned, /保持人物性格/);
+        assert.doesNotMatch(cleaned, /7000|七千|7千|7k|7,000|0\.7万|不得|不能|不可|不超过|字数要求|篇幅/);
+    }
+    for (const phrase of ['7000字', '7千字', '7k字', '7,000字', '七千字']) {
+        assert.equal(resolveTargetWordCount(`雨夜重逢\n${phrase}`), 7000);
+    }
+    for (const instruction of ['两人在7000年前相遇', '她读完一封7000字的信', '没有字数要求']) {
+        assert.equal(resolveTargetWordCount(instruction), null);
+    }
+    assert.equal(resolveTargetWordCount('不得少于7000字', { manualEnabled: true, manualTarget: 9000 }), 9000);
+});
+
 test('旧用户升级时默认开启目标字数自动补写，迁移只执行一次', () => {
     const settings = { autoContinue: false };
     assert.equal(migrateAutoContinueDefault(settings), true);
@@ -5636,7 +5742,7 @@ test('模板分页每页10条，跨页筛选保持原索引和勾选，删除末
     const render = source.match(/function renderInstList\(arr\) \{[\s\S]*?\n\}/)[0];
     const filter = source.match(/function filterInstAll\(arr\) \{[\s\S]*?\n\}/)[0];
     const templates = Array.from({ length: 23 }, (_, i) => ({ name: `模板${i}`, tags: [i % 2 ? '奇数' : '偶数'] }));
-    const scope = { settings: { instructionTagFilter: [] }, instSearch: '', instPage: 0, INST_PAGE_SIZE: 10,
+    const scope = { settings: { instructionTagFilter: [] }, instSearch: '', instPage: 0, INST_PAGE_SIZE: 10, listPage, listPaginationHTML,
         instSelected: new Set([0, 10]), knownInstructionTags: () => ['奇数', '偶数'], matchesTagFilter, esc: value => String(value), templates };
     const renderPage = (code = '') => runInNewContext(`${filter}\n${render}\n${code}\nrenderInstList(templates);`, scope);
     const count = html => (html.match(/class="theater-inst-item/g) || []).length;

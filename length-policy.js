@@ -1,9 +1,13 @@
-const NUMBER_PATTERN = '(\\d[\\d,]*(?:\\.\\d+)?\\s*[kK]?|[零〇一二两三四五六七八九十百千万]+)';
+const NUMBER_PATTERN = '(\\d[\\d,]*(?:\\.\\d+)?\\s*[kK千万]?|[零〇一二两三四五六七八九十百千万]+)';
+const TARGET_PREFIX = '(?:不得少于|不能少于|不可少于|不得低于|不能低于|不可低于|不得超过|不能超过|不可超过|不少于|不低于|不超过|不多于|至少|至多|最多|最少|起码|最低|最高|保底|大于|超过|少于|低于|写满|达到|达成|大约|大概|约莫|约)';
+const TARGET_SUFFIX = '(?:以上|以下|左右|上下|以内|附近|内|起)';
 
 const TARGET_PATTERNS = [
-    new RegExp(`(?:至少|不少于|不低于|起码|最低|保底|大于|超过|写满|达到|达成)\\s*${NUMBER_PATTERN}\\s*(?:个)?字`),
-    new RegExp(`${NUMBER_PATTERN}\\s*(?:个)?字\\s*(?:以上|起|左右|上下|内)`),
+    new RegExp(`${TARGET_PREFIX}\\s*[：:]?\\s*${NUMBER_PATTERN}\\s*(?:个)?字`),
+    new RegExp(`(?<![\\d,.])${NUMBER_PATTERN}\\s*(?:个)?字\\s*${TARGET_SUFFIX}`),
     new RegExp(`(?:写|生成|输出|正文|篇幅|字数)[^\\n。；;]{0,12}?${NUMBER_PATTERN}\\s*(?:个)?字`),
+    new RegExp(`(?:字数|篇幅)(?:要求|目标)?\\s*[：:=为在]?\\s*${NUMBER_PATTERN}(?:\\s*字)?(?=[\\s。；;！!，,]|$)`),
+    new RegExp(`^\\s*${NUMBER_PATTERN}\\s*(?:个)?字\\s*[。！!]?\\s*$`, 'm'),
 ];
 
 export const LENGTH_TIERS = Object.freeze({
@@ -19,6 +23,8 @@ export const LONG_FORM_SPLIT_THRESHOLD = 8000;
 export function parseChineseNumber(raw) {
     const text = String(raw || '').trim();
     if (!text) return null;
+    const scaled = text.match(/^(\d[\d,]*(?:\.\d+)?)\s*([kK千万])$/);
+    if (scaled) return Math.round(Number(scaled[1].replace(/,/g, '')) * (scaled[2] === '万' ? 10000 : 1000));
     if (/^\d+(?:\.\d+)?\s*[kK]$/.test(text)) return Math.round(parseFloat(text) * 1000);
     if (/^\d[\d,]*(?:\.\d+)?$/.test(text)) return Math.round(parseFloat(text.replace(/,/g, '')));
 
@@ -73,10 +79,11 @@ export function stripTargetWordCountRequirement(instruction) {
     const found = findTargetMatch(instruction);
     if (!found) return String(instruction || '').trim();
     const escapedNumber = String(found.match[1]).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const targetPhrase = new RegExp(`(?:约|大约|至少|不少于|不低于|起码|最低|保底|大于|超过|写满|达到|达成)?\\s*${escapedNumber}\\s*(?:个)?字\\s*(?:以上|起|左右|上下|以内|内)?(?:的)?`, 'gi');
+    const targetPhrase = new RegExp(`(?:${TARGET_PREFIX}\\s*[：:]?)?\\s*${escapedNumber}\\s*(?:个)?字\\s*${TARGET_SUFFIX}?(?:的)?`, 'gi');
     const cleaned = found.text
         .replace(targetPhrase, '')
-        .replace(/(?:字数|篇幅)(?:要求|目标)?\s*(?:控制|设定)?\s*(?:为|在|达到|达成)?\s*(?=[，,。；;]|$)/g, '')
+        .replace(new RegExp(`(?:字数|篇幅)(?:要求|目标)?\\s*[：:=为在]?\\s*${escapedNumber}(?![\\d.])(?:\\s*字)?`, 'gi'), '')
+        .replace(/(?:字数|篇幅)(?:要求|目标)?\s*(?:控制|设定)?\s*(?:为|在|达到|达成)?\s*[：:=]?\s*(?=[，,。；;]|$)/g, '')
         .replace(/一个的/g, '一个')
         .replace(/^[\s，,。；;：:、-]+|[\s，,。；;：:、-]+$/g, '')
         .replace(/\s{2,}/g, ' ')
