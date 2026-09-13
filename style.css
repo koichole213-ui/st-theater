@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.2.9
+/* 千夜浮梦 · 小剧场生成器 v4.3.0
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -6981,17 +6981,46 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 }
 
 /* 模板列表分页：窄屏可换行，辅助文字保持左对齐。 */
-.theater-inst-pagination { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:10px 0; }
-.theater-inst-pagination > span { text-align:left; font-size:var(--t-text-xs); color:var(--t-fg-soft); }
-.theater-inst-pagination > button { min-height:36px; }
-.theater-inst-pagination > button:disabled { opacity:.4; cursor:default; }
-.theater-inst-pagination .theater-page-summary { flex:1 0 100%; text-align:left; }
-.theater-page-navigation { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; width:100%; }
-.theater-page-navigation .theater-btn { min-width:0; min-height:40px; padding:6px 4px; white-space:nowrap; font-size:var(--t-text-xs); }
-.theater-inst-pagination button:disabled { opacity:.4; cursor:default; }
-.theater-page-jump { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.theater-page-jump label { display:flex; align-items:center; gap:6px; text-align:left; color:var(--t-fg-soft); font-size:var(--t-text-xs); }
-.theater-page-jump .theater-page-number { width:64px; min-width:0; min-height:40px; margin:0; }
-.theater-page-jump .theater-btn { min-height:40px; }
+.theater-popup .theater-inst-pagination {
+    --page-surface:var(--t-bg); --page-ink:var(--t-fg);
+    --page-light:color-mix(in srgb,var(--page-surface) 35%,white);
+    --page-shade:color-mix(in srgb,var(--page-surface) 85%,#735a3e);
+    display:flex; flex-direction:column; align-items:center; gap:20px;
+    padding:16px 10px 20px; margin-top:12px; border-radius:16px;
+    background:var(--page-surface); color:var(--page-ink);
+}
+.theater-popup[data-skin="theater"] .theater-inst-pagination {
+    --page-surface:var(--SmartThemeBlurTintColor,var(--SmartThemeBgColor,#e8e8e8));
+    --page-ink:var(--SmartThemeBodyColor,#494b51);
+    --page-light:color-mix(in srgb,var(--page-surface) 90%,white);
+    --page-shade:color-mix(in srgb,var(--page-surface) 83%,black);
+}
+.theater-inst-pagination .theater-page-summary { align-self:stretch; text-align:left; font-size:var(--t-text-xs); color:var(--t-fg-soft); }
+.theater-page-navigation { display:flex; align-items:center; justify-content:center; gap:8px; max-width:100%; }
+.theater-popup .theater-inst-pagination .theater-list-page {
+    display:flex; align-items:center; justify-content:center; text-align:center;
+    flex:0 0 42px; width:42px; min-width:0; height:44px; min-height:44px;
+    padding:0; margin:0; border:1px solid var(--page-surface); border-radius:10px;
+    background:var(--page-surface); color:var(--page-ink); font-size:11px; line-height:1;
+    box-shadow:5px 5px 10px var(--page-shade),-5px -5px 10px var(--page-light);
+    transform:none; transition:box-shadow .15s; white-space:nowrap;
+}
+.theater-popup .theater-inst-pagination .theater-list-page:is([data-page-action="prev"],[data-page-action="next"]) { font-family:Georgia,serif; font-size:23px; }
+.theater-popup .theater-inst-pagination .theater-list-page:active:not(:disabled) { box-shadow:inset 3px 3px 7px var(--page-shade),inset -3px -3px 7px var(--page-light); }
+.theater-popup .theater-inst-pagination .theater-list-page:disabled { opacity:.35; box-shadow:none; cursor:default; }
+.theater-page-position { display:flex; align-items:baseline; justify-content:center; gap:5px; min-width:48px; text-align:center; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.theater-page-position strong { font-size:20px; font-weight:500; }
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-inst-pagination .theater-btn:not(.primary) { background:var(--page-surface); }
+.theater-page-position > span { font-size:11px; opacity:.7; }
+.theater-page-jump { display:flex; align-items:center; justify-content:center; gap:12px; }
+.theater-page-jump label { display:flex; align-items:center; gap:9px; text-align:left; color:var(--page-ink); font-size:11px; }
+.theater-popup .theater-page-jump .theater-page-number { width:40px; min-width:0; height:34px; min-height:34px; margin:0; padding:0; border:0; border-radius:7px; text-align:center; background:var(--page-surface); color:var(--page-ink); box-shadow:inset 2px 2px 5px var(--page-shade),inset -2px -2px 5px var(--page-light); appearance:textfield; }
+.theater-page-number::-webkit-inner-spin-button { appearance:none; }
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-page-jump .theater-input { background:var(--page-surface); color:var(--page-ink); }
+.theater-popup .theater-page-jump .theater-list-page { height:36px; min-height:36px; font-size:10px; box-shadow:3px 3px 7px var(--page-shade),-3px -3px 7px var(--page-light); }
+.theater-popup .theater-inst-pagination :is(button,input):focus-visible { outline:2px solid var(--page-ink); outline-offset:3px; }
+.theater-popup[data-skin="custom"] .theater-inst-pagination { --page-surface:transparent; --page-ink:currentColor; --page-light:transparent; --page-shade:transparent; }
+@media(max-width:360px) { .theater-page-navigation { gap:5px; } .theater-popup .theater-inst-pagination .theater-list-page { flex-basis:40px; width:40px; } }
+@media(prefers-reduced-motion:reduce) { .theater-popup .theater-inst-pagination .theater-list-page { transition:none; } }
 .theater-default-name::placeholder { color:var(--t-fg-soft, #888); opacity:.7; }
 .theater-default-name:focus::placeholder { color:transparent; }

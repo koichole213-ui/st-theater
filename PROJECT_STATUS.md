@@ -3,6 +3,13 @@
 > 最后核对：2026-09-13（Asia/Shanghai）
 > 这份文件记录会变化的项目现状。长期施工规则以仓库外层的 `AGENTS.md` 和禾禾当轮要求为准。
 
+## 最新发布交接：v4.3.0 柔和浮雕分页（2026-09-13，预览分支）
+
+- **用户确认与授权**：禾禾认可 `design-previews/pagination-soft-relief.html` 的浮起／按下凹陷设计及三种配色，明确接入并直接push，版本指定4.3.0。基线 `121e5c1`，仅发布 `codex/long-dream-preview`，主支不动。
+- **改动范围**：`pagination.js` 将当前页放在居中导航中间，上下页改箭头并保留中文无障碍名称；首页／末页／跳转／回车的动作和现有分页逻辑不变。`style.css` 限定分页区域为柔和浮雕、文字居中，统计说明左对齐；默认奶油底、跟随酒馆读取现有主题色并派生阴影，自定义CSS皮肤保留透明无阴影基底。修正旧规则覆盖分页按钮和输入框背景的级联问题，支持减少动画和键盘焦点。
+- **版本与验证**：index VERSION、manifest、样式头及版本测试同步4.3.0，设置页引用VERSION；相关JS语法、差异检查和核心258/258通过。独立终审未发现功能缺陷，提出窄屏大页码和输入框背景核对项，主代理已补验。隔离Edge使用正式CSS和真实分页HTML，在320/390/900宽、默认／酒馆浅色／酒馆深色下无横向溢出、导航及文字居中、按下阴影为inset；另验100页，320截图目视通过。真实酒馆全页面及手机触控、用户实际主题仍待更新后确认；未调用创作API。
+- **发布文件与保护**：仅 `pagination.js`、`style.css`、`index.js`、`manifest.json`、`tests/core.test.js`、本交接。独立设计稿与截图、`.codex-remote-attachments/`、`standalone-scripts/`不发布。最终提交号与远端一致性由本轮Git流程核对。
+
 ## 最新发布交接：v4.2.9 操作优化与字数识别（2026-09-13，预览分支）
 
 - **授权与范围**：禾禾明确“可以啦，先推送吧小砚”，重新授权将下方两批已审查改动一起发布到 `codex/long-dream-preview`；发布基线 `3fb4cdc`。仅提交 `index.js`、`length-policy.js`、新增 `pagination.js`、`manifest.json`、`style.css`、`tests/core.test.js` 和本交接，主支不动，三个原有未跟踪目录保留。
