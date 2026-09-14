@@ -47,7 +47,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.0';
+const VERSION = '4.3.1';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -6224,6 +6224,11 @@ function bindEvents() {
     $d.off('change.tautorounds').on('change.tautorounds', '#theater-max-auto-rounds', function () {
         settings.maxAutoRounds = Math.min(10, Math.max(1, parseInt(this.value) || 3));
         this.value = settings.maxAutoRounds;
+        save();
+    });
+    $d.off('change.tmaxtokens').on('change.tmaxtokens', '#theater-max-output-tokens', function () {
+        settings.maxOutputTokens = normalizeMaxTokens(this.value);
+        this.value = settings.maxOutputTokens;
         save();
     });
 
