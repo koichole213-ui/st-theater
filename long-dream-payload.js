@@ -1,6 +1,7 @@
 import { LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION } from './long-dream.js';
 import { composePresetMessages } from './request-layout.js';
 import { readableCharCount } from './text-counter.js';
+import { STORY_RELATION_CONTINUITY_RULE } from './generation-payload.js';
 
 function cleanText(value) {
     return String(value || '').trim();
@@ -410,6 +411,8 @@ export function buildLongDreamChapterPayload({
     const systemPrompt = [
         '你正在续写一部长篇支线故事。你只能依据用户已经确认的此梦世界线、这部长卷自身的章节与已确认梦脉继续创作；不得读取、猜测或恢复原聊天前文、普通续写缓存及未提供的世界书设定。此梦设定是不可静默推翻的硬事实；若本章方向与它冲突，应停止创作并明确指出冲突。',
         worldLineRelationInstruction(context.worldLineRelation),
+        STORY_RELATION_CONTINUITY_RULE,
+        '上述关系承接以此梦已确认的定梦硬事实为边界；本章方向若与定梦冲突，仍须停止并指出冲突，不得将其视为已经批准修改定梦。',
         hasIdentityContext ? '【人物继承规则】角色卡与 User 人设用于保持人物身份、核心性格、说话方式和行为倾向；其中若含有与此梦设定或已保存章节冲突的原世界线事实，以此梦设定和本卷已经发生的内容为准。' : '',
         cleanText(protagonistAnchor),
         style ? `【写作风格｜只控制表达，不得改写事实】\n${style}` : '',

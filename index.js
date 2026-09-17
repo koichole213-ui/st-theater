@@ -9,7 +9,7 @@ import { compareVersion, fetchInstalledExtensionStatus, fetchLatestRemoteVersion
 import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
-import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml, recentGenerationRoundsContext } from './generation-payload.js';
+import { STORY_RELATION_CONTINUITY_RULE, buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml, recentGenerationRoundsContext } from './generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection } from './adaptive-render.js';
 import { normalizeContinuationRounds, continuationRoundHistory, createContinuationSession, appendContinuationVersion, selectContinuationVersion, displayedContinuationVersion } from './continuation-session.js';
 import { createTokenBreakdownEstimator, debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
@@ -47,7 +47,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.1';
+const VERSION = '4.3.2';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -8454,7 +8454,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         charName: name2 || character?.name || character?.data?.name,
     });
     let fixed = contCtx
-        ? '只输出新增内容，保持人物语气、视角和时态，不要复述前文。'
+        ? `只输出新增内容，保持人物语气、视角和时态，不要复述前文。\n${STORY_RELATION_CONTINUITY_RULE}`
         : '请根据以上所有信息生成小剧场，严格遵守渲染规则。';
     fixed += `\n${protagonistAnchor}`;
     fixed += `\n【创作节奏】${longFormPlan ? longFormFirstRoundGuidance(targetWordCount) : firstRoundGuidance(targetWordCount)}`;

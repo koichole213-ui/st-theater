@@ -1,3 +1,5 @@
+export const STORY_RELATION_CONTINUITY_RULE = '【本篇关系承接】后续写作须承接本篇正文已经建立的身份、相识经过、人物关系和称呼；角色卡、世界书、预设及聊天记录中与本篇冲突的旧关系不得覆盖本篇事实，不得补入与本篇冲突或本篇明确不继承的原世界共同经历及熟人关系。符合本篇指令与既有世界线继承规则、且不冲突的人物关系、共同经历、性格、说话方式及背景仍可沿用，不因本篇尚未重述就一律清空。除非用户明确要求改变相应设定，或本篇情节已经交代关系变化，否则不得突然切换关系；允许有情节依据的自然发展，不得仅凭原世界资料虚构本篇已经发生过的关系变化。';
+
 export function buildGenerationPayload(parts = {}) {
     const preset = String(parts.preset || '');
     const role = String(parts.role || '');
@@ -115,9 +117,9 @@ export function buildFinalRenderPayload({ sourceText = '', rules = '', originalI
 
 export function buildContinuationPayload({ instruction = '', manuscriptMode = false } = {}) {
     return {
-        systemPrompt: manuscriptMode
+        systemPrompt: (manuscriptMode
             ? '你正在补完同一份尚未完成的小剧场正文。所有正文轮共同组成一个作品，不是续集或后日谈。已有正文是不可重复的前半稿；只输出紧接其后的缺失正文，保持人物、视角、时态与文风一致。'
-            : '你正在续写同一篇小剧场。只负责承接给出的结尾创作新增正文，保持人物、视角、时态与文风一致。',
+            : '你正在续写同一篇小剧场。只负责承接给出的结尾创作新增正文，保持人物、视角、时态与文风一致。') + '\n\n' + STORY_RELATION_CONTINUITY_RULE,
         userPrompt: String(instruction || '').trim(),
     };
 }

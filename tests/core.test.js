@@ -84,7 +84,7 @@ test('新建名称是空输入和默认提示，留空或空格采用默认，�
     }
 });
 import { createTokenBreakdownEstimator, estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
-import { buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml, recentGenerationRoundsContext } from '../generation-payload.js';
+import { STORY_RELATION_CONTINUITY_RULE, buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml, recentGenerationRoundsContext } from '../generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection } from '../adaptive-render.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, MESSAGE_COMPATIBILITY, applyIndependentOpenAICompatibility, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, hasReasoningContent, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { CUSTOM_STREAM_IDLE_TIMEOUT_MS, readNonStreamingResponse, readSSEStream, requestCustomApi, requestMainApi } from '../api-runtime.js';
@@ -384,7 +384,7 @@ test('前文排除同时进入预估、正式消息和世界书扫描，不改�
         currentPresetSnapshot: () => snapshot, ensureSelectedPresetLoaded: async () => snapshot,
         DEFAULT_SYSTEM_PROMPT: '默认', prepareContinuationContext: value => value || '', continueContext: '续写' + EXCLUSION_TEST_FOOTER,
         resolveTargetWordCount: () => 0, buildProtagonistAnchor: () => '人物锚点', firstRoundGuidance: () => '节奏',
-        buildGenerationPayload, generationIdentitySlots: () => ({}),
+        STORY_RELATION_CONTINUITY_RULE, buildGenerationPayload, generationIdentitySlots: () => ({}),
         composePresetMessages: options => [...options.chatMessages, ...options.tailMessages],
         freezeGenerationFoundationList: items => Object.freeze(items.map(item => Object.freeze({ ...item }))),
         runtimeLog() {},
@@ -394,6 +394,8 @@ test('前文排除同时进入预估、正式消息和世界书扫描，不改�
     const full = await assemble(instruction);
     const estimate = await assemble(instruction, { loadPreset: false, evaluateWorldBook: false, estimateOnly: true });
     assert.deepEqual(estimate.tokenParts, full.tokenParts);
+    assert.ok(full.messages.some(message => message.content.includes(STORY_RELATION_CONTINUITY_RULE)));
+    assert.ok(full.tokenParts.rules.includes(STORY_RELATION_CONTINUITY_RULE));
     assert.equal(full.generationFoundation.chatMessages.length, 1);
     assert.equal(full.generationFoundation.chatMessages[0].content, '<p>正常段落</p>');
     assert.doesNotMatch(full.tokenParts.context, /人间藏万相/);
@@ -2880,13 +2882,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.3.1 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.3.2 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.3\.1'/);
-    assert.equal(manifest.version, '4.3.1');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.1/);
+    assert.match(source, /const VERSION = '4\.3\.2'/);
+    assert.equal(manifest.version, '4.3.2');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.2/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -4915,6 +4917,45 @@ test('HTML 网关错误页不会被当作模型正文', () => {
     assert.equal(isHtmlErrorResponse('text/html; charset=UTF-8', 'Cloudflare error'), true);
     assert.equal(isHtmlErrorResponse('text/plain', '<!DOCTYPE html><html><body>524</body></html>'), true);
     assert.equal(isHtmlErrorResponse('text/plain', '<article>合法的小剧场片段</article>'), false);
+});
+
+test('普通与长文自动补写、长梦新章和草稿恢复均传递本篇关系优先规则', () => {
+    const previous = '雨夜捡回的天使与他刚刚相识。';
+    const direction = '两人通过本篇相处逐渐成为恋人。';
+    for (const manuscriptMode of [false, true]) {
+        const instruction = buildContinuationInstruction({ round: 2, draft: previous, manuscriptMode, originalInstruction: direction });
+        const payload = buildContinuationPayload({ instruction, manuscriptMode });
+        const messages = composeGenerationContinuationMessages({
+            presetEntries: [], slots: {}, worldInfoEntries: [], chatMessages: [], foundationTailMessages: [],
+            continuationSystemPrompt: payload.systemPrompt, continuationUserPrompt: payload.userPrompt,
+        });
+        assert.ok(messages.some(message => message.role === 'system' && message.content.includes(STORY_RELATION_CONTINUITY_RULE)));
+        assert.ok(messages.some(message => message.content.includes(previous)));
+        assert.match(payload.systemPrompt, /除非用户明确要求改变相应设定/);
+        assert.match(payload.systemPrompt, /允许有情节依据的自然发展/);
+        assert.match(payload.systemPrompt, /符合本篇指令与既有世界线继承规则、且不冲突的人物关系/);
+    }
+    const record = createLongDreamRecord({ canon: '此梦中两人没有亲属关系。', source: { text: previous, html: `<main>${previous}</main>` } });
+    for (const currentDraft of ['', '天使在本章第一次告诉他自己的名字。']) {
+        const payload = buildLongDreamChapterPayload({ record, instruction: direction, currentDraft, continuationRound: !!currentDraft });
+        const messages = buildLongDreamChapterMessages({ payload, presetEntries: [], slots: {} });
+        assert.ok(messages.some(message => message.content.includes(STORY_RELATION_CONTINUITY_RULE)));
+        assert.match(payload.systemPrompt, /本章方向若与定梦冲突，仍须停止并指出冲突/);
+        assert.ok(payload.userPrompt.includes(previous));
+        assert.ok(payload.userPrompt.includes(direction));
+        if (currentDraft) assert.ok(payload.userPrompt.includes(currentDraft));
+    }
+    for (const [worldLineRelation, expected] of [
+        [LONG_DREAM_WORLD_LINE_RELATION.PARALLEL, '原剧情、关系、年龄和人物现状不是本梦事实'],
+        [LONG_DREAM_WORLD_LINE_RELATION.CANON_CONCURRENT, '重大事件和人物关系默认成立'],
+        [LONG_DREAM_WORLD_LINE_RELATION.SEQUEL, '冻结世界书属于已经发生的历史'],
+    ]) {
+        const inherited = createLongDreamRecord({ worldLineRelation, source: { text: previous, html: `<main>${previous}</main>` } });
+        const payload = buildLongDreamChapterPayload({ record: inherited });
+        assert.ok(payload.systemPrompt.includes(expected));
+        assert.ok(payload.systemPrompt.includes(STORY_RELATION_CONTINUITY_RULE));
+        assert.match(payload.systemPrompt, /且不冲突的人物关系、共同经历/);
+    }
 });
 
 test('自动续写达到目标的 90% 后停止', () => {
