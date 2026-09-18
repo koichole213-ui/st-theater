@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.3.4
+/* 千夜浮梦 · 小剧场生成器 v4.3.5
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -6517,6 +6517,10 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-panel[data-panel="long-dream"] .theater-dream-memory-state-editor > label > span { color:var(--t-accent-deep); font-size:10px; font-weight:800; letter-spacing:.1em; }
 .theater-panel[data-panel="long-dream"] .theater-dream-memory-state-editor > label > small { grid-row:2; color:var(--t-fg-mute); font-size:9px; }
 .theater-panel[data-panel="long-dream"] .theater-dream-memory-state-editor > label > button { grid-column:2; grid-row:1 / span 2; padding:6px 0; color:var(--t-fg-mute); border:0; background:transparent; font-size:10px; cursor:pointer; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-state-editor > label > small { text-align:left; }
+.theater-panel[data-panel="long-dream"] .theater-dream-summary-actions { display:flex; justify-content:flex-end; margin-top:10px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-summary-actions > button { position:static; min-height:36px; max-width:100%; padding:6px 12px; border:1px solid var(--t-line); border-radius:8px; background:transparent; color:var(--t-accent-deep); font:inherit; font-size:var(--t-text-xs); cursor:pointer; }
+.theater-panel[data-panel="long-dream"] .theater-dream-summary-actions > button:disabled { opacity:.5; cursor:default; }
 .theater-panel[data-panel="long-dream"] .theater-dream-memory-current-state-readonly {
     position:relative;
     margin-top:12px;

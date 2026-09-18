@@ -48,7 +48,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.4';
+const VERSION = '4.3.5';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -3042,8 +3042,9 @@ function longDreamMemoryCardsHTML(dream) {
             ${cards.length || legacyCards.length ? `<button type="button" data-dream-memory-filter="legacy" aria-pressed="false">旧版 ${cards.length + legacyCards.length}</button>` : ''}
         </nav>
         <div class="theater-dream-memory-state-editor">
-            <label><span>当前脉象</span><button type="button" data-dream-summary-refresh ${memoryLocked || conflicts.length || memory.pendingChapterNumbers?.length ? 'disabled' : ''}>更新概要</button><small>剧情概要；与下方梦脉条目分开保存。${dream.memory?.summaryNeedsRefresh ? '当前概要待更新，请先完成补织和冲突确认。' : '可单独更新，不改正文或梦脉条目。'}</small>${currentState ? '<button type="button" data-dream-memory-state-toggle aria-expanded="false">展开</button>' : ''}</label>
+            <label><span>当前脉象</span><small>剧情概要；与下方梦脉条目分开保存。${dream.memory?.summaryNeedsRefresh ? '当前概要待更新，请先完成补织和冲突确认。' : '可单独更新，不改正文或梦脉条目。'}</small>${currentState ? '<button type="button" data-dream-memory-state-toggle aria-expanded="false">展开</button>' : ''}</label>
             <div class="theater-dream-memory-current-state-readonly ${currentState ? 'is-clamped' : ''}">${currentState ? esc(currentState) : '尚未形成当前状态摘要。'}</div>
+            <div class="theater-dream-summary-actions"><button type="button" data-dream-summary-refresh ${memoryLocked || conflicts.length || memory.pendingChapterNumbers?.length ? 'disabled' : ''}>更新概要</button></div>
         </div>
         ${conflicts.length ? `<section class="theater-dream-memory-conflicts"><h4>有 ${conflicts.length} 处需要你决定</h4>${conflicts.map(conflict => `<article data-dream-memory-conflict="${esc(conflict.id)}"><p>${esc(conflictLabels[conflict.reason] || '新章节提出了不能静默覆盖的变化')}。</p><small>来自第 ${conflict.chapterNumber} 章 · ${conflict.reason === 'missing-target' ? '需要从已保存正文补织缺失记录' : '原记忆暂时保持不变'}</small><div class="theater-dream-memory-card-actions"><button type="button" class="theater-btn" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="${conflict.reason === 'missing-target' ? 'reweave' : 'accept'}">${conflict.reason === 'missing-target' ? '补织后再确认' : '以新章节为准'}</button><button type="button" class="theater-btn danger" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="keep">保留我的版本</button></div></article>`).join('')}</section>` : ''}
         <div class="theater-dream-memory-flow-list">
