@@ -2617,7 +2617,8 @@ test('旧梦脉跨章状态还原历史，未来事件不进入重写前情，�
     assert.equal(branch.memory.threads.length, 0);
     assert.deepEqual(branch.memory.pendingChapterNumbers, [2, 3]);
     assert.doesNotMatch(JSON.stringify(branch.memory), /恋人|未来婚礼|未来找到旧信|未来结局/);
-    assert.match(branch.memory.currentState, /朋友/);
+    assert.equal(branch.memory.currentState, '');
+    assert.equal(branch.memory.summaryNeedsRefresh, true);
     assert.equal(record.memory.states[0].value, '恋人');
 });
 
@@ -2635,7 +2636,7 @@ test('状态回退恢复历史主体和主题，缺少槽位快照的旧历史�
     assert.deepEqual(branch.memory.states[0].subjects, ['甲']);
     assert.equal(branch.memory.states[0].attribute, 'possession');
     assert.equal(branch.memory.states[0].topic, '钥匙');
-    assert.match(branch.memory.currentState, /甲：携带旧钥匙/);
+    assert.equal(branch.memory.currentState, '');
     assert.doesNotMatch(JSON.stringify(branch.memory), /未来/);
     for (const entry of restored.memory.states[0].history) {
         delete entry.subjects;
@@ -2670,7 +2671,7 @@ test('补织较早章不能覆盖已保留的较新状态、事项进展或偏�
     assert.doesNotMatch(record.memory.currentState, /过时|旧地点|旧进展|旧身份/);
 });
 
-test('重织有冲突时概要不再空白，接受与保留均按最终有效梦脉恢复概要', () => {
+test('重织冲突不会把梦脉条目拼成概要，接受与保留标记独立摘要待更新', () => {
     let record = createLongDreamRecord({ source: { text: '一', html: '<p>一</p>' } });
     record = prepareLongDreamMemoryRegeneration(record);
     record = applyLongDreamMemoryPatch(record, { currentState: '不能提前采用的新位置', operations: [
@@ -2678,15 +2679,15 @@ test('重织有冲突时概要不再空白，接受与保留均按最终有效�
         { op: 'set_state', targetId: 'missing', subjects: ['甲'], attribute: 'location', value: '新位置', chapterNumber: 1 },
     ] }, 1);
     assert.equal(record.memory.pendingConflicts.length, 1);
-    assert.match(record.memory.currentState, /朋友/);
+    assert.equal(record.memory.currentState, '');
     assert.doesNotMatch(record.memory.currentState, /新位置/);
     for (const action of ['accept', 'keep']) {
         const restored = normalizeLongDreamRecord(JSON.parse(JSON.stringify(record)));
         const result = resolveLongDreamMemoryV2RecordConflict(restored, restored.memory.pendingConflicts[0].id, action);
         assert.equal(result.memory.pendingConflicts.length, 0);
-        assert.match(result.memory.currentState, /朋友/);
-        if (action === 'accept') assert.match(result.memory.currentState, /新位置/);
-        else assert.doesNotMatch(result.memory.currentState, /新位置/);
+        assert.equal(result.memory.currentState, '');
+        assert.equal(result.memory.summaryNeedsRefresh, true);
+        assert.equal(result.memory.states.some(item => item.value === '新位置'), action === 'accept');
     }
 });
 
@@ -3008,7 +3009,7 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /data-dream-memory-action="\$\{dismissed \? 'restore' : 'dismiss'\}"/);
     assert.match(source, /theater-dream-memory-current-state-readonly/);
     assert.match(source, /data-dream-memory-v2-action="save"/);
-    assert.match(source, /data-dream-memory-conflict-action="accept"/);
+    assert.match(source, /data-dream-memory-conflict-action="\$\{conflict.reason === 'missing-target' \? 'reweave' : 'accept'\}"/);
     assert.match(source, /id="theater-dream-memory-analysis-preset"/);
     assert.match(source, /id="theater-import-dream-memory-preset"/);
     assert.match(source, /id="theater-dream-memory-selection"/);
@@ -3069,13 +3070,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.3.3 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.3.4 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.3\.3'/);
-    assert.equal(manifest.version, '4.3.3');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.3/);
+    assert.match(source, /const VERSION = '4\.3\.4'/);
+    assert.equal(manifest.version, '4.3.4');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.4/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -6088,4 +6089,65 @@ test('普通新稿第三轮中断后保存再续写只带第二轮和未完成�
     const session=createContinuationSession({sourceText:'整篇旧正文',sourceRounds:restored.continuationRounds});
     assert.equal(session.source.text,rounds[1]+'\n\n'+live);
     assert.doesNotMatch(session.source.text,/第一轮/);
+});
+
+test('独立剧情概要使用正文和确认事实，保存快照且不执行模型返回的操作', async () => {
+    const { refreshLongDreamSummary } = await import('../long-dream-summary.js');
+    const { buildLongDreamSummaryPayload } = await import('../long-dream-memory.js');
+    let record = createLongDreamRecord({ source: { text: '两人在雨夜进入车站，等候末班车。', html: '<p>正文</p>' } });
+    record = applyLongDreamMemoryPatch(record, { currentState: '原先连贯概要', operations: [] }, 1);
+    const payload = buildLongDreamSummaryPayload(record);
+    assert.match(payload.userPrompt, /两人在雨夜进入车站/);
+    assert.doesNotMatch(payload.userPrompt, /原先连贯概要/);
+    const result = await refreshLongDreamSummary({ record,
+        request: async () => JSON.stringify({ currentState: '雨夜里，两人抵达车站，正在等候末班车。', operations: [{ op: 'set_state', subjects: ['甲'], attribute: 'location', value: '恶意地点', chapterNumber: 1 }] }),
+        readLatest: () => record, save: value => value,
+    });
+    assert.equal(result.memory.currentState, '雨夜里，两人抵达车站，正在等候末班车。');
+    assert.deepEqual(result.memory.states, record.memory.states);
+    assert.equal(result.memory.summaryNeedsRefresh, false);
+    assert.equal(normalizeLongDreamRecord(JSON.parse(JSON.stringify(result))).memory.summaryHistory[0].text, result.memory.currentState);
+});
+
+test('概要失败、空返回、期间修改或删除作品都不覆盖原概要', async () => {
+    const { refreshLongDreamSummary } = await import('../long-dream-summary.js');
+    let record = createLongDreamRecord({ source: { text: '正文', html: '<p>正文</p>' } });
+    record = applyLongDreamMemoryPatch(record, { currentState: '原概要', operations: [] }, 1);
+    let saves = 0;
+    const options = { record, readLatest: () => record, save: () => { saves++; } };
+    await assert.rejects(refreshLongDreamSummary({ ...options, request: async () => { throw new Error('断网'); } }));
+    await assert.rejects(refreshLongDreamSummary({ ...options, request: async () => '{}' }), /概要返回为空/);
+    for (const latest of [null, { ...record, memory: { ...record.memory, currentState: '用户已修改' } }]) {
+        assert.equal(await refreshLongDreamSummary({ ...options, request: async () => '{"currentState":"过时结果"}', readLatest: () => latest }), null);
+    }
+    assert.equal(saves, 0);
+    assert.equal(record.memory.currentState, '原概要');
+});
+
+test('缺失事项冲突可安排补织，不清空有效梦脉或保存伪造事项', () => {
+    let record = createLongDreamRecord({ source: { text: '正文', html: '<p>正文</p>' } });
+    record = applyLongDreamMemoryPatch(record, { currentState: '原剧情概要', operations: [
+        { op: 'set_state', subjects: ['甲'], attribute: 'location', value: '车站', chapterNumber: 1 },
+    ] }, 1);
+    record = applyLongDreamMemoryPatch(record, { operations: [
+        { op: 'resolve_thread', targetId: 'missing', resolution: '结束', chapterNumber: 1 },
+    ] }, 1);
+    assert.equal(record.memory.pendingConflicts.length, 1);
+    const result = resolveLongDreamMemoryV2RecordConflict(record, record.memory.pendingConflicts[0].id, 'reweave');
+    assert.equal(result.memory.pendingConflicts.length, 0);
+    assert.equal(result.memory.states[0].value, '车站');
+    assert.equal(result.memory.threads.length, 0);
+    assert.equal(result.memory.currentState, '原剧情概要');
+    assert.deepEqual(result.memory.pendingChapterNumbers, [1]);
+    assert.equal(result.memory.processedThroughChapter, 0);
+});
+
+test('重写回退取对应阶段的独立剧情概要，不拼条目或携带未来摘要', () => {
+    let record = createLongDreamRecord({ source: { text: '初遇', html: '<p>初遇</p>' } });
+    record = applyLongDreamMemoryPatch(record, { currentState: '两人初遇，正在寻找住处。', operations: [] }, 1);
+    record = appendLongDreamChapter(record, { text: '后来', html: '<p>后来</p>' });
+    record = applyLongDreamMemoryPatch(record, { currentState: '未来两人已结婚。', operations: [] }, 2);
+    const branch = createLongDreamBranch(record, 'chapter-2', { includeChapter: false });
+    assert.equal(branch.memory.currentState, '两人初遇，正在寻找住处。');
+    assert.doesNotMatch(JSON.stringify(branch.memory), /未来两人/);
 });

@@ -1,3 +1,4 @@
+import { refreshLongDreamSummary } from './long-dream-summary.js';
 // 千夜浮梦 · 小剧场生成器 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
 
@@ -47,7 +48,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.3';
+const VERSION = '4.3.4';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -2989,7 +2990,7 @@ function longDreamMemoryCardsHTML(dream) {
         'missing-target': '新变化引用的旧记忆已经不存在',
         'target-type-mismatch': '新变化引用了不匹配的记忆类型',
     };
-    if (!cards.length && !legacyCards.length && !v2Count && !currentState && !conflicts.length) return '';
+    if (!cards.length && !legacyCards.length && !v2Count && !currentState && !conflicts.length && !dream.chapters?.length) return '';
 
     const field = (name, label, value, { rows = 0, placeholder = '', list = null } = {}) => {
         if (list) return `<label class="ia-field theater-dream-memory-flow-field"><span>${label}</span><select class="ui-select theater-select" data-dream-memory-v2-field="${name}" ${memoryLocked ? 'disabled' : ''}>${list.map(([option, text]) => `<option value="${esc(option)}" ${option === value ? 'selected' : ''}>${esc(text)}</option>`).join('')}</select></label>`;
@@ -3041,10 +3042,10 @@ function longDreamMemoryCardsHTML(dream) {
             ${cards.length || legacyCards.length ? `<button type="button" data-dream-memory-filter="legacy" aria-pressed="false">旧版 ${cards.length + legacyCards.length}</button>` : ''}
         </nav>
         <div class="theater-dream-memory-state-editor">
-            <label><span>当前脉象</span><small>只读摘要；冲突处理或章节回退后会按有效梦脉重新整理。错误内容请在下方对应梦脉中校正。</small>${currentState ? '<button type="button" data-dream-memory-state-toggle aria-expanded="false">展开</button>' : ''}</label>
+            <label><span>当前脉象</span><button type="button" data-dream-summary-refresh ${memoryLocked || conflicts.length || memory.pendingChapterNumbers?.length ? 'disabled' : ''}>更新概要</button><small>剧情概要；与下方梦脉条目分开保存。${dream.memory?.summaryNeedsRefresh ? '当前概要待更新，请先完成补织和冲突确认。' : '可单独更新，不改正文或梦脉条目。'}</small>${currentState ? '<button type="button" data-dream-memory-state-toggle aria-expanded="false">展开</button>' : ''}</label>
             <div class="theater-dream-memory-current-state-readonly ${currentState ? 'is-clamped' : ''}">${currentState ? esc(currentState) : '尚未形成当前状态摘要。'}</div>
         </div>
-        ${conflicts.length ? `<section class="theater-dream-memory-conflicts"><h4>有 ${conflicts.length} 处需要你决定</h4>${conflicts.map(conflict => `<article data-dream-memory-conflict="${esc(conflict.id)}"><p>${esc(conflictLabels[conflict.reason] || '新章节提出了不能静默覆盖的变化')}。</p><small>来自第 ${conflict.chapterNumber} 章 · 原记忆暂时保持不变</small><div class="theater-dream-memory-card-actions"><button type="button" class="theater-btn" data-dream-memory-conflict-action="accept">以新章节为准</button><button type="button" class="theater-btn danger" data-dream-memory-conflict-action="keep">保留我的版本</button></div></article>`).join('')}</section>` : ''}
+        ${conflicts.length ? `<section class="theater-dream-memory-conflicts"><h4>有 ${conflicts.length} 处需要你决定</h4>${conflicts.map(conflict => `<article data-dream-memory-conflict="${esc(conflict.id)}"><p>${esc(conflictLabels[conflict.reason] || '新章节提出了不能静默覆盖的变化')}。</p><small>来自第 ${conflict.chapterNumber} 章 · ${conflict.reason === 'missing-target' ? '需要从已保存正文补织缺失记录' : '原记忆暂时保持不变'}</small><div class="theater-dream-memory-card-actions"><button type="button" class="theater-btn" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="${conflict.reason === 'missing-target' ? 'reweave' : 'accept'}">${conflict.reason === 'missing-target' ? '补织后再确认' : '以新章节为准'}</button><button type="button" class="theater-btn danger" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="keep">保留我的版本</button></div></article>`).join('')}</section>` : ''}
         <div class="theater-dream-memory-flow-list">
         ${groups.map(([kind, , , items]) => items.map(item => v2Card(kind, item)).join('')).join('')}
         ${(cards.length || legacyCards.length) ? [...cards, ...legacyCards].map(card => {
@@ -5244,6 +5245,7 @@ function bindEvents() {
             toastr.warning(error?.message || String(error));
         }
     });
+    $d.off('click.tdsummary').on('click.tdsummary', '[data-dream-summary-refresh]', () => refreshLongDreamSummaryNow(activeLongDreamId));
     $d.off('click.tdmemoryconflict').on('click.tdmemoryconflict', '[data-dream-memory-conflict-action]', async function () {
         const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
         const card = $(this).closest('[data-dream-memory-conflict]');
@@ -5254,7 +5256,13 @@ function bindEvents() {
             const saved = await longDreamPut(resolveLongDreamMemoryV2RecordConflict(dream, conflictId, action));
             if (!saved) return;
             renderLongDreamPanel();
-            toastr.success(action === 'accept' ? '已采用新章节带来的变化' : '已保留原记忆并否定这次变化');
+            if (action === 'reweave') {
+                toastr.info('已保留有效梦脉，将从正文重新补织缺失记录');
+                queueLongDreamMemoryWeave(saved.id, { force: true, announce: true });
+            } else {
+                toastr.success(action === 'accept' ? '已采用新章节带来的变化' : '已保留原记忆并否定这次变化');
+                if (!saved.memory.pendingConflicts.length && !saved.memory.pendingChapterNumbers.length) await refreshLongDreamSummaryNow(saved.id);
+            }
         } catch (error) {
             toastr.warning(error?.message || String(error));
         }
@@ -9314,6 +9322,32 @@ function queueLongDreamMemoryWeave(dreamId, { force = false, announce = false } 
         .finally(() => queuedLongDreamMemoryIds.delete(key));
 }
 
+const refreshingLongDreamSummaries = new Set();
+async function refreshLongDreamSummaryNow(dreamId) {
+    const key = String(dreamId);
+    if (refreshingLongDreamSummaries.has(key)) return;
+    const dream = longDreamCache.find(item => String(item.id) === key);
+    const preset = selectedLongDreamMemoryApiPreset();
+    if (!dream) return;
+    if (!preset) { toastr.warning('请先绑定梦脉副 API，再更新概要'); return; }
+    refreshingLongDreamSummaries.add(key);
+    try {
+        const saved = await refreshLongDreamSummary({
+            record: dream,
+            request: payload => requestCustomApi({ config: { ...preset, maxOutputTokens: Math.min(8192, normalizeMaxTokens(preset.maxOutputTokens, 4096)) }, ...payload, shouldStream: false, onChunk: () => {}, log: runtimeLog }),
+            readLatest: () => longDreamCache.find(item => String(item.id) === key),
+            save: record => longDreamPut(record),
+        });
+        if (saved) toastr.success('剧情概要已更新');
+        else toastr.info('作品或梦脉刚刚发生变化，本次概要未覆盖，请重新更新');
+    } catch {
+        toastr.warning('概要未能更新，原概要已保留；完成补织和冲突确认后可点击“更新概要”重试');
+    } finally {
+        refreshingLongDreamSummaries.delete(key);
+        if (String(activeLongDreamId) === key) renderLongDreamPanel();
+    }
+}
+
 async function weaveLongDreamMemory(dreamId, { force = false, announce = false } = {}) {
     const dream = longDreamCache.find(item => String(item.id) === String(dreamId));
     if (!dream || settings.longDreamMemoryEnabled === false) return;
@@ -9367,6 +9401,7 @@ async function weaveLongDreamMemory(dreamId, { force = false, announce = false }
         });
         if (String(activeLongDreamId) === String(dream.id) && longDreamView === 'detail') renderLongDreamPanel();
         if (announce) toastr.success(`梦脉已织录至第 ${payload.throughChapter} 章`);
+        if (saved.memory.summaryNeedsRefresh && !saved.memory.pendingConflicts.length && !saved.memory.pendingChapterNumbers.length) await refreshLongDreamSummaryNow(saved.id);
     } catch (error) {
         const latest = longDreamCache.find(item => String(item.id) === String(dream.id)) || weaving;
         const signal = error?.diagnosticSignal || REQUEST_DIAGNOSTIC_SIGNAL.INVALID_RESPONSE;

@@ -168,6 +168,10 @@ function safeMemory(memory = {}, fallbackDate) {
         pendingConflicts: v2.pendingConflicts,
         lastBatchChanges: v2.lastBatchChanges,
         currentState: cleanText(memory?.currentState, 5000),
+        summaryNeedsRefresh: memory?.summaryNeedsRefresh === true,
+        summaryHistory: (Array.isArray(memory?.summaryHistory) ? memory.summaryHistory : [])
+            .filter(item => Number.isInteger(item.chapterNumber) && item.chapterNumber > 0 && typeof item.text === 'string')
+            .map(item => ({ chapterNumber: item.chapterNumber, text: cleanText(item.text, 5000) })).slice(-100),
         processedThroughChapter: Math.max(0, Math.floor(Number(memory?.processedThroughChapter) || 0)),
         pendingChapterNumbers: (Array.isArray(memory?.pendingChapterNumbers) ? memory.pendingChapterNumbers : [])
             .map(value => Math.max(1, Math.floor(Number(value) || 0)))

@@ -1,23 +1,3 @@
-// Work only from accepted structured facts. Never reuse a rejected batch's prose.
-export function summarizeAcceptedMemory(memory = {}) {
-    const lines = [];
-    const visible = items => (items || []).filter(item => !item.hiddenFromPrompt);
-    for (const item of visible(memory.states)) lines.push(`${item.subjects.join('、')}：${item.value}`);
-    for (const item of visible(memory.threads)) {
-        const detail = item.status === 'resolved' ? item.resolution
-            : item.status === 'abandoned' ? item.abandonedReason : item.progress;
-        const status = item.status === 'resolved' ? '已解决：' : item.status === 'abandoned' ? '已放弃：' : '';
-        lines.push(`${status}${item.content}${detail ? `；${detail}` : ''}`);
-    }
-    for (const item of visible(memory.transitions)) lines.push(`${item.subjects.join('、')}：${item.from ? `${item.from} → ` : ''}${item.to || item.cause}`);
-    for (const item of visible(memory.deviations)) lines.push(item.dreamChange);
-    for (const item of [...(memory.cards || []), ...(memory.legacyCards || [])]) {
-        if (item.status !== 'dismissed') lines.push(item.content);
-    }
-    const unique = [...new Set(lines.map(line => String(line || '').trim()).filter(Boolean))];
-    return unique.length ? unique.join('\n').slice(0, 5000) : '当前暂无已确认的有效梦脉可供概括。';
-}
-
 // Old records have state history, but do not have full snapshots for every kind
 // of mutable memory. Preserve provable facts and schedule missing history only.
 export function retainMemoryThroughChapter(memory, cutoff) {
@@ -86,6 +66,8 @@ export function retainMemoryThroughChapter(memory, cutoff) {
     result.pendingChapterNumbers = Array.from({ length: cutoff - processed }, (_, i) => processed + i + 1);
     result.status = result.pendingChapterNumbers.length ? 'pending' : processed ? 'ready' : 'not-started';
     result.lastErrorSignal = '';
-    result.currentState = changed ? summarizeAcceptedMemory(result) : source.currentState;
+    result.summaryHistory = (source.summaryHistory || []).filter(item => item.chapterNumber <= cutoff);
+    result.currentState = changed ? (result.summaryHistory.slice().sort((a, b) => a.chapterNumber - b.chapterNumber).at(-1)?.text || '') : source.currentState;
+    result.summaryNeedsRefresh = changed || source.summaryNeedsRefresh === true;
     return result;
 }

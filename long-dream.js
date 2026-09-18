@@ -9,7 +9,7 @@ import {
 } from './long-dream-memory-model.js';
 
 export { LONG_DREAM_MEMORY_SCHEMA_VERSION } from './long-dream-memory-model.js';
-import { retainMemoryThroughChapter, summarizeAcceptedMemory } from './long-dream-memory-recovery.js';
+import { retainMemoryThroughChapter } from './long-dream-memory-recovery.js';
 
 export const LONG_DREAM_SCHEMA_VERSION = 4;
 
@@ -276,6 +276,8 @@ function normalizeMemory(memory = {}, chapterCount = 0) {
         legacyCards,
         ...v2,
         currentState: cleanText(memory?.currentState, 5000),
+        summaryNeedsRefresh: memory?.summaryNeedsRefresh === true,
+        summaryHistory: (Array.isArray(memory?.summaryHistory) ? memory.summaryHistory : []).filter(item => Number.isInteger(item.chapterNumber) && item.chapterNumber > 0 && item.chapterNumber <= chapterCount && typeof item.text === 'string').map(item => ({ chapterNumber: item.chapterNumber, text: cleanText(item.text, 5000) })).slice(-100),
         processedThroughChapter,
         pendingChapterNumbers,
         updatedAt: cleanText(memory?.updatedAt, 60),
@@ -758,8 +760,12 @@ export function applyLongDreamMemoryPatch(record, patch = {}, throughChapter, no
             ...normalized.memory,
             ...application.memory,
             currentState: application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0
-                ? normalized.memory.currentState || summarizeAcceptedMemory({ ...normalized.memory, ...application.memory })
-                : cleanText(patch.currentState || normalized.memory.currentState || summarizeAcceptedMemory({ ...normalized.memory, ...application.memory }), 5000),
+                ? normalized.memory.currentState
+                : cleanText(patch.currentState || normalized.memory.currentState, 5000),
+            summaryNeedsRefresh: !!(application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0 || !patch.currentState),
+            summaryHistory: !(application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0) && patch.currentState
+                ? [...normalized.memory.summaryHistory.filter(item => item.chapterNumber !== processedThroughChapter), { chapterNumber: processedThroughChapter, text: cleanText(patch.currentState, 5000) }]
+                : normalized.memory.summaryHistory,
             processedThroughChapter,
             pendingChapterNumbers: normalized.chapters
                 .map(chapter => chapter.number)
@@ -883,6 +889,8 @@ export function updateLongDreamMemoryState(record, currentState, now = new Date(
         memory: {
             ...normalized.memory,
             currentState: cleanText(currentState, 5000),
+            summaryNeedsRefresh: false,
+            summaryHistory: [...normalized.memory.summaryHistory.filter(item => item.chapterNumber !== normalized.chapters.length), { chapterNumber: normalized.chapters.length, text: cleanText(currentState, 5000) }],
             updatedAt,
         },
         updatedAt,
@@ -929,13 +937,23 @@ export function resolveLongDreamMemoryV2RecordConflict(record, conflictId, actio
     const normalized = normalizeLongDreamRecord(record);
     if (!normalized) throw new Error('长梦记录无效');
     const updatedAt = normalizeIsoDate(now, new Date().toISOString());
+    if (action === 'reweave') {
+        const conflict = normalized.memory.pendingConflicts.find(item => item.id === conflictId);
+        if (!conflict || conflict.reason !== 'missing-target') return normalized;
+        return { ...normalized, updatedAt, memory: { ...normalized.memory,
+            pendingConflicts: normalized.memory.pendingConflicts.filter(item => item.id !== conflictId),
+            processedThroughChapter: 0, pendingChapterNumbers: normalized.chapters.map(item => item.number),
+            status: LONG_DREAM_MEMORY_STATUS.PENDING, summaryNeedsRefresh: true, updatedAt,
+        } };
+    }
+    const conflictChapter = normalized.memory.pendingConflicts.find(item => item.id === conflictId)?.chapterNumber;
     const v2 = resolveLongDreamMemoryConflict(normalized.memory, conflictId, action, {
         worldLineRelation: normalized.inheritance.worldLineRelation,
         now,
     });
     return {
         ...normalized,
-        memory: normalizeMemory({ ...normalized.memory, ...v2, currentState: summarizeAcceptedMemory({ ...normalized.memory, ...v2 }), updatedAt }, normalized.chapters.length),
+        memory: normalizeMemory({ ...normalized.memory, ...v2, currentState: normalized.memory.currentState, summaryNeedsRefresh: true, summaryHistory: normalized.memory.summaryHistory.filter(item => item.chapterNumber < conflictChapter), updatedAt }, normalized.chapters.length),
         updatedAt,
     };
 }
