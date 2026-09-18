@@ -6964,7 +6964,8 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-panel[data-panel="long-dream"] .theater-dream-review-fullscreen:hover {
     transform:translateY(calc(-50% - 1px));
 }
-.theater-panel[data-panel="long-dream"] .theater-dream-review-actions {
+.theater-panel[data-panel="long-dream"] .theater-dream-review-actions,
+.theater-panel[data-panel="long-dream"] .theater-dream-candidate-actions {
     width:min(100%,560px);
     margin-inline:auto;
 }
@@ -6985,21 +6986,14 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 }
 
 .theater-panel[data-panel="long-dream"] .theater-dream-candidate-actions {
-    display:flex;
-    flex-wrap:wrap;
-    justify-content:center;
+    display:grid;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
     gap:8px;
-    width:100%;
 }
 .theater-panel[data-panel="long-dream"] .theater-dream-candidate-actions > .theater-dream-regenerate {
+    width:100%;
     min-width:0;
-    min-height:44px;
     margin:0;
-    padding:8px 12px;
-    gap:6px;
-    font-size:12px;
-    line-height:1.3;
-    white-space:nowrap;
 }
 
 /* 紧凑分页：居中薄底座，跳转区略大，辅助说明左对齐。 */
