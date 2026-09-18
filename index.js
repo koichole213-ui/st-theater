@@ -47,7 +47,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.2';
+const VERSION = '4.3.3';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -3041,7 +3041,7 @@ function longDreamMemoryCardsHTML(dream) {
             ${cards.length || legacyCards.length ? `<button type="button" data-dream-memory-filter="legacy" aria-pressed="false">旧版 ${cards.length + legacyCards.length}</button>` : ''}
         </nav>
         <div class="theater-dream-memory-state-editor">
-            <label><span>当前脉象</span><small>副 API 生成的只读摘要；错误内容请在下方对应梦脉中校正。</small>${currentState ? '<button type="button" data-dream-memory-state-toggle aria-expanded="false">展开</button>' : ''}</label>
+            <label><span>当前脉象</span><small>只读摘要；冲突处理或章节回退后会按有效梦脉重新整理。错误内容请在下方对应梦脉中校正。</small>${currentState ? '<button type="button" data-dream-memory-state-toggle aria-expanded="false">展开</button>' : ''}</label>
             <div class="theater-dream-memory-current-state-readonly ${currentState ? 'is-clamped' : ''}">${currentState ? esc(currentState) : '尚未形成当前状态摘要。'}</div>
         </div>
         ${conflicts.length ? `<section class="theater-dream-memory-conflicts"><h4>有 ${conflicts.length} 处需要你决定</h4>${conflicts.map(conflict => `<article data-dream-memory-conflict="${esc(conflict.id)}"><p>${esc(conflictLabels[conflict.reason] || '新章节提出了不能静默覆盖的变化')}。</p><small>来自第 ${conflict.chapterNumber} 章 · 原记忆暂时保持不变</small><div class="theater-dream-memory-card-actions"><button type="button" class="theater-btn" data-dream-memory-conflict-action="accept">以新章节为准</button><button type="button" class="theater-btn danger" data-dream-memory-conflict-action="keep">保留我的版本</button></div></article>`).join('')}</section>` : ''}
@@ -3389,6 +3389,7 @@ function longDreamDetailHTML(dream) {
         <div class="review-canvas theater-dream-review-canvas"><iframe id="theater-dream-review-frame" sandbox="" title="待确认长梦章节"></iframe><div id="theater-dream-review-fallback" class="theater-dream-review-fallback" hidden></div></div>
         <div class="theater-dream-review-actions"><button type="button" id="theater-dream-discard-draft" class="ui-btn ui-btn-sm"><i class="fa-solid fa-rotate-left"></i><span>放弃重写</span></button><button type="button" id="theater-dream-confirm-chapter" class="ui-btn ui-btn-sm ui-btn-primary"><i class="fa-solid fa-check"></i><span>确认保存</span></button></div>
         <button type="button" id="theater-dream-regenerate-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" ${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? 'disabled' : ''}><i class="fa-solid fa-plus"></i><span>${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? '已保留三版' : '按原要求再生成一版'}</span></button>
+        <button type="button" id="theater-dream-revise-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" ${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? 'disabled' : ''}><i class="fa-solid fa-pen-to-square"></i><span>修改要求再生成</span></button>
     </section></div>` : '';
     return `<div class="theater-dream-detail theater-dream-continuation" data-id="${esc(dream.id)}">
         ${writeFlow}${reviewFlow}
@@ -5113,6 +5114,7 @@ function bindEvents() {
         toastr.info('本章续写指令已清空');
     });
     $d.off('click.tdregenerate').on('click.tdregenerate', '#theater-dream-regenerate-draft', regenerateLongDreamDraft);
+    $d.off('click.tdrevise').on('click.tdrevise', '#theater-dream-revise-draft', () => regenerateLongDreamDraft({ edit: true }));
     $d.off('click.tdcandidate').on('click.tdcandidate', '[data-dream-candidate-step]', function () {
         changeLongDreamDraftCandidate(Number($(this).attr('data-dream-candidate-step')) || 0);
     });
@@ -9137,7 +9139,7 @@ async function refreshLongDreamTokenEstimate() {
 
 const scheduleLongDreamTokenEstimate = debounce(refreshLongDreamTokenEstimate, 220);
 
-async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
+async function generateNextLongDreamChapter({ appendCandidate = false, candidateConfig = null } = {}) {
     if (isGenerating || isPreparingGeneration) {
         toastr.warning('普通小剧场正在生成，请完成或停止后再续写长梦');
         return;
@@ -9174,10 +9176,10 @@ async function generateNextLongDreamChapter({ appendCandidate = false } = {}) {
     const $titleInput = $('#theater-dream-next-title');
     const $instructionInput = $('#theater-dream-next-instruction');
     const $targetInput = $('#theater-dream-next-target');
-    const chapterTitle = String(($titleInput.length ? $titleInput.val() : composerDraft.title)
+    const chapterTitle = String((candidateConfig?.title ?? ($titleInput.length ? $titleInput.val() : composerDraft.title))
         || `第 ${dream.chapters.length + 1} 章`).trim();
-    const instruction = String($instructionInput.length ? ($instructionInput.val() || '') : (composerDraft.instruction || ''));
-    const targetChars = Math.max(500, Math.min(8000, Math.round(Number($targetInput.length ? $targetInput.val() : composerDraft.targetChars) || 3000)));
+    const instruction = String(candidateConfig?.instruction ?? ($instructionInput.length ? ($instructionInput.val() || '') : (composerDraft.instruction || '')));
+    const targetChars = Math.max(500, Math.min(8000, Math.round(Number(candidateConfig?.targetChars ?? ($targetInput.length ? $targetInput.val() : composerDraft.targetChars)) || 3000)));
     setLongDreamComposerDraft(dream.id, { chapterTitle, title: chapterTitle, instruction, targetChars });
     let foundation;
     isPreparingGeneration = true;
@@ -9409,7 +9411,7 @@ async function discardLongDreamDraft() {
     toastr.info(isWritingCandidate ? `本轮生成已清除，已回到 ${candidateCount} 版候选；指令已保留` : `${label}已清除，指令已保留`);
 }
 
-async function regenerateLongDreamDraft() {
+async function regenerateLongDreamDraft({ edit = false } = {}) {
     const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
     const draft = dream?.draft;
     if (draft?.status !== LONG_DREAM_DRAFT_STATUS.REVIEW) return;
@@ -9418,15 +9420,30 @@ async function regenerateLongDreamDraft() {
         toastr.info(`同一章最多保留 ${LONG_DREAM_MAX_CANDIDATES} 版候选`);
         return;
     }
-    setLongDreamComposerDraft(dream.id, {
-        instruction: draft.instruction,
+    let instruction = draft.instruction;
+    if (edit) {
+        const { Popup, POPUP_TYPE } = SillyTavern.getContext();
+        const popup = new Popup(`<div class="theater-popup"><h3>修改要求再生成</h3><p style="text-align:left">修改下方完整指令后，生成一个新版本。已有 ${candidateCount} 版会原样保留，最多共存三版。请具体写明要调整的表现；旧候选不会作为正文前文发送。</p><label style="display:block;text-align:left">本次完整续写指令<textarea class="theater-textarea" data-dream-revised-instruction rows="8" style="width:100%;box-sizing:border-box;text-align:left">${esc(instruction)}</textarea></label></div>`, POPUP_TYPE.CONFIRM, '', { wide: false, okButton: '生成新版本', cancelButton: '取消', allowVerticalScrolling: true });
+        const shown = popup.show();
+        const input = $(popup.dlg).find('[data-dream-revised-instruction]');
+        if (!await shown) return;
+        instruction = String(input.val() || '');
+        const current = longDreamCache.find(item => String(item.id) === String(dream.id));
+        if (String(activeLongDreamId) !== String(dream.id) || current?.draft !== draft) {
+            toastr.info('章节状态已变化，请重新打开修改要求');
+            return;
+        }
+    }
+    const candidateConfig = {
+        instruction,
         title: draft.title,
         targetChars: draft.targetChars,
-    });
-    toastr.info(`正在按原要求生成第 ${candidateCount + 1} 版，已有候选不会被覆盖`);
+    };
+    setLongDreamComposerDraft(dream.id, candidateConfig);
+    toastr.info(`正在按${edit ? '修改后的' : '原'}要求生成第 ${candidateCount + 1} 版，已有候选不会被覆盖`);
     longDreamWorkspaceSection = 'continue';
     longDreamView = 'detail';
-    await generateNextLongDreamChapter({ appendCandidate: true });
+    await generateNextLongDreamChapter({ appendCandidate: true, candidateConfig });
 }
 
 async function changeLongDreamDraftCandidate(step) {

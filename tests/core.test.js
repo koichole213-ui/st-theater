@@ -1329,6 +1329,80 @@ test('长梦连续生成并确认五章时只按顺序追加一次，不重复�
     assert.equal(new Set(record.chapters.map(chapter => chapter.id)).size, 6);
 });
 
+test('修改要求入口确认采用新指令，取消、状态变化和三版满额不发起生成', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const code = source.match(/async function regenerateLongDreamDraft\([^]*?^}/m)[0];
+    for (const mode of ['confirm', 'empty', 'cancel', 'stale', 'full', 'original']) {
+        const draft = { status: LONG_DREAM_DRAFT_STATUS.REVIEW, instruction: '原要求', title: '章名', targetChars: 3000, candidates: Array(mode === 'full' ? 3 : 1).fill({ text: '保留正文', html: '<p>保留正文</p>' }) };
+        const dream = { id: 7, draft };
+        const before = JSON.stringify(draft);
+        const calls = [];
+        let markup = '';
+        const scope = { activeLongDreamId: 7, longDreamCache: [dream], LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES,
+            esc: value => String(value), toastr: { info() {} },
+            setLongDreamComposerDraft: (_id, config) => calls.push(['save', config]),
+            generateNextLongDreamChapter: async config => calls.push(['generate', config]),
+            $: () => ({ find: () => ({ val: () => mode === 'empty' ? '' : '新的完整要求' }) }),
+            SillyTavern: { getContext: () => ({ POPUP_TYPE: { CONFIRM: 1 }, Popup: class {
+                constructor(html) { markup = html; this.dlg = {}; }
+                async show() { if (mode === 'stale') scope.activeLongDreamId = 8; return mode !== 'cancel'; }
+            } }) },
+        };
+        await runInNewContext(code + `\nregenerateLongDreamDraft({edit:${mode !== 'original'}})`, scope);
+        assert.equal(JSON.stringify(draft), before);
+        if (['cancel', 'stale', 'full'].includes(mode)) assert.equal(calls.length, 0);
+        else {
+            assert.equal(calls.length, 2);
+            assert.equal(calls[1][1].appendCandidate, true);
+            assert.equal(calls[1][1].candidateConfig.instruction, mode === 'original' ? '原要求' : mode === 'empty' ? '' : '新的完整要求');
+        }
+        if (!['original', 'full'].includes(mode)) assert.ok(markup.includes('原要求'));
+    }
+});
+
+test('长梦修改要求生成保留三版各自指令，切换、重载和确认不串版', async () => {
+    const record = createLongDreamRecord({ source: { text: '唯一已确认的前文。', html: '<main>唯一已确认的前文。</main>' } });
+    const prompts = [];
+    const controller = createLongDreamGenerationController({
+        requestChapter: async ({ userPrompt }) => { prompts.push(userPrompt); return { text: `候选正文${prompts.length}。` }; },
+        renderChapter: async ({ text }) => `<main>${text}</main>`,
+    });
+    const first = await controller.run({ record, instruction: '方向甲', chapterTitle: '原章名', targetChars: 1500 });
+    const before = JSON.stringify(first.record.draft.candidates[0]);
+    const second = await controller.run({ record: first.record, appendCandidate: true, instruction: '方向乙：请表现得更主动', targetChars: 2000 });
+    assert.equal(JSON.stringify(second.record.draft.candidates[0]), before);
+    assert.match(prompts[1], /方向乙：请表现得更主动/);
+    assert.doesNotMatch(prompts[1], /方向甲|候选正文1/);
+    const third = await controller.run({ record: second.record, appendCandidate: true, instruction: '' });
+    const reloaded = normalizeLongDreamRecord(JSON.parse(JSON.stringify(third.record)));
+    assert.deepEqual(reloaded.draft.candidates.map(item => item.instruction), ['方向甲', '方向乙：请表现得更主动', '']);
+    assert.deepEqual(reloaded.draft.candidates.map(item => item.text), ['候选正文1。', '候选正文2。', '候选正文3。']);
+    const selected = selectLongDreamDraftCandidate(reloaded, 0);
+    assert.equal(selected.draft.instruction, '方向甲');
+    assert.equal(selected.draft.targetChars, 1500);
+    const confirmed = await controller.confirm(selected);
+    assert.equal(confirmed.chapters[1].instruction, '方向甲');
+    assert.equal(confirmed.chapters[1].text, '候选正文1。');
+    await assert.rejects(controller.run({ record: reloaded, appendCandidate: true, instruction: '第四版' }), /最多保留 3 版/);
+    assert.equal(prompts.length, 3);
+});
+
+test('长梦旧候选迁移继承原指令，新版本失败后返回旧版恢复其指令', async () => {
+    const record = createLongDreamRecord({ source: { text: '第一章', html: '<p>第一章</p>' } });
+    const legacy = saveLongDreamDraft(record, { status: LONG_DREAM_DRAFT_STATUS.REVIEW, instruction: '旧要求', title: '旧标题', targetChars: 1500, text: '旧正文', html: '<p>旧正文</p>' });
+    assert.equal(legacy.draft.candidates[0].instruction, '旧要求');
+    const controller = createLongDreamGenerationController({ requestChapter: async () => { throw new Error('模拟失败'); }, renderChapter: async () => { throw new Error('不应进入排版'); } });
+    await assert.rejects(controller.run({ record: legacy, appendCandidate: true, instruction: '新要求' }), error => {
+        const failed = error.longDreamRecord;
+        assert.equal(failed.draft.instruction, '新要求');
+        assert.equal(failed.draft.candidates[0].instruction, '旧要求');
+        const restored = discardLongDreamWritingAttempt(failed);
+        assert.equal(restored.draft.instruction, '旧要求');
+        assert.equal(restored.draft.text, '旧正文');
+        return true;
+    });
+});
+
 test('长梦待确认章节最多保留三版，并只晋升用户选中的候选', async () => {
     const record = createLongDreamRecord({
         title: '三重月影',
@@ -2465,7 +2539,7 @@ test('重新生成整部梦脉会清理自动结果并保留人工校正、隐�
     assert.equal(regenerated.memory.rejections[0].signature, '错误地点');
 });
 
-test('旧章分支、重写与删除都保留原卷，并让新时间线重新织录梦脉', () => {
+test('旧章分支、重写与删除保留原卷和范围内梦脉，移除越界记忆', () => {
     let original = createLongDreamRecord({
         title: '原卷',
         source: { text: '第一章', html: '<main>第一章</main>' },
@@ -2494,13 +2568,126 @@ test('旧章分支、重写与删除都保留原卷，并让新时间线重新�
     assert.equal(branch.source.kind, 'long-dream-branch');
     assert.equal(branch.source.refId, 42);
     assert.equal(branch.chapters.length, 3);
-    assert.equal(branch.memory.cards.length, 0);
+    assert.equal(branch.memory.cards.length, 1);
     assert.deepEqual(branch.memory.pendingChapterNumbers, [1, 2, 3]);
     assert.equal(rewrite.chapters.length, 2);
     assert.deepEqual(rewrite.memory.pendingChapterNumbers, [1, 2]);
     assert.equal(deleted.chapters.length, 2);
     assert.equal(deleted.memory.cards.length, 0);
     assert.throws(() => deleteLongDreamFrom(original, 'chapter-1'), /第一章不能单独删除/);
+});
+
+test('重写任意后续章节保留已织录前章梦脉和概要，不修改原卷', () => {
+    for (const chapter of [4, 6, 9]) {
+        let record = createLongDreamRecord({ source: { text: '第一章', html: '<p>第一章</p>' } });
+        for (let n = 2; n <= chapter; n++) record = appendLongDreamChapter(record, { text: `第${n}章`, html: '<p>正文</p>' });
+        record = applyLongDreamMemoryPatch(record, { currentState: '前章概要原文', operations: [
+            { op: 'set_state', subjects: ['甲'], attribute: 'relationship', value: '朋友', chapterNumber: chapter - 1 },
+            { op: 'open_thread', threadKey: '约定', content: '一起看海', chapterNumber: 1 },
+        ] }, chapter - 1);
+        const before = JSON.stringify(record);
+        const branch = createLongDreamBranch(record, `chapter-${chapter}`, { includeChapter: false });
+        assert.equal(branch.chapters.length, chapter - 1);
+        assert.deepEqual(branch.memory.states, record.memory.states);
+        assert.deepEqual(branch.memory.threads, record.memory.threads);
+        assert.equal(branch.memory.currentState, '前章概要原文');
+        assert.equal(branch.memory.processedThroughChapter, chapter - 1);
+        assert.deepEqual(branch.memory.pendingChapterNumbers, []);
+        assert.equal(JSON.stringify(record), before);
+    }
+});
+
+test('旧梦脉跨章状态还原历史，未来事件不进入重写前情，不可还原事项等待补织', () => {
+    let record = createLongDreamRecord({ source: { text: '一', html: '<p>一</p>' } });
+    for (let n = 2; n <= 6; n++) record = appendLongDreamChapter(record, { text: `第${n}章`, html: '<p>正文</p>' });
+    record = applyLongDreamMemoryPatch(record, { currentState: '未来结局不可带回', operations: [
+        { op: 'set_state', subjects: ['甲'], attribute: 'relationship', value: '朋友', chapterNumber: 1 },
+        { op: 'set_state', subjects: ['甲'], attribute: 'relationship', value: '恋人', chapterNumber: 5 },
+        { op: 'append_transition', subjects: ['甲'], to: '共同旅行', cause: '相约', chapterNumber: 2 },
+        { op: 'append_transition', subjects: ['甲'], to: '未来婚礼', cause: '结婚', chapterNumber: 6 },
+        { op: 'open_thread', threadKey: '约定', content: '寻找旧信', chapterNumber: 2 },
+        { op: 'resolve_thread', threadKey: '约定', resolution: '未来找到旧信', chapterNumber: 5 },
+    ] }, 6);
+    const branch = createLongDreamBranch(record, 'chapter-4', { includeChapter: false });
+    assert.equal(branch.memory.states[0].value, '朋友');
+    assert.equal(branch.memory.states[0].validFromChapter, 1);
+    assert.deepEqual(branch.memory.states[0].sourceChapterNumbers, [1]);
+    assert.equal(branch.memory.transitions.length, 1);
+    assert.equal(branch.memory.transitions[0].to, '共同旅行');
+    assert.equal(branch.memory.threads.length, 0);
+    assert.deepEqual(branch.memory.pendingChapterNumbers, [2, 3]);
+    assert.doesNotMatch(JSON.stringify(branch.memory), /恋人|未来婚礼|未来找到旧信|未来结局/);
+    assert.match(branch.memory.currentState, /朋友/);
+    assert.equal(record.memory.states[0].value, '恋人');
+});
+
+test('状态回退恢复历史主体和主题，缺少槽位快照的旧历史待补织', () => {
+    let record = createLongDreamRecord({ source: { text: '一', html: '<p>一</p>' } });
+    for (let n = 2; n <= 5; n++) record = appendLongDreamChapter(record, { text: `第${n}章`, html: '<p>正文</p>' });
+    record = applyLongDreamMemoryPatch(record, { operations: [
+        { op: 'set_state', subjects: ['甲'], attribute: 'possession', topic: '钥匙', value: '携带旧钥匙', chapterNumber: 1 },
+    ] }, 1);
+    record = applyLongDreamMemoryPatch(record, { operations: [
+        { op: 'set_state', targetId: record.memory.states[0].id, subjects: ['未来人物乙'], attribute: 'knowledge', topic: '未来真相', value: '知道未来密室真相', chapterNumber: 5 },
+    ] }, 5);
+    const restored = normalizeLongDreamRecord(JSON.parse(JSON.stringify(record)));
+    const branch = createLongDreamBranch(restored, 'chapter-4', { includeChapter: false });
+    assert.deepEqual(branch.memory.states[0].subjects, ['甲']);
+    assert.equal(branch.memory.states[0].attribute, 'possession');
+    assert.equal(branch.memory.states[0].topic, '钥匙');
+    assert.match(branch.memory.currentState, /甲：携带旧钥匙/);
+    assert.doesNotMatch(JSON.stringify(branch.memory), /未来/);
+    for (const entry of restored.memory.states[0].history) {
+        delete entry.subjects;
+        delete entry.attribute;
+        delete entry.topic;
+    }
+    const legacyBranch = createLongDreamBranch(restored, 'chapter-4', { includeChapter: false });
+    assert.equal(legacyBranch.memory.states.length, 0);
+    assert.deepEqual(legacyBranch.memory.pendingChapterNumbers, [1, 2, 3]);
+    assert.doesNotMatch(JSON.stringify(legacyBranch.memory), /未来/);
+    assert.equal(restored.memory.states[0].value, '知道未来密室真相');
+});
+
+test('补织较早章不能覆盖已保留的较新状态、事项进展或偏离', () => {
+    let record = createLongDreamRecord({ worldLineRelation: LONG_DREAM_WORLD_LINE_RELATION.PARALLEL, source: { text: '一', html: '<p>一</p>' } });
+    for (let n = 2; n <= 4; n++) record = appendLongDreamChapter(record, { text: `第${n}章`, html: '<p>正文</p>' });
+    record = applyLongDreamMemoryPatch(record, { operations: [
+        { op: 'set_state', subjects: ['甲'], attribute: 'location', value: '新地点', chapterNumber: 3 },
+        { op: 'open_thread', threadKey: '线索', content: '新进展', chapterNumber: 3 },
+        { op: 'upsert_deviation', deviationKey: '身份', dreamChange: '新身份', chapterNumber: 3 },
+    ] }, 3);
+    record = applyLongDreamMemoryPatch(record, { currentState: '不能采用的过时摘要', operations: [
+        { op: 'set_state', subjects: ['甲'], attribute: 'location', value: '旧地点', chapterNumber: 2 },
+        { op: 'open_thread', threadKey: '线索', content: '旧进展', chapterNumber: 2 },
+        { op: 'advance_thread', threadKey: '线索', progress: '旧推进', chapterNumber: 2 },
+        { op: 'upsert_deviation', deviationKey: '身份', dreamChange: '旧身份', chapterNumber: 2 },
+    ] }, 3);
+    assert.equal(record.memory.states[0].value, '新地点');
+    assert.equal(record.memory.threads[0].content, '新进展');
+    assert.equal(record.memory.threads[0].progress, '');
+    assert.equal(record.memory.deviations[0].dreamChange, '新身份');
+    assert.doesNotMatch(record.memory.currentState, /过时|旧地点|旧进展|旧身份/);
+});
+
+test('重织有冲突时概要不再空白，接受与保留均按最终有效梦脉恢复概要', () => {
+    let record = createLongDreamRecord({ source: { text: '一', html: '<p>一</p>' } });
+    record = prepareLongDreamMemoryRegeneration(record);
+    record = applyLongDreamMemoryPatch(record, { currentState: '不能提前采用的新位置', operations: [
+        { op: 'set_state', subjects: ['甲'], attribute: 'relationship', value: '朋友', chapterNumber: 1 },
+        { op: 'set_state', targetId: 'missing', subjects: ['甲'], attribute: 'location', value: '新位置', chapterNumber: 1 },
+    ] }, 1);
+    assert.equal(record.memory.pendingConflicts.length, 1);
+    assert.match(record.memory.currentState, /朋友/);
+    assert.doesNotMatch(record.memory.currentState, /新位置/);
+    for (const action of ['accept', 'keep']) {
+        const restored = normalizeLongDreamRecord(JSON.parse(JSON.stringify(record)));
+        const result = resolveLongDreamMemoryV2RecordConflict(restored, restored.memory.pendingConflicts[0].id, action);
+        assert.equal(result.memory.pendingConflicts.length, 0);
+        assert.match(result.memory.currentState, /朋友/);
+        if (action === 'accept') assert.match(result.memory.currentState, /新位置/);
+        else assert.doesNotMatch(result.memory.currentState, /新位置/);
+    }
 });
 
 test('草稿刷新恢复后仍不能冒充正式章节，确认后才原子晋升', () => {
@@ -2882,13 +3069,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.3.2 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.3.3 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.3\.2'/);
-    assert.equal(manifest.version, '4.3.2');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.2/);
+    assert.match(source, /const VERSION = '4\.3\.3'/);
+    assert.equal(manifest.version, '4.3.3');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.3/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 

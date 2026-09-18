@@ -9,6 +9,7 @@ import {
 } from './long-dream-memory-model.js';
 
 export { LONG_DREAM_MEMORY_SCHEMA_VERSION } from './long-dream-memory-model.js';
+import { retainMemoryThroughChapter, summarizeAcceptedMemory } from './long-dream-memory-recovery.js';
 
 export const LONG_DREAM_SCHEMA_VERSION = 4;
 
@@ -290,6 +291,9 @@ function normalizeDraftCandidate(candidate, fallbackDate) {
     return {
         text,
         html,
+        instruction: String(candidate.instruction ?? ''),
+        title: cleanText(candidate.title, 80),
+        targetChars: Math.max(500, Math.min(8000, Math.round(Number(candidate.targetChars) || 3000))),
         mode: cleanText(candidate.mode, 40) || 'html',
         createdAt: normalizeIsoDate(candidate.createdAt || candidate.updatedAt, fallbackDate),
     };
@@ -301,7 +305,9 @@ function normalizeDraft(draft, chapterNumber, fallbackDate) {
     const draftHtml = String(draft.html || '');
     const instruction = String(draft.instruction || '');
     const candidates = (Array.isArray(draft.candidates) ? draft.candidates : [])
-        .map(candidate => normalizeDraftCandidate(candidate, fallbackDate))
+        .map(candidate => normalizeDraftCandidate(candidate && typeof candidate === 'object'
+            ? { instruction, title: draft.title, targetChars: draft.targetChars, ...candidate }
+            : candidate, fallbackDate))
         .filter(Boolean)
         .slice(0, LONG_DREAM_MAX_CANDIDATES);
     if (!candidates.length && draft.status === LONG_DREAM_DRAFT_STATUS.REVIEW) {
@@ -309,6 +315,9 @@ function normalizeDraft(draft, chapterNumber, fallbackDate) {
             text: draftText,
             html: draftHtml,
             mode: draft.mode,
+            instruction,
+            title: draft.title,
+            targetChars: draft.targetChars,
             createdAt: draft.updatedAt,
         }, fallbackDate);
         if (legacyCandidate) candidates.push(legacyCandidate);
@@ -332,9 +341,9 @@ function normalizeDraft(draft, chapterNumber, fallbackDate) {
         status,
         resumeStage,
         chapterNumber,
-        title: cleanText(draft.title, 80) || `第 ${chapterNumber} 章`,
-        instruction,
-        targetChars: Math.max(500, Math.min(8000, Math.round(Number(draft.targetChars) || 3000))),
+        title: selectedCandidate?.title || cleanText(draft.title, 80) || `第 ${chapterNumber} 章`,
+        instruction: selectedCandidate?.instruction ?? instruction,
+        targetChars: selectedCandidate?.targetChars ?? Math.max(500, Math.min(8000, Math.round(Number(draft.targetChars) || 3000))),
         text: selectedCandidate?.text ?? draftText,
         html: selectedCandidate?.html ?? draftHtml,
         mode: selectedCandidate?.mode || cleanText(draft.mode, 40) || (draftHtml.trim() ? 'html' : 'text'),
@@ -646,7 +655,7 @@ export function truncateLongDreamAfter(record, chapterId, now = new Date()) {
     return {
         ...normalized,
         chapters,
-        memory: resetMemoryForChapters(chapters),
+        memory: normalizeMemory(retainMemoryThroughChapter(normalized.memory, chapters.length), chapters.length),
         status: LONG_DREAM_STATUS.ACTIVE,
         draft: null,
         updatedAt: normalizeIsoDate(now, new Date().toISOString()),
@@ -689,7 +698,7 @@ export function createLongDreamBranch(record, chapterId, {
             capturedAt: createdAt,
         },
         chapters,
-        memory: resetMemoryForChapters(chapters),
+        memory: normalizeMemory(retainMemoryThroughChapter(normalized.memory, chapters.length), chapters.length),
         draft: null,
     };
 }
@@ -749,8 +758,8 @@ export function applyLongDreamMemoryPatch(record, patch = {}, throughChapter, no
             ...normalized.memory,
             ...application.memory,
             currentState: application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0
-                ? normalized.memory.currentState
-                : cleanText(patch.currentState || normalized.memory.currentState, 5000),
+                ? normalized.memory.currentState || summarizeAcceptedMemory({ ...normalized.memory, ...application.memory })
+                : cleanText(patch.currentState || normalized.memory.currentState || summarizeAcceptedMemory({ ...normalized.memory, ...application.memory }), 5000),
             processedThroughChapter,
             pendingChapterNumbers: normalized.chapters
                 .map(chapter => chapter.number)
@@ -926,7 +935,7 @@ export function resolveLongDreamMemoryV2RecordConflict(record, conflictId, actio
     });
     return {
         ...normalized,
-        memory: normalizeMemory({ ...normalized.memory, ...v2, updatedAt }, normalized.chapters.length),
+        memory: normalizeMemory({ ...normalized.memory, ...v2, currentState: summarizeAcceptedMemory({ ...normalized.memory, ...v2 }), updatedAt }, normalized.chapters.length),
         updatedAt,
     };
 }
@@ -943,7 +952,12 @@ export function saveLongDreamDraft(record, draft = {}, now = new Date()) {
 export function appendLongDreamDraftCandidate(record, candidate = {}, now = new Date()) {
     const normalized = normalizeLongDreamRecord(record);
     if (!normalized?.draft) throw new Error('没有可加入候选的长梦草稿');
-    const nextCandidate = normalizeDraftCandidate(candidate, normalizeIsoDate(now, new Date().toISOString()));
+    const nextCandidate = normalizeDraftCandidate({
+        instruction: normalized.draft.instruction,
+        title: normalized.draft.title,
+        targetChars: normalized.draft.targetChars,
+        ...candidate,
+    }, normalizeIsoDate(now, new Date().toISOString()));
     if (!nextCandidate) throw new Error('待确认候选必须同时包含纯正文与最终 HTML');
     const candidates = Array.isArray(normalized.draft.candidates) ? normalized.draft.candidates : [];
     if (candidates.length >= LONG_DREAM_MAX_CANDIDATES) throw new Error(`同一章最多保留 ${LONG_DREAM_MAX_CANDIDATES} 版候选`);

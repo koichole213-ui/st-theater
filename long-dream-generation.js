@@ -328,6 +328,9 @@ export function createLongDreamGenerationController({
             }));
             persistence = persistence.then(async latestRecord => {
                 const nextRecord = appendLongDreamDraftCandidate(latestRecord, {
+                    instruction: normalizedInstruction,
+                    title: normalizedTitle,
+                    targetChars: target,
                     text: finalText,
                     html: rendered.html,
                     mode: rendered.mode,

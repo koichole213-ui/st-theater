@@ -91,6 +91,11 @@ function normalizeStateHistory(entry, index = 0) {
         value,
         fromChapter,
         toChapter,
+        ...(Array.isArray(entry.subjects) && entry.subjects.length && LONG_DREAM_MEMORY_STATE_ATTRIBUTES.includes(entry.attribute) ? {
+            subjects: cleanList(entry.subjects, 8),
+            attribute: entry.attribute,
+            topic: cleanText(entry.topic, 160),
+        } : {}),
         sourceChapterNumbers: sourceNumbers(entry.sourceChapterNumbers, fromChapter),
         quote: cleanText(entry.quote, 240),
         editedByUser: entry.editedByUser === true,
@@ -437,6 +442,11 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
         targetId,
         chapterNumber: operation.chapterNumber,
     });
+    const isOlderReplay = (operation, latestChapter, index) => {
+        if (operation.chapterNumber >= latestChapter) return false;
+        ignoredOperations.push({ index, reason: 'older-chapter-replay', op: operation.op });
+        return true;
+    };
 
     for (const { operation, index } of operations) {
         if (!operation || !LONG_DREAM_MEMORY_OPERATION_TYPES.includes(operation.op)) {
@@ -469,6 +479,7 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
                 continue;
             }
             const previous = states[targetIndex];
+            if (isOlderReplay(operation, previous.validFromChapter, index)) continue;
             if (previous.lockedByUser && canonicalText(previous.value) !== canonicalText(operation.value)) {
                 addConflict(operation, 'locked-by-user', previous.id, index);
                 continue;
@@ -485,6 +496,9 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
                 const history = [...previous.history, {
                     id: `state-history-${previous.id}-${previous.validFromChapter}`,
                     value: previous.value,
+                    subjects: [...previous.subjects],
+                    attribute: previous.attribute,
+                    topic: previous.topic,
                     fromChapter: previous.validFromChapter,
                     toChapter: Math.max(previous.validFromChapter, operation.chapterNumber),
                     sourceChapterNumbers: previous.sourceChapterNumbers,
@@ -545,6 +559,7 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
             }
             if (targetIndex >= 0) {
                 const previous = threads[targetIndex];
+                if (isOlderReplay(operation, previous.lastTouchedAt, index)) continue;
                 if (['resolved', 'abandoned'].includes(previous.status)) {
                     addConflict(operation, 'closed-thread', previous.id, index);
                     continue;
@@ -593,6 +608,7 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
                 continue;
             }
             const previous = threads[targetIndex];
+            if (isOlderReplay(operation, previous.lastTouchedAt, index)) continue;
             if (!operation.threadKey) operation.threadKey = previous.threadKey;
             if (previous.lockedByUser) {
                 addConflict(operation, 'locked-by-user', previous.id, index);
@@ -640,6 +656,7 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
         }
         if (targetIndex >= 0) {
             const previous = deviations[targetIndex];
+            if (isOlderReplay(operation, Math.max(...previous.sourceChapterNumbers), index)) continue;
             if (previous.lockedByUser) {
                 addConflict(operation, 'locked-by-user', previous.id, index);
                 continue;
