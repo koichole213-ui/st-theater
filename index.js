@@ -3044,7 +3044,7 @@ function longDreamMemoryCardsHTML(dream) {
         <div class="theater-dream-memory-state-editor">
             <label><span>当前脉象</span><small>剧情概要；与下方梦脉条目分开保存。${dream.memory?.summaryNeedsRefresh ? '当前概要待更新，请先完成补织和冲突确认。' : '可单独更新，不改正文或梦脉条目。'}</small>${currentState ? '<button type="button" data-dream-memory-state-toggle aria-expanded="false">展开</button>' : ''}</label>
             <div class="theater-dream-memory-current-state-readonly ${currentState ? 'is-clamped' : ''}">${currentState ? esc(currentState) : '尚未形成当前状态摘要。'}</div>
-            <div class="theater-dream-summary-actions"><button type="button" data-dream-summary-refresh ${memoryLocked || conflicts.length || memory.pendingChapterNumbers?.length ? 'disabled' : ''}>更新概要</button></div>
+            <div class="theater-dream-summary-actions"><button type="button" data-dream-summary-refresh aria-busy="${refreshingLongDreamSummaries.has(String(dream.id))}" ${refreshingLongDreamSummaries.has(String(dream.id)) || memoryLocked || conflicts.length || memory.pendingChapterNumbers?.length ? 'disabled' : ''}>${refreshingLongDreamSummaries.has(String(dream.id)) ? '正在更新…' : '更新概要'}</button></div>
         </div>
         ${conflicts.length ? `<section class="theater-dream-memory-conflicts"><h4>有 ${conflicts.length} 处需要你决定</h4>${conflicts.map(conflict => `<article data-dream-memory-conflict="${esc(conflict.id)}"><p>${esc(conflictLabels[conflict.reason] || '新章节提出了不能静默覆盖的变化')}。</p><small>来自第 ${conflict.chapterNumber} 章 · ${conflict.reason === 'missing-target' ? '需要从已保存正文补织缺失记录' : '原记忆暂时保持不变'}</small><div class="theater-dream-memory-card-actions"><button type="button" class="theater-btn" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="${conflict.reason === 'missing-target' ? 'reweave' : 'accept'}">${conflict.reason === 'missing-target' ? '补织后再确认' : '以新章节为准'}</button><button type="button" class="theater-btn danger" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="keep">保留我的版本</button></div></article>`).join('')}</section>` : ''}
         <div class="theater-dream-memory-flow-list">
@@ -3390,8 +3390,10 @@ function longDreamDetailHTML(dream) {
         </div>
         <div class="review-canvas theater-dream-review-canvas"><iframe id="theater-dream-review-frame" sandbox="" title="待确认长梦章节"></iframe><div id="theater-dream-review-fallback" class="theater-dream-review-fallback" hidden></div></div>
         <div class="theater-dream-review-actions"><button type="button" id="theater-dream-discard-draft" class="ui-btn ui-btn-sm"><i class="fa-solid fa-rotate-left"></i><span>放弃重写</span></button><button type="button" id="theater-dream-confirm-chapter" class="ui-btn ui-btn-sm ui-btn-primary"><i class="fa-solid fa-check"></i><span>确认保存</span></button></div>
-        <button type="button" id="theater-dream-regenerate-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" ${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? 'disabled' : ''}><i class="fa-solid fa-plus"></i><span>${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? '已保留三版' : '按原要求再生成一版'}</span></button>
-        <button type="button" id="theater-dream-revise-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" ${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? 'disabled' : ''}><i class="fa-solid fa-pen-to-square"></i><span>修改要求再生成</span></button>
+        <div class="theater-dream-candidate-actions">
+        <button type="button" id="theater-dream-regenerate-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="按原要求再生成一版，保留已有候选" ${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? 'disabled' : ''}><i class="fa-solid fa-plus"></i><span>${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? '已保留三版' : '再来一版'}</span></button>
+        <button type="button" id="theater-dream-revise-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="修改要求再生成，保留已有候选" ${state.draftCandidates.length >= LONG_DREAM_MAX_CANDIDATES ? 'disabled' : ''}><i class="fa-solid fa-pen-to-square"></i><span>改要求重写</span></button>
+        </div>
     </section></div>` : '';
     return `<div class="theater-dream-detail theater-dream-continuation" data-id="${esc(dream.id)}">
         ${writeFlow}${reviewFlow}
@@ -9324,28 +9326,54 @@ function queueLongDreamMemoryWeave(dreamId, { force = false, announce = false } 
 }
 
 const refreshingLongDreamSummaries = new Set();
+function syncLongDreamSummaryButton(key) {
+    if (String(activeLongDreamId) !== key) return;
+    const memory = longDreamCache.find(item => String(item.id) === key)?.memory;
+    const busy = refreshingLongDreamSummaries.has(key);
+    $('[data-dream-summary-refresh]')
+        .prop('disabled', busy || !memory || memory.status === LONG_DREAM_MEMORY_STATUS.WEAVING || !!memory.pendingConflicts?.length || !!memory.pendingChapterNumbers?.length)
+        .attr('aria-busy', String(busy)).text(busy ? '正在更新…' : '更新概要');
+}
 async function refreshLongDreamSummaryNow(dreamId) {
     const key = String(dreamId);
-    if (refreshingLongDreamSummaries.has(key)) return;
+    if (refreshingLongDreamSummaries.has(key)) { toastr.info('概要正在更新，请稍候'); return; }
     const dream = longDreamCache.find(item => String(item.id) === key);
-    const preset = selectedLongDreamMemoryApiPreset();
-    if (!dream) return;
-    if (!preset) { toastr.warning('请先绑定梦脉副 API，再更新概要'); return; }
-    refreshingLongDreamSummaries.add(key);
+    if (!dream) { toastr.warning('未找到当前作品，请重新打开作品后再试'); return; }
+    if (dream.memory?.status === LONG_DREAM_MEMORY_STATUS.WEAVING || dream.memory?.pendingConflicts?.length || dream.memory?.pendingChapterNumbers?.length) {
+        toastr.warning('请先完成梦脉织录和冲突确认，再更新概要'); return;
+    }
+    let stage = 'preset';
     try {
+        const preset = selectedLongDreamMemoryApiPreset();
+        if (!preset) { toastr.warning('请先绑定梦脉副 API，再更新概要'); return; }
+        stage = 'request';
+        refreshingLongDreamSummaries.add(key);
+        syncLongDreamSummaryButton(key);
+        toastr.info('正在更新概要，最多等待 3 分钟');
         const saved = await refreshLongDreamSummary({
             record: dream,
-            request: payload => requestCustomApi({ config: { ...preset, maxOutputTokens: Math.min(8192, normalizeMaxTokens(preset.maxOutputTokens, 4096)) }, ...payload, shouldStream: false, onChunk: () => {}, log: runtimeLog }),
+            request: (payload, { signal }) => requestCustomApi({ config: { ...preset, maxOutputTokens: Math.min(8192, normalizeMaxTokens(preset.maxOutputTokens, 4096)) }, ...payload, signal, shouldStream: false, onChunk: () => {}, log: runtimeLog }),
             readLatest: () => longDreamCache.find(item => String(item.id) === key),
             save: record => longDreamPut(record),
         });
-        if (saved) toastr.success('剧情概要已更新');
+        if (saved) {
+            toastr.success('剧情概要已更新');
+            if (String(activeLongDreamId) === key) {
+                rememberLongDreamComposerDraft();
+                renderLongDreamPanel();
+            }
+        }
         else toastr.info('作品或梦脉刚刚发生变化，本次概要未覆盖，请重新更新');
-    } catch {
-        toastr.warning('概要未能更新，原概要已保留；完成补织和冲突确认后可点击“更新概要”重试');
+    } catch (error) {
+        const reason = stage === 'preset' ? '副 API 配置读取失败'
+            : error?.code === 'LONG_DREAM_SUMMARY_TIMEOUT' ? '等待超过 3 分钟'
+            : error?.code === 'LONG_DREAM_SUMMARY_SAVE_FAILED' ? '概要保存失败'
+            : error?.diagnosticSignal ? diagnosticSignalInfo(error.diagnosticSignal).title
+            : '接口未返回可用概要或保存失败';
+        toastr.warning(`${reason}，原概要已保留；可点击“更新概要”重试`);
     } finally {
         refreshingLongDreamSummaries.delete(key);
-        if (String(activeLongDreamId) === key) renderLongDreamPanel();
+        syncLongDreamSummaryButton(key);
     }
 }
 

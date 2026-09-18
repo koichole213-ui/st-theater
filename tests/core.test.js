@@ -6117,11 +6117,75 @@ test('概要失败、空返回、期间修改或删除作品都不覆盖原概�
     const options = { record, readLatest: () => record, save: () => { saves++; } };
     await assert.rejects(refreshLongDreamSummary({ ...options, request: async () => { throw new Error('断网'); } }));
     await assert.rejects(refreshLongDreamSummary({ ...options, request: async () => '{}' }), /概要返回为空/);
+    await assert.rejects(refreshLongDreamSummary({ ...options, request: async () => '{"currentState":"新概要"}', save: async () => false }), { code: 'LONG_DREAM_SUMMARY_SAVE_FAILED' });
     for (const latest of [null, { ...record, memory: { ...record.memory, currentState: '用户已修改' } }]) {
         assert.equal(await refreshLongDreamSummary({ ...options, request: async () => '{"currentState":"过时结果"}', readLatest: () => latest }), null);
     }
     assert.equal(saves, 0);
     assert.equal(record.memory.currentState, '原概要');
+});
+
+test('概要超时中止请求，迟到响应不能保存，并可再次更新', async () => {
+    const { refreshLongDreamSummary } = await import('../long-dream-summary.js');
+    let record = createLongDreamRecord({ source: { text: '合成正文', html: '<p>合成正文</p>' } });
+    record = applyLongDreamMemoryPatch(record, { currentState: '原概要', operations: [] }, 1);
+    let resolveLate, signal, saves = 0;
+    const options = { record, readLatest: () => record, save: value => { saves++; return value; } };
+    await assert.rejects(refreshLongDreamSummary({ ...options, timeoutMs: 10,
+        request: (_, context) => { signal = context.signal; return new Promise(resolve => { resolveLate = resolve; }); },
+    }), { code: 'LONG_DREAM_SUMMARY_TIMEOUT' });
+    assert.equal(signal.aborted, true);
+    resolveLate('{"currentState":"迟到概要"}');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(saves, 0);
+    assert.equal(record.memory.currentState, '原概要');
+    const saved = await refreshLongDreamSummary({ ...options, request: async () => '{"currentState":"重试概要"}' });
+    assert.equal(saved.memory.currentState, '重试概要');
+    assert.equal(saves, 1);
+});
+
+test('概要点击立即反馈、去重、超时解锁和配置异常提示', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const functions = source.match(/function syncLongDreamSummaryButton\(key\) \{[^]*?(?=\nasync function weaveLongDreamMemory)/)[0];
+    const binding = source.split('\n').find(line => line.includes("$d.off('click.tdsummary')"));
+    const { refreshLongDreamSummary } = await import('../long-dream-summary.js');
+    let record = createLongDreamRecord({ source: { text: '合成正文', html: '<p>合成正文</p>' } });
+    record = applyLongDreamMemoryPatch(record, { currentState: '原概要', operations: [] }, 1);
+    const button = { prop(k,v) { this[k]=v; return this; }, attr(k,v) { this[k]=v; return this; }, text(v) { this.label=v; return this; } };
+    const notices = [];
+    let handler, calls = 0, saves = 0;
+    const scope = { activeLongDreamId: record.id, longDreamCache: [record], refreshingLongDreamSummaries: new Set(),
+        LONG_DREAM_MEMORY_STATUS, $: () => button, normalizeMaxTokens: v => v, runtimeLog() {},
+        selectedLongDreamMemoryApiPreset: () => ({ maxOutputTokens: 4096 }),
+        refreshLongDreamSummary: options => refreshLongDreamSummary({ ...options, timeoutMs: 10 }),
+        requestCustomApi: ({ signal }) => { calls++; assert.equal(signal instanceof AbortSignal, true); return new Promise(() => {}); },
+        longDreamPut: r => { saves++; return r; }, rememberLongDreamComposerDraft() {}, renderLongDreamPanel() {},
+        toastr: Object.fromEntries(['info','warning','success'].map(type => [type, text => notices.push([type,text])])),
+        diagnosticSignalInfo: () => ({ title: '网络连接没有完成' }),
+        $d: { off() { return this; }, on(type, selector, callback) { assert.equal(selector, '[data-dream-summary-refresh]'); handler=callback; return this; } },
+    };
+    runInNewContext(functions + '\n' + binding, scope);
+    const pending = handler();
+    assert.equal(button.label, '正在更新…');
+    assert.equal(button.disabled, true);
+    await handler();
+    assert.equal(calls, 1);
+    await pending;
+    assert.equal(button.label, '更新概要');
+    assert.equal(button.disabled, false);
+    assert.equal(scope.refreshingLongDreamSummaries.size, 0);
+    assert.equal(saves, 0);
+    assert.match(notices.at(-1)[1], /等待超过 3 分钟/);
+    scope.selectedLongDreamMemoryApiPreset = () => { throw new Error('DO_NOT_DISPLAY'); };
+    await handler();
+    assert.match(notices.at(-1)[1], /配置读取失败/);
+    assert.doesNotMatch(JSON.stringify(notices), /DO_NOT_DISPLAY/);
+    scope.selectedLongDreamMemoryApiPreset = () => ({ maxOutputTokens: 4096 });
+    scope.requestCustomApi = async () => '{"currentState":"成功概要"}';
+    await handler();
+    assert.equal(saves, 1);
+    assert.equal(notices.at(-1)[0], 'success');
+    assert.equal(button.disabled, false);
 });
 
 test('缺失事项冲突可安排补织，不清空有效梦脉或保存伪造事项', () => {
