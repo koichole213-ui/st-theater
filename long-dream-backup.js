@@ -1,3 +1,4 @@
+import { normalizeStoryFields } from './long-dream-story-summary.js';
 import { LONG_DREAM_SCHEMA_VERSION, normalizeLongDreamRecord } from './long-dream.js';
 import { normalizeLongDreamMemoryV2 } from './long-dream-memory-model.js';
 
@@ -167,7 +168,8 @@ function safeMemory(memory = {}, fallbackDate) {
         rejections: v2.rejections,
         pendingConflicts: v2.pendingConflicts,
         lastBatchChanges: v2.lastBatchChanges,
-        currentState: cleanText(memory?.currentState, 5000),
+        ...normalizeStoryFields(memory),
+        currentState: typeof memory?.currentState === 'string' ? memory.currentState.trim() : '',
         summaryNeedsRefresh: memory?.summaryNeedsRefresh === true,
         summaryHistory: (Array.isArray(memory?.summaryHistory) ? memory.summaryHistory : [])
             .filter(item => Number.isInteger(item.chapterNumber) && item.chapterNumber > 0 && typeof item.text === 'string')

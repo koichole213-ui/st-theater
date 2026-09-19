@@ -2137,7 +2137,8 @@ test('梦脉织录按三章批量、只读已确认章节，并以补丁追加�
     assert.deepEqual(updated.memory.pendingChapterNumbers, []);
     assert.equal(updated.memory.cards.some(card => card.content === '旧钥匙尚未使用。'), true);
     assert.equal(updated.memory.cards.some(card => card.content === '旧钥匙打开了钟楼侧门。'), true);
-    assert.equal(updated.memory.currentState, '两人目前位于旧港钟楼。');
+    assert.equal(updated.memory.currentState, ''); // Legacy cards remain compatible, but a recent-only synopsis cannot replace story history.
+    assert.equal(updated.memory.summaryNeedsRefresh, true);
 });
 
 test('梦脉用 type + key 原位更新有效状态，并保留人工修改的用户主权', () => {
@@ -2173,7 +2174,7 @@ test('梦脉 v2 按章节顺序应用状态增量，旧值进入历史且新值�
     record = appendLongDreamChapter(record, { text: '第二章。', html: '<main>第二章。</main>' });
     record = appendLongDreamChapter(record, { text: '第三章。', html: '<main>第三章。</main>' });
     const patch = parseLongDreamMemoryResponse(JSON.stringify({
-        currentState: '林岚已经进入钟楼顶层。',
+        storyEntries: [1, 2, 3].map(chapterNumber => ({ chapterNumber, text: `第${chapterNumber}章经历` })),
         operations: [
             { op: 'set_state', subjects: ['林岚'], attribute: 'location', value: '旧港入口', chapterNumber: 1 },
             { op: 'set_state', subjects: ['林岚'], attribute: 'location', value: '钟楼顶层', chapterNumber: 3 },
@@ -2187,7 +2188,7 @@ test('梦脉 v2 按章节顺序应用状态增量，旧值进入历史且新值�
     assert.deepEqual(record.memory.states[0].sourceChapterNumbers, [3]);
     assert.deepEqual(record.memory.states[0].history.map(item => item.value), ['旧港入口']);
     assert.deepEqual(record.memory.states[0].history[0].sourceChapterNumbers, [1]);
-    assert.equal(record.memory.currentState, '林岚已经进入钟楼顶层。');
+    assert.match(record.memory.currentState, /第 1 章：第1章经历[\s\S]*第 3 章：第3章经历/);
 });
 
 test('梦脉 v2 未完事项保存推进历史、解决结果，并阻止已关闭事项静默重开', () => {
@@ -2286,7 +2287,7 @@ test('梦脉 v2 主 API 检索按层选择，不让所有记忆继续争同一�
     const selected = selectRelevantLongDreamMemoryItems(record, { instruction: '林岚和周砚去打开退潮暗门。' });
     assert.deepEqual(new Set(selected.map(item => item.kind)), new Set(['state', 'thread', 'deviation', 'transition']));
     const context = longDreamChapterContext(record, { instruction: '林岚和周砚去打开退潮暗门。' });
-    assert.match(context.memory, /当前脉象：林岚在旧港等待退潮/);
+    assert.match(context.memory, /故事概要.*：林岚在旧港等待退潮/);
     assert.match(context.memory, /当前状态|关键变化|事项|世界线偏离/);
 });
 
@@ -2632,7 +2633,8 @@ test('重新生成整部梦脉会清理自动结果并保留人工校正、隐�
     };
 
     const regenerated = prepareLongDreamMemoryRegeneration(record, new Date('2026-08-12T08:00:00.000Z'));
-    assert.equal(regenerated.memory.currentState, '');
+    assert.equal(regenerated.memory.currentState, '旧的自动摘要');
+    assert.equal(regenerated.memory.summaryNeedsRefresh, true);
     assert.equal(regenerated.memory.processedThroughChapter, 0);
     assert.deepEqual(regenerated.memory.pendingChapterNumbers, [1, 2]);
     assert.equal(regenerated.memory.status, LONG_DREAM_MEMORY_STATUS.PENDING);
@@ -6240,13 +6242,13 @@ test('独立剧情概要使用正文和确认事实，保存快照且不执行�
     assert.match(payload.userPrompt, /两人在雨夜进入车站/);
     assert.doesNotMatch(payload.userPrompt, /原先连贯概要/);
     const result = await refreshLongDreamSummary({ record,
-        request: async () => JSON.stringify({ currentState: '雨夜里，两人抵达车站，正在等候末班车。', operations: [{ op: 'set_state', subjects: ['甲'], attribute: 'location', value: '恶意地点', chapterNumber: 1 }] }),
+        request: async () => JSON.stringify({ storyEntries: [{chapterNumber: 1, text: '雨夜里，两人抵达车站，正在等候末班车。'}], operations: [{ op: 'set_state', subjects: ['甲'], attribute: 'location', value: '恶意地点', chapterNumber: 1 }] }),
         readLatest: () => record, save: value => value,
     });
-    assert.equal(result.memory.currentState, '雨夜里，两人抵达车站，正在等候末班车。');
+    assert.equal(result.memory.currentState, '第 1 章：雨夜里，两人抵达车站，正在等候末班车。');
     assert.deepEqual(result.memory.states, record.memory.states);
     assert.equal(result.memory.summaryNeedsRefresh, false);
-    assert.equal(normalizeLongDreamRecord(JSON.parse(JSON.stringify(result))).memory.summaryHistory[0].text, result.memory.currentState);
+    assert.equal(normalizeLongDreamRecord(JSON.parse(JSON.stringify(result))).memory.summaryVersions.at(-1).text, result.memory.currentState);
 });
 
 test('概要失败、空返回、期间修改或删除作品都不覆盖原概要', async () => {
@@ -6257,9 +6259,9 @@ test('概要失败、空返回、期间修改或删除作品都不覆盖原概�
     const options = { record, readLatest: () => record, save: () => { saves++; } };
     await assert.rejects(refreshLongDreamSummary({ ...options, request: async () => { throw new Error('断网'); } }));
     await assert.rejects(refreshLongDreamSummary({ ...options, request: async () => '{}' }), /概要返回为空/);
-    await assert.rejects(refreshLongDreamSummary({ ...options, request: async () => '{"currentState":"新概要"}', save: async () => false }), { code: 'LONG_DREAM_SUMMARY_SAVE_FAILED' });
+    await assert.rejects(refreshLongDreamSummary({ ...options, request: async () => '{"storyEntries":[{"chapterNumber":1,"text":"新概要"}]}', save: async () => false }), { code: 'LONG_DREAM_SUMMARY_SAVE_FAILED' });
     for (const latest of [null, { ...record, memory: { ...record.memory, currentState: '用户已修改' } }]) {
-        assert.equal(await refreshLongDreamSummary({ ...options, request: async () => '{"currentState":"过时结果"}', readLatest: () => latest }), null);
+        assert.equal(await refreshLongDreamSummary({ ...options, request: async () => '{"storyEntries":[{"chapterNumber":1,"text":"过时结果"}]}', readLatest: () => latest }), null);
     }
     assert.equal(saves, 0);
     assert.equal(record.memory.currentState, '原概要');
@@ -6275,12 +6277,12 @@ test('概要超时中止请求，迟到响应不能保存，并可再次更新',
         request: (_, context) => { signal = context.signal; return new Promise(resolve => { resolveLate = resolve; }); },
     }), { code: 'LONG_DREAM_SUMMARY_TIMEOUT' });
     assert.equal(signal.aborted, true);
-    resolveLate('{"currentState":"迟到概要"}');
+    resolveLate('{"storyEntries":[{"chapterNumber":1,"text":"迟到概要"}]}');
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(saves, 0);
     assert.equal(record.memory.currentState, '原概要');
-    const saved = await refreshLongDreamSummary({ ...options, request: async () => '{"currentState":"重试概要"}' });
-    assert.equal(saved.memory.currentState, '重试概要');
+    const saved = await refreshLongDreamSummary({ ...options, request: async () => '{"storyEntries":[{"chapterNumber":1,"text":"重试概要"}]}' });
+    assert.equal(saved.memory.currentState, '第 1 章：重试概要');
     assert.equal(saves, 1);
 });
 
@@ -6321,7 +6323,7 @@ test('概要点击立即反馈、去重、超时解锁和配置异常提示', as
     assert.match(notices.at(-1)[1], /配置读取失败/);
     assert.doesNotMatch(JSON.stringify(notices), /DO_NOT_DISPLAY/);
     scope.selectedLongDreamMemoryApiPreset = () => ({ maxOutputTokens: 4096 });
-    scope.requestCustomApi = async () => '{"currentState":"成功概要"}';
+    scope.requestCustomApi = async () => '{"storyEntries":[{"chapterNumber":1,"text":"成功概要"}]}';
     await handler();
     assert.equal(saves, 1);
     assert.equal(notices.at(-1)[0], 'success');
@@ -6354,4 +6356,191 @@ test('重写回退取对应阶段的独立剧情概要，不拼条目或携带�
     const branch = createLongDreamBranch(record, 'chapter-2', { includeChapter: false });
     assert.equal(branch.memory.currentState, '两人初遇，正在寻找住处。');
     assert.doesNotMatch(JSON.stringify(branch.memory), /未来两人/);
+});
+
+
+function synopsisFixture(count = 5) {
+    let record = createLongDreamRecord({ source: { text: '初遇：两人在旧港相识。', html: '<p>初遇</p>' } });
+    for (let n = 2; n <= count; n++) record = appendLongDreamChapter(record, { text: `经历${n}：本章关键转折。`, html: `<p>经历${n}</p>` });
+    return applyLongDreamMemoryPatch(record, { operations: [] }, count);
+}
+
+test('全篇概要增量保存开端，关系现状仍能替换，遗漏章节不覆盖旧版', async () => {
+    const { refreshLongDreamSummary } = await import('../long-dream-summary.js');
+    let record = synopsisFixture(3);
+    const entries = [1,2,3].map(chapterNumber => ({chapterNumber, text:`历史经历${chapterNumber}`}));
+    record = await refreshLongDreamSummary({record, request: async()=>JSON.stringify({storyEntries:entries}), readLatest:()=>record, save:value=>value});
+    record = appendLongDreamChapter(record, {text:'第四章关系和解',html:'<p>和解</p>'});
+    record = appendLongDreamChapter(record, {text:'第五章共同出发',html:'<p>出发</p>'});
+    const payload = buildLongDreamMemoryPayload({record});
+    assert.match(payload.userPrompt, /只为以下编号逐章返回 storyEntries：4、5/);
+    let patch = parseLongDreamMemoryResponse(JSON.stringify({storyEntries:[{chapterNumber:4,text:'两人和解'},{chapterNumber:5,text:'共同出发'}],operations:[{op:'set_state',subjects:['甲','乙'],attribute:'relationship',value:'已和解',chapterNumber:4}]}),{pendingChapterNumbers:[4,5]});
+    record = applyLongDreamMemoryPatch(record,patch,5);
+    assert.match(record.memory.currentState,/历史经历1[\s\S]*历史经历3[\s\S]*两人和解[\s\S]*共同出发/);
+    assert.equal(record.memory.states[0].value,'已和解');
+    const old = JSON.stringify(record.memory);
+    await assert.rejects(refreshLongDreamSummary({record, request:async()=>JSON.stringify({storyEntries:[{chapterNumber:3,text:'仅最近三章'},{chapterNumber:4,text:'近况'},{chapterNumber:5,text:'近况'}]}),readLatest:()=>record,save:()=>assert.fail('must not save')}),/完整覆盖/);
+    assert.equal(JSON.stringify(record.memory),old);
+});
+
+test('概要最近五版包含同章重试，恢复不改变正文梦脉，备份完整保留', async () => {
+    const { refreshLongDreamSummary } = await import('../long-dream-summary.js');
+    const { restoreStorySummary } = await import('../long-dream-story-summary.js');
+    const { createLongDreamBackup, parseLongDreamBackup } = await import('../long-dream-backup.js');
+    let record = synopsisFixture(2);
+    for (let i=0;i<7;i++) {
+        record = await refreshLongDreamSummary({record,request:async()=>JSON.stringify({storyEntries:[1,2].map(chapterNumber=>({chapterNumber,text:`版本${i}经历${chapterNumber}`}))}),readLatest:()=>record,save:value=>value});
+    }
+    assert.equal(record.memory.summaryVersions.length,5);
+    assert.match(record.memory.summaryVersions[0].text,/版本2/);
+    const before = JSON.stringify([record.chapters,record.memory.states,record.memory.transitions]);
+    const restored = restoreStorySummary(record,record.memory.summaryVersions[0].id);
+    assert.match(restored.memory.currentState,/版本2/);
+    assert.equal(JSON.stringify([restored.chapters,restored.memory.states,restored.memory.transitions]),before);
+    assert.equal(restored.memory.summaryVersions.length,5);
+    const imported = parseLongDreamBackup(createLongDreamBackup([restored]))[0];
+    assert.deepEqual(imported.memory.storyEntries,restored.memory.storyEntries);
+    assert.deepEqual(imported.memory.summaryVersions,restored.memory.summaryVersions);
+    assert.equal(imported.memory.currentState,restored.memory.currentState);
+});
+
+test('概要章节回退、改写与分支不携带未来经历，恢复早期版注明进度', async () => {
+    const { mergeStoryResponse, saveStorySummary, restoreStorySummary } = await import('../long-dream-story-summary.js');
+    const { updateLongDreamChapter, truncateLongDreamAfter } = await import('../long-dream.js');
+    let record = synopsisFixture(3);
+    record = saveStorySummary(record,mergeStoryResponse(record,[1,2,3].map(chapterNumber=>({chapterNumber,text:`原经历${chapterNumber}`}))));
+    const earlyId = record.memory.summaryVersions[0].id;
+    record = appendLongDreamChapter(record,{text:'未来四章',html:'<p>未来</p>'});
+    record = applyLongDreamMemoryPatch(record,{operations:[]},4);
+    record = saveStorySummary(record,mergeStoryResponse(record,[{chapterNumber:4,text:'未来结婚'}]));
+    const restored = restoreStorySummary(record,earlyId);
+    assert.equal(restored.memory.summaryThroughChapter,3);
+    assert.equal(restored.memory.summaryNeedsRefresh,true);
+    assert.equal(restored.chapters.length,4);
+    const branch = createLongDreamBranch(record,'chapter-3');
+    assert.doesNotMatch(JSON.stringify(branch.memory),/未来结婚/);
+    assert.match(branch.memory.currentState,/原经历1/);
+    const edited = updateLongDreamChapter(record,'chapter-2',{text:'第二章已改',html:'<p>已改</p>'});
+    assert.doesNotMatch(JSON.stringify(edited.memory.summaryVersions),/未来结婚/);
+    assert.equal(edited.memory.storyEntries.length,1);
+    assert.throws(()=>restoreStorySummary(edited,earlyId));
+    assert.equal(truncateLongDreamAfter(record,'chapter-2').memory.storyEntries.length,2);
+});
+
+test('长篇概要分批完整成功才保存，超过5000字不被截断，后批失败保留旧版', async () => {
+    const { refreshLongDreamSummary } = await import('../long-dream-summary.js');
+    const { sanitizeLongDreamBackupRecord } = await import('../long-dream-backup.js');
+    let record = synopsisFixture(7), calls=0, saves=0;
+    const request = async payload => {
+        calls++;
+        const numbers = [...payload.userPrompt.matchAll(/第(\d+)章：/g)].map(match=>Number(match[1]));
+        return JSON.stringify({storyEntries:numbers.map(chapterNumber=>({chapterNumber,text:`经历${chapterNumber}`+'叙'.repeat(800)}))});
+    };
+    record=await refreshLongDreamSummary({record,request,readLatest:()=>record,save:value=>{saves++;return value;}});
+    assert.equal(calls,2);assert.equal(saves,1);
+    assert.ok(record.memory.currentState.length>5000);
+    assert.match(normalizeLongDreamRecord(record).memory.currentState,/经历7/);
+    assert.equal(sanitizeLongDreamBackupRecord(record).memory.currentState,record.memory.currentState);
+    const before=JSON.stringify(record.memory);calls=0;
+    await assert.rejects(refreshLongDreamSummary({record,request:payload=>{if(calls===1)throw Error('later failure');return request(payload);},readLatest:()=>record,save:()=>assert.fail('partial save')}));
+    assert.equal(JSON.stringify(record.memory),before);
+});
+
+test('用户纠正事实后旧版仅供查看，补织重新取章节概要，空回复不替换历史', async () => {
+    const { mergeStoryResponse, saveStorySummary, restoreStorySummary } = await import('../long-dream-story-summary.js');
+    let record=synopsisFixture(1);
+    record=applyLongDreamMemoryPatch(record,{operations:[{op:'set_state',subjects:['甲'],attribute:'location',value:'旧港',chapterNumber:1}]},1);
+    record=saveStorySummary(record,mergeStoryResponse(record,[{chapterNumber:1,text:'原概要'}]));
+    const id=record.memory.summaryVersions[0].id;
+    record=updateLongDreamMemoryV2RecordItem(record,'state',record.memory.states[0].id,{value:'新港'});
+    assert.equal(record.memory.storyEntries.length,0);
+    assert.equal(record.memory.summaryVersions[0].canRestore,false);
+    assert.throws(()=>restoreStorySummary(record,id));
+    const result=applyLongDreamMemoryPatch(record,parseLongDreamMemoryResponse('{"currentState":"只看最近","operations":[]}',{pendingChapterNumbers:[1]}),1);
+    assert.equal(result.memory.currentState,record.memory.currentState);
+    assert.equal(result.memory.summaryNeedsRefresh,true);
+});
+
+
+test('织录迟到成功或失败都不能复活已删除作品，也不覆盖请求期间的改写', async () => {
+    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
+    const fn=source.match(/async function weaveLongDreamMemory\([^]*?(?=\nasync function discardLongDreamDraft)/)[0];
+    const { setLongDreamMemoryStatus }=await import('../long-dream.js');
+    const { DEFAULT_LONG_DREAM_MEMORY_PRESET }=await import('../long-dream-memory.js');
+    for (const outcome of ['deleted-success','deleted-failure','changed-success','changed-failure']) {
+        const record=createLongDreamRecord({source:{text:'合成第一章',html:'<p>正文</p>'}});record.id=123;
+        const puts=[];
+        const scope={longDreamCache:[record],settings:{},selectedLongDreamMemoryApiPreset:()=>({}),shouldWeaveLongDreamMemory,buildLongDreamMemoryPayload,DEFAULT_LONG_DREAM_MEMORY_PRESET,
+            setLongDreamMemoryStatus,LONG_DREAM_MEMORY_STATUS,activeLongDreamId:null,longDreamView:'list',renderLongDreamPanel(){},runtimeLog(){},normalizeMaxTokens:()=>4096,
+            parseLongDreamMemoryResponse,applyLongDreamMemoryPatch,REQUEST_DIAGNOSTIC_SIGNAL:{INVALID_RESPONSE:'bad'},refreshLongDreamSummaryNow:()=>assert.fail('stale summary'),
+            longDreamPut:async value=>{puts.push(value);scope.longDreamCache=[value];return value;},
+            requestCustomApi:async()=>{
+                scope.longDreamCache=outcome.startsWith('deleted')?[]:[{...scope.longDreamCache[0],canon:'新决定'}];
+                if(outcome.endsWith('failure'))throw Error('synthetic');
+                return '{"storyEntries":[{"chapterNumber":1,"text":"旧结果"}],"operations":[]}';
+            },
+        };
+        await runInNewContext(fn+'\nweaveLongDreamMemory(123,{force:true});',scope);
+        assert.equal(puts.filter(value=>value.memory.status==='failed').length,0);
+        if(outcome.startsWith('deleted'))assert.equal(puts.length,1);
+        else {assert.equal(scope.longDreamCache[0].canon,'新决定');assert.equal(scope.longDreamCache[0].memory.status,LONG_DREAM_MEMORY_STATUS.PENDING);assert.doesNotMatch(scope.longDreamCache[0].memory.currentState,/旧结果/);}
+    }
+});
+
+test('正文来源校验区分 emoji 改写，旧概要不能被错误恢复', async () => {
+    const { chapterSummarySources, mergeStoryResponse, saveStorySummary, restoreStorySummary }=await import('../long-dream-story-summary.js');
+    assert.notDeepEqual(chapterSummarySources([{number:1,text:'😀'}]),chapterSummarySources([{number:1,text:'😁'}]));
+    let record=synopsisFixture(1);
+    record=saveStorySummary(record,mergeStoryResponse(record,[{chapterNumber:1,text:'原经历'}]));
+    const id=record.memory.summaryVersions[0].id;
+    const changed={...record,chapters:record.chapters.map(chapter=>({...chapter,text:'另一条故事'}))};
+    assert.throws(()=>restoreStorySummary(changed,id),/正文已改变/);
+    const normalized=normalizeLongDreamRecord(changed);
+    assert.equal(normalized.memory.currentState,'');
+    assert.equal(normalized.memory.summaryVersions.length,0);
+});
+
+
+test('旧作品大量缺失概要时不挤占织录操作输出，完成织录后可分批补全', async () => {
+    let record=synopsisFixture(7);
+    record=appendLongDreamChapter(record,{text:'最新章',html:'<p>最新章</p>'});
+    const payload=buildLongDreamMemoryPayload({record});
+    assert.match(payload.userPrompt,/本次 storyEntries 返回空数组/);
+    assert.doesNotMatch(payload.userPrompt,/仅补齐第 1 章概要/);
+    record=applyLongDreamMemoryPatch(record,parseLongDreamMemoryResponse('{"storyEntries":[],"operations":[]}',{pendingChapterNumbers:[8]}),8);
+    assert.equal(record.memory.pendingChapterNumbers.length,0);
+    assert.equal(record.memory.summaryNeedsRefresh,true);
+    const {buildLongDreamSummaryPayload}=await import('../long-dream-memory.js');
+    assert.doesNotThrow(()=>buildLongDreamSummaryPayload(record));
+});
+
+
+test('自动分批补概要保留已保存早期段落，只有手动更新重整全篇', async () => {
+    const { refreshLongDreamSummary }=await import('../long-dream-summary.js');
+    let record=synopsisFixture(2);
+    record=await refreshLongDreamSummary({record,request:async()=>JSON.stringify({storyEntries:[{chapterNumber:1,text:'喜欢的开端'},{chapterNumber:2,text:'喜欢的转折'}]}),readLatest:()=>record,save:value=>value});
+    for(let n=3;n<=8;n++)record=appendLongDreamChapter(record,{text:`补充${n}`,html:`<p>${n}</p>`});
+    record=applyLongDreamMemoryPatch(record,{operations:[]},8);
+    const requested=[];
+    const result=await refreshLongDreamSummary({record,replace:false,request:async payload=>{
+        const numbers=[...payload.userPrompt.matchAll(/第(\d+)章：/g)].map(match=>Number(match[1]));requested.push(...numbers);
+        return JSON.stringify({storyEntries:numbers.map(chapterNumber=>({chapterNumber,text:`新段落${chapterNumber}`}))});
+    },readLatest:()=>record,save:value=>value});
+    assert.deepEqual(requested,[3,4,5,6,7,8]);
+    assert.match(result.memory.currentState,/喜欢的开端[\s\S]*喜欢的转折[\s\S]*新段落8/);
+});
+
+
+test('旧版概要在用户纠错后迁移仍不可恢复，直接截短导入也不残留未来', async () => {
+    const { refreshLongDreamSummary }=await import('../long-dream-summary.js');
+    const { restoreStorySummary }=await import('../long-dream-story-summary.js');
+    let record=synopsisFixture(2);
+    record=applyLongDreamMemoryPatch(record,{currentState:'旧错误概要',operations:[{op:'set_state',subjects:['甲'],attribute:'location',value:'错误地点',chapterNumber:1}]},2);
+    record=updateLongDreamMemoryV2RecordItem(record,'state',record.memory.states[0].id,{value:'正确地点'});
+    record=await refreshLongDreamSummary({record,request:async()=>JSON.stringify({storyEntries:[{chapterNumber:1,text:'正确开端'},{chapterNumber:2,text:'未来章节'}]}),readLatest:()=>record,save:value=>value});
+    assert.equal(record.memory.summaryVersions[0].canRestore,false);
+    assert.throws(()=>restoreStorySummary(record,record.memory.summaryVersions[0].id));
+    const shortened=normalizeLongDreamRecord({...record,chapters:record.chapters.slice(0,1)});
+    assert.doesNotMatch(shortened.memory.currentState,/未来章节/);
+    assert.equal(shortened.memory.storyEntries.length,1);
 });

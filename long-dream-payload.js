@@ -326,7 +326,7 @@ export function longDreamChapterContext(record = {}, {
         canon: cleanText(record.canon),
         chapters,
         olderOutline,
-        memory: [currentState ? `当前脉象：${currentState}` : '', cards].filter(Boolean).join('\n'),
+        memory: [currentState ? `故事概要（按时间先后，历史关系不等于当前状态）：${currentState}` : '', cards].filter(Boolean).join('\n'),
         selectedMemoryCount: selectedItems.length,
         selectedMemoryItems: selectedItems,
         activeMemoryCount: v2Count + legacyCount,

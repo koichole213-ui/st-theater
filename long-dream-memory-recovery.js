@@ -1,3 +1,4 @@
+import { normalizeStoryFields, composeStorySummary } from './long-dream-story-summary.js';
 // Old records have state history, but do not have full snapshots for every kind
 // of mutable memory. Preserve provable facts and schedule missing history only.
 export function retainMemoryThroughChapter(memory, cutoff) {
@@ -68,6 +69,11 @@ export function retainMemoryThroughChapter(memory, cutoff) {
     result.lastErrorSignal = '';
     result.summaryHistory = (source.summaryHistory || []).filter(item => item.chapterNumber <= cutoff);
     result.currentState = changed ? (result.summaryHistory.slice().sort((a, b) => a.chapterNumber - b.chapterNumber).at(-1)?.text || '') : source.currentState;
+    Object.assign(result, normalizeStoryFields(source, cutoff));
+    if (source.storyEntries?.length) {
+        result.currentState = composeStorySummary(result.storyEntries);
+        result.summaryThroughChapter = result.storyEntries.at(-1)?.chapterNumber || 0;
+    }
     result.summaryNeedsRefresh = changed || source.summaryNeedsRefresh === true;
     return result;
 }

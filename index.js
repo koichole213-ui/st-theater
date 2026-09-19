@@ -1,3 +1,4 @@
+import { restoreStorySummary } from './long-dream-story-summary.js';
 import { refreshLongDreamSummary } from './long-dream-summary.js';
 // 千夜浮梦 · 小剧场生成器 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
@@ -3044,9 +3045,11 @@ function longDreamMemoryCardsHTML(dream) {
             ${cards.length || legacyCards.length ? `<button type="button" data-dream-memory-filter="legacy" aria-pressed="false">旧版 ${cards.length + legacyCards.length}</button>` : ''}
         </nav>
         <div class="theater-dream-memory-state-editor">
-            <label><span>当前脉象</span><small>剧情概要；与下方梦脉条目分开保存。${dream.memory?.summaryNeedsRefresh ? '当前概要待更新，请先完成补织和冲突确认。' : '可单独更新，不改正文或梦脉条目。'}</small>${currentState ? '<button type="button" data-dream-memory-state-toggle aria-expanded="false">展开</button>' : ''}</label>
-            <div class="theater-dream-memory-current-state-readonly ${currentState ? 'is-clamped' : ''}">${currentState ? esc(currentState) : '尚未形成当前状态摘要。'}</div>
+            <label><span>全篇概要</span><small>按章保留故事开端、发展与因果；关系现状在下方单独更新。${dream.memory?.summaryNeedsRefresh ? (conflicts.length || memory.pendingChapterNumbers?.length ? '请先完成补织和冲突确认，再更新概要。' : '概要待更新，可点击下方更新概要。') : '可单独重新整理，不改正文或梦脉条目。'}</small>${currentState ? '<button type="button" data-dream-memory-state-toggle aria-expanded="false">展开</button>' : ''}</label>
+            <div class="theater-dream-memory-current-state-readonly ${currentState ? 'is-clamped' : ''}">${currentState ? esc(currentState) : '尚未形成全篇概要。'}</div>
             <div class="theater-dream-summary-actions"><button type="button" data-dream-summary-refresh aria-busy="${refreshingLongDreamSummaries.has(String(dream.id))}" ${refreshingLongDreamSummaries.has(String(dream.id)) || memoryLocked || conflicts.length || memory.pendingChapterNumbers?.length ? 'disabled' : ''}>${refreshingLongDreamSummaries.has(String(dream.id)) ? '正在更新…' : '更新概要'}</button></div>
+            ${memory.summaryThroughChapter ? `<small class="theater-dream-summary-note">当前概要截至第 ${memory.summaryThroughChapter} 章 · 正文共 ${dream.chapters.length} 章</small>` : ''}
+            ${memory.summaryVersions?.length ? `<details class="theater-dream-summary-history"><summary>最近概要 · ${memory.summaryVersions.length} / 5 版</summary><small class="theater-dream-summary-note">恢复仅切换概要，不回退正文或人物关系。</small>${memory.summaryVersions.slice().reverse().map((version, i) => `<details><summary>${i === 0 ? '最新保存' : `较早 ${i} 版`} · 截至第 ${version.chapterNumber} 章</summary><div class="theater-dream-memory-current-state-readonly">${esc(version.text)}</div><button type="button" class="theater-btn" data-dream-summary-restore="${esc(version.id)}" ${memoryLocked || conflicts.length || memory.pendingChapterNumbers?.length || refreshingLongDreamSummaries.has(String(dream.id)) || version.canRestore === false ? 'disabled' : ''}>${version.canRestore === false ? '用户决定已改变，仅供查看' : '恢复这版概要'}</button></details>`).join('')}</details>` : ''}
         </div>
         ${conflicts.length ? `<section class="theater-dream-memory-conflicts"><h4>有 ${conflicts.length} 处需要你决定</h4>${conflicts.map(conflict => `<article data-dream-memory-conflict="${esc(conflict.id)}"><p>${esc(conflictLabels[conflict.reason] || '新章节提出了不能静默覆盖的变化')}。</p><small>来自第 ${conflict.chapterNumber} 章 · ${conflict.reason === 'missing-target' ? '需要从已保存正文补织缺失记录' : '原记忆暂时保持不变'}</small><div class="theater-dream-memory-card-actions"><button type="button" class="theater-btn" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="${conflict.reason === 'missing-target' ? 'reweave' : 'accept'}">${conflict.reason === 'missing-target' ? '补织后再确认' : '以新章节为准'}</button><button type="button" class="theater-btn danger" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="keep">保留我的版本</button></div></article>`).join('')}</section>` : ''}
         <div class="theater-dream-memory-flow-list">
@@ -5251,6 +5254,17 @@ function bindEvents() {
         }
     });
     $d.off('click.tdsummary').on('click.tdsummary', '[data-dream-summary-refresh]', () => refreshLongDreamSummaryNow(activeLongDreamId));
+    $d.off('click.tdsummaryrestore').on('click.tdsummaryrestore', '[data-dream-summary-restore]', async function () {
+        const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+        if (!dream || refreshingLongDreamSummaries.has(String(dream.id))) return;
+        try {
+            const saved = await longDreamPut(restoreStorySummary(dream, String($(this).attr('data-dream-summary-restore'))));
+            if (!saved) { toastr.warning('概要恢复未保存，请重试'); return; }
+            rememberLongDreamComposerDraft(dream.id);
+            renderLongDreamPanel();
+            toastr.success('已恢复这版概要，正文和人物关系保持不变');
+        } catch { toastr.warning('当前章节或梦脉已变化，请完成补织并重新查看概要'); }
+    });
     $d.off('click.tdmemoryconflict').on('click.tdmemoryconflict', '[data-dream-memory-conflict-action]', async function () {
         const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
         const card = $(this).closest('[data-dream-memory-conflict]');
@@ -5266,7 +5280,7 @@ function bindEvents() {
                 queueLongDreamMemoryWeave(saved.id, { force: true, announce: true });
             } else {
                 toastr.success(action === 'accept' ? '已采用新章节带来的变化' : '已保留原记忆并否定这次变化');
-                if (!saved.memory.pendingConflicts.length && !saved.memory.pendingChapterNumbers.length) await refreshLongDreamSummaryNow(saved.id);
+                if (!saved.memory.pendingConflicts.length && !saved.memory.pendingChapterNumbers.length) await refreshLongDreamSummaryNow(saved.id, { fillMissing: true });
             }
         } catch (error) {
             toastr.warning(error?.message || String(error));
@@ -9364,7 +9378,7 @@ function syncLongDreamSummaryButton(key) {
         .prop('disabled', busy || !memory || memory.status === LONG_DREAM_MEMORY_STATUS.WEAVING || !!memory.pendingConflicts?.length || !!memory.pendingChapterNumbers?.length)
         .attr('aria-busy', String(busy)).text(busy ? '正在更新…' : '更新概要');
 }
-async function refreshLongDreamSummaryNow(dreamId) {
+async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {}) {
     const key = String(dreamId);
     if (refreshingLongDreamSummaries.has(key)) { toastr.info('概要正在更新，请稍候'); return; }
     const dream = longDreamCache.find(item => String(item.id) === key);
@@ -9381,6 +9395,7 @@ async function refreshLongDreamSummaryNow(dreamId) {
         syncLongDreamSummaryButton(key);
         toastr.info('正在更新概要，最多等待 3 分钟');
         const saved = await refreshLongDreamSummary({
+            replace: !fillMissing,
             record: dream,
             request: (payload, { signal }) => requestCustomApi({ config: { ...preset, maxOutputTokens: Math.min(8192, normalizeMaxTokens(preset.maxOutputTokens, 4096)) }, ...payload, signal, shouldStream: false, onChunk: () => {}, log: runtimeLog }),
             readLatest: () => longDreamCache.find(item => String(item.id) === key),
@@ -9447,7 +9462,13 @@ async function weaveLongDreamMemory(dreamId, { force = false, announce = false }
         const patch = parseLongDreamMemoryResponse(response?.text || response, {
             pendingChapterNumbers: payload.pendingChapterNumbers,
         });
-        const latest = longDreamCache.find(item => String(item.id) === String(dream.id)) || weaving;
+        const latest = longDreamCache.find(item => String(item.id) === String(dream.id));
+        if (!latest) return;
+        if (JSON.stringify([latest.chapters, latest.memory, latest.canon, latest.inheritance]) !== JSON.stringify([weaving.chapters, weaving.memory, weaving.canon, weaving.inheritance])) {
+            if (latest.memory.status === LONG_DREAM_MEMORY_STATUS.WEAVING) await longDreamPut(setLongDreamMemoryStatus(latest, LONG_DREAM_MEMORY_STATUS.PENDING));
+            if (String(activeLongDreamId) === String(dream.id) && longDreamView === 'detail') renderLongDreamPanel();
+            return;
+        }
         const saved = await longDreamPut(applyLongDreamMemoryPatch(latest, patch, payload.throughChapter));
         if (!saved) return;
         runtimeLog('info', '梦脉织录完成', {
@@ -9460,9 +9481,15 @@ async function weaveLongDreamMemory(dreamId, { force = false, announce = false }
         });
         if (String(activeLongDreamId) === String(dream.id) && longDreamView === 'detail') renderLongDreamPanel();
         if (announce) toastr.success(`梦脉已织录至第 ${payload.throughChapter} 章`);
-        if (saved.memory.summaryNeedsRefresh && !saved.memory.pendingConflicts.length && !saved.memory.pendingChapterNumbers.length) await refreshLongDreamSummaryNow(saved.id);
+        if (saved.memory.summaryNeedsRefresh && !saved.memory.pendingConflicts.length && !saved.memory.pendingChapterNumbers.length) await refreshLongDreamSummaryNow(saved.id, { fillMissing: true });
     } catch (error) {
-        const latest = longDreamCache.find(item => String(item.id) === String(dream.id)) || weaving;
+        const latest = longDreamCache.find(item => String(item.id) === String(dream.id));
+        if (!latest) return;
+        if (JSON.stringify([latest.chapters, latest.memory, latest.canon, latest.inheritance]) !== JSON.stringify([weaving.chapters, weaving.memory, weaving.canon, weaving.inheritance])) {
+            if (latest.memory.status === LONG_DREAM_MEMORY_STATUS.WEAVING) await longDreamPut(setLongDreamMemoryStatus(latest, LONG_DREAM_MEMORY_STATUS.PENDING));
+            if (String(activeLongDreamId) === String(dream.id) && longDreamView === 'detail') renderLongDreamPanel();
+            return;
+        }
         const signal = error?.diagnosticSignal || REQUEST_DIAGNOSTIC_SIGNAL.INVALID_RESPONSE;
         await longDreamPut(setLongDreamMemoryStatus(latest, LONG_DREAM_MEMORY_STATUS.FAILED, { errorSignal: signal }));
         runtimeLog('error', '梦脉织录失败', { dream_id: String(dream.id), signal });

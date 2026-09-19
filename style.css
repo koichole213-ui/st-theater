@@ -7072,3 +7072,10 @@ body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-
 @media(prefers-reduced-motion:reduce) { .theater-popup .theater-inst-pagination .theater-list-page { transition:none; } }
 .theater-default-name::placeholder { color:var(--t-fg-soft, #888); opacity:.7; }
 .theater-default-name:focus::placeholder { color:transparent; }
+
+/* Inline synopsis history follows the existing dream panel controls. */
+.theater-dream-summary-history { margin-top: 10px; text-align: left; }
+.theater-dream-summary-history details { margin: 8px 0; }
+.theater-dream-summary-history summary { cursor: pointer; text-align: left; }
+.theater-dream-summary-note { display: block; margin-top: 6px; text-align: left; opacity: .75; }
+.theater-dream-summary-history .theater-dream-memory-current-state-readonly { max-height: 240px; overflow: auto; }

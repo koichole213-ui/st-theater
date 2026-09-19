@@ -1,3 +1,4 @@
+import { normalizeStoryFields, mergeStoryResponse, saveStorySummary, composeStorySummary, validateStorySources, invalidateStoryDecisions } from './long-dream-story-summary.js';
 import {
     LONG_DREAM_MEMORY_SCHEMA_VERSION,
     applyLongDreamMemoryOperations,
@@ -188,6 +189,9 @@ export function prepareLongDreamMemoryRegeneration(record, now = new Date()) {
     const updatedAt = normalizeIsoDate(now, new Date().toISOString());
     const memory = normalizeMemory({
         ...resetMemoryForChapters(normalized.chapters),
+        ...normalizeStoryFields(normalized.memory),
+        currentState: normalized.memory.currentState,
+        summaryNeedsRefresh: true,
         states: preserveV2(normalized.memory.states || []),
         transitions: preserveV2(normalized.memory.transitions || []),
         threads: preserveV2(normalized.memory.threads || []),
@@ -275,7 +279,8 @@ function normalizeMemory(memory = {}, chapterCount = 0) {
         cards,
         legacyCards,
         ...v2,
-        currentState: cleanText(memory?.currentState, 5000),
+        ...normalizeStoryFields(memory, chapterCount),
+        currentState: typeof memory?.currentState === 'string' ? memory.currentState.trim() : '',
         summaryNeedsRefresh: memory?.summaryNeedsRefresh === true,
         summaryHistory: (Array.isArray(memory?.summaryHistory) ? memory.summaryHistory : []).filter(item => Number.isInteger(item.chapterNumber) && item.chapterNumber > 0 && item.chapterNumber <= chapterCount && typeof item.text === 'string').map(item => ({ chapterNumber: item.chapterNumber, text: cleanText(item.text, 5000) })).slice(-100),
         processedThroughChapter,
@@ -531,7 +536,7 @@ export function normalizeLongDreamRecord(record = {}) {
             textTheme: cleanText(record?.sourceConfig?.textTheme, 40),
         },
         chapters,
-        memory: normalizeMemory(record?.memory, chapters.length),
+        memory: normalizeMemory(validateStorySources(record?.memory || {}, chapters), chapters.length),
         draft: normalizeDraft(record?.draft, chapters.length + 1, normalizeIsoDate(record.updatedAt, createdAt)),
     };
 }
@@ -561,6 +566,7 @@ export function updateLongDreamDefinition(record, { title, canon, worldBookPolic
         ...normalized,
         title: cleanText(title, 80) || normalized.title,
         canon: String(canon ?? normalized.canon).trim(),
+        memory: canon !== undefined && String(canon).trim() !== normalized.canon ? { ...normalized.memory, ...invalidateStoryDecisions(normalized.memory) } : normalized.memory,
         inheritance: {
             worldBookPolicy: policy,
             worldLineRelation: relation,
@@ -637,6 +643,12 @@ export function updateLongDreamChapter(record, chapterId, changes = {}, now = ne
     const memory = contentChanged
         ? normalizeMemory({
             ...normalized.memory,
+            storyEntries: normalized.memory.storyEntries.filter(item => item.chapterNumber < previous.number),
+            summaryVersions: normalized.memory.summaryVersions.filter(item => item.chapterNumber < previous.number),
+            currentState: composeStorySummary(normalized.memory.storyEntries.filter(item => item.chapterNumber < previous.number)),
+            summaryThroughChapter: replayFrom,
+            summaryNeedsRefresh: true,
+            summaryHistory: normalized.memory.summaryHistory.filter(item => item.chapterNumber < previous.number),
             processedThroughChapter,
             pendingChapterNumbers: chapters.map(chapter => chapter.number).filter(number => number > processedThroughChapter),
             status: LONG_DREAM_MEMORY_STATUS.PENDING,
@@ -759,11 +771,11 @@ export function applyLongDreamMemoryPatch(record, patch = {}, throughChapter, no
         const memory = normalizeMemory({
             ...normalized.memory,
             ...application.memory,
-            currentState: application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0
+            currentState: patch.storyRequested || normalized.memory.storyEntries.length || application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0
                 ? normalized.memory.currentState
                 : cleanText(patch.currentState || normalized.memory.currentState, 5000),
-            summaryNeedsRefresh: !!(application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0 || !patch.currentState),
-            summaryHistory: !(application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0) && patch.currentState
+            summaryNeedsRefresh: !!(patch.storyRequested || application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0 || !patch.currentState),
+            summaryHistory: !patch.storyRequested && !(application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0) && patch.currentState
                 ? [...normalized.memory.summaryHistory.filter(item => item.chapterNumber !== processedThroughChapter), { chapterNumber: processedThroughChapter, text: cleanText(patch.currentState, 5000) }]
                 : normalized.memory.summaryHistory,
             processedThroughChapter,
@@ -774,7 +786,12 @@ export function applyLongDreamMemoryPatch(record, patch = {}, throughChapter, no
             updatedAt,
             lastErrorSignal: '',
         }, normalized.chapters.length);
-        return { ...normalized, memory, updatedAt };
+        const result = { ...normalized, memory, updatedAt };
+        if (patch.storyRequested && !application.memory.pendingConflicts.length && !application.ignoredOperations.length && !Number(patch.invalidOperationCount)) {
+            try { return saveStorySummary(result, mergeStoryResponse(result, patch.storyEntries), now); }
+            catch { return result; } // Operations can succeed while an incomplete synopsis stays untouched.
+        }
+        return result;
     }
     const cards = normalized.memory.cards.slice();
     for (const rawCard of Array.isArray(patch.cards) ? patch.cards : []) {
@@ -821,7 +838,8 @@ export function applyLongDreamMemoryPatch(record, patch = {}, throughChapter, no
     const memory = normalizeMemory({
         ...normalized.memory,
         cards,
-        currentState: cleanText(patch.currentState || normalized.memory.currentState, 5000),
+        currentState: patch.storyRequested || normalized.memory.storyEntries.length ? normalized.memory.currentState : cleanText(patch.currentState || normalized.memory.currentState, 5000),
+        summaryNeedsRefresh: patch.storyRequested || normalized.memory.summaryNeedsRefresh,
         processedThroughChapter,
         pendingChapterNumbers: normalized.chapters
             .map(chapter => chapter.number)
@@ -855,7 +873,7 @@ export function updateLongDreamMemoryCard(record, cardId, changes = {}, now = ne
     cards[index] = next;
     return {
         ...normalized,
-        memory: { ...normalized.memory, cards, updatedAt },
+        memory: { ...normalized.memory, cards, ...invalidateStoryDecisions(normalized.memory), updatedAt },
         updatedAt,
     };
 }
@@ -875,7 +893,7 @@ export function setLongDreamMemoryCardStatus(record, cardId, status, now = new D
     };
     return {
         ...normalized,
-        memory: { ...normalized.memory, cards, updatedAt },
+        memory: { ...normalized.memory, cards, ...invalidateStoryDecisions(normalized.memory), updatedAt },
         updatedAt,
     };
 }
@@ -904,7 +922,7 @@ export function updateLongDreamMemoryV2RecordItem(record, kind, itemId, changes 
     const v2 = updateLongDreamMemoryV2Item(normalized.memory, kind, itemId, changes, now);
     return {
         ...normalized,
-        memory: normalizeMemory({ ...normalized.memory, ...v2, updatedAt }, normalized.chapters.length),
+        memory: normalizeMemory({ ...normalized.memory, ...v2, ...invalidateStoryDecisions(normalized.memory), updatedAt }, normalized.chapters.length),
         updatedAt,
     };
 }
@@ -916,7 +934,7 @@ export function setLongDreamMemoryV2RecordItemHidden(record, kind, itemId, hidde
     const v2 = setLongDreamMemoryV2ItemHidden(normalized.memory, kind, itemId, hidden, now);
     return {
         ...normalized,
-        memory: normalizeMemory({ ...normalized.memory, ...v2, updatedAt }, normalized.chapters.length),
+        memory: normalizeMemory({ ...normalized.memory, ...v2, ...invalidateStoryDecisions(normalized.memory), updatedAt }, normalized.chapters.length),
         updatedAt,
     };
 }
@@ -928,7 +946,7 @@ export function rejectLongDreamMemoryV2RecordItem(record, kind, itemId, reason =
     const v2 = rejectLongDreamMemoryV2Item(normalized.memory, kind, itemId, reason, now);
     return {
         ...normalized,
-        memory: normalizeMemory({ ...normalized.memory, ...v2, updatedAt }, normalized.chapters.length),
+        memory: normalizeMemory({ ...normalized.memory, ...v2, ...invalidateStoryDecisions(normalized.memory), updatedAt }, normalized.chapters.length),
         updatedAt,
     };
 }
@@ -953,7 +971,7 @@ export function resolveLongDreamMemoryV2RecordConflict(record, conflictId, actio
     });
     return {
         ...normalized,
-        memory: normalizeMemory({ ...normalized.memory, ...v2, currentState: normalized.memory.currentState, summaryNeedsRefresh: true, summaryHistory: normalized.memory.summaryHistory.filter(item => item.chapterNumber < conflictChapter), updatedAt }, normalized.chapters.length),
+        memory: normalizeMemory({ ...normalized.memory, ...v2, ...invalidateStoryDecisions(normalized.memory), currentState: normalized.memory.currentState, summaryNeedsRefresh: true, summaryHistory: normalized.memory.summaryHistory.filter(item => item.chapterNumber < conflictChapter), updatedAt }, normalized.chapters.length),
         updatedAt,
     };
 }
