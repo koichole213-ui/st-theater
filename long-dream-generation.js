@@ -1,7 +1,6 @@
 import {
     LONG_DREAM_DRAFT_RESUME_STAGE,
     LONG_DREAM_DRAFT_STATUS,
-    LONG_DREAM_MAX_CANDIDATES,
     appendLongDreamDraftCandidate,
     normalizeLongDreamRecord,
     promoteLongDreamDraft,
@@ -110,9 +109,6 @@ export function createLongDreamGenerationController({
         const retainedCandidates = Array.isArray(currentRecord.draft?.candidates)
             ? currentRecord.draft.candidates
             : [];
-        if (appendCandidate && retainedCandidates.length >= LONG_DREAM_MAX_CANDIDATES) {
-            throw new Error(`同一章最多保留 ${LONG_DREAM_MAX_CANDIDATES} 版候选`);
-        }
         const retainedSelectedCandidateIndex = Math.min(
             Math.max(0, retainedCandidates.length - 1),
             Math.max(0, Math.floor(Number(currentRecord.draft?.selectedCandidateIndex) || 0)),
@@ -327,6 +323,8 @@ export function createLongDreamGenerationController({
                 apiRoute,
             }));
             persistence = persistence.then(async latestRecord => {
+                // A renderer may finish after abort; never evict a retained candidate for a stopped attempt.
+                if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
                 const nextRecord = appendLongDreamDraftCandidate(latestRecord, {
                     instruction: normalizedInstruction,
                     title: normalizedTitle,

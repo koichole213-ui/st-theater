@@ -996,8 +996,8 @@ export function appendLongDreamDraftCandidate(record, candidate = {}, now = new 
     }, normalizeIsoDate(now, new Date().toISOString()));
     if (!nextCandidate) throw new Error('待确认候选必须同时包含纯正文与最终 HTML');
     const candidates = Array.isArray(normalized.draft.candidates) ? normalized.draft.candidates : [];
-    if (candidates.length >= LONG_DREAM_MAX_CANDIDATES) throw new Error(`同一章最多保留 ${LONG_DREAM_MAX_CANDIDATES} 版候选`);
-    const nextCandidates = [...candidates, nextCandidate];
+    // Evict only when a complete new candidate is ready; writing checkpoints keep all old candidates.
+    const nextCandidates = [...candidates, nextCandidate].slice(-LONG_DREAM_MAX_CANDIDATES);
     return saveLongDreamDraft(normalized, {
         ...normalized.draft,
         status: LONG_DREAM_DRAFT_STATUS.REVIEW,

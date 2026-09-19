@@ -1447,17 +1447,17 @@ test('修改要求入口确认采用新指令，取消、状态变化和三版�
         };
         await runInNewContext(code + `\nregenerateLongDreamDraft({edit:${mode !== 'original'}})`, scope);
         assert.equal(JSON.stringify(draft), before);
-        if (['cancel', 'stale', 'full'].includes(mode)) assert.equal(calls.length, 0);
+        if (['cancel', 'stale'].includes(mode)) assert.equal(calls.length, 0);
         else {
             assert.equal(calls.length, 2);
             assert.equal(calls[1][1].appendCandidate, true);
             assert.equal(calls[1][1].candidateConfig.instruction, mode === 'original' ? '原要求' : mode === 'empty' ? '' : '新的完整要求');
         }
-        if (!['original', 'full'].includes(mode)) {
+        if (mode !== 'original') {
             assert.ok(markup.includes('原要求'));
             assert.match(markup, /theater-compact-popup theater-dream-revise-popup/);
             assert.match(markup, /data-skin="default"/);
-            assert.match(markup, /本次将新增第 2 版/);
+            assert.match(markup, mode === 'full' ? /新版成功保存后移出最早一版/ : /本次将新增第 2 版/);
         }
     }
 });
@@ -1485,8 +1485,9 @@ test('长梦修改要求生成保留三版各自指令，切换、重载和确�
     const confirmed = await controller.confirm(selected);
     assert.equal(confirmed.chapters[1].instruction, '方向甲');
     assert.equal(confirmed.chapters[1].text, '候选正文1。');
-    await assert.rejects(controller.run({ record: reloaded, appendCandidate: true, instruction: '第四版' }), /最多保留 3 版/);
-    assert.equal(prompts.length, 3);
+    const fourth = await controller.run({ record: reloaded, appendCandidate: true, instruction: '第四版' });
+    assert.deepEqual(fourth.record.draft.candidates.map(item => item.instruction), ['方向乙：请表现得更主动', '', '第四版']);
+    assert.equal(prompts.length, 4);
 });
 
 test('长梦旧候选迁移继承原指令，新版本失败后返回旧版恢复其指令', async () => {
@@ -1529,20 +1530,82 @@ test('长梦待确认章节最多保留三版，并只晋升用户选中的候�
         '第 2 版正文。',
         '第 3 版正文。',
     ]);
-    await assert.rejects(
-        controller.run({ record: third.record, appendCandidate: true }),
-        /最多保留 3 版候选/,
-    );
-    assert.equal(requestCount, 3);
+    let latest = third.record;
+    for (let number = 4; number <= 7; number++) {
+        latest = (await controller.run({ record: latest, appendCandidate: true, instruction: `方向${number}` })).record;
+        latest = normalizeLongDreamRecord(JSON.parse(JSON.stringify(latest)));
+        assert.deepEqual(latest.draft.candidates.map(candidate => candidate.text), [number - 2, number - 1, number].map(n => `第 ${n} 版正文。`));
+        assert.equal(latest.draft.selectedCandidateIndex, 2);
+        assert.equal(latest.draft.instruction, `方向${number}`);
+    }
+    assert.equal(requestCount, 7);
 
-    const selected = selectLongDreamDraftCandidate(third.record, 0);
+    const selected = selectLongDreamDraftCandidate(latest, 0);
     assert.equal(selected.draft.selectedCandidateIndex, 0);
-    assert.equal(selected.draft.text, '第 1 版正文。');
+    assert.equal(selected.draft.text, '第 5 版正文。');
+    assert.equal(selected.draft.instruction, '方向5');
     const confirmed = await controller.confirm(selected);
     assert.equal(confirmed.chapters.length, 2);
-    assert.equal(confirmed.chapters[1].text, '第 1 版正文。');
-    assert.equal(confirmed.chapters[1].html, '<main>第 1 版正文。</main>');
+    assert.equal(confirmed.chapters[1].text, '第 5 版正文。');
+    assert.equal(confirmed.chapters[1].html, '<main>第 5 版正文。</main>');
     assert.equal(confirmed.draft, null);
+});
+
+test('满三版后请求失败、停止、排版或保存失败均保留旧候选，恢复成功才移出最早版', async () => {
+    const seed = createLongDreamGenerationController({
+        requestChapter: async ({ userPrompt }) => ({ text: '已有候选正文。' + userPrompt.slice(-10) }),
+        renderChapter: async ({ text }) => `<main>${text}</main>`,
+    });
+    let record = createLongDreamRecord({ source: { text: '正式正文', html: '<main>正式正文</main>' } });
+    for (let i = 0; i < 3; i++) record = (await seed.run({ record, appendCandidate: i > 0, instruction: `旧要求${i}` })).record;
+    record = selectLongDreamDraftCandidate(record, 1);
+    const before = JSON.stringify(record.draft.candidates);
+    for (const failure of ['request', 'stop', 'render', 'late-render', 'save']) {
+        let stored = record;
+        const controller = createLongDreamGenerationController({
+            checkpointIntervalMs: 0,
+            requestChapter: async ({ onChunk }) => {
+                onChunk('新的一版正文');
+                if (failure === 'request') throw new Error('请求失败');
+                if (failure === 'stop') { controller.abort(); throw new DOMException('Aborted', 'AbortError'); }
+                return { text: '新的一版正文' };
+            },
+            renderChapter: async () => {
+                if (failure === 'render') throw new Error('排版失败');
+                if (failure === 'late-render') controller.abort();
+                return '<main>新排版</main>';
+            },
+            persistRecord: async next => {
+                if (failure === 'save' && next.draft.status === LONG_DREAM_DRAFT_STATUS.REVIEW) return false;
+                assert.equal(JSON.stringify(next.draft.candidates), before);
+                stored = next;
+                return next;
+            },
+        });
+        let failed;
+        await assert.rejects(controller.run({ record, appendCandidate: true, instruction: '新要求' }), error => {
+            if (failure === 'late-render') assert.equal(error.name, 'AbortError');
+            failed = error.longDreamRecord;
+            return true;
+        });
+        assert.equal(JSON.stringify(record.draft.candidates), before);
+        assert.equal(JSON.stringify(stored.draft.candidates), before);
+        assert.equal(JSON.stringify(failed.draft.candidates), before);
+        const restored = discardLongDreamWritingAttempt(normalizeLongDreamRecord(JSON.parse(JSON.stringify(failed))));
+        assert.equal(restored.draft.selectedCandidateIndex, 1);
+        assert.equal(restored.draft.instruction, '旧要求1');
+        if (failure === 'render') {
+            const recovery = createLongDreamGenerationController({
+                requestChapter: async () => assert.fail('排版恢复不应再写正文'),
+                renderChapter: async () => '<main>恢复排版</main>',
+            });
+            const result = await recovery.run({ record: failed });
+            assert.deepEqual(result.record.draft.candidates.slice(0, 2), record.draft.candidates.slice(1));
+            assert.equal(result.record.draft.candidates.length, 3);
+            assert.equal(result.record.draft.text, '新的一版正文');
+            assert.equal(result.record.draft.instruction, '新要求');
+        }
+    }
 });
 
 test('生成下一版中途停止时保留旧候选，放弃本轮后可回到待确认状态', async () => {
