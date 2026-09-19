@@ -319,6 +319,12 @@ export function composeGenerationContinuationMessages({
     continuationUserPrompt = '',
     squashSystemMessages = false,
 } = {}) {
+    // Label the frozen background only for continuation rounds; keep its roles,
+    // order and full contents without changing the first-round request.
+    const referenceChatMessages = normalizeRequestMessages(chatMessages).map(message => ({
+        ...message,
+        content: `【聊天正文参考开始｜仅作背景，不是本轮补写对象】\n${message.content}\n【聊天正文参考结束】`,
+    }));
     const tailMessages = [
         ...normalizeRequestMessages(foundationTailMessages),
         String(continuationUserPrompt || '').trim() ? {
@@ -338,7 +344,7 @@ export function composeGenerationContinuationMessages({
         presetEntries,
         slots,
         worldInfoEntries,
-        chatMessages,
+        chatMessages: referenceChatMessages,
         tailMessages,
         squashSystemMessages,
     });

@@ -10,6 +10,7 @@ import { compareVersion, fetchInstalledExtensionStatus, fetchLatestRemoteVersion
 import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
+import { recognizeInstructionTitle } from './instruction-title.js';
 import { STORY_RELATION_CONTINUITY_RULE, buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml, recentGenerationRoundsContext } from './generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection } from './adaptive-render.js';
 import { normalizeContinuationRounds, continuationRoundHistory, createContinuationSession, appendContinuationVersion, selectContinuationVersion, displayedContinuationVersion } from './continuation-session.js';
@@ -409,6 +410,7 @@ const defaultSettings = Object.freeze({
     recentGenerations: [],  // 最近 3 条自动保留的生成结果 [{ html, mode, time, instruction }]
     recentIndex: 0,         // 当前查看的 recentGenerations 索引
     lastTheaterTab: 'generate',
+    autoRecognizeInstructionTitle: false,
     longDreamLastView: 'list',
     longDreamLastId: '',
     longDreamComposerDrafts: {},
@@ -7476,7 +7478,7 @@ async function askNewItemName(title, defaultName, maxLength = 80) {
     return (String($(popup.dlg).find('[data-new-item-name]').val() || '').trim() || String(defaultName).trim()).slice(0, maxLength);
 }
 
-async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已有标签，也可以同时新建一个标签', selected = [], okButton = '确认', templateName = null, nameLabel = '模板名称', namePlaceholder = '给这个模板起个名字' } = {}) {
+async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已有标签，也可以同时新建一个标签', selected = [], okButton = '确认', templateName = null, nameLabel = '模板名称', namePlaceholder = '给这个模板起个名字', instructionContent = null } = {}) {
     const { Popup, POPUP_TYPE } = SillyTavern.getContext();
     const known = knownInstructionTags();
     const current = normalizeTagFilter(selected, known);
@@ -7488,6 +7490,11 @@ async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已
             ${templateName === null ? '' : `<div class="theater-tag-template-name-field">
                 <label for="theater-tag-template-name"><i class="fa-solid fa-file-signature"></i> ${esc(nameLabel)}</label>
                 <input id="theater-tag-template-name" class="theater-input theater-default-name" maxlength="60" autocomplete="off" value="" placeholder="${esc(templateName || namePlaceholder)}">
+            </div>`}
+            ${instructionContent === null ? '' : `<div class="theater-instruction-title-options">
+                <label><input type="checkbox" data-instruction-title-auto ${settings.autoRecognizeInstructionTitle === true ? 'checked' : ''}> 自动识别标题</label>
+                <small data-instruction-title-status aria-live="polite"></small>
+                <details><summary>查看将保存的指令内容</summary><textarea class="theater-textarea" data-instruction-content-preview readonly rows="6" aria-label="将保存的指令内容"></textarea></details>
             </div>`}
             <div class="theater-compact-tag-heading"><b>选择标签</b><small>可多选 · 也可以不选</small></div>
             <div class="theater-tag-choice-list is-compact">${rows}${emptyHint}</div>
@@ -7503,6 +7510,26 @@ async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已
     const popup = new Popup(html, POPUP_TYPE.CONFIRM, '', { wide: false, okButton, cancelButton: '取消', allowVerticalScrolling: true });
     const showPromise = popup.show();
     const $body = $(popup.dlg);
+    let instructionSelection = null;
+    if (instructionContent !== null) {
+        const parsed = recognizeInstructionTitle(instructionContent);
+        const $name = $body.find('#theater-tag-template-name');
+        let manuallyNamed = false;
+        $name.on('input', () => { manuallyNamed = true; });
+        const updateInstructionPreview = () => {
+            const enabled = $body.find('[data-instruction-title-auto]').is(':checked');
+            const recognized = enabled && parsed.recognized;
+            instructionSelection = { content: recognized ? parsed.content : instructionContent, autoRecognizeTitle: enabled };
+            if (!manuallyNamed) $name.val(recognized ? parsed.name : '');
+            $body.find('[data-instruction-content-preview]').val(instructionSelection.content);
+            $body.find('[data-instruction-title-status]').text(!enabled
+                ? '关闭时保留完整原文；保存后记住开关选择。'
+                : recognized ? '已识别开头标题，请核对名称和内容；关闭开关可保留完整原文。'
+                    : '未识别到明确的开头标题，已保留完整原文；名称留空将使用浅色提示中的默认名称。');
+        };
+        $body.on('change', '[data-instruction-title-auto]', updateInstructionPreview);
+        updateInstructionPreview();
+    }
     const selectOrAppendTag = raw => {
         const tag = cleanTagName(raw);
         if (!tag) return null;
@@ -7553,6 +7580,7 @@ async function chooseTagsWithNew({ title = '选择标签', subtitle = '勾选已
         name,
         tags,
         newTags,
+        ...(instructionSelection || {}),
     };
 }
 
@@ -7687,11 +7715,13 @@ async function saveInstructionTpl() {
         selected: suggested,
         okButton: '保存模板',
         templateName: defaultName,
+        instructionContent: c,
     });
     if (selection === null) return;
     settings.instructionTags = normalizeTagList([...knownInstructionTags(), ...selection.newTags]);
     const tags = mergeTagLists([], selection.tags, settings.instructionTags);
-    const tpl = { name: selection.name, content: c, tags };
+    settings.autoRecognizeInstructionTitle = selection.autoRecognizeTitle === true;
+    const tpl = { name: selection.name, content: selection.content ?? c, tags };
     settings.instructionTemplates.push(tpl);
     save(); refreshInstUI();
     toastr.success(tags.length ? `已保存 · ${tags.join('、')}` : '已保存为未分类');
@@ -9487,7 +9517,14 @@ async function regenerateLongDreamDraft({ edit = false } = {}) {
     let instruction = draft.instruction;
     if (edit) {
         const { Popup, POPUP_TYPE } = SillyTavern.getContext();
-        const popup = new Popup(`<div class="theater-popup"><h3>修改要求再生成</h3><p style="text-align:left">修改下方完整指令后，生成一个新版本。已有 ${candidateCount} 版会原样保留，最多共存三版。请具体写明要调整的表现；旧候选不会作为正文前文发送。</p><label style="display:block;text-align:left">本次完整续写指令<textarea class="theater-textarea" data-dream-revised-instruction rows="8" style="width:100%;box-sizing:border-box;text-align:left">${esc(instruction)}</textarea></label></div>`, POPUP_TYPE.CONFIRM, '', { wide: false, okButton: '生成新版本', cancelButton: '取消', allowVerticalScrolling: true });
+        const popup = new Popup(`<div class="theater-popup theater-compact-popup theater-dream-revise-popup" data-skin="${settings.skinMode || 'default'}">
+            <div class="theater-dream-revise-eyebrow"><i class="fa-regular fa-moon" aria-hidden="true"></i><span>长梦 · 续章</span></div>
+            <h3>修改续写要求</h3>
+            <p class="theater-dream-revise-description">改好这次想写的内容，再生成一个新版本。<br>原来的版本会为你保留。</p>
+            <div class="theater-dream-revise-field-heading"><label for="theater-dream-revised-instruction">本次续写要求</label><small>已带入原要求</small></div>
+            <textarea id="theater-dream-revised-instruction" class="theater-textarea" data-dream-revised-instruction rows="6">${esc(instruction)}</textarea>
+            <p class="theater-dream-revise-retention"><i class="fa-solid fa-layer-group" aria-hidden="true"></i><span>已有 <b>${candidateCount} / ${LONG_DREAM_MAX_CANDIDATES}</b> 版 · 本次将新增第 ${candidateCount + 1} 版</span></p>
+        </div>`, POPUP_TYPE.CONFIRM, '', { wide: false, okButton: '生成新版本', cancelButton: '取消', allowVerticalScrolling: true });
         const shown = popup.show();
         const input = $(popup.dlg).find('[data-dream-revised-instruction]');
         if (!await shown) return;

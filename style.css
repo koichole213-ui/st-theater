@@ -6996,6 +6996,56 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     margin:0;
 }
 
+/* 修改要求：只作用于已确认设计的长梦紧凑弹窗。 */
+body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) {
+    display:flex !important; flex-direction:column !important;
+    width:min(440px,calc(100vw - 28px)) !important;
+    max-width:min(440px,calc(100vw - 28px)) !important;
+    height:auto !important; min-height:0 !important; max-height:calc(100dvh - 32px) !important;
+    border-radius:22px !important;
+}
+body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) .popup-content {
+    flex:0 1 auto !important; min-height:0 !important; overflow:hidden !important;
+}
+body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) .popup-body {
+    flex:1 1 auto !important; min-height:0 !important; overflow-y:auto !important;
+}
+.theater-popup.theater-compact-popup.theater-dream-revise-popup {
+    flex:0 0 auto; padding:24px 24px 0; min-height:0; border-radius:0; background:var(--t-bg);
+}
+.theater-dream-revise-popup .theater-dream-revise-eyebrow { display:flex; align-items:center; gap:7px; margin:0 0 12px; font-size:12px; line-height:1.5; letter-spacing:2px; color:var(--t-accent-deep); text-align:left; }
+.theater-dream-revise-popup h3 { margin:0; font:600 24px/1.4 var(--t-font-serif); letter-spacing:1px; color:var(--t-fg); text-align:left; }
+.theater-dream-revise-popup .theater-dream-revise-description { margin:10px 0 22px; font-size:13px; line-height:1.8; color:var(--t-fg-soft); text-align:left; }
+.theater-dream-revise-popup .theater-dream-revise-field-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:10px; font-size:13px; line-height:1.5; text-align:left; }
+.theater-dream-revise-field-heading label { font-weight:600; }
+.theater-dream-revise-field-heading small { font-size:12px; color:var(--t-fg-soft); text-align:left; }
+.theater-dream-revise-popup textarea.theater-textarea { display:block; width:100%; min-height:196px; box-sizing:border-box; margin:0; padding:16px; border:1px solid var(--t-border-strong); border-radius:14px; background:var(--t-surface-1); color:var(--t-fg); font:400 16px/1.85 var(--t-font-sans); text-align:left; resize:vertical; }
+.theater-dream-revise-popup .theater-dream-revise-retention { display:flex; align-items:center; gap:7px; margin:13px 0 22px; font-size:12px; line-height:1.7; color:var(--t-fg-soft); text-align:left; }
+.theater-dream-revise-retention b { font-weight:500; color:var(--t-fg); }
+body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) :is(.popup-controls,.popup-buttons) {
+    display:grid !important; grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important;
+    gap:10px !important; padding:18px 24px 24px !important; margin:0 !important;
+    border-top:1px solid rgba(128,118,100,.2); flex:0 0 auto !important;
+}
+body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) :is(.popup-button-ok,.popup-button-cancel) {
+    width:100% !important; min-width:0 !important; min-height:46px !important; height:auto !important;
+    margin:0 !important; padding:10px 9px !important; border-radius:999px !important;
+    font-size:14px !important; line-height:1.5 !important; justify-content:center !important;
+}
+body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) .popup-button-cancel { grid-column:1; grid-row:1; }
+body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) .popup-button-ok { grid-column:2; grid-row:1; }
+@media (max-width:360px) {
+    .theater-popup.theater-compact-popup.theater-dream-revise-popup { padding:20px 16px 0; }
+    .theater-dream-revise-popup h3 { font-size:22px; }
+    body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) :is(.popup-controls,.popup-buttons) { padding:16px !important; }
+}
+
+.theater-instruction-title-options { display:flex; flex-direction:column; gap:8px; margin:12px 0; text-align:left; }
+.theater-instruction-title-options > label { display:flex; align-items:center; gap:8px; text-align:left; }
+.theater-instruction-title-options small { display:block; text-align:left; }
+.theater-instruction-title-options summary { cursor:pointer; text-align:left; }
+.theater-instruction-title-options textarea { width:100%; box-sizing:border-box; margin-top:8px; text-align:left; }
+
 /* 紧凑分页：居中薄底座，跳转区略大，辅助说明左对齐。 */
 .theater-popup .theater-inst-pagination { display:flex; flex-direction:column; align-items:center; gap:9px; padding:10px 0 2px; margin-top:9px; border-radius:0; background:transparent; color:var(--t-fg); }
 .theater-inst-pagination .theater-page-summary { align-self:stretch; text-align:left; font-size:10px; color:var(--t-fg-soft); }
