@@ -38,16 +38,21 @@ export function composeStorySummary(entries) {
 }
 
 export function mergeStoryResponse(record, responseEntries, { replace = false } = {}) {
-    if (!Array.isArray(responseEntries)) throw new Error('概要返回为空或缺少分章概要，请重试');
+    const fail = (code, message) => { throw Object.assign(new Error(message), { code: `LONG_DREAM_SUMMARY_${code}` }); };
+    if (!Array.isArray(responseEntries)) fail('MISSING_ENTRIES', '概要返回为空或缺少分章概要，请重试');
+    // Normalize only unambiguous positive decimal chapter numbers; never guess by position.
+    const normalized = responseEntries.map(item => ({ ...item, chapterNumber:
+        typeof item?.chapterNumber === 'string' && /^[1-9]\d*$/.test(item.chapterNumber.trim())
+            ? Number(item.chapterNumber.trim()) : item?.chapterNumber }));
     const sources = chapterSummarySources(record.chapters);
     const existing = replace ? [] : validStoryEntries(record);
     const required = record.chapters.filter(chapter => !existing.some(entry => entry.chapterNumber === chapter.number));
     const entries = existing.slice();
     for (const chapter of required) {
-        const matches = responseEntries.filter(item => item?.chapterNumber === chapter.number);
-        if (matches.length !== 1 || typeof matches[0].text !== 'string' || !matches[0].text.trim() || matches[0].text.trim().length > 1200) {
-            throw new Error('概要未完整覆盖已保存章节，原概要已保留');
-        }
+        const matches = normalized.filter(item => item.chapterNumber === chapter.number);
+        if (matches.length !== 1) fail('COVERAGE', '概要未完整覆盖已保存章节，或章号重复，原概要已保留');
+        if (typeof matches[0].text !== 'string' || !matches[0].text.trim()) fail('EMPTY_ENTRY', '分章概要内容为空，原概要已保留');
+        if (matches[0].text.trim().length > 1200) fail('ENTRY_TOO_LONG', '单章概要超过1200字符，原概要已保留');
         entries.push({ chapterNumber: chapter.number, text: matches[0].text.trim(), source: sources[chapter.number - 1] });
     }
     return entries.sort((a, b) => a.chapterNumber - b.chapterNumber);

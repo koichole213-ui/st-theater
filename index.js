@@ -9410,11 +9410,20 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
         }
         else toastr.info('作品或梦脉刚刚发生变化，本次概要未覆盖，请重新更新');
     } catch (error) {
+        const summaryReasons = {
+            LONG_DREAM_SUMMARY_PARSE_FAILED: '接口返回的概要格式无法解析',
+            LONG_DREAM_SUMMARY_MISSING_ENTRIES: '接口没有返回分章概要',
+            LONG_DREAM_SUMMARY_COVERAGE: '接口返回的概要有漏章、章号不符或重复',
+            LONG_DREAM_SUMMARY_EMPTY_ENTRY: '接口返回了空的分章概要',
+            LONG_DREAM_SUMMARY_ENTRY_TOO_LONG: '接口返回的单章概要过长',
+            LONG_DREAM_SUMMARY_REQUEST_FAILED: '概要请求未完成',
+        };
         const reason = stage === 'preset' ? '副 API 配置读取失败'
             : error?.code === 'LONG_DREAM_SUMMARY_TIMEOUT' ? '等待超过 3 分钟'
             : error?.code === 'LONG_DREAM_SUMMARY_SAVE_FAILED' ? '概要保存失败'
             : error?.diagnosticSignal ? diagnosticSignalInfo(error.diagnosticSignal).title
-            : '接口未返回可用概要或保存失败';
+            : summaryReasons[error?.code] || '接口未返回可用概要或保存失败';
+        if (error?.summaryDiagnostic) runtimeLog('warn', '概要更新失败', { code: error.code, ...error.summaryDiagnostic });
         toastr.warning(`${reason}，原概要已保留；可点击“更新概要”重试`);
     } finally {
         refreshingLongDreamSummaries.delete(key);

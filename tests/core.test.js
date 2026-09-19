@@ -6258,7 +6258,7 @@ test('概要失败、空返回、期间修改或删除作品都不覆盖原概�
     let saves = 0;
     const options = { record, readLatest: () => record, save: () => { saves++; } };
     await assert.rejects(refreshLongDreamSummary({ ...options, request: async () => { throw new Error('断网'); } }));
-    await assert.rejects(refreshLongDreamSummary({ ...options, request: async () => '{}' }), /概要返回为空/);
+    await assert.rejects(refreshLongDreamSummary({ ...options, request: async () => '{}' }), { code: 'LONG_DREAM_SUMMARY_MISSING_ENTRIES' });
     await assert.rejects(refreshLongDreamSummary({ ...options, request: async () => '{"storyEntries":[{"chapterNumber":1,"text":"新概要"}]}', save: async () => false }), { code: 'LONG_DREAM_SUMMARY_SAVE_FAILED' });
     for (const latest of [null, { ...record, memory: { ...record.memory, currentState: '用户已修改' } }]) {
         assert.equal(await refreshLongDreamSummary({ ...options, request: async () => '{"storyEntries":[{"chapterNumber":1,"text":"过时结果"}]}', readLatest: () => latest }), null);
@@ -6323,6 +6323,12 @@ test('概要点击立即反馈、去重、超时解锁和配置异常提示', as
     assert.match(notices.at(-1)[1], /配置读取失败/);
     assert.doesNotMatch(JSON.stringify(notices), /DO_NOT_DISPLAY/);
     scope.selectedLongDreamMemoryApiPreset = () => ({ maxOutputTokens: 4096 });
+    scope.requestCustomApi = async () => '{"currentState":"PRIVATE_RESPONSE"}';
+    await handler();
+    assert.match(notices.at(-1)[1], /没有返回分章概要/);
+    assert.equal(saves, 0);
+    assert.equal(button.disabled, false);
+    assert.doesNotMatch(JSON.stringify(notices), /PRIVATE_RESPONSE/);
     scope.requestCustomApi = async () => '{"storyEntries":[{"chapterNumber":1,"text":"成功概要"}]}';
     await handler();
     assert.equal(saves, 1);
@@ -6379,8 +6385,82 @@ test('全篇概要增量保存开端，关系现状仍能替换，遗漏章节�
     assert.match(record.memory.currentState,/历史经历1[\s\S]*历史经历3[\s\S]*两人和解[\s\S]*共同出发/);
     assert.equal(record.memory.states[0].value,'已和解');
     const old = JSON.stringify(record.memory);
-    await assert.rejects(refreshLongDreamSummary({record, request:async()=>JSON.stringify({storyEntries:[{chapterNumber:3,text:'仅最近三章'},{chapterNumber:4,text:'近况'},{chapterNumber:5,text:'近况'}]}),readLatest:()=>record,save:()=>assert.fail('must not save')}),/完整覆盖/);
+    await assert.rejects(refreshLongDreamSummary({record, request:async()=>JSON.stringify({storyEntries:[{chapterNumber:3,text:'仅最近三章'},{chapterNumber:4,text:'近况'},{chapterNumber:5,text:'近况'}]}),readLatest:()=>record,save:()=>assert.fail('must not save')}),{code:'LONG_DREAM_SUMMARY_COVERAGE'});
     assert.equal(JSON.stringify(record.memory),old);
+});
+
+test('概要兼容数字字符串，后批提示使用真实章号且全篇一次保存', async () => {
+    const { refreshLongDreamSummary } = await import('../long-dream-summary.js');
+    const record = synopsisFixture(7);
+    let calls = 0, saves = 0;
+    const saved = await refreshLongDreamSummary({ record, readLatest: () => record,
+        save: value => { saves++; return value; }, request: async payload => {
+            calls++;
+            const numbers = calls === 1 ? [1,2,3,4,5] : [6,7];
+            assert.ok(payload.userPrompt.includes(`只整理章号：${numbers.join('、')}`));
+            for (const number of numbers) assert.ok(payload.userPrompt.includes(`"chapterNumber":${number},`));
+            if (calls === 2) assert.doesNotMatch(payload.systemPrompt + payload.userPrompt, /"chapterNumber":1,/);
+            return JSON.stringify({ storyEntries: numbers.map(n => ({ chapterNumber: ` ${n} `, text: `经历${n}` })) });
+        } });
+    assert.equal(calls, 2); assert.equal(saves, 1);
+    assert.deepEqual(saved.memory.storyEntries.map(entry => entry.chapterNumber), [1,2,3,4,5,6,7]);
+    assert.match(saved.memory.currentState, /经历1/); assert.match(saved.memory.currentState, /经历7/);
+});
+
+test('概要错误分阶段且失败不保存、不泄露响应或异常原文', async () => {
+    const { refreshLongDreamSummary } = await import('../long-dream-summary.js');
+    const record = synopsisFixture(1), before = JSON.stringify(record);
+    const cases = [
+        ['PRIVATE_RESPONSE', 'PARSE_FAILED', 'parse'],
+        [JSON.stringify({ currentState: 'PRIVATE_RESPONSE' }), 'MISSING_ENTRIES', 'coverage'],
+        [JSON.stringify({ storyEntries: [{ chapterNumber: '第1章', text: '叙事' }] }), 'COVERAGE', 'coverage'],
+        [JSON.stringify({ storyEntries: [{ chapterNumber: true, text: '叙事' }] }), 'COVERAGE', 'coverage'],
+        [JSON.stringify({ storyEntries: [{ chapterNumber: 1, text: '叙事' }, { chapterNumber: '1', text: '重复' }] }), 'COVERAGE', 'coverage'],
+        [JSON.stringify({ storyEntries: [{ chapterNumber: 1, text: ' ' }] }), 'EMPTY_ENTRY', 'coverage'],
+        [JSON.stringify({ storyEntries: [{ chapterNumber: 1, text: '叙'.repeat(1201) }] }), 'ENTRY_TOO_LONG', 'coverage'],
+    ];
+    for (const [response, code, stage] of cases) {
+        await assert.rejects(refreshLongDreamSummary({ record, readLatest: () => record,
+            request: async () => response, save: () => assert.fail('invalid response saved') }), error => {
+            assert.equal(error.code, `LONG_DREAM_SUMMARY_${code}`);
+            assert.equal(error.summaryDiagnostic.stage, stage);
+            assert.equal(error.summaryDiagnostic.batch, 1);
+            assert.doesNotMatch(error.message + JSON.stringify(error), /PRIVATE_RESPONSE/);
+            return true;
+        });
+        assert.equal(JSON.stringify(record), before);
+    }
+    for (const save of [() => null, () => { throw new Error('PRIVATE_SAVE_ERROR'); }]) {
+        await assert.rejects(refreshLongDreamSummary({ record, readLatest: () => record, save,
+            request: async () => '{"storyEntries":[{"chapterNumber":1,"text":"合成概要"}]}' }), error => {
+            assert.equal(error.code, 'LONG_DREAM_SUMMARY_SAVE_FAILED');
+            assert.equal(error.summaryDiagnostic.stage, 'save');
+            assert.doesNotMatch(error.message + JSON.stringify(error), /PRIVATE_SAVE_ERROR/);
+            return true;
+        });
+    }
+    await assert.rejects(refreshLongDreamSummary({ record, readLatest: () => record,
+        save: () => assert.fail('network failure saved'), request: async () => {
+            throw Object.assign(new Error('PRIVATE_NETWORK_ERROR'), { diagnosticSignal: 'network_error' });
+        } }), error => {
+        assert.equal(error.code, 'LONG_DREAM_SUMMARY_REQUEST_FAILED');
+        assert.equal(error.summaryDiagnostic.stage, 'request');
+        assert.equal(error.diagnosticSignal, 'network_error');
+        assert.doesNotMatch(error.message + JSON.stringify(error), /PRIVATE_NETWORK_ERROR/);
+        return true;
+    });
+    const longRecord = synopsisFixture(7), original = JSON.stringify(longRecord);
+    let batch = 0;
+    await assert.rejects(refreshLongDreamSummary({ record: longRecord, readLatest: () => longRecord,
+        save: () => assert.fail('partial batch saved'), request: async () => {
+            batch++;
+            return JSON.stringify({ storyEntries: (batch === 1 ? [1,2,3,4,5] : [1,2]).map(chapterNumber => ({ chapterNumber, text: '概要' })) });
+        } }), error => {
+        assert.equal(error.code, 'LONG_DREAM_SUMMARY_COVERAGE');
+        assert.deepEqual(error.summaryDiagnostic, { stage: 'coverage', batch: 2, expectedCount: 2, receivedCount: 2 });
+        return true;
+    });
+    assert.equal(JSON.stringify(longRecord), original);
 });
 
 test('概要最近五版包含同章重试，恢复不改变正文梦脉，备份完整保留', async () => {
