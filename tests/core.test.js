@@ -6463,6 +6463,26 @@ test('概要错误分阶段且失败不保存、不泄露响应或异常原文',
     assert.equal(JSON.stringify(longRecord), original);
 });
 
+test('概要版本列表转义内容、缺失日期不伪造时间、受限版本不可恢复', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const render = source.match(/function longDreamSummaryHistoryHTML\([^]*?(?=\nfunction toggleLongDreamSummaryPreview)/)[0];
+    const date = source.match(/function longDreamDate\([^]*?(?=\nfunction longDreamExcerpt)/)[0];
+    const scope = { esc: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;') };
+    runInNewContext(date + '\n' + render, scope);
+    assert.equal(scope.longDreamSummaryHistoryHTML({}), '');
+    const memory = { summaryVersions: [
+        { id: 'old"bad', text: '<script>bad()</script>', chapterNumber: 1, createdAt: '', canRestore: false },
+        { id: 'new', text: '第二版', chapterNumber: 2, createdAt: '2026-09-19T12:26:00Z' },
+    ] };
+    const html = scope.longDreamSummaryHistoryHTML(memory);
+    assert.ok(html.indexOf('第二版') < html.indexOf('&lt;script>'));
+    assert.doesNotMatch(html, /<script>|Invalid Date/);
+    assert.match(html, /data-dream-summary-restore="old&quot;bad" disabled/);
+    assert.match(html, /data-dream-summary-restore="new" >/);
+    assert.equal((html.match(/aria-expanded="false"/g) || []).length, 2);
+    assert.equal((scope.longDreamSummaryHistoryHTML(memory, true).match(/data-dream-summary-restore="[^"]*" disabled/g) || []).length, 2);
+});
+
 test('概要最近五版包含同章重试，恢复不改变正文梦脉，备份完整保留', async () => {
     const { refreshLongDreamSummary } = await import('../long-dream-summary.js');
     const { restoreStorySummary } = await import('../long-dream-story-summary.js');

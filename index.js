@@ -2970,6 +2970,41 @@ function longDreamActiveMemoryCount(dream) {
     return v2 + legacy;
 }
 
+function longDreamSummaryHistoryHTML(memory, blocked = false) {
+    const versions = (memory.summaryVersions || []).slice().reverse();
+    if (!versions.length) return '';
+    return `<details class="theater-dream-summary-history">
+        <summary><span>最近版本</span><small>${versions.length} / 5</small><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></summary>
+        <p class="theater-dream-summary-note">可查看并恢复旧版，仅切换概要，不回退正文或人物关系。</p>
+        ${versions.map((version, i) => {
+            const date = longDreamDate(version.createdAt);
+            return `<article class="theater-dream-summary-version">
+                <button type="button" class="theater-dream-summary-version-row" data-dream-summary-preview aria-expanded="false">
+                    <span class="theater-dream-summary-version-info"><span class="theater-dream-summary-version-title">${i === 0 ? '最新保存' : i === 1 ? '上一版' : `较早 ${i} 版`}${i === 0 ? '<small class="theater-dream-summary-version-tag">最新</small>' : ''}</span><small class="theater-dream-summary-version-meta">截至第 ${version.chapterNumber} 章${date ? ` · ${esc(date)}` : ''}</small></span>
+                    <span class="theater-dream-summary-version-toggle">查看</span>
+                </button>
+                <div class="theater-dream-summary-version-preview" hidden>
+                    <div class="theater-dream-summary-version-text">${esc(version.text)}</div>
+                    ${version.canRestore === false ? '<p class="theater-dream-summary-note">用户决定已改变，这版仅供查看。</p>' : ''}
+                    <div class="theater-dream-summary-version-actions"><button type="button" data-dream-summary-restore="${esc(version.id)}" ${blocked || version.canRestore === false ? 'disabled' : ''}>${version.canRestore === false ? '仅供查看' : '恢复这版概要'}</button></div>
+                </div>
+            </article>`;
+        }).join('')}
+    </details>`;
+}
+
+function toggleLongDreamSummaryPreview(button) {
+    const history = button.closest('.theater-dream-summary-history');
+    if (!history) return;
+    const opening = button.getAttribute('aria-expanded') !== 'true';
+    history.querySelectorAll('[data-dream-summary-preview]').forEach(row => {
+        const expanded = row === button && opening;
+        row.setAttribute('aria-expanded', String(expanded));
+        row.querySelector('.theater-dream-summary-version-toggle').textContent = expanded ? '收起' : '查看';
+        row.nextElementSibling.hidden = !expanded;
+    });
+}
+
 function longDreamMemoryCardsHTML(dream) {
     const memory = dream?.memory || {};
     const cards = Array.isArray(memory.cards) ? memory.cards : [];
@@ -3049,7 +3084,7 @@ function longDreamMemoryCardsHTML(dream) {
             <div class="theater-dream-memory-current-state-readonly ${currentState ? 'is-clamped' : ''}">${currentState ? esc(currentState) : '尚未形成全篇概要。'}</div>
             <div class="theater-dream-summary-actions"><button type="button" data-dream-summary-refresh aria-busy="${refreshingLongDreamSummaries.has(String(dream.id))}" ${refreshingLongDreamSummaries.has(String(dream.id)) || memoryLocked || conflicts.length || memory.pendingChapterNumbers?.length ? 'disabled' : ''}>${refreshingLongDreamSummaries.has(String(dream.id)) ? '正在更新…' : '更新概要'}</button></div>
             ${memory.summaryThroughChapter ? `<small class="theater-dream-summary-note">当前概要截至第 ${memory.summaryThroughChapter} 章 · 正文共 ${dream.chapters.length} 章</small>` : ''}
-            ${memory.summaryVersions?.length ? `<details class="theater-dream-summary-history"><summary>最近概要 · ${memory.summaryVersions.length} / 5 版</summary><small class="theater-dream-summary-note">恢复仅切换概要，不回退正文或人物关系。</small>${memory.summaryVersions.slice().reverse().map((version, i) => `<details><summary>${i === 0 ? '最新保存' : `较早 ${i} 版`} · 截至第 ${version.chapterNumber} 章</summary><div class="theater-dream-memory-current-state-readonly">${esc(version.text)}</div><button type="button" class="theater-btn" data-dream-summary-restore="${esc(version.id)}" ${memoryLocked || conflicts.length || memory.pendingChapterNumbers?.length || refreshingLongDreamSummaries.has(String(dream.id)) || version.canRestore === false ? 'disabled' : ''}>${version.canRestore === false ? '用户决定已改变，仅供查看' : '恢复这版概要'}</button></details>`).join('')}</details>` : ''}
+            ${longDreamSummaryHistoryHTML(memory, memoryLocked || !!conflicts.length || !!memory.pendingChapterNumbers?.length || refreshingLongDreamSummaries.has(String(dream.id)))}
         </div>
         ${conflicts.length ? `<section class="theater-dream-memory-conflicts"><h4>有 ${conflicts.length} 处需要你决定</h4>${conflicts.map(conflict => `<article data-dream-memory-conflict="${esc(conflict.id)}"><p>${esc(conflictLabels[conflict.reason] || '新章节提出了不能静默覆盖的变化')}。</p><small>来自第 ${conflict.chapterNumber} 章 · ${conflict.reason === 'missing-target' ? '需要从已保存正文补织缺失记录' : '原记忆暂时保持不变'}</small><div class="theater-dream-memory-card-actions"><button type="button" class="theater-btn" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="${conflict.reason === 'missing-target' ? 'reweave' : 'accept'}">${conflict.reason === 'missing-target' ? '补织后再确认' : '以新章节为准'}</button><button type="button" class="theater-btn danger" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="keep">保留我的版本</button></div></article>`).join('')}</section>` : ''}
         <div class="theater-dream-memory-flow-list">
@@ -5254,6 +5289,7 @@ function bindEvents() {
         }
     });
     $d.off('click.tdsummary').on('click.tdsummary', '[data-dream-summary-refresh]', () => refreshLongDreamSummaryNow(activeLongDreamId));
+    $d.off('click.tdsummarypreview').on('click.tdsummarypreview', '[data-dream-summary-preview]', function () { toggleLongDreamSummaryPreview(this); });
     $d.off('click.tdsummaryrestore').on('click.tdsummaryrestore', '[data-dream-summary-restore]', async function () {
         const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
         if (!dream || refreshingLongDreamSummaries.has(String(dream.id))) return;
