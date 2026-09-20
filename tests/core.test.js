@@ -943,11 +943,12 @@ test('资料完成只更新长梦计数和进度，已展示的候选正文不�
     const harness = runInNewContext(`
         let longDreamWorkspaceSection = 'continue';
         const longDreamCache = [{id: 'dream'}], activeLongDreamId = 'dream';
+        const refreshingLongDreamWorldBooks = false, refreshingLongDreamWorldBookId = null;
         ${sync}
         ({ syncLongDreamPanel, definition() { longDreamWorkspaceSection = 'definition'; } });
     `, {
-        $: () => ({ text(value) { calls.label = value; } }),
-        longDreamDetailState: () => ({ currentCheckedEntries: 7 }),
+        $: key => ({ prop() { return this; }, attr() { return this; }, find() { return this; }, text(value) { if (key === '#theater-dream-frozen-count') calls.label = value; return this; } }),
+        longDreamDetailState: () => ({ snapshotEntries: 7 }),
         renderLongDreamReviewDraft() { calls.review++; }, renderLongDreamProgressCandidate() { calls.candidate++; },
         syncLongDreamProgressDisplay() { calls.progress++; }, scheduleLongDreamTokenEstimate() { calls.estimate++; },
     });
@@ -956,7 +957,7 @@ test('资料完成只更新长梦计数和进度，已展示的候选正文不�
     assert.deepEqual(calls, { review: 1, candidate: 1, progress: 2, estimate: 2, label: '' });
     harness.definition();
     harness.syncLongDreamPanel({ renderDrafts: false });
-    assert.equal(calls.label, '用素材页当前勾选更新冻结资料（7 条）');
+    assert.equal(calls.label, '· 7 条');
 });
 
 test('世界书旧请求不能覆盖新书单，失败回退不会跨读取模式复用缓存', async () => {
@@ -1021,39 +1022,101 @@ test('世界书旧请求不能覆盖新书单，失败回退不会跨读取模�
     assert.equal(harness.state().loadedKey, '');
 });
 
-test('定梦刷新强制读取、去重、失败解锁，切换选书后不误报成功且不重绘编辑内容', async () => {
+test('定梦单次更新读取新资料后保存，失败或切换不覆盖，保留未保存编辑', async () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const code = source.match(/let refreshingLongDreamWorldBooks = false;[^]*?(?=\nfunction longDreamDefinitionHTML)/)[0];
-    const buttons = new Map();
-    const notices = [];
-    let resolve, calls = 0, syncs = 0;
-    const settings = { selectedWorldBooks: ['A'] };
-    const scope = { settings, activeLongDreamId: 1, longDreamCache: [{ id: 1 }],
-        worldBookCacheKey: () => settings.selectedWorldBooks.join(','),
-        longDreamDetailState: () => ({ hasReviewDraft: true }),
-        syncLongDreamPanel: () => syncs++,
-        toastr: Object.fromEntries(['info', 'success', 'warning'].map(type => [type, text => notices.push([type,text])])),
-        $: key => { if (!buttons.has(key)) buttons.set(key, { prop(k,v) { this[k]=v; return this; }, attr() { return this; }, find() { return this; }, text(v) { this.label=v; return this; } }); return buttons.get(key); },
-        reloadWorldBooks: options => { calls++; assert.equal(options.force, true); assert.equal(options.requireFresh, true); return new Promise(done => { resolve=done; }); },
-    };
-    runInNewContext(code, scope);
-    const loading = scope.refreshLongDreamWorldBookSources();
-    await scope.refreshLongDreamWorldBookSources();
-    assert.equal(calls, 1); assert.equal(buttons.get('#theater-dream-refresh-world-book').disabled, true);
-    resolve(true); await loading;
-    assert.equal(syncs, 1); assert.equal(notices.at(-1)[0], 'success');
-    assert.equal(buttons.get('#theater-dream-reload-world-books').disabled, false);
-    assert.equal(buttons.get('#theater-dream-refresh-world-book').disabled, true);
-    const failed = scope.refreshLongDreamWorldBookSources(); resolve(false); await failed;
-    assert.equal(notices.at(-1)[0], 'warning'); assert.equal(syncs, 1);
-    const stale = scope.refreshLongDreamWorldBookSources(); settings.selectedWorldBooks=['B']; resolve(true); await stale;
-    assert.equal(notices.at(-1)[0], 'info'); assert.equal(syncs, 1);
-    scope.reloadWorldBooks = async () => { throw Error('private'); };
-    await scope.refreshLongDreamWorldBookSources();
-    assert.equal(buttons.get('#theater-dream-reload-world-books').disabled, false);
-    assert.doesNotMatch(JSON.stringify(notices), /private/);
+    const syncCode = source.match(/function syncLongDreamPanel\([^]*?^}/m)[0];
+    for (const mode of ['success', 'read-failed', 'read-threw', 'save-failed', 'save-threw', 'books-changed', 'dream-switched', 'deleted', 'record-changed', 'generation-started', 'review-started', 'no-entries', 'initial-review', 'initial-generating', 'initial-preparing', 'initial-isolated', 'no-books']) {
+        const original = { ...createLongDreamRecord({ title: '已保存标题', canon: '已保存正典',
+            worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED, worldBookNames: ['A'],
+            worldBookSnapshot: createLongDreamWorldBookSnapshot({ bookNames: ['A'], entries: [{ book: 'A', uid: 1, content: '旧资料', enabled: true }] }),
+            source: { text: '原章节', html: '<main>原章节</main>' },
+        }), id: 1 };
+        const originalJSON = JSON.stringify(original);
+        const fields = new Map([
+            ['#theater-dream-edit-title', { value: '未保存标题' }],
+            ['#theater-dream-edit-canon', { value: '未保存正典' }],
+        ]);
+        const notices = [];
+        let resolve, reject, calls = 0, writes = 0, generating = mode === 'initial-generating', review = mode === 'initial-review';
+        const settings = { selectedWorldBooks: mode === 'no-books' ? [] : ['A'] };
+        const scope = { settings, activeLongDreamId: 1, longDreamCache: [original], longDreamWorkspaceSection: 'definition',
+            isPreparingGeneration: mode === 'initial-preparing', longDreamChapterEditController: null,
+            worldBookCacheKey: () => settings.selectedWorldBooks.join(','),
+            longDreamDetailState: record => ({ isGeneratingThisDream: generating, hasReviewDraft: review, selectedPolicy: mode !== 'initial-isolated',
+                snapshotEntries: record.inheritance.snapshot.books.reduce((n,b) => n + b.entries.length, 0), bookText: record.inheritance.worldBookNames.join('、') }),
+            updateLongDreamDefinition,
+            captureCurrentLongDreamWorldBooks: names => createLongDreamWorldBookSnapshot({ bookNames: names, entries: mode === 'no-entries' ? [] : [
+                { book: 'A', uid: 1, content: '刚读回的新资料', enabled: true }, { book: 'A', uid: 2, content: '勾选的新条目', enabled: true },
+                { book: 'A', uid: 3, content: '未勾选不冻结', enabled: false },
+            ] }),
+            longDreamSnapshotEntryCount: snapshot => snapshot.books.reduce((n,b) => n + b.entries.length, 0),
+            longDreamPut: async record => { writes++; if (mode === 'save-failed') return false; if (mode === 'save-threw') throw Error('private'); scope.longDreamCache[0] = record; return record; },
+            toastr: Object.fromEntries(['info', 'success', 'warning'].map(type => [type, text => notices.push([type,text])])),
+            $: key => { if (!fields.has(key)) fields.set(key, {}); const field = fields.get(key);
+                return { prop(k,v) { field[k]=v; return this; }, attr(k,v) { field[k]=v; return this; }, find() { return this; }, text(v) { field.label=v; return this; } }; },
+            reloadWorldBooks: options => { calls++; assert.equal(options.force, true); assert.equal(options.requireFresh, true); return new Promise((done, fail) => { resolve=done; reject=fail; }); },
+        };
+        runInNewContext(code + '\n' + syncCode, scope);
+        const loading = scope.refreshLongDreamWorldBookSources();
+        if (mode.startsWith('initial-') || mode === 'no-books') { await loading; assert.equal(calls, 0, mode); assert.equal(writes, 0, mode); continue; }
+        await scope.refreshLongDreamWorldBookSources();
+        assert.equal(calls, 1, mode);
+        assert.equal(fields.get('#theater-dream-refresh-world-book').disabled, true);
+        assert.equal(fields.get('#theater-dream-refresh-world-book').label, '更新中…');
+        assert.equal(fields.get('#theater-dream-save-definition').disabled, true);
+        assert.equal(writes, 0, '读取完成前不保存');
+        if (mode === 'books-changed') settings.selectedWorldBooks = ['B'];
+        if (mode === 'dream-switched') scope.activeLongDreamId = 2;
+        if (mode === 'deleted') scope.longDreamCache = [];
+        if (mode === 'record-changed') scope.longDreamCache = [{ ...original, canon: '其他已保存修改' }];
+        if (mode === 'generation-started') generating = true;
+        if (mode === 'review-started') review = true;
+        if (mode === 'read-threw') reject(Error('private')); else resolve(mode !== 'read-failed');
+        await loading;
+        const shouldWrite = ['success', 'save-failed', 'save-threw'].includes(mode);
+        assert.equal(writes, shouldWrite ? 1 : 0, mode);
+        if (mode === 'success') {
+            const saved = scope.longDreamCache[0];
+            assert.equal(saved.inheritance.snapshot.books[0].entries[0].content, '刚读回的新资料');
+            assert.equal(saved.inheritance.snapshot.books[0].entries.length, 2);
+            assert.deepEqual(saved.chapters, original.chapters);
+            assert.equal(saved.canon, original.canon);
+            assert.equal(saved.title, original.title);
+            assert.equal(fields.get('#theater-dream-frozen-count').label, '· 2 条');
+            assert.equal(notices.at(-1)[0], 'success');
+        } else assert.equal(notices.some(([type]) => type === 'success'), false, mode);
+        assert.equal(JSON.stringify(original), originalJSON, mode);
+        assert.equal(fields.get('#theater-dream-edit-title').value, '未保存标题');
+        assert.equal(fields.get('#theater-dream-edit-canon').value, '未保存正典');
+        assert.doesNotMatch(JSON.stringify(notices), /private/);
+        scope.activeLongDreamId = 1; scope.longDreamCache = [original]; generating = false; review = false;
+        scope.syncLongDreamPanel({ renderDrafts: false });
+        assert.equal(fields.get('#theater-dream-refresh-world-book').disabled, false, mode);
+        assert.equal(fields.get('#theater-dream-refresh-world-book')['aria-busy'], 'false', mode);
+        assert.equal(fields.get('#theater-dream-save-definition').disabled, false, mode);
+    }
 });
 
+test('世界书更新期间同一长梦不能保存旧定梦或启动续写，结束后可进入原流程', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const generation = source.match(/async function generateNextLongDreamChapter\([^]*?^}/m)[0];
+    const saveStart = source.indexOf("$d.off('click.tdsave')");
+    const saveEnd = source.indexOf("\n    });", saveStart) + '\n    });'.length;
+    const saveCode = source.slice(saveStart, saveEnd);
+    let saveHandler, notices = [];
+    const scope = { refreshingLongDreamWorldBookId: 1, activeLongDreamId: 1, isGenerating: true,
+        activeLongDreamGenerationId: 1, longDreamGenerationController: { active: true },
+        toastr: { info: text => notices.push(text), warning: text => notices.push(text) },
+        $d: { off() { return this; }, on(_event, _selector, fn) { saveHandler=fn; return this; } },
+    };
+    runInNewContext(generation + '\n' + saveCode, scope);
+    await scope.generateNextLongDreamChapter(); await saveHandler();
+    assert.equal(notices.length, 2); assert.ok(notices.every(text => text.includes('世界书更新完成')));
+    notices = []; scope.refreshingLongDreamWorldBookId = null;
+    await scope.generateNextLongDreamChapter(); await saveHandler();
+    assert.equal(notices.length, 2); assert.ok(notices.every(text => !text.includes('世界书更新完成')));
+});
 test('世界书慢读取提交时保留用户刚修改的条目开关', async () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const keyStart = source.indexOf('function worldBookCacheKey');

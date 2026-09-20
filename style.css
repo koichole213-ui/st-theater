@@ -7073,11 +7073,21 @@ body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-
 .theater-default-name::placeholder { color:var(--t-fg-soft, #888); opacity:.7; }
 .theater-default-name:focus::placeholder { color:transparent; }
 
+/* Approved definition control: always visible, one compact update action. */
+.theater-panel[data-panel="long-dream"] .theater-dream-world-book-summary { margin-top:12px; padding-top:12px; border-top:1px solid var(--t-border); }
+.theater-panel[data-panel="long-dream"] .theater-dream-world-book-row { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; }
+.theater-panel[data-panel="long-dream"] .theater-dream-world-book-title { min-width:0; color:var(--t-accent-deep); font-size:12px; font-weight:600; }
+.theater-panel[data-panel="long-dream"] #theater-dream-frozen-count { display:inline; margin:0; padding:0; border:0; border-radius:0; background:transparent; color:var(--t-fg-soft); font-size:12px; font-weight:400; line-height:inherit; white-space:nowrap; }
+.theater-panel[data-panel="long-dream"] #theater-dream-refresh-world-book { position:relative; flex:0 0 auto; justify-content:center; gap:5px; width:auto; min-height:32px; height:32px; padding:0 11px; border:1px solid var(--t-border-strong); border-radius:var(--t-radius-pill); background:var(--t-bg); color:var(--t-accent-deep); box-shadow:none; font-family:var(--t-font-sans); font-size:11.5px; font-weight:500; line-height:1; white-space:nowrap; }
+.theater-panel[data-panel="long-dream"] #theater-dream-refresh-world-book::after { content:''; position:absolute; inset:-6px 0; }
+.theater-panel[data-panel="long-dream"] #theater-dream-refresh-world-book:hover:not(:disabled) { background:var(--t-surface-2); color:var(--t-accent-deep); transform:none; }
+.theater-panel[data-panel="long-dream"] #theater-dream-refresh-world-book:focus-visible { outline:2px solid var(--t-accent); outline-offset:3px; }
+.theater-panel[data-panel="long-dream"] #theater-dream-refresh-world-book svg { flex:0 0 auto; width:12px; height:12px; }
+.theater-panel[data-panel="long-dream"] :is(.theater-dream-world-book-library,.theater-dream-world-book-hint) { text-align:left; overflow-wrap:anywhere; line-height:1.7; }
+.theater-panel[data-panel="long-dream"] .theater-dream-world-book-library { margin:8px 0 0; color:var(--t-fg-soft); font-size:11px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-world-book-hint { margin:4px 0 0; color:var(--t-fg-soft); font-size:10.5px; }
+
 /* Approved synopsis history: quiet rows, one preview at a time, existing skin tokens. */
-.theater-panel[data-panel="long-dream"] .theater-dream-freeze-actions { display:flex; align-items:stretch; gap:8px; }
-.theater-panel[data-panel="long-dream"] .theater-dream-freeze-actions > button { min-height:44px; height:auto; white-space:normal; }
-.theater-panel[data-panel="long-dream"] #theater-dream-reload-world-books { flex:0 0 auto; }
-.theater-panel[data-panel="long-dream"] .theater-dream-freeze-actions > #theater-dream-refresh-world-book { flex:1 1 0; min-width:0; }
 .theater-panel[data-panel="long-dream"] .theater-dream-summary-note { display:block; margin:8px 0 14px; color:var(--t-fg-mute); font-size:11px; line-height:1.8; text-align:left; overflow-wrap:anywhere; }
 .theater-panel[data-panel="long-dream"] .theater-dream-summary-history { margin-top:20px; padding-top:8px; border-top:1px solid var(--t-line); text-align:left; }
 .theater-panel[data-panel="long-dream"] .theater-dream-summary-history > summary { display:flex; align-items:center; gap:10px; min-height:44px; padding:8px 0; color:var(--t-accent-deep); font-family:var(--t-font-sans); font-size:13px; font-weight:500; line-height:1.5; text-align:left; list-style:none; cursor:pointer; }

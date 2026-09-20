@@ -3351,25 +3351,51 @@ function longDreamDetailHeaderHTML(dream, { showTools = false, statusControlDisa
 }
 
 let refreshingLongDreamWorldBooks = false;
+let refreshingLongDreamWorldBookId = null;
 async function refreshLongDreamWorldBookSources() {
     if (refreshingLongDreamWorldBooks) return;
-    if (!(settings.selectedWorldBooks || []).length) { toastr.warning('素材页当前没有选中的世界书'); return; }
+    const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+    if (!dream) return;
+    const state = longDreamDetailState(dream);
+    if (state.isGeneratingThisDream || state.hasReviewDraft || isPreparingGeneration || longDreamChapterEditController) {
+        toastr.warning('请先完成当前生成、待确认章节或章节编辑，再更新世界书');
+        return;
+    }
+    if (!state.selectedPolicy) return;
+    const bookNames = (settings.selectedWorldBooks || []).filter(Boolean);
+    if (!bookNames.length) { toastr.warning('素材页当前没有选中的世界书'); return; }
     const key = worldBookCacheKey();
     refreshingLongDreamWorldBooks = true;
-    $('#theater-dream-reload-world-books').prop('disabled', true).attr('aria-busy', 'true').find('span').text('刷新中…');
-    $('#theater-dream-refresh-world-book').prop('disabled', true);
+    refreshingLongDreamWorldBookId = dream.id;
+    syncLongDreamPanel({ renderDrafts: false });
     try {
         const complete = await reloadWorldBooks({ silent: true, force: true, requireFresh: true });
-        if (key !== worldBookCacheKey()) { toastr.info('世界书选择已变化，请重新刷新后再冻结'); return; }
-        if (!complete) { toastr.warning('世界书未全部刷新成功，暂存内容可能仍是旧版，请重试后再冻结'); return; }
-        syncLongDreamPanel({ renderDrafts: false });
-        toastr.success('世界书已刷新，可再点击右侧按钮更新冻结资料');
-    } catch { toastr.warning('世界书刷新失败，已冻结资料未改动，请重试'); }
+        if (key !== worldBookCacheKey()) { toastr.info('世界书选择已变化，冻结资料未改动，请重新更新'); return; }
+        if (!complete) { toastr.warning('世界书未全部读取成功，冻结资料未改动，请重试'); return; }
+        const current = longDreamCache.find(item => String(item.id) === String(dream.id));
+        if (String(activeLongDreamId) !== String(dream.id) || current !== dream) {
+            toastr.info('长梦已切换或内容已变化，本次未更新冻结资料');
+            return;
+        }
+        const currentState = longDreamDetailState(current);
+        if (currentState.isGeneratingThisDream || currentState.hasReviewDraft || isPreparingGeneration || longDreamChapterEditController) {
+            toastr.info('长梦正在生成或编辑，本次未更新冻结资料');
+            return;
+        }
+        const snapshot = captureCurrentLongDreamWorldBooks(bookNames);
+        const entryCount = longDreamSnapshotEntryCount(snapshot);
+        if (!entryCount) { toastr.warning('素材页当前没有已勾选的世界书条目，冻结资料未改动'); return; }
+        const saved = await longDreamPut(updateLongDreamDefinition(current, {
+            worldBookNames: bookNames,
+            worldBookSnapshot: snapshot,
+        }));
+        if (!saved) { toastr.warning('冻结资料未能保存，请重试'); return; }
+        toastr.success(`冻结资料已更新为当前勾选的 ${entryCount} 条`);
+    } catch { toastr.warning('世界书更新失败，请重试'); }
     finally {
         refreshingLongDreamWorldBooks = false;
-        $('#theater-dream-reload-world-books').prop('disabled', false).attr('aria-busy', 'false').find('span').text('刷新');
-        const current = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
-        $('#theater-dream-refresh-world-book').prop('disabled', !!current && (longDreamDetailState(current).isGeneratingThisDream || longDreamDetailState(current).hasReviewDraft));
+        refreshingLongDreamWorldBookId = null;
+        syncLongDreamPanel({ renderDrafts: false });
     }
 }
 
@@ -3388,12 +3414,13 @@ function longDreamDefinitionHTML(dream) {
             <div class="relation-cards theater-dream-relation-list">${longDreamRelationChoicesHTML({ name: 'theater-dream-edit-relation', selected: state.worldLineRelation, hasBooks: !!(state.selectedBooks.length || state.availableBooks.length), disabled: state.isGeneratingThisDream || state.hasReviewDraft })}</div>
         </section>
         <section class="ui-card theater-dream-world-book-freeze">
-            <div class="ui-title"><span><i class="fa-solid fa-book"></i> 初始设定与冻结资料</span><span class="memory-v2-tag">${state.snapshotEntries} 条</span></div>
+            <div class="ui-title"><span><i class="fa-solid fa-book"></i> 初始设定与冻结资料</span></div>
             <div class="source-preview-card"><div class="source-preview-title">初始设定快照</div><div class="source-preview-text">角色卡、用户人设、固定事实与选定正典已在定梦时保存。</div></div>
-            <details class="ia-book-menu">
-                <summary class="ia-memory-summary"><div class="ia-memory-summary-copy"><div class="ia-memory-summary-title">冻结世界书 · ${state.snapshotEntries} 条</div><div class="ia-memory-summary-sub">${state.selectedPolicy ? `当前冻结资料库：${esc(state.bookText)}` : '当前完全隔离，不读取原世界书'}</div></div><i class="fa-solid fa-chevron-right"></i></summary>
-                <div class="ia-memory-body"><p class="theater-hint">${state.selectedPolicy ? '原书变化不会自动进入长梦。' : '不会读取或猜测原世界书。'}</p>${state.selectedPolicy ? `<div class="theater-dream-freeze-actions"><button type="button" id="theater-dream-reload-world-books" class="ui-btn ui-btn-sm" aria-busy="${refreshingLongDreamWorldBooks}" ${refreshingLongDreamWorldBooks ? 'disabled' : ''}><i class="fa-solid fa-rotate" aria-hidden="true"></i><span>${refreshingLongDreamWorldBooks ? '刷新中…' : '刷新'}</span></button><button type="button" id="theater-dream-refresh-world-book" class="ui-btn ui-btn-sm" ${refreshingLongDreamWorldBooks || state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-snowflake"></i><span>用素材页当前勾选更新冻结资料${state.currentCheckedEntries ? `（${state.currentCheckedEntries} 条）` : ''}</span></button></div>` : ''}</div>
-            </details>
+            <div class="theater-dream-world-book-summary">
+                <div class="theater-dream-world-book-row"><div class="theater-dream-world-book-title">冻结世界书 <span id="theater-dream-frozen-count">· ${state.snapshotEntries} 条</span></div>${state.selectedPolicy ? `<button type="button" id="theater-dream-refresh-world-book" class="ui-btn ui-btn-sm" aria-busy="${refreshingLongDreamWorldBooks}" ${refreshingLongDreamWorldBooks || state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8"/></svg><span>${refreshingLongDreamWorldBooks ? '更新中…' : '更新世界书'}</span></button>` : ''}</div>
+                <p id="theater-dream-frozen-books" class="theater-dream-world-book-library">${state.selectedPolicy ? `当前冻结资料库：${esc(state.bookText)}` : '当前完全隔离，不读取原世界书'}</p>
+                <p class="theater-dream-world-book-hint">${state.selectedPolicy ? '按素材页勾选，重新读取并更新冻结资料。' : '不会读取或猜测原世界书。'}</p>
+            </div>
         </section>
         <button type="button" id="theater-dream-save-definition" class="ui-btn ui-btn-primary theater-btn primary theater-dream-definition-save" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-floppy-disk"></i><span>保存定梦设置</span></button>
     </div>`;
@@ -3578,7 +3605,11 @@ function syncLongDreamPanel({ renderDrafts = true } = {}) {
     const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
     if (longDreamWorkspaceSection === 'definition' && dream) {
         const state = longDreamDetailState(dream);
-        $('#theater-dream-refresh-world-book span').text(`用素材页当前勾选更新冻结资料${state.currentCheckedEntries ? `（${state.currentCheckedEntries} 条）` : ''}`);
+        $('#theater-dream-refresh-world-book').prop('disabled', refreshingLongDreamWorldBooks || state.isGeneratingThisDream || state.hasReviewDraft)
+            .attr('aria-busy', String(refreshingLongDreamWorldBooks)).find('span').text(refreshingLongDreamWorldBooks ? '更新中…' : '更新世界书');
+        $('#theater-dream-frozen-count').text(`· ${state.snapshotEntries} 条`);
+        $('#theater-dream-frozen-books').text(state.selectedPolicy ? `当前冻结资料库：${state.bookText}` : '当前完全隔离，不读取原世界书');
+        $('#theater-dream-save-definition').prop('disabled', state.isGeneratingThisDream || state.hasReviewDraft || String(refreshingLongDreamWorldBookId) === String(dream.id));
     }
     if (longDreamWorkspaceSection === 'continue' && dream) {
         if (renderDrafts) {
@@ -5380,47 +5411,13 @@ function bindEvents() {
             text: draft.text,
         });
     });
-    $d.off('click.tdreloadwb').on('click.tdreloadwb', '#theater-dream-reload-world-books', refreshLongDreamWorldBookSources);
-    $d.off('click.tdrefreshwb').on('click.tdrefreshwb', '#theater-dream-refresh-world-book', async function () {
-        if (refreshingLongDreamWorldBooks) { toastr.info('请等世界书刷新完成再冻结'); return; }
-        if (String(activeLongDreamGenerationId) === String(activeLongDreamId) && longDreamGenerationController?.active) {
-            toastr.warning('请先完成或停止当前章节生成');
-            return;
-        }
-        const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
-        if (!dream) return;
-        const bookNames = (settings.selectedWorldBooks || []).filter(Boolean);
-        if (!bookNames.length) {
-            toastr.warning('素材页当前没有选中的世界书');
-            return;
-        }
-        if (!wbEntries.some(entry => bookNames.includes(entry.book))) await reloadWorldBooks({ silent: true });
-        const snapshot = captureCurrentLongDreamWorldBooks(bookNames);
-        const entryCount = longDreamSnapshotEntryCount(snapshot);
-        if (!entryCount) {
-            toastr.warning('素材页当前没有已勾选的世界书条目');
-            return;
-        }
-        const confirmed = await SillyTavern.getContext().Popup.show.confirm(
-            '更新这部长梦的冻结资料？',
-            `将用素材页当前勾选的 ${entryCount} 条内容替换原来冻结的 ${longDreamSnapshotEntryCount(dream.inheritance?.snapshot)} 条；已经保存的章节不会改变。`,
-        );
-        if (!confirmed) return;
-        const relation = dream.inheritance?.worldLineRelation === LONG_DREAM_WORLD_LINE_RELATION.ISOLATED
-            ? LONG_DREAM_WORLD_LINE_RELATION.PARALLEL
-            : dream.inheritance?.worldLineRelation;
-        const updated = updateLongDreamDefinition(dream, {
-            worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED,
-            worldLineRelation: relation,
-            worldBookNames: bookNames,
-            worldBookSnapshot: snapshot,
-        });
-        const saved = await longDreamPut(updated);
-        if (!saved) return;
-        renderLongDreamPanel();
-        toastr.success(`冻结资料已更新为当前勾选的 ${entryCount} 条`);
-    });
+    $d.off('click.tdreloadwb');
+    $d.off('click.tdrefreshwb').on('click.tdrefreshwb', '#theater-dream-refresh-world-book', refreshLongDreamWorldBookSources);
     $d.off('click.tdsave').on('click.tdsave', '#theater-dream-save-definition', async function () {
+        if (String(refreshingLongDreamWorldBookId) === String(activeLongDreamId)) {
+            toastr.info('请等世界书更新完成后再保存定梦设置');
+            return;
+        }
         if (String(activeLongDreamGenerationId) === String(activeLongDreamId) && longDreamGenerationController?.active) {
             toastr.warning('请先完成或停止当前章节生成');
             return;
@@ -9256,6 +9253,10 @@ async function refreshLongDreamTokenEstimate() {
 const scheduleLongDreamTokenEstimate = debounce(refreshLongDreamTokenEstimate, 220);
 
 async function generateNextLongDreamChapter({ appendCandidate = false, candidateConfig = null } = {}) {
+    if (String(refreshingLongDreamWorldBookId) === String(activeLongDreamId)) {
+        toastr.info('请等世界书更新完成后再续写');
+        return;
+    }
     if (isGenerating || isPreparingGeneration) {
         toastr.warning('普通小剧场正在生成，请完成或停止后再续写长梦');
         return;
