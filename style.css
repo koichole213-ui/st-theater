@@ -7074,6 +7074,10 @@ body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-
 .theater-default-name:focus::placeholder { color:transparent; }
 
 /* Approved synopsis history: quiet rows, one preview at a time, existing skin tokens. */
+.theater-panel[data-panel="long-dream"] .theater-dream-freeze-actions { display:flex; align-items:stretch; gap:8px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-freeze-actions > button { min-height:44px; height:auto; white-space:normal; }
+.theater-panel[data-panel="long-dream"] #theater-dream-reload-world-books { flex:0 0 auto; }
+.theater-panel[data-panel="long-dream"] .theater-dream-freeze-actions > #theater-dream-refresh-world-book { flex:1 1 0; min-width:0; }
 .theater-panel[data-panel="long-dream"] .theater-dream-summary-note { display:block; margin:8px 0 14px; color:var(--t-fg-mute); font-size:11px; line-height:1.8; text-align:left; overflow-wrap:anywhere; }
 .theater-panel[data-panel="long-dream"] .theater-dream-summary-history { margin-top:20px; padding-top:8px; border-top:1px solid var(--t-line); text-align:left; }
 .theater-panel[data-panel="long-dream"] .theater-dream-summary-history > summary { display:flex; align-items:center; gap:10px; min-height:44px; padding:8px 0; color:var(--t-accent-deep); font-family:var(--t-font-sans); font-size:13px; font-weight:500; line-height:1.5; text-align:left; list-style:none; cursor:pointer; }

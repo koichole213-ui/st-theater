@@ -1002,7 +1002,10 @@ test('世界书旧请求不能覆盖新书单，失败回退不会跨读取模�
 
     const failedSameMode = harness.reloadWorldBooks();
     pending.get('D')({ ok: false, status: 500 });
-    await failedSameMode;
+    assert.equal(await failedSameMode, true);
+    const strictRefresh = harness.reloadWorldBooks({ force: true, requireFresh: true });
+    pending.get('D')({ ok: false, status: 500 });
+    assert.equal(await strictRefresh, false);
     assert.deepEqual(Array.from(harness.state().books), ['D']);
     settings.worldBookReadMode = 'lights';
     const failedNewMode = harness.reloadWorldBooks();
@@ -1016,6 +1019,39 @@ test('世界书旧请求不能覆盖新书单，失败回退不会跨读取模�
     pending.get('E')({ ok: true, status: 200, json: async () => ({}) });
     assert.equal(await malformed, false);
     assert.equal(harness.state().loadedKey, '');
+});
+
+test('定梦刷新强制读取、去重、失败解锁，切换选书后不误报成功且不重绘编辑内容', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const code = source.match(/let refreshingLongDreamWorldBooks = false;[^]*?(?=\nfunction longDreamDefinitionHTML)/)[0];
+    const buttons = new Map();
+    const notices = [];
+    let resolve, calls = 0, syncs = 0;
+    const settings = { selectedWorldBooks: ['A'] };
+    const scope = { settings, activeLongDreamId: 1, longDreamCache: [{ id: 1 }],
+        worldBookCacheKey: () => settings.selectedWorldBooks.join(','),
+        longDreamDetailState: () => ({ hasReviewDraft: true }),
+        syncLongDreamPanel: () => syncs++,
+        toastr: Object.fromEntries(['info', 'success', 'warning'].map(type => [type, text => notices.push([type,text])])),
+        $: key => { if (!buttons.has(key)) buttons.set(key, { prop(k,v) { this[k]=v; return this; }, attr() { return this; }, find() { return this; }, text(v) { this.label=v; return this; } }); return buttons.get(key); },
+        reloadWorldBooks: options => { calls++; assert.equal(options.force, true); assert.equal(options.requireFresh, true); return new Promise(done => { resolve=done; }); },
+    };
+    runInNewContext(code, scope);
+    const loading = scope.refreshLongDreamWorldBookSources();
+    await scope.refreshLongDreamWorldBookSources();
+    assert.equal(calls, 1); assert.equal(buttons.get('#theater-dream-refresh-world-book').disabled, true);
+    resolve(true); await loading;
+    assert.equal(syncs, 1); assert.equal(notices.at(-1)[0], 'success');
+    assert.equal(buttons.get('#theater-dream-reload-world-books').disabled, false);
+    assert.equal(buttons.get('#theater-dream-refresh-world-book').disabled, true);
+    const failed = scope.refreshLongDreamWorldBookSources(); resolve(false); await failed;
+    assert.equal(notices.at(-1)[0], 'warning'); assert.equal(syncs, 1);
+    const stale = scope.refreshLongDreamWorldBookSources(); settings.selectedWorldBooks=['B']; resolve(true); await stale;
+    assert.equal(notices.at(-1)[0], 'info'); assert.equal(syncs, 1);
+    scope.reloadWorldBooks = async () => { throw Error('private'); };
+    await scope.refreshLongDreamWorldBookSources();
+    assert.equal(buttons.get('#theater-dream-reload-world-books').disabled, false);
+    assert.doesNotMatch(JSON.stringify(notices), /private/);
 });
 
 test('世界书慢读取提交时保留用户刚修改的条目开关', async () => {
@@ -1426,7 +1462,7 @@ test('长梦连续生成并确认五章时只按顺序追加一次，不重复�
     assert.equal(new Set(record.chapters.map(chapter => chapter.id)).size, 6);
 });
 
-test('修改要求入口确认采用新指令，取消、状态变化和三版满额不发起生成', async () => {
+test('修改要求入口确认采用并记住新指令，取消或状态变化不保存不生成', async () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const code = source.match(/async function regenerateLongDreamDraft\([^]*?^}/m)[0];
     for (const mode of ['confirm', 'empty', 'cancel', 'stale', 'full', 'original']) {
@@ -1436,7 +1472,8 @@ test('修改要求入口确认采用新指令，取消、状态变化和三版�
         const calls = [];
         let markup = '';
         const scope = { settings: { skinMode: 'default' }, activeLongDreamId: 7, longDreamCache: [dream], LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES,
-            esc: value => String(value), toastr: { info() {} },
+            esc: value => String(value), toastr: { info() {}, warning() {} },
+            longDreamPut: async record => { scope.longDreamCache = [record]; return record; },
             setLongDreamComposerDraft: (_id, config) => calls.push(['save', config]),
             generateNextLongDreamChapter: async config => calls.push(['generate', config]),
             $: () => ({ find: () => ({ val: () => mode === 'empty' ? '' : '新的完整要求' }) }),
@@ -1447,6 +1484,7 @@ test('修改要求入口确认采用新指令，取消、状态变化和三版�
         };
         await runInNewContext(code + `\nregenerateLongDreamDraft({edit:${mode !== 'original'}})`, scope);
         assert.equal(JSON.stringify(draft), before);
+        assert.equal(scope.longDreamCache[0].draft.lastRevisionInstruction, ['cancel', 'stale', 'original'].includes(mode) ? undefined : mode === 'empty' ? '' : '新的完整要求');
         if (['cancel', 'stale'].includes(mode)) assert.equal(calls.length, 0);
         else {
             assert.equal(calls.length, 2);
@@ -1606,6 +1644,54 @@ test('满三版后请求失败、停止、排版或保存失败均保留旧候�
             assert.equal(result.record.draft.instruction, '新要求');
         }
     }
+});
+
+test('修改要求再次打开带回上次补充，取消和保存失败不覆盖，再来一版沿用当前候选要求', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const code = source.match(/async function regenerateLongDreamDraft\([^]*?^}/m)[0];
+    const draft = { status: LONG_DREAM_DRAFT_STATUS.REVIEW, instruction: '旧候选要求', lastRevisionInstruction: '原要求\nchar更温柔', title: '章名', targetChars: 3000, candidates: [] };
+    let markup, cancel = true, failSave = false, generated = [];
+    const scope = { activeLongDreamId: 7, longDreamCache: [{ id: 7, draft }], settings: {}, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES,
+        esc: String, toastr: { info() {}, warning() {} }, setLongDreamComposerDraft() {},
+        longDreamPut: async record => { if (failSave) return false; scope.longDreamCache = [record]; return record; },
+        generateNextLongDreamChapter: async options => generated.push(options.candidateConfig.instruction),
+        $: () => ({ find: () => ({ val: () => '原要求\nchar更温柔\n不要突然冷脸' }) }),
+        SillyTavern: { getContext: () => ({ POPUP_TYPE: {}, Popup: class { constructor(html) { markup = html; this.dlg = {}; } async show() { return !cancel; } } }) },
+    };
+    runInNewContext(code, scope);
+    await scope.regenerateLongDreamDraft({ edit: true });
+    assert.match(markup, /char更温柔/); assert.doesNotMatch(markup, /theater-dream-revise-description/);
+    assert.equal(generated.length, 0); assert.equal(scope.longDreamCache[0].draft, draft);
+    cancel = false; failSave = true;
+    await scope.regenerateLongDreamDraft({ edit: true });
+    assert.equal(generated.length, 0); assert.equal(scope.longDreamCache[0].draft, draft);
+    failSave = false;
+    await scope.regenerateLongDreamDraft({ edit: true });
+    assert.equal(generated[0], '原要求\nchar更温柔\n不要突然冷脸');
+    cancel = true;
+    await scope.regenerateLongDreamDraft({ edit: true });
+    assert.match(markup, /不要突然冷脸/);
+    await scope.regenerateLongDreamDraft();
+    assert.equal(generated.at(-1), '旧候选要求');
+});
+
+test('本章修改要求跨候选、失败回退、重载和备份保留，确认章节后清除', async () => {
+    const { sanitizeLongDreamBackupRecord } = await import('../long-dream-backup.js');
+    let record = createLongDreamRecord({ source: { text: '前文', html: '<p>前文</p>' } });
+    record = saveLongDreamDraft(record, { status: LONG_DREAM_DRAFT_STATUS.REVIEW, text: '候选一', html: '<p>候选一</p>', instruction: '初始要求', lastRevisionInstruction: '更温柔' });
+    const controller = createLongDreamGenerationController({ requestChapter: async () => ({ text: '候选二' }), renderChapter: async () => '<p>候选二</p>' });
+    record = (await controller.run({ record, appendCandidate: true, instruction: '更温柔' })).record;
+    record = selectLongDreamDraftCandidate(record, 0);
+    assert.equal(record.draft.instruction, '初始要求');
+    assert.equal(record.draft.lastRevisionInstruction, '更温柔');
+    const backup = sanitizeLongDreamBackupRecord(record, { includeReviewDraft: true });
+    assert.equal(normalizeLongDreamRecord(JSON.parse(JSON.stringify(backup))).draft.lastRevisionInstruction, '更温柔');
+    const failed = createLongDreamGenerationController({ requestChapter: async () => { throw Error('offline'); }, renderChapter: async () => '' });
+    await assert.rejects(failed.run({ record, appendCandidate: true, instruction: '更温柔' }), error => {
+        assert.equal(discardLongDreamWritingAttempt(error.longDreamRecord).draft.lastRevisionInstruction, '更温柔'); return true;
+    });
+    assert.equal((await controller.confirm(record)).draft, null);
+    assert.equal(clearLongDreamDraft(record).draft, null);
 });
 
 test('生成下一版中途停止时保留旧候选，放弃本轮后可回到待确认状态', async () => {

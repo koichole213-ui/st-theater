@@ -350,6 +350,7 @@ function normalizeDraft(draft, chapterNumber, fallbackDate) {
         chapterNumber,
         title: selectedCandidate?.title || cleanText(draft.title, 80) || `第 ${chapterNumber} 章`,
         instruction: selectedCandidate?.instruction ?? instruction,
+        ...(typeof draft.lastRevisionInstruction === 'string' ? { lastRevisionInstruction: draft.lastRevisionInstruction } : {}),
         targetChars: selectedCandidate?.targetChars ?? Math.max(500, Math.min(8000, Math.round(Number(draft.targetChars) || 3000))),
         text: selectedCandidate?.text ?? draftText,
         html: selectedCandidate?.html ?? draftHtml,
@@ -980,7 +981,8 @@ export function saveLongDreamDraft(record, draft = {}, now = new Date()) {
     const normalized = normalizeLongDreamRecord(record);
     if (!normalized) throw new Error('长梦记录无效');
     const updatedAt = normalizeIsoDate(now, new Date().toISOString());
-    const nextDraft = normalizeDraft({ ...draft, updatedAt }, normalized.chapters.length + 1, updatedAt);
+    const nextDraft = normalizeDraft({ ...(typeof normalized.draft?.lastRevisionInstruction === 'string'
+        ? { lastRevisionInstruction: normalized.draft.lastRevisionInstruction } : {}), ...draft, updatedAt }, normalized.chapters.length + 1, updatedAt);
     if (!nextDraft) throw new Error('长梦草稿不能为空');
     return { ...normalized, draft: nextDraft, updatedAt };
 }

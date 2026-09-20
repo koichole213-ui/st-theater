@@ -3350,6 +3350,29 @@ function longDreamDetailHeaderHTML(dream, { showTools = false, statusControlDisa
     </header>`;
 }
 
+let refreshingLongDreamWorldBooks = false;
+async function refreshLongDreamWorldBookSources() {
+    if (refreshingLongDreamWorldBooks) return;
+    if (!(settings.selectedWorldBooks || []).length) { toastr.warning('素材页当前没有选中的世界书'); return; }
+    const key = worldBookCacheKey();
+    refreshingLongDreamWorldBooks = true;
+    $('#theater-dream-reload-world-books').prop('disabled', true).attr('aria-busy', 'true').find('span').text('刷新中…');
+    $('#theater-dream-refresh-world-book').prop('disabled', true);
+    try {
+        const complete = await reloadWorldBooks({ silent: true, force: true, requireFresh: true });
+        if (key !== worldBookCacheKey()) { toastr.info('世界书选择已变化，请重新刷新后再冻结'); return; }
+        if (!complete) { toastr.warning('世界书未全部刷新成功，暂存内容可能仍是旧版，请重试后再冻结'); return; }
+        syncLongDreamPanel({ renderDrafts: false });
+        toastr.success('世界书已刷新，可再点击右侧按钮更新冻结资料');
+    } catch { toastr.warning('世界书刷新失败，已冻结资料未改动，请重试'); }
+    finally {
+        refreshingLongDreamWorldBooks = false;
+        $('#theater-dream-reload-world-books').prop('disabled', false).attr('aria-busy', 'false').find('span').text('刷新');
+        const current = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
+        $('#theater-dream-refresh-world-book').prop('disabled', !!current && (longDreamDetailState(current).isGeneratingThisDream || longDreamDetailState(current).hasReviewDraft));
+    }
+}
+
 function longDreamDefinitionHTML(dream) {
     const state = longDreamDetailState(dream);
     return `<div class="theater-dream-detail theater-dream-definition" data-id="${esc(dream.id)}">
@@ -3369,7 +3392,7 @@ function longDreamDefinitionHTML(dream) {
             <div class="source-preview-card"><div class="source-preview-title">初始设定快照</div><div class="source-preview-text">角色卡、用户人设、固定事实与选定正典已在定梦时保存。</div></div>
             <details class="ia-book-menu">
                 <summary class="ia-memory-summary"><div class="ia-memory-summary-copy"><div class="ia-memory-summary-title">冻结世界书 · ${state.snapshotEntries} 条</div><div class="ia-memory-summary-sub">${state.selectedPolicy ? `当前冻结资料库：${esc(state.bookText)}` : '当前完全隔离，不读取原世界书'}</div></div><i class="fa-solid fa-chevron-right"></i></summary>
-                <div class="ia-memory-body"><p class="theater-hint">${state.selectedPolicy ? '原书变化不会自动进入长梦。' : '不会读取或猜测原世界书。'}</p>${state.selectedPolicy ? `<button type="button" id="theater-dream-refresh-world-book" class="ui-btn ui-btn-sm" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-snowflake"></i><span>用素材页当前勾选更新冻结资料${state.currentCheckedEntries ? `（${state.currentCheckedEntries} 条）` : ''}</span></button>` : ''}</div>
+                <div class="ia-memory-body"><p class="theater-hint">${state.selectedPolicy ? '原书变化不会自动进入长梦。' : '不会读取或猜测原世界书。'}</p>${state.selectedPolicy ? `<div class="theater-dream-freeze-actions"><button type="button" id="theater-dream-reload-world-books" class="ui-btn ui-btn-sm" aria-busy="${refreshingLongDreamWorldBooks}" ${refreshingLongDreamWorldBooks ? 'disabled' : ''}><i class="fa-solid fa-rotate" aria-hidden="true"></i><span>${refreshingLongDreamWorldBooks ? '刷新中…' : '刷新'}</span></button><button type="button" id="theater-dream-refresh-world-book" class="ui-btn ui-btn-sm" ${refreshingLongDreamWorldBooks || state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-snowflake"></i><span>用素材页当前勾选更新冻结资料${state.currentCheckedEntries ? `（${state.currentCheckedEntries} 条）` : ''}</span></button></div>` : ''}</div>
             </details>
         </section>
         <button type="button" id="theater-dream-save-definition" class="ui-btn ui-btn-primary theater-btn primary theater-dream-definition-save" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-floppy-disk"></i><span>保存定梦设置</span></button>
@@ -5357,7 +5380,9 @@ function bindEvents() {
             text: draft.text,
         });
     });
+    $d.off('click.tdreloadwb').on('click.tdreloadwb', '#theater-dream-reload-world-books', refreshLongDreamWorldBookSources);
     $d.off('click.tdrefreshwb').on('click.tdrefreshwb', '#theater-dream-refresh-world-book', async function () {
+        if (refreshingLongDreamWorldBooks) { toastr.info('请等世界书刷新完成再冻结'); return; }
         if (String(activeLongDreamGenerationId) === String(activeLongDreamId) && longDreamGenerationController?.active) {
             toastr.warning('请先完成或停止当前章节生成');
             return;
@@ -7296,11 +7321,11 @@ function entryKey(e) {
 }
 
 // 重新加载所有勾选的世界书条目（多本合并，手动条目排最后）
-function reloadWorldBooks({ silent = false } = {}) {
+function reloadWorldBooks({ silent = false, force = false, requireFresh = false } = {}) {
     const books = [...(settings.selectedWorldBooks || [])];
     const readMode = settings.worldBookReadMode;
     const cacheKey = worldBookCacheKey(books, readMode);
-    if (wbReloadInFlight?.cacheKey === cacheKey) return wbReloadInFlight.promise;
+    if (!force && wbReloadInFlight?.cacheKey === cacheKey) return wbReloadInFlight.promise;
     const requestId = ++wbReloadSequence;
     const previousByBook = new Map();
     let previousCacheBooks = new Set();
@@ -7421,7 +7446,7 @@ function reloadWorldBooks({ silent = false } = {}) {
         refreshWBUI();
         scheduleTokenEstimate();
         if (!silent && books.length && complete) toastr.success(`已加载 ${loadedBooks} 本世界书 · ${all.length} 个条目`);
-        return complete;
+        return complete && (!requireFresh || loadedBooks === books.length);
     })();
     wbReloadInFlight = { cacheKey, requestId, promise };
     promise.then(() => {
@@ -9577,14 +9602,13 @@ async function regenerateLongDreamDraft({ edit = false } = {}) {
     const draft = dream?.draft;
     if (draft?.status !== LONG_DREAM_DRAFT_STATUS.REVIEW) return;
     const candidateCount = Array.isArray(draft.candidates) ? draft.candidates.length : 0;
-    let instruction = draft.instruction;
+    let instruction = edit ? (draft.lastRevisionInstruction ?? draft.instruction) : draft.instruction;
     if (edit) {
         const { Popup, POPUP_TYPE } = SillyTavern.getContext();
         const popup = new Popup(`<div class="theater-popup theater-compact-popup theater-dream-revise-popup" data-skin="${settings.skinMode || 'default'}">
             <div class="theater-dream-revise-eyebrow"><i class="fa-regular fa-moon" aria-hidden="true"></i><span>长梦 · 续章</span></div>
             <h3>修改续写要求</h3>
-            <p class="theater-dream-revise-description">改好这次想写的内容，再生成一个新版本。<br>最多保留最新三版；失败或停止不会移出旧版。</p>
-            <div class="theater-dream-revise-field-heading"><label for="theater-dream-revised-instruction">本次续写要求</label><small>已带入原要求</small></div>
+            <div class="theater-dream-revise-field-heading"><label for="theater-dream-revised-instruction">本次续写要求</label><small>${draft.lastRevisionInstruction !== undefined ? '已带入上次修改' : '已带入原要求'}</small></div>
             <textarea id="theater-dream-revised-instruction" class="theater-textarea" data-dream-revised-instruction rows="6">${esc(instruction)}</textarea>
             <p class="theater-dream-revise-retention"><i class="fa-solid fa-layer-group" aria-hidden="true"></i><span>已有 <b>${candidateCount} / ${LONG_DREAM_MAX_CANDIDATES}</b> 版 · ${candidateCount >= LONG_DREAM_MAX_CANDIDATES ? '新版成功保存后移出最早一版' : `本次将新增第 ${candidateCount + 1} 版`}</span></p>
         </div>`, POPUP_TYPE.CONFIRM, '', { wide: false, okButton: '生成新版本', cancelButton: '取消', allowVerticalScrolling: true });
@@ -9597,6 +9621,11 @@ async function regenerateLongDreamDraft({ edit = false } = {}) {
             toastr.info('章节状态已变化，请重新打开修改要求');
             return;
         }
+        try {
+            const saved = await longDreamPut({ ...current, draft: { ...draft, lastRevisionInstruction: instruction } });
+            if (!saved) { toastr.warning('续写要求未能记住，请重试'); return; }
+            if (String(activeLongDreamId) !== String(dream.id) || longDreamCache.find(item => String(item.id) === String(dream.id))?.draft !== saved.draft) return;
+        } catch { toastr.warning('续写要求未能记住，请重试'); return; }
     }
     const candidateConfig = {
         instruction,

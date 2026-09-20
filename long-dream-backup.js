@@ -116,6 +116,7 @@ function safeDraft(draft = null, fallbackDate, nextNumber, { includeReviewDraft 
             ? 'rendering'
             : 'writing',
         chapterNumber: nextNumber,
+        ...(typeof draft.lastRevisionInstruction === 'string' ? { lastRevisionInstruction: draft.lastRevisionInstruction } : {}),
         title: cleanText(draft.title, 80) || `第 ${nextNumber} 章`,
         instruction,
         targetChars: Math.max(500, Math.min(8000, Math.round(Number(draft.targetChars) || 3000))),
