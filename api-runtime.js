@@ -151,11 +151,11 @@ function statusError(status, body = '', { phase = 'body', transport = '' } = {})
     });
 }
 
-function normalizeFetchError(error, { phase = 'body', transport = '' } = {}) {
+function normalizeFetchError(error, { phase = 'body', transport = '', networkSignal = REQUEST_DIAGNOSTIC_SIGNAL.NETWORK } = {}) {
     if (error?.name === 'AbortError' || error?.diagnosticSignal) return error;
     if (error instanceof TypeError
         || /failed to fetch|network(?:error| error)|load failed|connection reset|econnreset|socket hang up/i.test(String(error?.message || error || ''))) {
-        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.NETWORK, {
+        return createDiagnosticError(networkSignal, {
             code: 'THEATER_NETWORK_FAILED', phase, transport,
         });
     }
@@ -623,11 +623,26 @@ export async function requestCustomApi({
     log = noop,
     onFallback = noop,
     onResponse = noop,
+    onConnection = noop,
     fetchImpl = (...args) => globalThis.fetch(...args),
 } = {}) {
     const url = String(config.apiUrl || '').replace(/\/+$/, '');
     const candidates = maxTokenFallbackSequence(config.maxOutputTokens);
     const safeChunk = text => emitReasoningSafeChunk(onChunk, text);
+    let connection = null;
+    let connectionStartedAt = 0;
+    let connectionAttempt = 0;
+    const publishConnection = (changes, announce = true) => {
+        if (!connection) return;
+        connection = { ...connection, ...changes, elapsedMs: Math.max(0, Date.now() - connectionStartedAt) };
+        // Only fixed categories, numeric timing and counters are exposed. Never error text or headers.
+        try { onConnection({ ...connection }); } catch {}
+        if (announce) { try { log(connection.state === 'failed' ? 'warn' : 'info', '独立 API 连接过程', { ...connection }); } catch {} }
+    };
+    const receiveBytes = bytes => {
+        const first = connection.receivedChunks === 0;
+        publishConnection({ receivedBytes: connection.receivedBytes + bytes, receivedChunks: connection.receivedChunks + 1 }, first);
+    };
     const reportResponse = (summary = {}) => {
         const safeSummary = { ...summary };
         onResponse(safeSummary);
@@ -635,8 +650,11 @@ export async function requestCustomApi({
     };
     const finalize = (result, transport) => {
         reportResponse(result?.responseSummary || {});
-        return publicResult(reasoningSafeResult(result, { phase: 'body', transport }));
+        const finalized = publicResult(reasoningSafeResult(result, { phase: 'body', transport }));
+        publishConnection({ state: 'complete' });
+        return finalized;
     };
+    try {
     for (let index = 0; index < candidates.length; index++) {
         const maxTokens = candidates[index];
         const request = buildApiRequest({
@@ -667,12 +685,25 @@ export async function requestCustomApi({
             presetGenerationOptionsInherited: false,
             messageCompatibility: request.messageCompatibility,
         });
-        const performRequest = body => fetchImpl(request.endpoint, {
-            method: 'POST',
-            headers: request.headers,
-            body: JSON.stringify(body),
-            signal,
-        });
+        const performRequest = async body => {
+            connectionStartedAt = Date.now();
+            connection = { attempt: ++connectionAttempt, transport: body.stream ? 'stream' : 'non-stream',
+                state: 'awaiting-response', headersReceived: false, headersMs: null, httpStatus: null,
+                contentType: 'unknown', receivedBytes: body.stream ? 0 : null, receivedChunks: body.stream ? 0 : null,
+                failedAt: null, failureSignal: null };
+            publishConnection({});
+            let response;
+            try {
+                response = await fetchImpl(request.endpoint, { method: 'POST', headers: request.headers, body: JSON.stringify(body), signal });
+            } catch (error) {
+                throw normalizeFetchError(error, { phase: 'awaiting-response', transport: request.protocol, networkSignal: REQUEST_DIAGNOSTIC_SIGNAL.NO_RESPONSE });
+            }
+            const mime = String(response.headers?.get?.('content-type') || '').split(';')[0].trim().toLowerCase();
+            publishConnection({ state: 'headers-received', headersReceived: true, headersMs: Math.max(0, Date.now() - connectionStartedAt),
+                httpStatus: Number(response.status) >= 100 && Number(response.status) <= 599 ? Number(response.status) : null,
+                contentType: ['text/event-stream', 'application/json', 'text/html', 'text/plain'].includes(mime) ? mime : (mime ? 'other' : 'unknown') });
+            return response;
+        };
         let response;
         try {
             response = await performCustomFetch(() => performRequest(request.body), {
@@ -704,7 +735,11 @@ export async function requestCustomApi({
         if (shouldStream) {
             while (true) {
                 try {
-                    return finalize(await readSSEStream(response, safeChunk, request.protocol), request.protocol);
+                    publishConnection({ state: 'reading-stream' });
+                    return finalize(await readSSEStream(response, safeChunk, request.protocol, {
+                        onReadProgress: receiveBytes,
+                        onNonStreamingRead: () => publishConnection({ state: 'reading-body', receivedBytes: null, receivedChunks: null }),
+                    }), request.protocol);
                 } catch (streamError) {
                     if (streamError?.apiResponseSummary) reportResponse(streamError.apiResponseSummary);
                     if (streamError?.code === 'THEATER_RATE_LIMIT' && !rateLimitRetried) {
@@ -761,15 +796,25 @@ export async function requestCustomApi({
                     if (!fallbackResponse.ok) {
                         throw await customApiStatusError(fallbackResponse, 'API 非流式重试');
                     }
+                    publishConnection({ state: 'reading-body' });
                     return finalize(await readNonStreamingResponse(fallbackResponse, safeChunk, request.protocol), request.protocol);
                 }
             }
         }
+        publishConnection({ state: 'reading-body' });
         return finalize(await readNonStreamingResponse(response, safeChunk, request.protocol), request.protocol);
     }
     throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TOKEN_LIMIT, {
         code: 'THEATER_OUTPUT_LIMIT', phase: 'body', transport: 'custom',
     });
+    } catch (error) {
+        const aborted = error?.name === 'AbortError';
+        const knownSignal = Object.values(REQUEST_DIAGNOSTIC_SIGNAL).includes(error?.diagnosticSignal)
+            || /^T-HTTP-[45]\d\d$/.test(error?.diagnosticSignal || '');
+        publishConnection({ state: aborted ? 'aborted' : 'failed', failedAt: connection?.state || null,
+            failureSignal: aborted ? null : (knownSignal ? error.diagnosticSignal : REQUEST_DIAGNOSTIC_SIGNAL.UNKNOWN) });
+        throw error;
+    }
 }
 
 function htmlResponseError(raw) {
@@ -794,8 +839,13 @@ function streamPayloadError(message) {
     });
 }
 
+async function readResponseText(response, protocol) {
+    try { return await response.text(); }
+    catch (error) { throw normalizeFetchError(error, { phase: 'reading-body', transport: protocol, networkSignal: REQUEST_DIAGNOSTIC_SIGNAL.BODY_INTERRUPTED }); }
+}
+
 export async function readNonStreamingResponse(response, onChunk = noop, protocol = API_PROTOCOLS.OPENAI) {
-    const raw = await response.text();
+    const raw = await readResponseText(response, protocol);
     if (isHtmlErrorResponse(response.headers.get('content-type'), raw)) throw htmlResponseError(raw);
     const trimmed = raw.trim();
     if (!trimmed) throw noTextResponseError({}, { phase: 'body', transport: 'non_stream' });
@@ -834,9 +884,9 @@ function streamIdleTimeoutError() {
 
 async function readStreamChunk(reader, idleTimeoutMs) {
     const timeout = Math.max(0, Number(idleTimeoutMs) || 0);
-    if (!timeout) return reader.read();
     let timeoutId = null;
     try {
+        if (!timeout) return await reader.read();
         return await Promise.race([
             reader.read(),
             new Promise((_, reject) => {
@@ -847,7 +897,7 @@ async function readStreamChunk(reader, idleTimeoutMs) {
         if (error?.code === 'THEATER_STREAM_IDLE_TIMEOUT') {
             await reader.cancel('stream idle timeout').catch(() => {});
         }
-        throw error;
+        throw normalizeFetchError(error, { phase: 'reading-stream', transport: 'stream', networkSignal: REQUEST_DIAGNOSTIC_SIGNAL.STREAM_INTERRUPTED });
     } finally {
         clearTimeout(timeoutId);
     }
@@ -857,10 +907,13 @@ export async function readSSEStream(
     response,
     onChunk = noop,
     protocol = API_PROTOCOLS.OPENAI,
-    { idleTimeoutMs = CUSTOM_STREAM_IDLE_TIMEOUT_MS } = {},
+    { idleTimeoutMs = CUSTOM_STREAM_IDLE_TIMEOUT_MS, onReadProgress = noop, onNonStreamingRead = noop } = {},
 ) {
     const contentType = response.headers.get('content-type') || '';
-    if (isHtmlErrorResponse(contentType)) throw htmlResponseError(await response.text());
+    if (isHtmlErrorResponse(contentType)) {
+        onNonStreamingRead();
+        throw htmlResponseError(await readResponseText(response, protocol));
+    }
     if (!response.body?.getReader) {
         throw streamEmptyError();
     }
@@ -927,6 +980,7 @@ export async function readSSEStream(
     while (true) {
         const { done, value } = await readStreamChunk(reader, idleTimeoutMs);
         if (done) break;
+        onReadProgress(value?.byteLength || 0);
         const chunk = decoder.decode(value, { stream: true });
         rawText += chunk;
         buffer += chunk;

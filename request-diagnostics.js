@@ -8,6 +8,9 @@ export const REQUEST_DIAGNOSTIC_SIGNAL = Object.freeze({
     HTTP_CLIENT: 'T-HTTP-4XX',
     TIMEOUT: 'T-NET-TIMEOUT',
     NETWORK: 'T-NET-FAILED',
+    NO_RESPONSE: 'T-NET-NO-RESPONSE',
+    STREAM_INTERRUPTED: 'T-NET-STREAM-INTERRUPTED',
+    BODY_INTERRUPTED: 'T-NET-BODY-INTERRUPTED',
     TOKEN_LIMIT: 'T-API-TOKEN-LIMIT',
     INVALID_RESPONSE: 'T-API-INVALID-RESPONSE',
     RENDER_INVALID: 'T-RENDER-INVALID',
@@ -70,8 +73,26 @@ const CATALOG = Object.freeze({
     [REQUEST_DIAGNOSTIC_SIGNAL.NETWORK]: {
         status: 'bad',
         title: '网络连接没有完成',
-        detail: '浏览器没有取得可读取的接口响应，常见于网络中断、跨域限制、代理断开或上游连接被重置。',
-        action: '先确认同一地址在当前网络可用；若酒馆正文正常而独立 API 持续失败，请复制脱敏日志中的时间与信号给线路提供者。',
+        detail: '连接或读取失败，但这条记录没有足够信息区分发生阶段。不能单凭此信号认定梯子、跨域或某家线路有问题。',
+        action: '新版独立 API 会进一步区分未取得响应、流式读取中断和非流式读取中断。查看“独立 API 连接过程”；若主 API 正常，可暂用主 API，并提供脱敏诊断继续排查。',
+    },
+    [REQUEST_DIAGNOSTIC_SIGNAL.NO_RESPONSE]: {
+        status: 'bad',
+        title: '独立 API 未取得可读取响应',
+        detail: '浏览器尚未取得可读取的响应头，请求就失败了；不能据此判断服务器是否收到请求。网络、代理、浏览器跨域限制或线路连接异常都可能导致此结果。',
+        action: '若同线路同模型的酒馆主 API 能生成，先使用主 API，并对比独立 API 的连接方式与请求适配。仅凭本信号不能确定是梯子或跨域；提供连接过程中的耗时与失败阶段，不要发送 Key。',
+    },
+    [REQUEST_DIAGNOSTIC_SIGNAL.STREAM_INTERRUPTED]: {
+        status: 'bad',
+        title: '独立 API 流式读取中断',
+        detail: '已经收到可读取的响应头，但读取流式数据时连接出错。HTTP 200 不代表正文已经完成；收到的数据也可能只是心跳或思考，并非正文。',
+        action: '查看响应状态、已接收字节和数据块数。主 API 正常时可暂用主 API；也可手动关闭独立 API 流式作对照。已收到的正文沿原流程保留，不会因这个分类自动重发请求。',
+    },
+    [REQUEST_DIAGNOSTIC_SIGNAL.BODY_INTERRUPTED]: {
+        status: 'bad',
+        title: '独立 API 非流式读取中断',
+        detail: '已经收到可读取的响应头，但按非流式方式读取时中断，包括流式请求收到 HTML 错误页的情况。响应头成功不代表正文读取成功；此阶段不报告无法测得的部分字节数。',
+        action: '可先使用已验证正常的主 API，并提供响应状态、耗时和失败阶段排查连接。不要仅凭此信号修改预设、世界书或字数，也不要把它当成已确认的 Token 超限。',
     },
     [REQUEST_DIAGNOSTIC_SIGNAL.TOKEN_LIMIT]: {
         status: 'bad',
@@ -125,6 +146,23 @@ export function diagnosticSignalInfo(signal) {
 
 export function diagnosticSignalCatalog() {
     return Object.entries(CATALOG).map(([signal, info]) => ({ signal, ...info }));
+}
+
+export function formatConnectionDiagnostics(connection) {
+    if (!connection) return '暂无独立 API 连接记录；主 API 使用酒馆请求服务。';
+    const phases = { 'awaiting-response': '等待响应头', 'headers-received': '已收到响应头',
+        'reading-stream': '读取流式数据', 'reading-body': '读取非流式响应', complete: '读取完成', failed: '失败', aborted: '已停止' };
+    const number = value => value != null && Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : null;
+    const status = number(connection.httpStatus);
+    const mime = ['text/event-stream', 'application/json', 'text/html', 'text/plain', 'other', 'unknown'].includes(connection.contentType) ? connection.contentType : 'unknown';
+    const bytes = number(connection.receivedBytes);
+    const chunks = number(connection.receivedChunks);
+    return `尝试 ${number(connection.attempt) ?? 0} · ${connection.transport === 'stream' ? '流式' : '非流式'} · ${phases[connection.state] || '阶段未知'}`
+        + ` · 响应头${connection.headersReceived ? `已收到（+${number(connection.headersMs) ?? 0}ms）` : '未取得'}`
+        + ` · HTTP ${status >= 100 && status <= 599 ? status : '未知'} · 类型 ${mime}`
+        + ` · 已接收${bytes === null ? '字节未统计（非流式）' : ` ${bytes} 字节 / ${chunks ?? 0} 块（不等于正文）`}`
+        + ` · 耗时 ${number(connection.elapsedMs) ?? 0}ms`
+        + (connection.failedAt ? ` · 停止阶段：${phases[connection.failedAt] || '未知'}` : '');
 }
 
 export function createDiagnosticError(signal, {

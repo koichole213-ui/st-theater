@@ -17,7 +17,7 @@ import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfil
 import { normalizeContinuationRounds, continuationRoundHistory, createContinuationSession, appendContinuationVersion, selectContinuationVersion, displayedContinuationVersion } from './continuation-session.js';
 import { createTokenBreakdownEstimator, debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
-import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, diagnosticSignalCatalog, diagnosticSignalInfo, signalForStopReason } from './request-diagnostics.js';
+import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, diagnosticSignalCatalog, diagnosticSignalInfo, formatConnectionDiagnostics, signalForStopReason } from './request-diagnostics.js';
 import { autoSourceLabel, resolveAutoInstruction } from './auto-mode.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, generationTextWithLiveSegment, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from './generation-job.js';
 import { readableCharCount } from './text-counter.js';
@@ -50,7 +50,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.5';
+const VERSION = '4.3.6';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -66,6 +66,7 @@ let lastRequestIssue = null;
 let lastRequestContext = null;
 let lastRequestTrace = null;
 let lastApiResponseSummary = null;
+let lastApiConnectionSummary = null;
 let lastAutoIssue = null;
 let lastAutoIssueFingerprint = '';
 let currentGenerationJob = null;
@@ -10271,6 +10272,7 @@ async function requestConfiguredGenerationApi({
     metricScope = '',
 } = {}) {
     lastApiResponseSummary = null;
+    lastApiConnectionSummary = null;
     const scope = metricScope ? `:${metricScope}` : '';
     if (apiRoute.mode === 'main') {
         lastRequestMetrics = createRequestMetrics(`main:ChatCompletionService${scope}`);
@@ -10299,6 +10301,8 @@ async function requestConfiguredGenerationApi({
 }
 
 async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStream = true, signal = abortController?.signal, requestOptions = {}) {
+    lastApiResponseSummary = null;
+    lastApiConnectionSummary = null;
     return requestMainApi({
         ctx,
         systemPrompt,
@@ -10320,6 +10324,8 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
 }
 
 async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStream = true, signal = abortController?.signal, requestOptions = {}) {
+    lastApiResponseSummary = null;
+    lastApiConnectionSummary = null;
     const apiConfig = requestOptions.apiConfig || {
         apiUrl: settings.apiUrl,
         apiProtocol: settings.apiProtocol,
@@ -10341,6 +10347,7 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
         log: runtimeLog,
         onFallback: path => markFallback(lastRequestMetrics, path),
         onResponse: summary => { lastApiResponseSummary = summary; },
+        onConnection: summary => { lastApiConnectionSummary = summary; },
     });
 }
 // ============================================================
@@ -10352,7 +10359,7 @@ function diagnosticLine(status, name, detail) {
 }
 
 function formatApiResponseSummary(summary) {
-    if (!summary) return '暂无；完成一次独立 API 请求后会显示脱敏后的响应类型和 Token 计数，不记录正文。';
+    if (!summary) return '暂无完整响应摘要；独立 API 是否收到响应头及读取中断阶段请看“独立 API 连接过程”。不记录正文。';
     const usage = summary.usage || {};
     const tokenParts = [
         usage.inputTokens != null ? `输入 ${usage.inputTokens}` : '',
@@ -10437,6 +10444,7 @@ function buildDiagnostics() {
             ? `${lastRequestTrace.route}/${lastRequestTrace.transport} · ${lastRequestTrace.messages.length} 条消息 · ${lastRequestTrace.route === 'custom' ? '预设采样参数未继承' : '预设采样参数由酒馆主 API 决定'} · 消息兼容：${requestTraceCompatibilityLabel(lastRequestTrace)} · 工具已强制禁用`
             : '暂无；完成一次插件正文请求后会在此显示发送前的角色、来源和长度，不包含消息正文'),
         diagnosticLine(lastApiResponseSummary?.hasText ? 'ok' : 'warn', '最近响应结构', formatApiResponseSummary(lastApiResponseSummary)),
+        diagnosticLine(lastApiConnectionSummary?.state === 'failed' ? 'bad' : lastApiConnectionSummary?.state === 'complete' ? 'ok' : 'warn', '独立 API 连接过程', formatConnectionDiagnostics(lastApiConnectionSummary)),
         buildAutoModeDiagnostic(),
         diagnosticLine('ok', '数据数量', `历史 ${historyCache.length} 条，最近生成 ${recentCache.length} 条，指令模板 ${(settings.instructionTemplates || []).length} 个`),
         diagnosticLine(recentContentOk ? 'ok' : 'warn', '最近生成正文', recentContentDetail),

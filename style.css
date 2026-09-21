@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.3.5
+/* 千夜浮梦 · 小剧场生成器 v4.3.6
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -578,6 +578,7 @@
     line-height: 1.4;
 }
 .theater-diagnostic-catalog-item p {
+    text-align: left;
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);
     gap: 8px;

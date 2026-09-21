@@ -190,7 +190,7 @@ import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, normalizeCon
 import { RENDER_REPORT_TIMEOUT_MS, injectResizeReporter, installSafeResizeListener, renderSafeIframe, sandboxPermissions } from '../safe-renderer.js';
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from '../request-metrics.js';
 import { filterTaggedReasoning, reasoningSafeContent } from '../reasoning-filter.js';
-import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, createDiagnosticError, diagnosticSignalInfo } from '../request-diagnostics.js';
+import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, createDiagnosticError, diagnosticSignalInfo, diagnosticSignalCatalog, formatConnectionDiagnostics } from '../request-diagnostics.js';
 import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkYRatio } from '../result-bookmark.js';
 import { autoSourceLabel, resolveAutoInstruction } from '../auto-mode.js';
 import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
@@ -3386,13 +3386,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.3.5 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.3.6 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.3\.5'/);
-    assert.equal(manifest.version, '4.3.5');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.5/);
+    assert.match(source, /const VERSION = '4\.3\.6'/);
+    assert.equal(manifest.version, '4.3.6');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.6/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -6855,4 +6855,142 @@ test('旧版概要在用户纠错后迁移仍不可恢复，直接截短导入�
     const shortened=normalizeLongDreamRecord({...record,chapters:record.chapters.slice(0,1)});
     assert.doesNotMatch(shortened.memory.currentState,/未来章节/);
     assert.equal(shortened.memory.storyEntries.length,1);
+});
+
+test('独立API区分未取得响应、首块前断流、心跳后断流与非流式中断，诊断不含私密内容', async () => {
+    for (const mode of ['connect', 'stream-empty', 'stream-heartbeat', 'stream-text', 'body']) {
+        const traces = [], logs = [], chunks = [];
+        let calls = 0, error;
+        const wire = new TextEncoder().encode(mode === 'stream-text' ? 'data: {"choices":[{"delta":{"content":"合成正文"}}]}\n\n' : ': private-heartbeat\n\n');
+        try {
+            await requestCustomApi({ config: { apiUrl: 'https://example.invalid', apiKey: 'PRIVATE_API_KEY', apiProtocol: 'openai', apiModel: 'synthetic', maxOutputTokens: 1024 },
+                messages: [{ role: 'user', content: 'PRIVATE_REQUEST_BODY' }], shouldStream: mode !== 'body',
+                onConnection: info => traces.push(info), log: (...items) => logs.push(items), onChunk: text => chunks.push(text),
+                fetchImpl: async () => {
+                    calls++;
+                    if (mode === 'connect') throw new TypeError('Failed to fetch PRIVATE_ERROR');
+                    let reads = 0;
+                    return { ok: true, status: 200, headers: { get: () => 'application/x-PRIVATE_HEADER;secret=PRIVATE' },
+                        text: async () => { throw new TypeError('network error PRIVATE_ERROR'); },
+                        body: { getReader: () => ({ read: async () => {
+                            if (reads++ === 0 && ['stream-heartbeat','stream-text'].includes(mode)) return { done: false, value: wire };
+                            throw new TypeError('network error PRIVATE_ERROR');
+                        }, cancel: async () => {} }) },
+                    };
+                },
+            });
+        } catch (caught) { error = caught; }
+        const signal = mode === 'connect' ? REQUEST_DIAGNOSTIC_SIGNAL.NO_RESPONSE : mode === 'body' ? REQUEST_DIAGNOSTIC_SIGNAL.BODY_INTERRUPTED : REQUEST_DIAGNOSTIC_SIGNAL.STREAM_INTERRUPTED;
+        assert.equal(classifyRequestFailure(error).signal, signal, mode);
+        assert.equal(calls, 1, '网络失败不自动重试');
+        const trace = traces.at(-1);
+        assert.equal(trace.state, 'failed'); assert.equal(trace.failureSignal, signal);
+        assert.equal(trace.headersReceived, mode !== 'connect');
+        assert.equal(trace.httpStatus, mode === 'connect' ? null : 200);
+        assert.equal(trace.failedAt, mode === 'connect' ? 'awaiting-response' : mode === 'body' ? 'reading-body' : 'reading-stream');
+        assert.equal(trace.receivedBytes, mode === 'body' ? null : ['stream-heartbeat','stream-text'].includes(mode) ? wire.byteLength : 0);
+        assert.equal(trace.receivedChunks, mode === 'body' ? null : ['stream-heartbeat','stream-text'].includes(mode) ? 1 : 0);
+        assert.equal(chunks.at(-1) || '', mode === 'stream-text' ? '合成正文' : '');
+        assert.doesNotMatch(JSON.stringify({ traces, logs, error }) + formatConnectionDiagnostics(trace), /PRIVATE|private-heartbeat|合成正文/);
+        assert.ok(trace.elapsedMs >= 0);
+    }
+});
+
+test('独立API的停止与明确HTTP错误不被改写成网络分类', async () => {
+    for (const mode of ['abort-before', 'abort-body', 'http400', 'http503']) {
+        const traces = []; let error;
+        try { await requestCustomApi({ config: { apiUrl: 'https://example.invalid', apiModel: 'synthetic', maxOutputTokens: 1024 }, shouldStream: false,
+            onConnection: value => traces.push(value), fetchImpl: async () => {
+                if (mode === 'abort-before') throw new DOMException('PRIVATE', 'AbortError');
+                if (mode === 'abort-body') return { status: 200, ok: true, headers: { get: () => 'application/json' }, text: async () => { throw new DOMException('PRIVATE', 'AbortError'); } };
+                return new Response('{}', { status: mode === 'http400' ? 400 : 503 });
+            },
+        }); } catch (caught) { error = caught; }
+        if (mode.startsWith('abort')) { assert.equal(error.name, 'AbortError'); assert.equal(traces.at(-1).state, 'aborted'); assert.equal(traces.at(-1).failureSignal, null); }
+        else { assert.equal(classifyRequestFailure(error).signal, mode === 'http400' ? 'T-HTTP-400' : 'T-HTTP-503'); assert.equal(traces.at(-1).state, 'failed'); }
+        assert.doesNotMatch(JSON.stringify(traces), /PRIVATE/);
+    }
+});
+
+test('独立API流式空回转非流式时重置连接计数，诊断回调异常不阻止正常生成', async () => {
+    const traces = []; const bodies = [];
+    const result = await requestCustomApi({ config: { apiUrl: 'https://example.invalid', apiModel: 'synthetic', maxOutputTokens: 1024 },
+        onConnection: trace => { traces.push(trace); throw Error('observer failure'); },
+        fetchImpl: async (_url, request) => {
+            bodies.push(JSON.parse(request.body));
+            return bodies.length === 1 ? new Response('', { headers: { 'content-type': 'text/event-stream' } })
+                : new Response(JSON.stringify({ choices: [{ message: { content: '合成正常正文' }, finish_reason: 'stop' }] }), { headers: { 'content-type': 'application/json' } });
+        },
+    });
+    assert.equal(result.text, '合成正常正文'); assert.equal(bodies.length, 2);
+    assert.equal(bodies[0].stream, true); assert.equal(bodies[1].stream, false);
+    const trace = traces.at(-1); assert.equal(trace.attempt, 2); assert.equal(trace.state, 'complete');
+    assert.equal(trace.transport, 'non-stream'); assert.equal(trace.receivedBytes, null);
+    assert.equal(trace.failedAt, null); assert.equal(trace.failureSignal, null);
+});
+
+test('新增网络阶段分类出现在常见问题汇总，报告不把心跳字节当正文或猜测跨域', () => {
+    const catalog = diagnosticSignalCatalog();
+    for (const signal of [REQUEST_DIAGNOSTIC_SIGNAL.NO_RESPONSE, REQUEST_DIAGNOSTIC_SIGNAL.STREAM_INTERRUPTED, REQUEST_DIAGNOSTIC_SIGNAL.BODY_INTERRUPTED]) {
+        const entry = catalog.find(item => item.signal === signal);
+        assert.ok(entry?.detail && entry.action);
+        assert.equal(classifyRequestFailure(createDiagnosticError(signal)).signal, signal);
+    }
+    assert.match(formatConnectionDiagnostics({ attempt: 1, transport: 'stream', state: 'failed', failedAt: 'reading-stream', headersReceived: true,
+        headersMs: 3, httpStatus: 200, contentType: 'text/event-stream', receivedBytes: 15, receivedChunks: 1, elapsedMs: 20 }), /响应头已收到.*HTTP 200.*15 字节.*不等于正文.*读取流式数据/);
+    assert.match(formatConnectionDiagnostics({ transport: 'non-stream', receivedBytes: null }), /字节未统计/);
+    assert.doesNotMatch(formatConnectionDiagnostics({ state: 'PRIVATE', failedAt: 'PRIVATE', contentType: 'PRIVATE' }), /PRIVATE/);
+});
+
+test('真实独立API适配器保留失败阶段，切换主API发起请求时清除旧连接报告', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const dispatcher = source.match(/async function requestConfiguredGenerationApi\([^]*?^}$/m)[0];
+    const custom = source.match(/async function callCustomAPIStream\([^]*?^}/m)[0];
+    const scope = { settings: {}, lastApiResponseSummary: null, lastApiConnectionSummary: null, lastRequestMetrics: null,
+        createRequestMetrics: path => ({ path }), captureActualRequestTrace() {}, runtimeLog() {}, markFallback() {},
+        requestCustomApi: options => requestCustomApi({ ...options, fetchImpl: async () => { throw new TypeError('Failed to fetch PRIVATE'); } }),
+        generateWithMainAPI: async () => 'main-result',
+    };
+    runInNewContext(custom + '\n' + dispatcher, scope);
+    const args = { ctx: {}, signal: null, onChunk() {}, systemPrompt: '合成', userPrompt: '测试',
+        apiRoute: { mode: 'custom', protocol: 'openai', shouldStream: true, custom: { apiUrl: 'https://example.invalid', apiModel: 'synthetic', maxOutputTokens: 1024 } } };
+    await assert.rejects(scope.requestConfiguredGenerationApi(args), error => error.diagnosticSignal === REQUEST_DIAGNOSTIC_SIGNAL.NO_RESPONSE);
+    assert.equal(scope.lastApiConnectionSummary.state, 'failed');
+    assert.equal(scope.lastApiConnectionSummary.failedAt, 'awaiting-response');
+    const result = await scope.requestConfiguredGenerationApi({ ...args, apiRoute: { mode: 'main', shouldStream: true } });
+    assert.equal(result, 'main-result'); assert.equal(scope.lastApiConnectionSummary, null);
+});
+
+test('流式请求收到HTML后按实际文本读取阶段诊断，完整HTML仍是非法响应且不重试', async () => {
+    for (const interrupted of [true, false]) {
+        const traces = []; let calls = 0, error;
+        try { await requestCustomApi({ config: { apiUrl: 'https://example.invalid', apiModel: 'synthetic', maxOutputTokens: 1024 },
+            onConnection: info => traces.push(info), fetchImpl: async () => {
+                calls++;
+                return { ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => {
+                    if (interrupted) throw new TypeError('Failed to fetch PRIVATE');
+                    return '<html>PRIVATE ERROR PAGE</html>';
+                } };
+            },
+        }); } catch (caught) { error = caught; }
+        assert.equal(calls, 1);
+        assert.equal(classifyRequestFailure(error).signal, interrupted ? REQUEST_DIAGNOSTIC_SIGNAL.BODY_INTERRUPTED : REQUEST_DIAGNOSTIC_SIGNAL.INVALID_RESPONSE);
+        assert.equal(traces.at(-1).failedAt, 'reading-body');
+        assert.equal(traces.at(-1).receivedBytes, null); assert.equal(traces.at(-1).headersReceived, true);
+        assert.doesNotMatch(JSON.stringify(traces), /PRIVATE/);
+    }
+});
+
+test('主API定梦建议直达入口也清除独立API旧失败报告', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const main = source.match(/async function generateWithMainAPI\([^]*?^}$/m)[0];
+    const scope = { lastApiConnectionSummary: { state: 'failed' }, lastApiResponseSummary: { httpStatus: 500 }, settings: {},
+        window: { TavernHelper: {} }, SillyTavern: { getContext: () => ({}) },
+        captureActualRequestTrace() {}, runtimeLog() {}, markFallback() {},
+        requestMainApi: async options => { assert.equal(scope.lastApiConnectionSummary, null); assert.equal(scope.lastApiResponseSummary, null); options.onResponse({ transport: 'ChatCompletionService', hasText: true }); return '合成主API正文'; },
+    };
+    runInNewContext(main, scope);
+    const result = await scope.generateWithMainAPI({}, '合成', '合成', () => {}, true, null);
+    assert.equal(result, '合成主API正文'); assert.equal(scope.lastApiConnectionSummary, null);
+    assert.equal(scope.lastApiResponseSummary.hasText, true);
 });
