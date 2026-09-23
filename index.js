@@ -1506,6 +1506,15 @@ let theaterNativeSelectCompatCounter = 0;
 function theaterNativeSelectCompatId() {
     return `${theaterNativeSelectCompatPrefix}-${++theaterNativeSelectCompatCounter}`;
 }
+// 全局下拉美化脚本在 document 捕获阶段接管 mousedown/touchend。
+// 在更早的 window 捕获阶段只隔离小剧场的原生选择框，不取消浏览器默认选择行为。
+function guardTheaterNativeSelectEvent(event) {
+    if (event.target?.closest?.('.theater-popup select.theater-select')) {
+        event.stopPropagation();
+    }
+}
+window.addEventListener('mousedown', guardTheaterNativeSelectEvent, true);
+window.addEventListener('touchend', guardTheaterNativeSelectEvent, true);
 function buildPopupHTML(initialTab = settings.lastTheaterTab) {
     initialTab = normalizeTheaterTab(initialTab);
     const activeTabClass = tab => initialTab === tab ? ' active' : '';

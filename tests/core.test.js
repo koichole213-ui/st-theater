@@ -6628,6 +6628,26 @@ test('小剧场下拉框保留原生选择，避开全局下拉美化脚本', ()
     assert.match(source, /id="theater-preset-search"/);
     assert.match(source, /'change\.tpns'[^\n]*'#theater-preset-name-select'/);
     assert.match(source, /'change\.tsp'[^\n]*'#theater-sound-preset'/);
+    const guardSource = source.match(/function guardTheaterNativeSelectEvent\(event\) \{[\s\S]*?\n\}/)?.[0];
+    assert.ok(guardSource);
+    const listeners = new Map();
+    const window = { addEventListener(type, handler, capture) { listeners.set(type, { handler, capture }); } };
+    runInNewContext(`${guardSource}\nwindow.addEventListener('mousedown', guardTheaterNativeSelectEvent, true);\nwindow.addEventListener('touchend', guardTheaterNativeSelectEvent, true);`, { window });
+    for (const type of ['mousedown', 'touchend']) {
+        assert.equal(listeners.get(type)?.capture, true);
+        for (const isTheaterSelect of [true, false]) {
+            let stopped = 0;
+            let prevented = 0;
+            const event = {
+                target: { closest: selector => selector === '.theater-popup select.theater-select' && isTheaterSelect ? {} : null },
+                stopPropagation: () => stopped++,
+                preventDefault: () => prevented++,
+            };
+            listeners.get(type).handler(event);
+            assert.equal(stopped, isTheaterSelect ? 1 : 0);
+            assert.equal(prevented, 0);
+        }
+    }
 });
 
 test('排查 TXT 点击时汇总最新报告和日志，并再次脱敏', () => {
