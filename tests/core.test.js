@@ -193,7 +193,7 @@ import { filterTaggedReasoning, reasoningSafeContent } from '../reasoning-filter
 import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, createDiagnosticError, diagnosticSignalInfo, diagnosticSignalCatalog, formatConnectionDiagnostics } from '../request-diagnostics.js';
 import { bookmarkPlacementFromPoint, bookmarkPosition, normalizeBookmarkYRatio } from '../result-bookmark.js';
 import { autoSourceLabel, resolveAutoInstruction } from '../auto-mode.js';
-import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
+import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, sanitizeLogText, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
 import { apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from '../api-presets.js';
 import { splitInstructionTextFile } from '../instruction-import.js';
 import { LENGTH_TIERS, LONG_FORM_SPLIT_THRESHOLD, STAGED_RENDER_THRESHOLD, classifyLengthTier, firstRoundGuidance, isLongFormTarget, isStagedRenderTarget, longFormFirstRoundGuidance, longFormFirstRoundTarget, parseTargetWordCount, resolveTargetWordCount, stripTargetWordCountRequirement } from '../length-policy.js';
@@ -6617,6 +6617,33 @@ test('概要兼容数字字符串，后批提示使用真实章号且全篇一�
     assert.equal(calls, 2); assert.equal(saves, 1);
     assert.deepEqual(saved.memory.storyEntries.map(entry => entry.chapterNumber), [1,2,3,4,5,6,7]);
     assert.match(saved.memory.currentState, /经历1/); assert.match(saved.memory.currentState, /经历7/);
+});
+
+test('排查 TXT 点击时汇总最新报告和日志，并再次脱敏', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    assert.match(source, /id="theater-export-diagnostics-btn"/);
+    assert.match(source, /#theater-export-diagnostics-btn', exportDiagnosticsText/);
+    const exportSource = source.match(/function exportDiagnosticsText\(\) \{[\s\S]*?\n\}/)?.[0];
+    assert.ok(exportSource);
+    let downloads = [];
+    let reportVersion = 0;
+    const context = {
+        buildDiagnostics: () => ({ text: `报告 ${++reportVersion}\n模型：https://example.com/private?key=secret` }),
+        getRuntimeLogEntries: () => [{ level: 'error' }],
+        formatRuntimeLogs: () => '2026/9/23 [ERROR] T-NET-FAILED',
+        sanitizeLogText,
+        MAX_RUNTIME_LOGS,
+        downloadTextContent: (content, name, feedback) => downloads.push({ content, name, feedback }),
+    };
+    runInNewContext(`${exportSource}\nexportDiagnosticsText(); exportDiagnosticsText();`, context);
+    assert.equal(downloads.length, 2);
+    assert.match(downloads[0].content, /报告 1\r\n/);
+    assert.match(downloads[1].content, /报告 2\r\n/);
+    assert.match(downloads[1].content, /脱敏运行日志（最近 1\/200 条）/);
+    assert.match(downloads[1].content, /T-NET-FAILED/);
+    assert.doesNotMatch(downloads[1].content, /private|key=secret/);
+    assert.match(downloads[1].name, /^千夜浮梦-排查报告-\d{4}-\d{2}-\d{2}\.txt$/);
+    assert.equal(downloads[1].feedback, '已发起下载，请查看浏览器下载列表');
 });
 
 test('概要错误分阶段且失败不保存、不泄露响应或异常原文', async () => {

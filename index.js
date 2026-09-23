@@ -22,7 +22,7 @@ import { autoSourceLabel, resolveAutoInstruction } from './auto-mode.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, generationTextWithLiveSegment, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from './generation-job.js';
 import { readableCharCount } from './text-counter.js';
 import { classifyLengthTier, firstRoundGuidance, isStagedRenderTarget, longFormFirstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
-import { clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
+import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, sanitizeLogText, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
 import { MAX_API_PRESETS, apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from './api-presets.js';
 import { splitInstructionTextFile } from './instruction-import.js';
 import { AUTO_CONTINUE_SCHEMA, migrateAutoContinueDefault } from './settings-migration.js';
@@ -1881,6 +1881,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
             <label class="theater-label"><i class="fa-solid fa-stethoscope"></i> 插件诊断</label>
             <div class="theater-btn-row">
                 <div id="theater-run-diagnostics-btn" class="theater-btn primary"><i class="fa-solid fa-list-check"></i><span>生成诊断报告</span></div>
+                <div id="theater-export-diagnostics-btn" class="theater-btn"><i class="fa-solid fa-download"></i><span>导出排查 TXT</span></div>
                 <div id="theater-copy-diagnostics-btn" class="theater-btn" style="display:none;"><i class="fa-solid fa-copy"></i><span>复制报告</span></div>
                 <div id="theater-toggle-diagnostics-btn" class="theater-btn" style="display:none;"><i class="fa-solid fa-chevron-up"></i><span>收起报告</span></div>
             </div>
@@ -6464,6 +6465,7 @@ function bindEvents() {
     $d.off('click.tfm').on('click.tfm', '#theater-fetch-models-btn', fetchModelList);
     $d.off('click.ttest').on('click.ttest', '#theater-test-api-btn', testAPIConnection);
     $d.off('click.tdiag').on('click.tdiag', '#theater-run-diagnostics-btn', runDiagnostics);
+    $d.off('click.tdiagexport').on('click.tdiagexport', '#theater-export-diagnostics-btn', exportDiagnosticsText);
     $d.off('click.tdiagcopy').on('click.tdiagcopy', '#theater-copy-diagnostics-btn', function () {
         const text = $('#theater-diagnostics-output').data('report') || '';
         if (!text) { toastr.warning('请先生成诊断报告'); return; }
@@ -8180,7 +8182,7 @@ function showManualCopyPanel(text, { title = '手动复制', downloadName = '千
     });
 }
 
-function downloadTextContent(text, fileName) {
+function downloadTextContent(text, fileName, feedback = 'TXT 已下载') {
     const blob = new Blob([String(text || '')], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -8190,7 +8192,7 @@ function downloadTextContent(text, fileName) {
     anchor.click();
     anchor.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toastr.success('TXT 已下载');
+    toastr.success(feedback);
 }
 
 async function exportAllHistory(format = 'zip') {
@@ -10461,6 +10463,19 @@ function buildDiagnostics() {
             formatRequestTrace(lastRequestTrace),
         ].join('\n'),
     };
+}
+
+function exportDiagnosticsText() {
+    const report = buildDiagnostics();
+    const entries = getRuntimeLogEntries();
+    const content = [
+        report.text,
+        '',
+        `===== 脱敏运行日志（最近 ${entries.length}/${MAX_RUNTIME_LOGS} 条）=====`,
+        entries.length ? formatRuntimeLogs() : '暂无运行日志',
+    ].join('\n');
+    const date = new Date().toISOString().slice(0, 10);
+    downloadTextContent(sanitizeLogText(content).replace(/\r?\n/g, '\r\n'), `千夜浮梦-排查报告-${date}.txt`, '已发起下载，请查看浏览器下载列表');
 }
 
 function runDiagnostics() {
