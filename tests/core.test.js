@@ -6619,6 +6619,17 @@ test('概要兼容数字字符串，后批提示使用真实章号且全篇一�
     assert.match(saved.memory.currentState, /经历1/); assert.match(saved.memory.currentState, /经历7/);
 });
 
+test('小剧场下拉框保留原生选择，避开全局下拉美化脚本', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const selects = [...source.matchAll(/<select\b[^>]*>/g)].map(match => match[0]);
+    assert.ok(selects.length >= 20);
+    for (const select of selects) assert.match(select, /\bdata-select2-id="\$\{theaterNativeSelectCompatId\(\)\}"/);
+    assert.match(source, /return `\$\{theaterNativeSelectCompatPrefix\}-\$\{\+\+theaterNativeSelectCompatCounter\}`/);
+    assert.match(source, /id="theater-preset-search"/);
+    assert.match(source, /'change\.tpns'[^\n]*'#theater-preset-name-select'/);
+    assert.match(source, /'change\.tsp'[^\n]*'#theater-sound-preset'/);
+});
+
 test('排查 TXT 点击时汇总最新报告和日志，并再次脱敏', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     assert.match(source, /id="theater-export-diagnostics-btn"/);

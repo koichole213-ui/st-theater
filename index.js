@@ -1499,6 +1499,13 @@ function createFloatingBall() {
 // ============================================================
 // Popup HTML
 // ============================================================
+// 小剧场的原生 select 使用 data-select2-id 作为“下拉选项框美化”脚本现有的排除标记；
+// 每个值保持唯一，以免后续 Select2 初始化时共享缓存。小剧场的搜索和 change 事件保持原样。
+const theaterNativeSelectCompatPrefix = `theater-native-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+let theaterNativeSelectCompatCounter = 0;
+function theaterNativeSelectCompatId() {
+    return `${theaterNativeSelectCompatPrefix}-${++theaterNativeSelectCompatCounter}`;
+}
 function buildPopupHTML(initialTab = settings.lastTheaterTab) {
     initialTab = normalizeTheaterTab(initialTab);
     const activeTabClass = tab => initialTab === tab ? ' active' : '';
@@ -1647,7 +1654,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-shield-halved"></i> 生成预设</label>
             <input id="theater-preset-search" class="theater-input" placeholder="搜索预设…" style="margin-bottom:6px;">
-            <select id="theater-preset-name-select" class="theater-select" style="margin-bottom:8px;">
+            <select id="theater-preset-name-select" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}" style="margin-bottom:8px;">
                 <option value="">-- 选择预设 --</option>
             </select>
 
@@ -1773,7 +1780,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
         <!-- Render Templates -->
         <div class="theater-section">
             <label class="theater-label"><i class="fa-solid fa-palette"></i> 渲染规则模板</label>
-            <select id="theater-render-select" class="theater-select">
+            <select id="theater-render-select" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}">
                 ${renderTemplateOptions(selRender, render)}
             </select>
             <p class="theater-hint" id="theater-render-selection-hint" style="margin:7px 1px 0;">${esc(renderSelectionHint(selRender))}</p>
@@ -1905,7 +1912,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <button type="button" data-theater-api-mode="custom" class="${(settings.apiMode || 'custom') === 'custom' ? 'active' : ''}" aria-pressed="${(settings.apiMode || 'custom') === 'custom'}"><i class="fa-solid fa-key"></i><span>独立 API</span></button>
                 <button type="button" data-theater-api-mode="main" class="${settings.apiMode === 'main' ? 'active' : ''}" aria-pressed="${settings.apiMode === 'main'}"><i class="fa-solid fa-wine-glass"></i><span>酒馆主 API</span></button>
             </div>
-            <select id="theater-api-mode" class="theater-api-mode-select" aria-hidden="true" tabindex="-1">
+            <select id="theater-api-mode" class="theater-api-mode-select" data-select2-id="${theaterNativeSelectCompatId()}" aria-hidden="true" tabindex="-1">
                 <option value="custom" ${(settings.apiMode || 'custom') === 'custom' ? 'selected' : ''}>独立 API（推荐）</option>
                 <option value="main" ${settings.apiMode === 'main' ? 'selected' : ''}>酒馆主 API（实验）</option>
             </select>
@@ -1916,7 +1923,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                         <span id="theater-api-preset-count" class="theater-api-preset-count">${apiPresets.length}/${MAX_API_PRESETS}</span>
                     </div>
                     <div class="theater-api-preset-control">
-                        <select id="theater-api-preset-select" class="theater-select">
+                        <select id="theater-api-preset-select" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}">
                             <option value="">选择已保存的 API 预设</option>
                             ${apiPresets.map(preset => `<option value="${esc(preset.id)}" ${preset.id === settings.selectedApiPresetId ? 'selected' : ''}>${esc(apiPresetDisplayLabel(preset))}</option>`).join('')}
                         </select>
@@ -1931,7 +1938,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 </div>
                 <div class="theater-config-field">
                     <label for="theater-api-protocol"><b>请求格式</b><small>多数兼容服务保持自动即可</small></label>
-                    <select id="theater-api-protocol" class="theater-select">
+                    <select id="theater-api-protocol" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}">
                         <option value="auto" ${(settings.apiProtocol || 'auto') === 'auto' ? 'selected' : ''}>自动判断（默认）</option>
                         <option value="openai" ${settings.apiProtocol === 'openai' ? 'selected' : ''}>OpenAI Chat Completions 兼容格式</option>
                         <option value="anthropic" ${settings.apiProtocol === 'anthropic' ? 'selected' : ''}>Anthropic Messages 兼容格式</option>
@@ -1948,7 +1955,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <div class="theater-config-field">
                     <label for="theater-api-model"><b>模型</b><small>可以手填或读取线路列表</small></label>
                     <div class="theater-config-model-control">
-                        <select id="theater-api-model-select" class="theater-select" style="display:none;"></select>
+                        <select id="theater-api-model-select" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}" style="display:none;"></select>
                         <input id="theater-api-model" class="theater-input" placeholder="模型名称" value="${esc(settings.apiModel || '')}">
                         <button type="button" id="theater-fetch-models-btn" class="theater-config-field-action" title="获取模型列表"><i class="fa-solid fa-arrows-rotate"></i><span>获取</span></button>
                     </div>
@@ -1962,16 +1969,16 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <summary><span><i class="fa-solid fa-route"></i><b>梦脉织录</b></span><small id="theater-dream-memory-summary">${settings.longDreamMemoryApiPresetId ? `${esc(apiPresets.find(preset => preset.id === settings.longDreamMemoryApiPresetId)?.name || '已绑定副 API')} · 每 ${Number(settings.longDreamMemoryBatchSize) || 3} 章` : '尚未绑定副 API'}</small><i class="fa-solid fa-chevron-down"></i></summary>
                 <div class="theater-memory-api-body">
                     <p>正文线路与梦脉完全分开。确认章节只加入待织录队列，默认累计三章后在后台批量整理。</p>
-                    <label><span>副 API 预设</span><select id="theater-dream-memory-api-preset" class="theater-select">
+                    <label><span>副 API 预设</span><select id="theater-dream-memory-api-preset" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}">
                         <option value="">尚未绑定（暂停自动织录）</option>
                         ${apiPresets.map(preset => `<option value="${esc(preset.id)}" ${preset.id === settings.longDreamMemoryApiPresetId ? 'selected' : ''}>${esc(apiPresetDisplayLabel(preset))}</option>`).join('')}
                     </select></label>
-                    <label class="theater-memory-batch-row"><span>自动批量</span><select id="theater-dream-memory-batch-size" class="theater-select">
+                    <label class="theater-memory-batch-row"><span>自动批量</span><select id="theater-dream-memory-batch-size" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}">
                         ${[1, 3, 5].map(size => `<option value="${size}" ${Number(settings.longDreamMemoryBatchSize || 3) === size ? 'selected' : ''}>每 ${size} 章${size === 3 ? '（推荐）' : ''}</option>`).join('')}
                     </select></label>
                     <details class="theater-memory-prompt-details">
                         <summary>梦脉分析预设库</summary>
-                        <label><span>当前预设</span><select id="theater-dream-memory-analysis-preset" class="theater-select">${memoryPresets.map(preset => `<option value="${esc(preset.id)}" ${preset.id === activeMemoryPreset.id ? 'selected' : ''}>${esc(preset.name)}${preset.author ? ` · ${esc(preset.author)}` : ''}</option>`).join('')}</select></label>
+                        <label><span>当前预设</span><select id="theater-dream-memory-analysis-preset" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}">${memoryPresets.map(preset => `<option value="${esc(preset.id)}" ${preset.id === activeMemoryPreset.id ? 'selected' : ''}>${esc(preset.name)}${preset.author ? ` · ${esc(preset.author)}` : ''}</option>`).join('')}</select></label>
                         <small id="theater-dream-memory-preset-description">${esc(activeMemoryPreset.description || '只改变梦脉的分析侧重点；数据结构和输出合同由程序固定。')}</small>
                         <textarea id="theater-dream-memory-prompt" class="theater-textarea" rows="10" ${activeMemoryPreset.builtin ? 'readonly' : ''}>${esc(activeMemoryPreset.focusPrompt || DEFAULT_LONG_DREAM_MEMORY_PRESET)}</textarea>
                         <div class="theater-memory-preset-actions">
@@ -1992,8 +1999,8 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
             <div class="theater-config-quick-render">
                 <div class="theater-config-setting-copy"><b>生成页双模板切换</b><small>选择按钮一按即可往返的两个模板</small></div>
                 <div class="theater-config-quick-render-grid">
-                    <label><span>模板 A</span><select id="theater-quick-render-a" class="theater-select">${renderTemplateOptions(settings.quickRenderA, render)}</select></label>
-                    <label><span>模板 B</span><select id="theater-quick-render-b" class="theater-select">${renderTemplateOptions(settings.quickRenderB, render)}</select></label>
+                    <label><span>模板 A</span><select id="theater-quick-render-a" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}">${renderTemplateOptions(settings.quickRenderA, render)}</select></label>
+                    <label><span>模板 B</span><select id="theater-quick-render-b" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}">${renderTemplateOptions(settings.quickRenderB, render)}</select></label>
                 </div>
                 <small>可以选择任意内置或自定义模板；三个剧情自适应模板分别侧重阅读、参与和探索。</small>
             </div>
@@ -2029,7 +2036,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-book-atlas"></i> 世界书读取</label>
             <div class="theater-config-choice-row">
                 <span><b>世界书读取范围</b><small>控制素材注入的精细度</small></span>
-                <select id="theater-wb-read-mode" class="theater-select">
+                <select id="theater-wb-read-mode" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}">
                     <option value="all" ${(settings.worldBookReadMode || 'all') === 'all' ? 'selected' : ''}>全部条目</option>
                     <option value="enabled" ${settings.worldBookReadMode === 'enabled' ? 'selected' : ''}>酒馆开启条目（含链式）</option>
                     <option value="lights" ${settings.worldBookReadMode === 'lights' ? 'selected' : ''}>按酒馆蓝灯与绿灯触发</option>
@@ -2045,7 +2052,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
             <div class="theater-config-choice-row">
                 <span><b>提示音样式</b><small id="theater-sound-summary">${esc(SOUND_PRESETS.find(p => p.id === settings.soundPreset)?.label || '铃·清脆')}</small></span>
                 <div class="theater-config-inline-control">
-                    <select id="theater-sound-preset" class="theater-select">
+                    <select id="theater-sound-preset" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}">
                         ${SOUND_PRESETS.map(p => `<option value="${esc(p.id)}" ${settings.soundPreset === p.id ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}
                     </select>
                     <button type="button" id="theater-sound-preview-btn" class="theater-btn"><i class="fa-solid fa-play"></i><span>试听</span></button>
@@ -2070,7 +2077,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
             <div class="theater-config-choice-row">
                 <span><b>抽取范围</b><small>多个标签表示同时包含</small></span>
                 <div class="theater-config-inline-control theater-tag-source-control">
-                    <select id="theater-random-scope" class="theater-select">
+                    <select id="theater-random-scope" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}">
                         <option value="__current__" ${settings.randomScope === '__current__' ? 'selected' : ''}>跟随筛选</option>
                         <option value="__all__" ${settings.randomScope === '__all__' ? 'selected' : ''}>全部模板</option>
                         <option value="${TAG_UNCATEGORIZED}" ${settings.randomScope === TAG_UNCATEGORIZED ? 'selected' : ''}>未分类</option>
@@ -2097,7 +2104,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
             <div class="theater-config-choice-row">
                 <span><b>指令来源</b><small>选择自动生成时使用的指令</small></span>
                 <div class="theater-config-inline-control theater-tag-source-control">
-                    <select id="theater-auto-source" class="theater-select">
+                    <select id="theater-auto-source" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}">
                         <option value="__last__" ${settings.autoSource === '__last__' ? 'selected' : ''}>上次指令</option>
                         <option value="__all__" ${settings.autoSource === '__all__' ? 'selected' : ''}>全部模板</option>
                         <option value="${TAG_UNCATEGORIZED}" ${settings.autoSource === TAG_UNCATEGORIZED ? 'selected' : ''}>未分类</option>
@@ -2330,7 +2337,7 @@ function longDreamCanonSuggestionCardsHTML(sourceKey) {
             .join('');
         return `<article class="theater-dream-canon-suggestion canon-suggest-item ${item.accepted ? 'is-accepted accepted' : ''}" data-dream-canon-suggestion-id="${esc(item.id)}">
             <div class="theater-dream-canon-suggestion-head">
-                <select class="ui-select theater-select" data-dream-canon-suggestion-category aria-label="建议分类">${categoryOptions}</select>
+                <select class="ui-select theater-select" data-select2-id="${theaterNativeSelectCompatId()}" data-dream-canon-suggestion-category aria-label="建议分类">${categoryOptions}</select>
                 <span class="theater-dream-canon-suggestion-state">${item.accepted ? '<i class="fa-solid fa-check"></i>已采纳' : '待决定'}</span>
                 ${item.uncertain ? '<span class="theater-dream-canon-uncertain"><i class="fa-solid fa-circle-question"></i>不确定 · 需要确认</span>' : ''}
             </div>
@@ -2849,7 +2856,7 @@ function longDreamCreateHTML() {
         ${sources.length ? `<div class="theater-dream-form-grid">
             <section class="ui-card theater-dream-form-card">
                 <div class="ui-title"><span><i class="fa-solid fa-book-bookmark"></i> 第一章来源</span></div>
-                <select id="theater-dream-source" class="ui-select theater-select">${options}</select>
+                <select id="theater-dream-source" class="ui-select theater-select" data-select2-id="${theaterNativeSelectCompatId()}">${options}</select>
                 <div id="theater-dream-source-preview" class="source-preview-card theater-dream-source-preview">${longDreamSourcePreviewHTML(first)}</div>
             </section>
             <section class="ui-card theater-dream-form-card">
@@ -3033,7 +3040,7 @@ function longDreamMemoryCardsHTML(dream) {
     if (!cards.length && !legacyCards.length && !v2Count && !currentState && !conflicts.length && !dream.chapters?.length) return '';
 
     const field = (name, label, value, { rows = 0, placeholder = '', list = null } = {}) => {
-        if (list) return `<label class="ia-field theater-dream-memory-flow-field"><span>${label}</span><select class="ui-select theater-select" data-dream-memory-v2-field="${name}" ${memoryLocked ? 'disabled' : ''}>${list.map(([option, text]) => `<option value="${esc(option)}" ${option === value ? 'selected' : ''}>${esc(text)}</option>`).join('')}</select></label>`;
+        if (list) return `<label class="ia-field theater-dream-memory-flow-field"><span>${label}</span><select class="ui-select theater-select" data-select2-id="${theaterNativeSelectCompatId()}" data-dream-memory-v2-field="${name}" ${memoryLocked ? 'disabled' : ''}>${list.map(([option, text]) => `<option value="${esc(option)}" ${option === value ? 'selected' : ''}>${esc(text)}</option>`).join('')}</select></label>`;
         if (rows) return `<label class="ia-field theater-dream-memory-flow-field"><span>${label}</span><textarea class="ui-textarea theater-textarea" rows="${rows}" data-dream-memory-v2-field="${name}" placeholder="${esc(placeholder)}" ${memoryLocked ? 'disabled' : ''}>${esc(value || '')}</textarea></label>`;
         return `<label class="ia-field theater-dream-memory-flow-field"><span>${label}</span><input class="ui-input theater-input ${placeholder ? 'placeholder-field' : ''}" data-dream-memory-v2-field="${name}" value="${esc(value || '')}" placeholder="${esc(placeholder)}" ${memoryLocked ? 'disabled' : ''}></label>`;
     };
@@ -3109,7 +3116,7 @@ function longDreamMemoryCardsHTML(dream) {
             <template data-dream-memory-editor-template="${esc(editorKey)}"><div class="theater-dream-memory-editor-record" data-dream-memory-card="${esc(card.id)}">
                 <div class="theater-dream-memory-editor-note"><span>${dismissed ? '已废止' : (card.editedByUser ? '人工确认' : '梦脉事实')}</span><small>来源${esc(sourceText)}</small></div>
                 <div class="theater-dream-memory-card-grid">
-                    <label class="theater-dream-memory-flow-field"><span>分类</span><select class="theater-select" data-dream-memory-type ${memoryLocked ? 'disabled' : ''}>${typeOptions}</select></label>
+                    <label class="theater-dream-memory-flow-field"><span>分类</span><select class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}" data-dream-memory-type ${memoryLocked ? 'disabled' : ''}>${typeOptions}</select></label>
                     <label class="theater-dream-memory-flow-field"><span>状态槽位</span><input class="theater-input" data-dream-memory-key maxlength="120" value="${esc(card.key || '')}" placeholder="例如：林岚/所在地点" ${memoryLocked ? 'disabled' : ''}></label>
                 </div>
                 <label class="theater-dream-memory-content theater-dream-memory-flow-field"><span>有效事实</span><textarea class="theater-textarea" data-dream-memory-content rows="3" ${memoryLocked ? 'disabled' : ''}>${esc(card.content || '')}</textarea></label>
@@ -3719,7 +3726,7 @@ function contextExclusionSettingsHTML() {
             <p class="theater-hint">排除小剧场读取的聊天内容，原消息不变。添加后自动保存，可随时停用或删除。</p>
             <div id="theater-exclusion-list">${contextExclusionRulesHTML()}</div>
             <label class="theater-label" for="theater-exclusion-type">添加规则</label>
-            <select id="theater-exclusion-type" class="theater-select"><option value="literal">固定内容</option><option value="tag">标签区块</option></select>
+            <select id="theater-exclusion-type" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}"><option value="literal">固定内容</option><option value="tag">标签区块</option></select>
             <label class="theater-exclusion-field-label" for="theater-exclusion-value" id="theater-exclusion-value-label">要排除的完整内容</label>
             <textarea id="theater-exclusion-value" class="theater-textarea" rows="3" maxlength="${MAX_CONTEXT_EXCLUSION_LENGTH}" aria-describedby="theater-exclusion-help" placeholder="粘贴固定收尾文字或完整 HTML…"></textarea>
             <p class="theater-hint" id="theater-exclusion-help">精确匹配，包括空格和换行；有 HTML 时请连同标签一起粘贴。</p>
@@ -7762,7 +7769,7 @@ async function editTemplateTags(index) {
 
 async function chooseBulkTagOperation(count) {
     const { Popup, POPUP_TYPE } = SillyTavern.getContext();
-    const html = `<div class="theater-popup" data-skin="${settings.skinMode || 'default'}"><div class="theater-popup-header"><p class="theater-title">批量修改标签</p><p class="theater-subtitle">已选 ${count} 项</p></div><div class="theater-section"><select class="theater-select theater-bulk-tag-mode"><option value="add">添加所选标签</option><option value="remove">移除所选标签</option><option value="replace">替换为所选标签</option></select>${knownInstructionTags().map(tag => `<label class="theater-tag-choice"><input type="checkbox" value="${esc(tag)}"><span><i class="fa-solid fa-tag"></i><b>${esc(tag)}</b></span></label>`).join('')}</div></div>`;
+    const html = `<div class="theater-popup" data-skin="${settings.skinMode || 'default'}"><div class="theater-popup-header"><p class="theater-title">批量修改标签</p><p class="theater-subtitle">已选 ${count} 项</p></div><div class="theater-section"><select class="theater-select theater-bulk-tag-mode" data-select2-id="${theaterNativeSelectCompatId()}"><option value="add">添加所选标签</option><option value="remove">移除所选标签</option><option value="replace">替换为所选标签</option></select>${knownInstructionTags().map(tag => `<label class="theater-tag-choice"><input type="checkbox" value="${esc(tag)}"><span><i class="fa-solid fa-tag"></i><b>${esc(tag)}</b></span></label>`).join('')}</div></div>`;
     const popup = new Popup(html, POPUP_TYPE.CONFIRM, '', { wide: false, okButton: '应用', cancelButton: '取消', allowVerticalScrolling: true });
     const showPromise = popup.show();
     const $body = $(popup.dlg);
