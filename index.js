@@ -1,3 +1,5 @@
+import { remapHistorySource, historyKey, historyOrder, orderedHistory, normalizeCollections, historyEntries, collectionPage, collectionChapters, moveCollectionItems, remapHistoryImport, continuationHistoryMetadata, planHistorySave, newHistoryKey } from './history-collections.js';
+import { collectionCardHTML, collectionDialog, collectionChapterIds } from './history-collections-ui.js';
 import { bindResultSwipe, animateResultPage } from './result-swipe.js';
 import { createHtmlTextEdit, previousResults } from './result-text-edit.js';
 import { readerPaneHTML, mountResultReader } from './result-reader.js';
@@ -53,7 +55,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.8';
+const VERSION = '4.3.9';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -428,6 +430,13 @@ const SKIN_LABELS = { default: '内置默认', theater: '跟随酒馆', custom: 
 // 所以历史和最近生成从 v2.7.1 起放进 IndexedDB，按条独立读写。
 // ============================================================
 let idb = null;            // 打不开时为 null，回退到 settings 存储
+let historyCollections = [];
+let historyQuery = '';
+const historyExpanded = new Set();
+const historyVersionSelection = new Map();
+let historyReadingItems = null;
+let historyReadingFolderId = null;
+let historyWriteQueue = Promise.resolve();
 let historyCache = [];     // [{ id, title, html, mode, instruction, date }]
 let currentGenerationResult = null;
 let resultStorageQueue = Promise.resolve();
@@ -589,6 +598,7 @@ async function storageInit() {
         if (!Array.isArray(settings.longDreams)) settings.longDreams = [];
         settings.history.forEach((h, i) => { if (h.id === undefined || h.id === null) h.id = i + 1; });
         historyCache = settings.history;
+        historyCollections = normalizeCollections(settings.historyCollections, historyCache);
         recentCache = settings.recentGenerations;
         currentGenerationResult = settings.currentGenerationResult || null;
         longDreamCache = settings.longDreams
@@ -599,7 +609,8 @@ async function storageInit() {
         return;
     }
 
-    if (settings.currentGenerationResult?.html) {
+    const fallbackCurrentResult = settings.currentGenerationResult?.html ? settings.currentGenerationResult : null;
+    if (settings.currentGenerationResult?.html && !settings.history?.length) {
         try {
             await idbReq(idb.transaction('kv', 'readwrite').objectStore('kv').put(settings.currentGenerationResult, 'current-result'));
             settings.currentGenerationResult = null;
@@ -611,17 +622,39 @@ async function storageInit() {
         if (Array.isArray(settings.history) && settings.history.length) {
             const n = settings.history.length;
             runtimeLog('info', '存档迁移开始', { type: 'history', count: n });
-            const transaction = idb.transaction('history', 'readwrite');
+            const existing = (await idbReq(idb.transaction('history').objectStore('history').getAll())) || [];
+            const existingFolders = (await idbReq(idb.transaction('kv').objectStore('kv').get('history-collections'))) || [];
+            let order = Math.max(0, ...existing.map(historyOrder));
+            const mapping = new Map();
+            const imported = remapHistoryImport(settings.history, settings.historyCollections);
+            const migrated = imported.items.map((h, index) => {
+                const id = newHistoryKey();
+                mapping.set(String(settings.history[index].id), id);
+                return { ...h, id, chapterId: h.chapterId || historyKey(h), historyOrder: ++order, tags: normalizeTagList(h.tags) };
+            });
+            const migratedFolders = imported.folders.map(folder => ({ ...folder, itemIds: folder.itemIds.map(id => mapping.get(id)).filter(Boolean) }));
+            const transaction = idb.transaction(['history', 'kv'], 'readwrite');
             const completed = idbTransactionDone(transaction);
             const store = transaction.objectStore('history');
-            for (const h of settings.history) {
-                store.add({ title: h.title, html: h.html, mode: h.mode, instruction: h.instruction, sourceConfig: h.sourceConfig || null, tags: normalizeTagList(h.tags), date: h.date });
-            }
+            for (const h of migrated) store.add(h);
+            transaction.objectStore('kv').put([...existingFolders, ...migratedFolders], 'history-collections');
+            if (fallbackCurrentResult) transaction.objectStore('kv').put(remapHistorySource(fallbackCurrentResult, imported.chapterMapping, mapping), 'current-result');
             await completed;
+            if (Array.isArray(settings.recentGenerations)) settings.recentGenerations = settings.recentGenerations.map(item => remapHistorySource(item, imported.chapterMapping, mapping));
+            settings.historyCollections = [];
+            if (fallbackCurrentResult) settings.currentGenerationResult = null;
             settings.history = [];
             save();
             runtimeLog('info', '存档迁移完成', { type: 'history', count: n });
             console.log(`[Theater] ${n} 条历史已迁移到 IndexedDB`);
+        }
+        if (!settings.history?.length && Array.isArray(settings.historyCollections) && settings.historyCollections.length) {
+            const existingFolders = (await idbReq(idb.transaction('kv').objectStore('kv').get('history-collections'))) || [];
+            const tx = idb.transaction('kv', 'readwrite');
+            const done = idbTransactionDone(tx);
+            tx.objectStore('kv').put([...existingFolders, ...normalizeCollections(settings.historyCollections).map(folder => ({ ...folder, id: newHistoryKey(), itemIds: [] }))], 'history-collections');
+            await done;
+            settings.historyCollections = []; save();
         }
         if (Array.isArray(settings.recentGenerations) && settings.recentGenerations.length) {
             runtimeLog('info', '存档迁移开始', { type: 'recent', count: settings.recentGenerations.length });
@@ -653,7 +686,8 @@ async function storageInit() {
     }
 
     try {
-        historyCache = (await idbReq(idb.transaction('history').objectStore('history').getAll())) || [];
+        historyCache = orderedHistory((await idbReq(idb.transaction('history').objectStore('history').getAll())) || []);
+        historyCollections = normalizeCollections((await idbReq(idb.transaction('kv').objectStore('kv').get('history-collections'))) || settings.historyCollections, historyCache);
         recentCache = (await idbReq(idb.transaction('kv').objectStore('kv').get('recent'))) || [];
         currentGenerationResult = (await idbReq(idb.transaction('kv').objectStore('kv').get('current-result'))) || null;
         longDreamCache = ((await idbReq(idb.transaction('dreams').objectStore('dreams').getAll())) || [])
@@ -669,7 +703,8 @@ async function storageInit() {
     }
 }
 
-async function histAdd(item) {
+function histAdd(item) { return queueHistoryWrite(() => histAddStorage(item)); }
+async function histAddStorage(item) {
     if (!idb) {
         item.id = historyCache.reduce((m, h) => Math.max(m, Number(h.id) || 0), 0) + 1;
         historyCache.push(item);
@@ -677,7 +712,10 @@ async function histAdd(item) {
         return true;
     }
     try {
-        item.id = await idbReq(idb.transaction('history', 'readwrite').objectStore('history').add(item));
+        const tx = idb.transaction('history', 'readwrite');
+        const done = idbTransactionDone(tx);
+        item.id = await idbReq(tx.objectStore('history').add(item));
+        await done;
         historyCache.push(item);
         return true;
     } catch (e) {
@@ -687,7 +725,8 @@ async function histAdd(item) {
     }
 }
 
-async function histDelete(ids) {
+function histDelete(ids) { return queueHistoryWrite(() => histDeleteStorage(ids)); }
+async function histDeleteStorage(ids) {
     const removeFromCache = () => {
         for (const id of ids) {
             const i = historyCache.findIndex(h => h.id === id);
@@ -1588,7 +1627,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
     const render = settings.renderTemplates || [];
     const allHistory = historyCache;
     const hist = initialTab === 'history' ? filterHistoryAll(allHistory) : [];
-    const historyEmptyText = allHistory.length ? '当前标签组合下没有历史' : '暂无';
+
     const selRender = settings.selectedRenderIndex || '__default__';
     const selectedAdaptiveRender = adaptiveRenderProfile(selRender);
     const runtimeEntries = getRuntimeLogEntries();
@@ -1872,13 +1911,16 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
     <!-- ===== 4. 历史 ===== -->
     <div class="theater-panel${activeTabClass('history')}${histBatchMode ? ' is-batch-managing' : ''}" data-panel="history">
         <div class="theater-section">
-            <div class="theater-history-top-bar">
+            <div class="theater-history-top-bar theater-history-collection-bar">
                 <label class="theater-label" style="margin:0;"><i class="fa-solid fa-clock-rotate-left"></i> 保存的小剧场</label>
-                <button type="button" id="theater-export-all-history" class="theater-btn" ${allHistory.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-download"></i><span>批量导出</span></button>
+                <div class="theater-history-six-buttons">
+                <button type="button" id="theater-export-all-history" class="theater-btn" ><i class="fa-solid fa-download"></i><span>批量导出</span></button>
                 <button type="button" id="theater-import-history-btn" class="theater-btn"><i class="fa-solid fa-file-import"></i><span>导入备份</span></button>
                 <button type="button" id="theater-history-tag-filter" class="theater-btn"><i class="fa-solid fa-filter"></i><span>${esc(historyTagFilterLabel())}</span></button>
                 <button type="button" id="theater-history-manage-tags" class="theater-btn"><i class="fa-solid fa-tags"></i><span>管理标签</span></button>
-                <button type="button" id="theater-hist-batch-enter" class="theater-btn" ${hist.length ? '' : 'style="display:none;"'}><i class="fa-solid fa-list-check"></i><span>批量管理</span></button>
+                <button type="button" id="theater-hist-batch-enter" class="theater-btn" ><i class="fa-solid fa-list-check"></i><span>批量管理</span></button>
+                <button type="button" id="theater-history-new-folder" class="theater-btn"><i class="fa-solid fa-folder-plus"></i><span>新建文件夹</span></button>
+                </div>
                 <div id="theater-hist-batch-bar" style="display:none;">
                     <div id="theater-hist-select-all" class="theater-btn"><i class="fa-solid fa-check-double"></i><span>全选本页</span></div>
                     <div id="theater-hist-tag-selected" class="theater-btn primary"><i class="fa-solid fa-tags"></i><span>改标签</span></div>
@@ -1886,8 +1928,9 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                     <div id="theater-hist-batch-cancel" class="theater-btn"><i class="fa-solid fa-xmark"></i><span>取消</span></div>
                 </div>
             </div>
+            <div class="theater-history-search-wrap"><input id="theater-history-search" type="search" class="theater-input" value="${esc(historyQuery)}" placeholder="搜索剧场标题或文件夹名称" aria-label="搜索剧场标题或文件夹名称"><button type="button" id="theater-history-clear-search" aria-label="清空搜索">×</button></div>
             <p class="theater-hint" style="margin:-2px 1px 10px;">批量导出的 ZIP 可直接从这里恢复；同时兼容旧版 ZIP 和 JSON 备份。</p>
-            <div id="theater-history-list"${initialTab === 'history' ? '' : ' data-pending-list="true"'}>${initialTab !== 'history' ? '' : hist.length === 0 ? `<p class="theater-empty">${historyEmptyText}</p>` : renderHistoryList()}</div>
+            <div id="theater-history-list"${initialTab === 'history' ? '' : ' data-pending-list="true"'}>${initialTab !== 'history' ? '' : renderHistoryList()}</div>
         </div>
     </div>
 
@@ -4712,7 +4755,8 @@ function applyResultToolboxMode() {
     }
 }
 
-async function histPut(item) {
+function histPut(item) { return queueHistoryWrite(() => histPutStorage(item)); }
+async function histPutStorage(item) {
     if (!item?.id) return false;
     const normalized = { ...item, tags: itemTags(item, settings.instructionTags) };
     const index = historyCache.findIndex(history => history.id === item.id);
@@ -4723,7 +4767,10 @@ async function histPut(item) {
         return true;
     }
     try {
-        await idbReq(idb.transaction('history', 'readwrite').objectStore('history').put(normalized));
+        const tx = idb.transaction('history', 'readwrite');
+        const done = idbTransactionDone(tx);
+        tx.objectStore('history').put(normalized);
+        await done;
         if (index !== -1) historyCache[index] = normalized;
         return true;
     } catch (e) {
@@ -6063,7 +6110,7 @@ function bindEvents() {
         const html = lastGeneratedHtml || currentDisplayHtml;
         if (!html) { toastr.warning('没有可续写的内容'); return; }
         const source = (currentGenerationResult?.html === html ? currentGenerationResult : null) || displayedContinuationVersion(continuationSession, html) || recentCache.find(item => item.html === html) || historyCache.find(item => item.html === html) || (retainedResultSource?.html === html ? retainedResultSource : null);
-        startContinue(html, source?.tags || activeInstructionTags, { sourceLabel: source?.title || '当前结果', sourceRounds: source?.continuationRounds });
+        startContinue(html, source?.tags || activeInstructionTags, { sourceLabel: source?.title || '当前结果', sourceRounds: source?.continuationRounds, sourceItem: source });
     });
     // 取消续写
     $d.off('click.tcc').on('click.tcc', '#theater-cancel-continue', function () {
@@ -6083,16 +6130,21 @@ function bindEvents() {
         if (!version) return;
         startContinue(version.html, version.tags || continuationSourceTags, {
             segment: continuationSession.segment + 1,
-            sourceRounds: version.continuationRounds,
+            sourceRounds: version.continuationRounds, sourceItem: version,
             sourceLabel: `第 ${continuationSession.segment} 段 · 第 ${continuationSession.versions.indexOf(version) + 1} 版`,
         });
     });
     $d.off('click.tcvp').on('click.tcvp', '#theater-cont-version-prev', () => showContinuationVersion(continuationSession?.selected - 1));
     $d.off('click.tcvn').on('click.tcvn', '#theater-cont-version-next', () => showContinuationVersion(continuationSession?.selected + 1));
+    $d.off('input.thsearch').on('input.thsearch', '#theater-history-search', function () { historyQuery = this.value; histPage = 0; histSelected.clear(); refreshHistList(); });
+    $d.off('click.thclearsearch').on('click.thclearsearch', '#theater-history-clear-search', () => { historyQuery = ''; histPage = 0; histSelected.clear(); $('#theater-history-search').val('').trigger('focus'); refreshHistList(); });
+    $d.off('click.thnewfolder').on('click.thnewfolder', '#theater-history-new-folder', () => organizeHistory('new'));
+    $d.off('click.thcollection').on('click.thcollection', '[data-collection-action]', function () { organizeHistory(this.dataset.collectionAction, this.dataset.collectionId, this); });
+    $d.off('change.thcollectionversion').on('change.thcollectionversion', '[data-collection-version]', function () { historyVersionSelection.set(this.dataset.collectionVersion, this.value); refreshHistList(); });
     $d.off('click.thv').on('click.thv', '.theater-history-view', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
         if (resultReader?.isEditing()) { toastr.warning('请先完成阅读页的文字编辑'); return; }
-        readingState.reading = { ...item }; // viewing and editing a copy never overwrites a saved work
+        openHistoryReading(item); // reading copies never overwrites a saved work
         $('.theater-tab[data-tab="generate"]').click();
         resultReader?.refresh();
         switchResultWorkspace('read');
@@ -6100,7 +6152,7 @@ function bindEvents() {
     // 续写：从历史记录
     $d.off('click.thc').on('click.thc', '.theater-history-continue', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
-        startContinue(item.html, item.tags, { sourceLabel: item.title || '保存的小剧场', sourceRounds: item.continuationRounds });
+        startContinue(item.html, item.tags, { sourceLabel: item.title || '保存的小剧场', sourceRounds: item.continuationRounds, sourceItem: item });
     });
     $d.off('click.the').on('click.the', '.theater-history-export', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
@@ -6129,11 +6181,13 @@ function bindEvents() {
     $d.off('click.thbe').on('click.thbe', '#theater-hist-batch-enter', function () {
         histBatchMode = true;
         histSelected.clear();
+        refreshHistList();
         enterHistBatchMode();
     });
     $d.off('click.thbc').on('click.thbc', '#theater-hist-batch-cancel', function () {
         histBatchMode = false;
         histSelected.clear();
+        refreshHistList();
         exitHistBatchMode();
     });
     $d.off('change.thcb').on('change.thcb', '.theater-hist-checkbox', function () {
@@ -6236,7 +6290,7 @@ function bindEvents() {
         resetHistorySelectionGesture();
     });
     $d.off('click.thsa').on('click.thsa', '#theater-hist-select-all', function () {
-        const visible = listPage(filterHistoryAll(historyCache), histPage).items;
+        const visible = visibleHistoryItems();
         if (visible.length && visible.every(item => histSelected.has(item.id))) {
             visible.forEach(item => histSelected.delete(item.id));
         } else {
@@ -6775,6 +6829,8 @@ function activateHistorySelectionGesture() {
     if (!histBatchMode) {
         histBatchMode = true;
         histSelected.clear();
+        refreshHistList();
+        gesture.item = document.querySelector(`.theater-history-item[data-id="${gesture.id}"]`) || gesture.item;
         enterHistBatchMode();
     }
     gesture.active = true;
@@ -6834,18 +6890,28 @@ function updateHistorySelectionAutoScroll(clientX, clientY) {
 function refreshHistList() {
     const h = filterHistoryAll(historyCache);
     $('#theater-history-list').html(renderHistoryList()).removeAttr('data-pending-list');
-    $('#theater-export-all-history').toggle(historyCache.length > 0 && !histBatchMode);
+    $('#theater-export-all-history').toggle(!histBatchMode);
     $('#theater-hist-select-all').toggle(h.length > 0);
-    $('#theater-hist-batch-enter').toggle(h.length > 0 && !histBatchMode);
+    $('#theater-hist-batch-enter').toggle(!histBatchMode);
     updateHistBulkBar();
     refreshTagControls();
 }
 
+function currentHistoryPage() {
+    return collectionPage(historyEntries(historyCache, historyCollections, { query: historyQuery,
+        accepts: item => matchesTagFilter(item, settings.historyTagFilter, knownInstructionTags()) }), histPage);
+}
+function visibleHistoryItems() {
+    return currentHistoryPage().items.flatMap(entry => entry.item ? [entry.item] : (histBatchMode || historyQuery.trim() || historyExpanded.has(entry.folder.id) ? entry.chapters.flat() : []));
+}
 function renderHistoryList() {
-    const state = listPage(filterHistoryAll(historyCache), histPage);
+    const state = currentHistoryPage();
     histPage = state.page;
-    if (!state.total) return `<p class="theater-empty">${historyCache.length ? '当前标签组合下没有历史' : '暂无'}</p>`;
-    return state.items.map(item => historyItemHTML(item)).join('') + listPaginationHTML('hist', state);
+    if (!state.total) return '<p class="theater-empty">没有找到符合条件的剧场或文件夹</p>';
+    return state.items.map(entry => entry.item ? historyItemHTML(entry.item) : collectionCardHTML(entry, {
+        expanded: histBatchMode || !!historyQuery.trim() || historyExpanded.has(entry.folder.id),
+        selected: historyVersionSelection, itemHTML: historyItemHTML, batch: histBatchMode, searching: !!historyQuery.trim(),
+    })).join('') + listPaginationHTML('hist', state);
 }
 
 function refreshTagControls() {
@@ -6921,8 +6987,8 @@ function exitHistBatchMode() {
     panel?.querySelectorAll('.theater-hist-checkbox:checked').forEach(input => { input.checked = false; });
     panel?.querySelectorAll('.theater-history-item-selected').forEach(item => item.classList.remove('theater-history-item-selected'));
     const h = filterHistoryAll(historyCache);
-    $('#theater-hist-batch-enter').toggle(h.length > 0);
-    $('#theater-export-all-history').toggle(historyCache.length > 0);
+    $('#theater-hist-batch-enter').show();
+    $('#theater-export-all-history').show();
     updateHistBulkBar();
 }
 
@@ -8107,6 +8173,124 @@ function exportInstructionTemplates() {
 // ============================================================
 // History
 // ============================================================
+function queueHistoryWrite(operation) {
+    const next = historyWriteQueue.then(operation, operation);
+    historyWriteQueue = next.catch(() => {});
+    return next;
+}
+
+function commitHistoryCollection(change) {
+    return queueHistoryWrite(async () => {
+        try {
+            const next = change(historyCache, normalizeCollections(historyCollections, historyCache));
+            const existingIds = new Set(historyCache.map(item => String(item.id)));
+            let order = Math.max(0, ...historyCache.map(historyOrder));
+            next.items = next.items.map(item => existingIds.has(String(item.id)) ? item : { ...item, historyOrder: ++order });
+            const folders = normalizeCollections(next.folders, next.items);
+            if (idb) {
+                const tx = idb.transaction(['history', 'kv'], 'readwrite');
+                const done = idbTransactionDone(tx);
+                const store = tx.objectStore('history');
+                try {
+                    for (const item of next.items) if (!historyCache.includes(item)) store.put(item);
+                    tx.objectStore('kv').put(folders, 'history-collections');
+                } catch (error) {
+                    try { tx.abort(); } catch { /* already aborted */ }
+                    await done.catch(() => {});
+                    throw error;
+                }
+                await done;
+            }
+            historyCache = next.items;
+            historyCollections = folders;
+            if (!idb) { settings.history = historyCache; settings.historyCollections = folders; save(); }
+            return true;
+        } catch (error) {
+            toastr.error('收纳保存失败，原作品保留：' + (error?.message || error));
+            return false;
+        }
+    });
+}
+
+async function organizeHistory(action, folderId, trigger) {
+    const folder = historyCollections.find(folder => folder.id === folderId);
+    if (action === 'toggle') {
+        if (historyQuery.trim() || histBatchMode) return;
+        historyExpanded.has(folderId) ? historyExpanded.delete(folderId) : historyExpanded.add(folderId);
+        refreshHistList(); return;
+    }
+    if (action === 'menu') {
+        const menu = trigger.closest('.theater-chapter-wrap').querySelector('.theater-chapter-menu');
+        menu.hidden = !menu.hidden; trigger.setAttribute('aria-expanded', String(!menu.hidden)); return;
+    }
+    const root = document.querySelector('.theater-popup');
+    let choice;
+    if (action === 'new' || action === 'add') {
+        const owned = new Set(historyCollections.flatMap(folder => folder.itemIds));
+        choice = await collectionDialog({ root, title: action === 'new' ? '新建文件夹' : `加入「${folder?.title || ''}」`,
+            name: action === 'new' ? '' : undefined, items: historyCache.filter(item => !owned.has(String(item.id))),
+            note: '选择已有剧场，也可以先建空文件夹。翻页或搜索不会清除已选。' });
+        if (!choice) return;
+        const id = action === 'new' ? newHistoryKey() : folderId;
+        if (await commitHistoryCollection((items, folders) => {
+            if (action === 'new') folders.push({ id, title: choice.title, itemIds: [] });
+            // Recheck ownership after the dialog closes; do not steal a concurrently moved work.
+            const ownedNow = new Set(folders.flatMap(folder => folder.itemIds));
+            return { items, folders: moveCollectionItems(folders, choice.ids.filter(id => !ownedNow.has(id)), id) };
+        })) historyExpanded.add(id);
+    } else if (action === 'rename') {
+        if (!folder) return;
+        choice = await collectionDialog({ root, title: '文件夹改名', name: folder.title });
+        if (!choice) return;
+        await commitHistoryCollection((items, folders) => ({ items, folders: folders.map(folder => folder.id === folderId ? { ...folder, title: choice.title } : folder) }));
+    } else if (action === 'dissolve') {
+        const { Popup } = SillyTavern.getContext();
+        if (!folder || !await Popup.show.confirm('解散这个文件夹？', '里面所有剧场和版本都会保留，回到历史列表。')) return;
+        await commitHistoryCollection((items, folders) => ({ items, folders: folders.filter(folder => folder.id !== folderId) }));
+    } else if (folder && ['remove', 'move', 'up', 'down'].includes(action)) {
+        const itemId = trigger.closest('[data-chapter-id]')?.dataset.chapterId;
+        if (action === 'move') {
+            const targets = historyCollections.filter(folder => folder.id !== folderId);
+            if (!targets.length) { toastr.info('请先新建一个目标文件夹'); return; }
+            choice = await collectionDialog({ root, title: '移动这一篇', folders: targets, note: '这一篇的所有已存版本一起移动。' });
+            if (!choice) return;
+        }
+        await commitHistoryCollection((items, folders) => {
+            const current = folders.find(folder => folder.id === folderId);
+            if (!current) throw new Error('文件夹已不存在');
+            const ids = collectionChapterIds(current, items, itemId);
+            if (action === 'remove' || action === 'move') return { items, folders: moveCollectionItems(folders, ids, choice?.folderId || null) };
+            const chapters = collectionChapters(current, items).map(versions => versions.map(item => String(item.id)));
+            const at = chapters.findIndex(group => group.includes(String(itemId)));
+            const to = at + (action === 'up' ? -1 : 1);
+            if (at >= 0 && to >= 0 && to < chapters.length) [chapters[at], chapters[to]] = [chapters[to], chapters[at]];
+            return { items, folders: folders.map(folder => folder.id === folderId ? { ...folder, itemIds: chapters.flat() } : folder) };
+        });
+    }
+    historyVersionSelection.clear();
+    refreshHistList();
+}
+
+function openHistoryReading(item) {
+    const folder = historyCollections.find(folder => folder.itemIds.includes(String(item.id)));
+    historyReadingFolderId = folder?.id || null;
+    historyReadingItems = folder ? collectionChapters(folder, historyCache).map(versions => ({ ...(versions.find(version => version.id === item.id) || versions.at(-1)) })) : null;
+    readingState.reading = historyReadingItems?.find(entry => entry.id === item.id) || { ...item };
+}
+function historyReadingVersions() {
+    const folder = historyCollections.find(folder => folder.id === historyReadingFolderId);
+    if (!folder) return [];
+    return collectionChapters(folder, historyCache).find(versions => versions.some(item => item.id === readingState.reading?.id)) || [];
+}
+function chooseHistoryReadingVersion(id) {
+    const source = historyReadingVersions().find(item => String(item.id) === String(id));
+    if (!source || !historyReadingItems) return;
+    const index = historyReadingItems.indexOf(readingState.reading);
+    const copy = { ...source };
+    if (index >= 0) historyReadingItems[index] = copy;
+    readingState.reading = copy;
+}
+
 async function saveToHistory(sourceOverride = null) {
     const supplied = sourceOverride?.html ? { ...sourceOverride } : null;
     if (!supplied && resultEditSnapshot) { toastr.warning('请先应用修改或退出编辑，再保存'); return; }
@@ -8121,7 +8305,7 @@ async function saveToHistory(sourceOverride = null) {
         : itemTags({ tags: activeInstructionTags }, knownInstructionTags());
     const selection = await chooseTagsWithNew({
         title: '保存小剧场',
-        subtitle: '默认沿用这篇结果的来源标签；可以增减或全部取消',
+        subtitle: sourceMeta?.parentChapterId ? '保存后与前篇归入同一系列；尚未保存的前篇也会一并保留。重写归入同篇版本。' : '默认沿用这篇结果的来源标签；可以增减或全部取消',
         selected: sourceTags,
         okButton: '保存',
         templateName: `小剧场 ${count}`,
@@ -8142,7 +8326,7 @@ async function saveToHistory(sourceOverride = null) {
         tags,
         date: `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
     };
-    if (await histAdd(item)) {
+    if (await commitHistoryCollection((items, folders) => planHistorySave(items, folders, item, sourceMeta || {}))) {
         settings.instructionTags = normalizeTagList([...knownInstructionTags(), ...selection.newTags]);
         save();
         refreshHistList();
@@ -8292,9 +8476,9 @@ function downloadTextContent(text, fileName, feedback = 'TXT 已下载') {
 
 async function exportAllHistory(format = 'zip') {
     const hist = historyCache;
-    if (!hist.length) return;
+    if (!hist.length && !historyCollections.length) return;
     if (format === 'json') {
-        const data = createHistoryJsonBackup(hist);
+        const data = createHistoryJsonBackup(hist, historyCollections);
         downloadFile(`theater-history-${Date.now()}.json`, JSON.stringify(data, null, 2), 'application/json');
         toastr.success(`已导出 ${hist.length} 个小剧场 JSON 备份`);
         return;
@@ -8302,7 +8486,7 @@ async function exportAllHistory(format = 'zip') {
     try {
         const JSZipCtor = await loadJSZip();
         const zip = new JSZipCtor();
-        const archive = createHistoryArchive(hist);
+        const archive = createHistoryArchive(hist, historyCollections);
         zip.file(HISTORY_ARCHIVE_MANIFEST, JSON.stringify(archive.manifest, null, 2));
         archive.files.forEach(file => zip.file(file.name, file.html));
         const blob = await zip.generateAsync({
@@ -8324,11 +8508,11 @@ async function exportAllHistory(format = 'zip') {
 }
 
 async function requestHistoryExport() {
-    if (!historyCache.length) {
+    if (!historyCache.length && !historyCollections.length) {
         toastr.warning('没有可导出的历史记录');
         return;
     }
-    const data = createHistoryJsonBackup(historyCache);
+    const data = createHistoryJsonBackup(historyCache, historyCollections);
     const format = await chooseExportFormat({
         title: '导出全部历史记录',
         count: historyCache.length,
@@ -8337,28 +8521,20 @@ async function requestHistoryExport() {
     if (format) await exportAllHistory(format);
 }
 
-async function addHistoryItems(items) {
-    const importedTags = normalizeTagList((Array.isArray(items) ? items : []).flatMap(item => normalizeTagList(item?.tags)));
-    settings.instructionTags = normalizeTagList([...knownInstructionTags(), ...importedTags]);
-    // IndexedDB 只负责历史正文；共享标签库仍在扩展设置中，导入时必须单独持久化。
-    save();
-    let added = 0;
-    for (const item of items) {
-        if (!item?.html) continue;
-        const ok = await histAdd({
-            title: item.title || `导入的小剧场 ${historyCache.length + 1}`,
-            html: item.html,
-            mode: item.mode || 'html',
-            instruction: item.instruction || '',
-            sourceConfig: item.sourceConfig || null,
-            continuationRounds: normalizeContinuationRounds(item.continuationRounds),
-            tags: itemTags(item, knownInstructionTags()),
-            date: item.date || new Date().toLocaleString('zh-CN', { hour12: false }),
-        });
-        if (ok) added++;
-    }
-    if (added) refreshHistList();
-    return added;
+async function addHistoryItems(items, folders = []) {
+    const imported = remapHistoryImport(items, folders);
+    const ids = new Map();
+    const records = imported.items.map((item, index) => {
+        const id = newHistoryKey();
+        if (items[index].id != null) ids.set(String(items[index].id), id);
+        return { ...item, id, date: item.date || new Date().toLocaleString('zh-CN', { hour12: false }) };
+    });
+    const importedFolders = imported.folders.map(folder => ({ ...folder, itemIds: folder.itemIds.map(id => ids.get(String(id))).filter(Boolean) }));
+    const ok = await commitHistoryCollection((existing, collections) => ({ items: [...existing, ...records], folders: [...collections, ...importedFolders] }));
+    if (!ok) return false;
+    settings.instructionTags = normalizeTagList([...knownInstructionTags(), ...records.flatMap(item => item.tags || [])]);
+    save(); refreshHistList();
+    return true;
 }
 
 async function loadJSZip() {
@@ -8386,7 +8562,7 @@ async function readHistoryZip(file) {
         name: entry.name,
         html: await entry.async('string'),
     })));
-    return historyItemsFromArchive(manifest, htmlEntries);
+    return { items: historyItemsFromArchive(manifest, htmlEntries), folders: normalizeCollections(manifest?.folders) };
 }
 
 function normalizedZipEntryName(value) {
@@ -8402,12 +8578,12 @@ function importHistoryBackup() {
         if (!file) return;
         try {
             const isZip = /\.zip$/i.test(file.name) || /(?:application|multipart)\/zip/i.test(file.type);
-            const items = isZip
-                ? await readHistoryZip(file)
-                : normalizeHistoryBackup(JSON.parse(await file.text()));
-            if (!items.length) { toastr.warning('这个文件里没有找到可导入的小剧场历史'); return; }
-            const added = await addHistoryItems(items);
-            if (added) toastr.success(`已导入 ${added} 条历史`);
+            const data = isZip ? await readHistoryZip(file) : JSON.parse(await file.text());
+            const items = normalizeHistoryBackup(data);
+            const folders = normalizeCollections(data?.folders);
+            if (!items.length && !folders.length) { toastr.warning('这个文件里没有找到可导入的小剧场历史'); return; }
+            const added = await addHistoryItems(items, folders);
+            if (added) toastr.success(`已导入 ${items.length} 条历史、${folders.length} 个文件夹`);
             else toastr.warning('没有导入任何内容');
         } catch (err) {
             theaterError('导入历史备份失败：' + (err?.message || err));
@@ -9754,13 +9930,14 @@ async function changeLongDreamDraftCandidate(step) {
 }
 
 // 设置续写上下文并跳转到生成面板
-function startContinue(html, tags = [], { sourceLabel = '当前小剧场', segment = 1, sourceRounds = [] } = {}) {
+function startContinue(html, tags = [], { sourceLabel = '当前小剧场', segment = 1, sourceRounds = [], sourceItem = null } = {}) {
     if (isGenerating || isPreparingGeneration || resultEditSnapshot) { toastr.warning('请先完成当前生成或文字编辑'); return; }
     const plainText = htmlToPlainText(html);
     if (!plainText) { toastr.warning('没有可续写的内容'); return; }
 
     const rounds = normalizeContinuationRounds(sourceRounds).map(prepareContinuationContext).filter(Boolean);
     continuationSession = createContinuationSession({ sourceText: plainText, sourceRounds: rounds, sourceLabel, segment });
+    continuationSession.historyMetadata = continuationHistoryMetadata(sourceItem || { html, title: sourceLabel, tags, continuationRounds: sourceRounds, mode: currentOutputMode });
     continueContext = continuationSession.source.text;
     continuationSourceTags = itemTags({ tags }, knownInstructionTags());
     activeInstructionTags = [...continuationSourceTags];
@@ -10083,6 +10260,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         generationSucceeded = true;
         if (continuationRun && continuationSession === continuationRun) {
             appendContinuationVersion(continuationRun, {
+                ...continuationRun.historyMetadata,
                 html: lastGeneratedHtml, text: newText, mode: currentOutputMode, continuationRounds,
                 direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig,
             });
@@ -10091,6 +10269,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         // The current result is independent of the three older results on the reading page.
         if (lastGeneratedHtml) {
             const item = {
+                ...continuationRun?.historyMetadata,
                 resultId: crypto.randomUUID(), html: lastGeneratedHtml,
                 mode: currentOutputMode, continuationRounds,
                 time: new Date().toLocaleString('zh-CN', { hour12: false }),
@@ -10144,11 +10323,13 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             currentOutputMode = 'text';
             retainedResultSource = {
                 html: lastGeneratedHtml, mode: currentOutputMode, instruction,
+                ...continuationRun?.historyMetadata,
                 tags: [...sourceTags], sourceConfig: generationSourceConfig,
                 continuationRounds: continuationRoundHistory(continuationRun?.source.rounds, [...currentGenerationJob.segments, liveBodyText].map(prepareContinuationContext)),
             };
             if (continuationRun && continuationSession === continuationRun) {
                 appendContinuationVersion(continuationRun, {
+                    ...continuationRun.historyMetadata,
                     html: lastGeneratedHtml, text: partialText, mode: currentOutputMode,
                     continuationRounds: continuationRoundHistory(continuationRun.source.rounds, [...currentGenerationJob.segments, liveBodyText].map(prepareContinuationContext)),
                     direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig, complete: false,
@@ -10828,7 +11009,10 @@ function initializeResultWorkspace() {
     if (!root) return;
     resultReader?.destroy();
     resultReader = mountResultReader(root, readingState, {
-        recent: () => recentCache,
+        recent: () => historyReadingItems || recentCache,
+        collection: () => historyReadingFolderId ? { title: historyCollections.find(folder => folder.id === historyReadingFolderId)?.title || '系列阅读', versions: historyReadingVersions() } : null,
+        chooseVersion: id => chooseHistoryReadingVersion(id),
+        exitCollection: () => { historyReadingItems = null; historyReadingFolderId = null; readingState.reading = recentCache[0] || null; },
         render: renderSafeIframe,
         swipe: switchResultWorkspace,
         text: htmlToPlainText,
@@ -10840,7 +11024,7 @@ function initializeResultWorkspace() {
         update: updateResultItem,
         continue: item => {
             if (isGenerating || isPreparingGeneration || resultEditSnapshot) { toastr.warning('请先完成当前生成或文字编辑'); return; }
-            startContinue(item.html, item.tags, { sourceLabel: item.title || '阅读中的小剧场', sourceRounds: item.continuationRounds });
+            startContinue(item.html, item.tags, { sourceLabel: item.title || '阅读中的小剧场', sourceRounds: item.continuationRounds, sourceItem: item });
         },
         remove: async item => {
             const { Popup } = SillyTavern.getContext();

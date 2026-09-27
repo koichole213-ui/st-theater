@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.3.8
+/* 千夜浮梦 · 小剧场生成器 v4.3.9
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -4547,6 +4547,7 @@ body.theater-reader-open {
     outline-offset: 2px;
     user-select: none;
 }
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-collection-card,
 .theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-history-item {
     background: #FFFFFF;
 }
@@ -4562,6 +4563,8 @@ body.theater-reader-open {
 .theater-hist-checkbox {
     margin-right: var(--t-space-2);
     flex-shrink: 0;
+    width: 16px;
+    height: 16px;
 }
 .theater-history-header {
     display: flex;
@@ -7154,3 +7157,65 @@ body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-
 .theater-panel[data-panel="long-dream"] .theater-dream-summary-version-actions > button { width:auto; max-width:100%; min-height:44px; height:auto; padding:8px 14px; border:0; border-radius:8px; background:var(--t-accent-deep); color:var(--t-on-accent); font-family:var(--t-font-sans); font-size:12px; line-height:1.5; white-space:normal; cursor:pointer; }
 .theater-panel[data-panel="long-dream"] .theater-dream-summary-version-actions > button:disabled { opacity:.5; cursor:default; }
 .theater-panel[data-panel="long-dream"] .theater-dream-summary-history :is(button, summary):focus-visible { outline:2px solid var(--t-accent); outline-offset:3px; }
+
+/* Saved series: follows the approved history design and existing skin tokens. */
+.theater-history-collection-bar { display:block !important; }
+.theater-history-six-buttons { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:10px 0 14px; width:100%; }
+.theater-history-six-buttons .theater-btn { min-width:0; width:100%; min-height:40px; padding:8px 4px; font-size:12px; white-space:nowrap; }
+.theater-history-search-wrap { position:relative; margin:0 0 14px; }
+.theater-history-search-wrap .theater-input { width:100%; height:40px; padding-right:36px; font-size:13px; }
+.theater-history-search-wrap input::-webkit-search-cancel-button { display:none; }
+.theater-history-search-wrap button { position:absolute; right:2px; top:2px; width:34px; height:36px; border:0; background:none; color:var(--t-fg-soft); font-size:20px; cursor:pointer; }
+.theater-collection-card { border:1px solid var(--t-border); border-radius:12px; padding:16px; margin-bottom:10px; background:var(--t-surface-1); min-width:0; }
+.theater-series-head { display:flex; gap:9px; align-items:flex-start; text-align:left; width:100%; padding:0; margin-bottom:12px; border:0; background:none; color:var(--t-fg); font:inherit; cursor:pointer; }
+.theater-series-head .theater-history-heading { flex:1; min-width:0; gap:6px; }
+.theater-series-head .theater-history-title { white-space:normal; overflow-wrap:anywhere; }
+.theater-folder-icon { color:var(--t-accent); margin-top:3px; }
+.theater-series-meta { font-size:var(--t-text-xs); color:var(--t-fg-mute); line-height:1.5; text-align:left; }
+.theater-chapter-list { border-top:1px solid var(--t-border); margin-bottom:12px; }
+.theater-chapter-wrap { border-bottom:1px solid var(--t-border); }
+.theater-chapter-wrap:last-child { border-bottom:0; }
+.theater-chapter-line { display:flex; align-items:center; gap:5px; }
+.theater-chapter { flex:1; min-width:0; display:flex; gap:10px; align-items:center; min-height:62px; padding:13px 1px; border:0; background:none; text-align:left; color:var(--t-fg); font:inherit; cursor:pointer; }
+.theater-chapter-number { font:17px var(--t-font-serif); min-width:25px; text-align:center; color:var(--t-accent); }
+.theater-chapter-copy { min-width:0; flex:1; }
+.theater-chapter-copy strong { display:block; font-size:13px; font-weight:500; overflow-wrap:anywhere; }
+.theater-chapter-copy small { display:block; font-size:11px; line-height:1.5; color:var(--t-fg-mute); margin-top:5px; text-align:left; }
+.theater-chapter-options { flex-shrink:0; border:0; background:none; color:var(--t-fg-soft); min-width:36px; min-height:44px; font-size:22px; cursor:pointer; }
+.theater-collection-actions,.theater-chapter-organize { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; }
+.theater-chapter-organize { grid-template-columns:repeat(2,minmax(0,1fr)); padding-bottom:12px; }
+.theater-collection-actions .theater-btn,.theater-chapter-organize .theater-btn { min-width:0; padding:7px 4px; min-height:36px; font-size:11px; }
+.theater-chapter-menu[hidden] { display:none; }
+.theater-chapter-menu .theater-history-item { padding:0; border:0; background:none; box-shadow:none; transform:none; }
+.theater-chapter-menu .theater-history-header { display:none; }
+.theater-chapter-menu .theater-history-actions { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.theater-history-version { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin:0 0 10px; font-size:11px; color:var(--t-fg-soft); text-align:left; }
+.theater-history-version select { max-width:70%; min-width:0; font-size:11px; }
+.theater-panel[data-panel="history"].is-batch-managing .theater-chapter-menu .theater-history-header { display:flex; }
+.theater-panel[data-panel="history"].is-batch-managing :is(.theater-chapter-line,.theater-history-version,.theater-collection-actions,.theater-chapter-organize) { display:none; }
+.theater-organize-dialog { box-sizing:border-box; width:min(440px,calc(100vw - 24px)); max-height:90dvh; overflow:auto; padding:20px; border:1px solid var(--t-border-strong); border-radius:18px; background:var(--t-bg); color:var(--t-fg); box-shadow:var(--t-elev-3); font-family:var(--t-font-sans); }
+.theater-organize-dialog::backdrop { background:#34261e66; }
+.theater-organize-dialog header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:18px; }
+.theater-organize-dialog h2 { font:600 18px var(--t-font-serif); margin:0; overflow-wrap:anywhere; }
+.theater-organize-dialog header button { border:0; background:none; font-size:25px; min-width:36px; min-height:36px; color:var(--t-fg-soft); cursor:pointer; }
+.theater-organize-dialog .theater-field-label { display:block; font-size:12px; text-align:left; margin:0 0 8px; }
+.theater-organize-dialog .theater-input { width:100%; font:13px var(--t-font-sans); margin-top:8px; }
+.theater-dialog-note { font-size:12px; color:var(--t-fg-soft); line-height:1.7; text-align:left; margin:12px 0; }
+.theater-pick-list { max-height:250px; overflow:auto; border-top:1px solid var(--t-border); border-bottom:1px solid var(--t-border); }
+.theater-pick-row { display:flex; align-items:center; gap:12px; padding:13px 4px; border-bottom:1px solid var(--t-border); text-align:left; cursor:pointer; }
+.theater-pick-row input { accent-color:var(--t-accent); width:16px; height:16px; flex-shrink:0; }
+.theater-pick-row span { min-width:0; overflow-wrap:anywhere; font-size:13px; }
+.theater-pick-row strong { display:block; font-weight:500; }
+.theater-pick-row small { display:block; text-align:left; color:var(--t-fg-mute); font-size:11px; margin-top:5px; }
+.theater-pick-summary { display:flex; align-items:center; justify-content:space-between; font-size:12px; color:var(--t-fg-soft); gap:8px; margin:10px 0; text-align:left; }
+.theater-pick-summary button { font:inherit; border:0; background:none; color:inherit; padding:7px; cursor:pointer; }
+.theater-organize-dialog footer { display:flex; justify-content:flex-end; gap:8px; margin-top:20px; }
+.theater-organize-dialog footer .theater-btn { min-height:40px; padding:8px 16px; }
+.theater-collection-pagination { display:flex; align-items:center; justify-content:center; gap:14px; margin:12px 0 3px; font-size:12px; color:var(--t-fg-soft); }
+.theater-collection-pagination button { border:1px solid var(--t-border); border-radius:8px; background:var(--t-surface-1); font:inherit; color:inherit; padding:8px 12px; min-height:38px; cursor:pointer; }
+.theater-organize-dialog button:disabled { opacity:.35; cursor:default; }
+.theater-reader-collection { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px; font-size:12px; color:var(--t-fg-soft); text-align:left; }
+.theater-reader-collection[hidden],.theater-reader-collection [hidden] { display:none; }
+.theater-reader-collection label { display:flex; align-items:center; gap:8px; max-width:100%; text-align:left; }
+.theater-reader-collection select { min-width:0; max-width:75%; }
+@media(max-width:360px) { .theater-history-six-buttons { gap:6px; } .theater-history-six-buttons .theater-btn { font-size:11px; } .theater-organize-dialog { padding:16px; } .theater-collection-card { padding:13px; } }

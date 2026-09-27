@@ -1,10 +1,12 @@
 import { createHtmlTextEdit, readingPosition } from './result-text-edit.js';
 import { readableCharCount } from './text-counter.js';
+import { escapeHistoryText } from './history-collections-ui.js';
 
 export function readerPaneHTML(lamp = '') {
     const actions = [['save', 'bookmark', '保存'], ['copy', 'copy', '复制HTML'], ['fullscreen', 'expand', '全屏阅读'],
         ['continue', 'forward', '续写'], ['edit', 'pen-to-square', '编辑文字'], ['remove', 'trash-can', '移除结果']];
     return `<section class="theater-workspace-page" data-result-page="read" hidden>
+        <div class="theater-reader-collection" data-reader-collection hidden><button type="button" class="theater-btn" data-reader-exit-collection>返回最近生成</button><span data-reader-collection-title></span><label data-reader-version-label hidden>本篇版本 <select class="theater-input" data-reader-version></select></label></div>
         <div class="theater-reader-recent-nav" aria-label="最近生成翻篇">
             <button type="button" class="theater-recent-arrow" data-reader-prev aria-label="上一篇">‹</button>
             <span data-reader-count>0 / 0</span>
@@ -44,8 +46,20 @@ export function mountResultReader(root, state, options) {
         const recent = options.recent();
         if (!state.reading) state.reading = recent[0] || null;
         const pos = readingPosition(state.reading, recent);
+        const collection = options.collection?.();
+        const collectionBar = find('[data-reader-collection]');
+        if (collectionBar) {
+            collectionBar.hidden = !collection;
+            find('[data-reader-collection-title]').textContent = collection?.title || '';
+            const versions = collection?.versions || [];
+            find('[data-reader-version-label]').hidden = versions.length < 2;
+            find('[data-reader-version]').innerHTML = versions.map((item, index) => `<option value="${escapeHistoryText(item.id)}" ${item.id === state.reading?.id ? 'selected' : ''}>版本 ${index + 1} · ${escapeHistoryText(item.title)}</option>`).join('');
+            find('[data-reader-version]').disabled = !!edit || saving;
+            find('[data-reader-exit-collection]').disabled = !!edit || saving;
+            find('[data-reader-action="remove"]').hidden = !!collection;
+        }
         find('[data-reader-count]').textContent = pos.retained ? '当前保留篇' : `${pos.index < 0 ? 0 : pos.index + 1} / ${pos.count}`;
-        find('[data-reader-retained]').hidden = !pos.retained;
+        find('[data-reader-retained]').hidden = !!collection || !pos.retained;
         find('[data-reader-prev]').disabled = !!edit || saving || pos.index <= 0;
         find('[data-reader-next]').disabled = !!edit || saving || !recent.length || pos.index === recent.length - 1;
         find('[data-reader-empty]').hidden = !!state.reading;
@@ -59,6 +73,10 @@ export function mountResultReader(root, state, options) {
         find('[data-reader-characters]').textContent = `约 ${readableCharCount(sourceText).toLocaleString('zh-CN')} 字`;
         options.render(find('[data-reader-frame]'), item.html, { sourceHasText: !!sourceText, fallbackOnNoReport: false, onWorkspaceSwipe: options.swipe });
     }
+    root.addEventListener('change', event => {
+        if (!event.target.matches('[data-reader-version]') || edit || saving) return;
+        options.chooseVersion?.(event.target.value); refresh(); options.position();
+    }, { signal: controller.signal });
     function leaveEdit() {
         edit = null;
         find('.theater-reader-editor').hidden = true;
@@ -70,6 +88,10 @@ export function mountResultReader(root, state, options) {
         const button = event.target.closest('button');
         if (!button || !root.contains(button) || button.disabled) return;
         if (saving) return;
+        if (button.matches('[data-reader-exit-collection]')) {
+            if (!edit) { options.exitCollection?.(); refresh(); options.position(); }
+            return;
+        }
         const recent = options.recent();
         if (button.matches('[data-reader-prev],[data-reader-next]')) {
             if (edit) return;

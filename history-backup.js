@@ -1,7 +1,8 @@
+import { normalizeCollections } from './history-collections.js';
 import { normalizeContinuationRounds } from './continuation-session.js';
 
 export const HISTORY_BACKUP_FORMAT = 'st-theater-history';
-export const HISTORY_BACKUP_VERSION = 3;
+export const HISTORY_BACKUP_VERSION = 4;
 export const HISTORY_ARCHIVE_MANIFEST = 'theater-history.json';
 
 function cleanText(value) {
@@ -12,6 +13,9 @@ function normalizeHistoryItem(item, fallbackTitle = '导入的小剧场') {
     const html = String(item?.html || '');
     if (!html.trim()) return null;
     return {
+        ...(item?.id != null ? { id: String(item.id) } : {}),
+        ...(item?.chapterId ? { chapterId: String(item.chapterId) } : {}),
+        ...(item?.parentChapterId ? { parentChapterId: String(item.parentChapterId) } : {}),
         title: cleanText(item?.title) || fallbackTitle,
         date: cleanText(item?.date),
         instruction: String(item?.instruction || ''),
@@ -72,16 +76,17 @@ export function normalizeHistoryBackup(data) {
         .filter(Boolean);
 }
 
-export function createHistoryJsonBackup(items = []) {
+export function createHistoryJsonBackup(items = [], folders = []) {
     return {
         format: HISTORY_BACKUP_FORMAT,
         version: HISTORY_BACKUP_VERSION,
         exportedAt: new Date().toISOString(),
         items: normalizeHistoryBackup(items),
+        folders: normalizeCollections(folders, items),
     };
 }
 
-export function createHistoryArchive(items = []) {
+export function createHistoryArchive(items = [], folders = []) {
     const normalized = normalizeHistoryBackup(items);
     const usedNames = new Set();
     const files = [];
@@ -89,6 +94,9 @@ export function createHistoryArchive(items = []) {
         const file = uniqueHtmlFilename(item, index, usedNames);
         files.push({ name: file, html: item.html });
         return {
+            ...(item.id != null ? { id: item.id } : {}),
+            ...(item.chapterId ? { chapterId: item.chapterId } : {}),
+            ...(item.parentChapterId ? { parentChapterId: item.parentChapterId } : {}),
             title: item.title,
             date: item.date,
             instruction: item.instruction,
@@ -105,6 +113,7 @@ export function createHistoryArchive(items = []) {
             version: HISTORY_BACKUP_VERSION,
             exportedAt: new Date().toISOString(),
             items: manifestItems,
+            folders: normalizeCollections(folders, items),
         },
         files,
     };

@@ -1,9 +1,116 @@
+import { remapHistorySource, historyOrder, orderedHistory, collectionPage, historyEntries, normalizeCollections, collectionChapters, moveCollectionItems, continuationHistoryMetadata, planHistorySave, remapHistoryImport } from '../history-collections.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { previousResults, readingPosition } from '../result-text-edit.js';
 import { bindResultSwipe } from '../result-swipe.js';
+
+test('历史搜索只匹配保存名和文件夹名，保留归属与标签交集', () => {
+    const items = [{id:1,title:'初遇',html:'隐藏内容'}, {id:2,title:'雨停',tags:['甲']}, {id:3,title:'独立雨停'}];
+    const folders = [{id:'f',title:'雨夜系列',itemIds:['1','2']}, {id:'empty',title:'空文件夹',itemIds:[]}];
+    const folderMatch = historyEntries(items, folders, {query:'雨夜'});
+    assert.equal(folderMatch[0].chapters.length,2);
+    const childMatch = historyEntries(items, folders, {query:'雨停'});
+    assert.equal(childMatch[0].folder.id,'f'); assert.equal(childMatch[0].chapters.length,1);
+    assert.equal(childMatch[1].item.id,3);
+    assert.equal(historyEntries(items,folders,{query:'隐藏内容'}).length,0);
+    assert.equal(historyEntries(items,folders,{query:'初遇', accepts:i=>i.tags?.includes('甲')}).length,0);
+    assert.equal(historyEntries(items,folders,{query:'空文件夹'})[0].count,0);
+    assert.equal(collectionPage(Array.from({length:19},(_,i)=>i),1).items.length,8);
+    assert.equal(collectionPage(Array.from({length:25},(_,i)=>i),2,10).items.length,5);
+});
+
+test('文件夹唯一归属，移动或解散保留所有原稿及同篇版本', () => {
+    const items=[{id:'a',chapterId:'A',html:'A'},{id:'b',chapterId:'B',html:'B1'},{id:'c',chapterId:'B',html:'B2'}];
+    const folders=normalizeCollections([{id:'f',title:'一',itemIds:['a','b','c','missing']},{id:'g',title:'二',itemIds:['a']}],items);
+    assert.deepEqual(folders[1].itemIds,[]);
+    assert.equal(collectionChapters(folders[0],items).length,2);
+    const moved=moveCollectionItems(folders,['b','c'],'g');
+    assert.deepEqual(moved[0].itemIds,['a']); assert.equal(collectionChapters(moved[1],items)[0].length,2);
+    assert.equal(historyEntries(items, moved.filter(f=>f.id!=='g')).filter(e=>e.item).length,2);
+    assert.deepEqual(items.map(i=>i.html),['A','B1','B2']);
+});
+
+test('首次保存续篇保留未存前篇，后续重写同篇，下一篇另分组', () => {
+    let n=0; const key=()=>`k${++n}`;
+    const original={resultId:'origin',html:'<p>原文</p>',title:'前篇'};
+    const metadata=continuationHistoryMetadata(original,key);
+    const first=planHistorySave([],[],{html:'<p>续篇一版</p>',title:'续篇'},metadata,key);
+    assert.equal(first.items.length,2); assert.equal(first.folders.length,1);
+    const second=planHistorySave(first.items,first.folders,{html:'<p>续篇二版</p>',title:'续篇改写'},metadata,key);
+    const chapters=collectionChapters(second.folders[0],second.items);
+    assert.equal(chapters.length,2); assert.equal(chapters[1].length,2);
+    const nextMeta=continuationHistoryMetadata({...second.saved,html:'<p>续篇二版</p>'},key);
+    const third=planHistorySave(second.items,second.folders,{html:'下一篇',title:'第三篇'},nextMeta,key);
+    assert.equal(collectionChapters(third.folders[0],third.items).length,3);
+});
+
+test('移夹后的重写跟随本篇，删除的前篇不会从快照复活', () => {
+    let n=0; const key=()=>`k${++n}`;
+    const items=[{id:'a',chapterId:'A',title:'A',html:'A'},{id:'b',chapterId:'B',title:'B',html:'B'}];
+    const folders=[{id:'f',title:'旧夹',itemIds:['a']},{id:'g',title:'新夹',itemIds:['b']}];
+    const saved=planHistorySave(items,folders,{title:'B新版',html:'B2'},{chapterId:'B',parentChapterId:'A'},key);
+    assert.equal(saved.folders[0].itemIds.length,1); assert.equal(saved.folders[1].itemIds.length,2);
+    const removed=planHistorySave([],[],{title:'续篇',html:'后'},{chapterId:'B',parentChapterId:'A',seriesSources:[items[0]]},key);
+    assert.equal(removed.items.length,1); assert.equal(removed.items[0].html,'后');
+});
+
+test('系列ZIP和JSON往返保留空夹、篇顺序与版本，导入身份互不混合', () => {
+    const items=[{id:'a',chapterId:'A',title:'甲',html:'甲'},{id:'b',chapterId:'B',parentChapterId:'A',title:'乙',html:'乙'},{id:'c',chapterId:'B',title:'乙二版',html:'乙2'}];
+    const folders=[{id:'f',title:'同名',itemIds:['b','c','a']},{id:'empty',title:'同名',itemIds:[]}];
+    const backup=JSON.parse(JSON.stringify(createHistoryJsonBackup(items,folders)));
+    const zip=createHistoryArchive(items,folders);
+    assert.deepEqual(zip.manifest.folders,backup.folders);
+    assert.deepEqual(historyItemsFromArchive(zip.manifest,zip.files),normalizeHistoryBackup(backup));
+    const imported=remapHistoryImport(normalizeHistoryBackup(backup),backup.folders);
+    const again=remapHistoryImport(normalizeHistoryBackup(backup),backup.folders);
+    assert.equal(imported.items[1].chapterId,imported.items[2].chapterId);
+    assert.equal(imported.items[1].parentChapterId,imported.items[0].chapterId);
+    assert.notEqual(imported.items[0].chapterId,again.items[0].chapterId);
+    assert.notEqual(imported.folders[0].id,again.folders[0].id);
+    assert.deepEqual(imported.folders[0].itemIds,['b','c','a']);
+    const legacy=remapHistoryImport([{html:'旧一'},{html:'旧二'}],[]);
+    assert.notEqual(legacy.items[0].chapterId,legacy.items[1].chapterId);
+});
+
+test('回退存档迁移同步普通结果resultId来源，保留版本与前篇关系', () => {
+    let n=0; const key=()=>`m${++n}`;
+    const old=[{id:1,chapterId:'R',html:'原稿'},{id:2,chapterId:'S',parentChapterId:'R',html:'续篇'}];
+    const migrated=remapHistoryImport(old,[],key);
+    const mapping=new Map([['1','new1'],['2','new2']]);
+    const current=remapHistorySource({resultId:'R',html:'原稿'},migrated.chapterMapping,mapping);
+    assert.equal(current.chapterId,migrated.items[0].chapterId);
+    const continuation=remapHistorySource({chapterId:'S',parentChapterId:'R',seriesSources:[old[0]]},migrated.chapterMapping,mapping);
+    assert.equal(continuation.parentChapterId,current.chapterId);
+    assert.equal(continuation.seriesSources[0].id,'new1');
+    const items=migrated.items.map((item,index)=>({...item,id:`new${index+1}`}));
+    const saved=planHistorySave(items,[],{title:'接着写',html:'正文'},continuationHistoryMetadata(current,key),key);
+    assert.equal(saved.items.length,3);
+});
+
+test('随机存储主键不改变历史保存顺序', () => {
+    const items=[{id:'zzz',historyOrder:3},{id:1},{id:'aaa',historyOrder:2}];
+    assert.deepEqual(orderedHistory(items).map(i=>i.id),[1,'aaa','zzz']);
+});
+
+test('系列保存事务失败不改缓存，排队写入基于上一笔完成后的状态', async () => {
+    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
+    const code=['queueHistoryWrite','commitHistoryCollection'].map(name=>source.match(new RegExp(`function ${name}\\([^]*?^}`, 'm'))[0]).join('\n');
+    let fail=true;
+    const scope={historyWriteQueue:Promise.resolve(),historyCache:[{id:1,html:'原文'}],historyCollections:[],normalizeCollections,historyOrder,
+        idb:{transaction(){ const tx={objectStore:()=>({put(){}})}; return tx; }},
+        idbTransactionDone:()=>fail?Promise.reject(Error('模拟额度不足')):Promise.resolve(),
+        toastr:{error(){}},settings:{},save(){}};
+    runInNewContext(code,scope);
+    const add=(items,folders)=>({items:[...items,{id:`new${items.length}`,html:'新'}],folders});
+    assert.equal(await scope.commitHistoryCollection(add),false);
+    assert.equal(scope.historyCache.length,1);
+    fail=false;
+    await Promise.all([scope.commitHistoryCollection(add),scope.commitHistoryCollection(add)]);
+    assert.equal(scope.historyCache.length,3);
+    assert.equal(scope.historyCache[2].historyOrder,3);
+});
 
 test('结果横滑识别方向并避开纵向滚动、多指、输入控件和选中文字，销毁后不再触发', () => {
     const handlers = new Map(), pages = [];
@@ -115,7 +222,7 @@ test('阅读页保存显式作品，不串入左边的新结果与元数据', as
         knownInstructionTags: () => [], itemTags: entry => entry.tags, mergeTagLists: (_a, b) => b,
         normalizeTagList: x => x, normalizeContinuationRounds: x => x,
         chooseTagsWithNew: async () => ({ name: '右页作品', tags: item.tags, newTags: [] }),
-        histAdd: async value => { saved = value; return true; }, save() {}, refreshHistList() {}, toastr: { success() {} } };
+        planHistorySave, commitHistoryCollection: async change => { saved = change([], []).saved; return true; }, save() {}, refreshHistList() {}, toastr: { success() {} } };
     runInNewContext(fn, scope);
     await scope.saveToHistory(item);
     assert.equal(saved.html, item.html);
@@ -230,19 +337,21 @@ test('历史分页跳转、跨页全选和删除末页回退不丢其他页的�
         histSelected:new Set(), histBatchMode:true, listPage, listPaginationHTML,
         filterHistoryAll:items=>items, historyItemHTML:item=>`<article data-id="${item.id}"></article>`,
         refreshHistList(){}, enterHistBatchMode(){} };
+    scope.currentHistoryPage = () => collectionPage(scope.historyCache.map(item => ({ item })), scope.histPage);
+    scope.visibleHistoryItems = () => scope.currentHistoryPage().items.map(entry => entry.item);
     const page = () => runInNewContext(render + '\nrenderHistoryList()', scope);
-    assert.equal((page().match(/<article/g)||[]).length, 10);
+    assert.equal((page().match(/<article/g)||[]).length, 8);
     runInNewContext('{'+select+'}',scope);
     scope.histPage = requestedListPage('jump', 0, 3, '2'); page(); runInNewContext('{'+select+'}',scope);
-    assert.equal(scope.histSelected.size,20);
+    assert.equal(scope.histSelected.size,16);
     runInNewContext('{'+select+'}',scope);
-    assert.deepEqual([...scope.histSelected],Array.from({length:10},(_,i)=>i));
+    assert.deepEqual([...scope.histSelected],Array.from({length:8},(_,i)=>i));
     scope.histPage = requestedListPage('last', 1, 3); assert.match(page(), /data-id="22"/);
-    scope.historyCache = scope.historyCache.slice(0,20); page(); assert.equal(scope.histPage,1);
+    scope.historyCache = scope.historyCache.slice(0,16); page(); assert.equal(scope.histPage,1);
     scope.histPage = requestedListPage('jump', 1, 2, '999'); page(); assert.equal(scope.histPage,1);
     for(const value of ['', 'abc', '-1', '1.5']) assert.equal(requestedListPage('jump',1,2,value),1);
     scope.histPage = requestedListPage('first',1,2); assert.match(page(), /data-id="0"/);
-    scope.historyCache=[]; assert.match(page(),/暂无/); assert.equal(scope.histPage,0);
+    scope.historyCache=[]; assert.match(page(),/没有找到/); assert.equal(scope.histPage,0);
     for(const kind of ['hist','inst']) {
         const html=listPaginationHTML(kind,listPage(Array(23),1));
         for(const title of ['首页','上一页','下一页','末页','跳转']) assert.ok(html.includes(title));
@@ -478,6 +587,7 @@ test('延迟进入历史会加载一次，批量恢复与刷新不显示全部�
             return api;
         },
     };
+    context.currentHistoryPage = () => collectionPage(context.historyCache.map(item => ({ item })), context.histPage);
     runInNewContext(['activateTheaterTab', 'renderHistoryList', 'refreshHistList', 'enterHistBatchMode', 'exitHistBatchMode'].map(extract).join('\n')
         + '\nenterHistBatchMode(); activateTheaterTab("history"); activateTheaterTab("history");', context);
     assert.equal(renders, 1);
@@ -3508,13 +3618,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.3.8 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.3.9 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.3\.8'/);
-    assert.equal(manifest.version, '4.3.8');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.8/);
+    assert.match(source, /const VERSION = '4\.3\.9'/);
+    assert.equal(manifest.version, '4.3.9');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.9/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -6209,7 +6319,7 @@ test('保存小剧场在同一弹窗编辑标题与标签，成功后才登记�
             normalizeTagList,
             mergeTagLists,
             chooseTagsWithNew: async options => { calls.picked = options; return selection; },
-            histAdd: async item => { calls.saved = item; return stored; },
+            planHistorySave, commitHistoryCollection: async change => { calls.saved = change([], []).saved; return stored; },
             save: () => { calls.settingsSaved++; },
             refreshHistList: () => { calls.refreshed++; },
             toastr: { success: message => calls.notices.push(message) },
@@ -6281,9 +6391,9 @@ test('标签界面、历史未分类、数字触发间隔和渲染模板删除�
     assert.match(source, /给这 \$\{imported\.length\} 条导入模板统一加标签[\s\S]*?if \(target === null\) return;[\s\S]*?mergeTagLists\(item\.tags, target\.tags/);
     const popupBuilder = source.match(/function buildPopupHTML[\s\S]*?function historyItemHTML/)?.[0] || '';
     assert.match(popupBuilder, /const allHistory = historyCache;\s*const hist = initialTab === 'history' \? filterHistoryAll\(allHistory\) : \[\]/);
-    assert.match(popupBuilder, /allHistory\.length \? '当前标签组合下没有历史' : '暂无'/);
-    assert.match(source, /async function addHistoryItems[\s\S]*?settings\.instructionTags = normalizeTagList[\s\S]*?save\(\);[\s\S]*?let added = 0/);
-    assert.match(source, /#theater-hist-batch-enter'\)\.toggle\(h\.length > 0 && !histBatchMode\)/);
+    assert.match(source, /没有找到符合条件的剧场或文件夹/);
+    assert.match(source, /async function addHistoryItems[\s\S]*?commitHistoryCollection[\s\S]*?settings\.instructionTags = normalizeTagList[\s\S]*?save\(\);/);
+    assert.match(source, /#theater-hist-batch-enter'\)\.toggle\(!histBatchMode\)/);
 });
 
 test('梦脉只保留一个明确标注的完善版内置预设', () => {
@@ -6519,7 +6629,7 @@ test('普通续写入口直接携带两轮完整纯正文，不再截断8000字'
     const a = '甲'.repeat(9500), b = '乙'.repeat(11000);
     const jq = { click() { return this; }, val() { return this; }, attr() { return this; }, text() { return this; }, show() { return this; }, hide() { return this; } };
     const context = { isGenerating: false, isPreparingGeneration: false, resultEditSnapshot: null,
-        htmlToPlainText: html => html.replace(/<[^>]*>/g, ''), normalizeContinuationRounds, createContinuationSession,
+        htmlToPlainText: html => html.replace(/<[^>]*>/g, ''), normalizeContinuationRounds, createContinuationSession, continuationHistoryMetadata, currentOutputMode: 'html',
         itemTags: ({tags}) => tags, knownInstructionTags: () => [], clearDisplayedResult() {}, updateContinueHint() {},
         switchResultWorkspace() {}, revealContinuationInput() {}, scheduleTokenEstimate() {}, $: () => jq, toastr: { warning() {}, info() {} },
         inputHtml: `<main>${b}</main>`, prior: [a, b],
@@ -6557,7 +6667,7 @@ test('普通新稿第三轮中断后保存再续写只带第二轮和未完成�
         continuationSession:null, displayedContinuationVersion:()=>null, recentCache:[], historyCache:[],
         activeInstructionTags:[], knownInstructionTags:()=>['标签'], itemTags, mergeTagLists, normalizeTagList,
         chooseTagsWithNew:async()=>({name:'中断作品',tags:['标签'],newTags:[]}),
-        histAdd:async item=>{saved=item;return true;},settings:{instructionTags:['标签']},
+        planHistorySave, commitHistoryCollection:async change=>{saved=change([], []).saved;return true;},settings:{instructionTags:['标签']},
         save(){},refreshHistList(){},toastr:{success(){}},$:()=>({val:()=>''}),
     };
     await runInNewContext(`${retain}\n${saveSource}\nsaveToHistory();`,context);
