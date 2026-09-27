@@ -3,6 +3,67 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { previousResults, readingPosition } from '../result-text-edit.js';
+import { bindResultSwipe } from '../result-swipe.js';
+
+test('结果横滑识别方向并避开纵向滚动、多指、输入控件和选中文字，销毁后不再触发', () => {
+    const handlers = new Map(), pages = [];
+    let selection = '';
+    const root = {
+        ownerDocument: { defaultView: { getSelection: () => selection, getComputedStyle: () => ({}) } },
+        addEventListener(name, handler) { handlers.set(name, handler); },
+        removeEventListener(name) { handlers.delete(name); },
+    };
+    const target = { closest: () => null, nodeType: 1, parentElement: root };
+    const dispose = bindResultSwipe(root, page => { pages.push(page); return true; });
+    const point = (x, y) => ({ clientX: x, clientY: y });
+    function event(name, points, extra = {}) {
+        const e = { target, touches: points, changedTouches: points, cancelable: true,
+            preventDefault() { this.prevented = true; }, stopImmediatePropagation() {}, ...extra };
+        handlers.get(name)?.(e); return e;
+    }
+    event('touchstart', [point(250, 30)]);
+    assert.equal(event('touchmove', [point(200, 32)]).prevented, true);
+    event('touchend', [point(90, 32)]);
+    assert.equal(event('click', []).prevented, true, '抑制横滑合成的点击');
+    event('touchstart', [point(80, 30)], { target: { closest: () => ({ matches: () => false }) } });
+    assert.equal(event('click', []).prevented, undefined, '新的主动点击不能被上一回横滑吞掉');
+    event('touchstart', [point(50, 30)]);
+    event('touchend', [point(180, 32)]);
+    assert.deepEqual(pages, ['read', 'generate']);
+    event('touchstart', [point(250, 30)]);
+    assert.equal(event('touchmove', [point(245, 75)]).prevented, undefined);
+    event('touchend', [point(90, 80)]);
+    event('touchstart', [point(250, 30), point(230, 30)]);
+    event('touchend', [point(90, 30)]);
+    event('touchstart', [point(250, 30)], { target: { closest: () => ({ matches: () => false }) } });
+    event('touchend', [point(90, 30)]);
+    selection = '正在选中的正文';
+    event('touchstart', [point(250, 30)]);
+    event('touchend', [point(90, 30)]);
+    assert.deepEqual(pages, ['read', 'generate']);
+    dispose(); assert.equal(handlers.size, 0);
+});
+
+test('结果页重复选择或无效方向横滑保留滚动位置，换页仍各自恢复', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const body = source.match(/function switchResultWorkspace\([^]*?^}/m)[0];
+    const wrapper = { scrollTop: 230 };
+    const state = { generate: 0, read: 75 };
+    const scope = { resultWorkspacePage: 'generate', resultPageScroll: state,
+        document: { querySelector: s => s === '.theater-panels-wrapper' ? wrapper : null, querySelectorAll: () => [] },
+        closeResultActions() {}, animateResultPage() {}, requestAnimationFrame() {}, positionResultToolbox() {}, resultReader: { refresh() {} } };
+    runInNewContext(body, scope);
+    assert.equal(scope.switchResultWorkspace('generate'), false);
+    assert.equal(wrapper.scrollTop, 230);
+    assert.equal(scope.switchResultWorkspace('read'), true);
+    assert.equal(wrapper.scrollTop, 75);
+    wrapper.scrollTop = 160;
+    assert.equal(scope.switchResultWorkspace('read'), false);
+    assert.equal(wrapper.scrollTop, 160);
+    assert.equal(scope.switchResultWorkspace('generate'), true);
+    assert.equal(wrapper.scrollTop, 230);
+    assert.equal(state.read, 160);
+});
 
 test('生成结果独立保存，下一次开始才移入三篇历史，并保留被挤出的阅读对象', async () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
@@ -943,6 +1004,7 @@ test('长梦首帧使用当前页面，慢资料完成后不重建输入或抢�
         let longDreamWorkspaceSection = 'definition', longDreamView = 'detail', activeLongDreamId = 'dream';
         let longDreamWorkLevel = 'list', activeLongDreamChapterId = null;
         let activeTheaterPopupSession = null, instructionSweepCleanup = null, wbSearch = '', presetSearch = '';
+        let resultSwipeCleanup = null, resultReader = null;
         const longDreamCache = [{ id: 'dream', chapters: [] }];
         const longDreamGenerationController = null, longDreamChapterEditController = null;
         const isGenerating = false, lastGeneratedHtml = '', currentDisplayHtml = '', recentCache = [];
@@ -3446,13 +3508,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.3.7 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.3.8 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.3\.7'/);
-    assert.equal(manifest.version, '4.3.7');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.7/);
+    assert.match(source, /const VERSION = '4\.3\.8'/);
+    assert.equal(manifest.version, '4.3.8');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.8/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -3778,15 +3840,14 @@ test('HTML 模板统一覆盖 Markdown 输出并检查配色，保留代码要�
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const resolve = source.match(/function resolveRenderSelection\([^]*?^}/m)?.[0];
     const guardrails = source.match(/const HTML_RENDER_FINAL_GUARDRAILS = `([^]*?)`;/)?.[1];
-    const interactiveAddon = source.match(/const INTERACTIVE_ADDON = `([^]*?)`;/)?.[1];
-    assert.ok(resolve && guardrails && interactiveAddon);
+    assert.ok(resolve && guardrails);
     assert.match(guardrails, /Markdown或Markdown代码块时，仅把标题、编号、列表、强调层级转为语义化HTML/);
     assert.match(guardrails, /HTML\/CSS\/JavaScript、视觉、交互、内容要求照常实现/);
     assert.match(guardrails, /各场景\/状态同步设置背景、正文、小字、边框、控件/);
     assert.match(guardrails, /浅底深字、深底浅字/);
     assert.match(guardrails, /禁止文字与背景明度相近/);
     for (const profile of adaptiveRenderProfiles()) {
-        assert.ok(estimateTokenCount(`${profile.rules}${interactiveAddon}\n\n${guardrails}`) <= 1525, `${profile.name} 含交互与兜底规则后明显过长`);
+        assert.ok(estimateTokenCount(`${profile.rules}\n\n${guardrails}`) <= 1525, `${profile.name} 含兜底规则后明显过长`);
         for (const interactiveMode of [false, true]) {
             const settings = {
                 selectedRenderIndex: profile.id, interactiveMode,
@@ -3796,7 +3857,7 @@ test('HTML 模板统一覆盖 Markdown 输出并检查配色，保留代码要�
                 settings, adaptiveRenderProfile, isPlainTextSelection, plainTextThemeForSelection,
                 normalizeRenderSelection: value => value,
                 DEFAULT_RENDER_TEMPLATE: '默认 HTML', DEFAULT_RENDER_TEMPLATE_PC: 'PC HTML',
-                DEFAULT_RENDER_TEMPLATE_TEXT: '仅正文', INTERACTIVE_ADDON: interactiveAddon,
+                DEFAULT_RENDER_TEMPLATE_TEXT: '仅正文',
                 HTML_RENDER_FINAL_GUARDRAILS: guardrails,
             });
             const builtin = select();
@@ -3804,7 +3865,7 @@ test('HTML 模板统一覆盖 Markdown 输出并检查配色，保留代码要�
             const custom = select();
             assert.equal(builtin.rules, custom.rules);
             assert.equal(builtin.isPlainTextRender, false);
-            assert.equal(builtin.rules, profile.rules + (interactiveMode ? interactiveAddon : '') + `\n\n${guardrails}`);
+            assert.equal(builtin.rules, profile.rules + `\n\n${guardrails}`);
             assert.deepEqual(buildGenerationPayload({ instruction: '写一段雨夜故事', rules: builtin.rules }),
                 buildGenerationPayload({ instruction: '写一段雨夜故事', rules: custom.rules }));
             settings.selectedRenderIndex = profile.id;
@@ -3951,7 +4012,7 @@ test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在�
     }
 });
 
-test('生成页双模板切换保留，交互开关不再被模板强制勾选或禁用', () => {
+test('生成页双模板切换保留，旧交互开关与追加规则已移除', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     assert.match(source, /id="theater-quick-render-toggle"/);
     assert.match(source, /id="theater-quick-render-a"/);
@@ -3959,8 +4020,8 @@ test('生成页双模板切换保留，交互开关不再被模板强制勾选�
     assert.doesNotMatch(source, /validateAdaptiveRenderHtml|adaptiveSelection|adaptiveRenderMode|adaptiveRenderPlan/);
     assert.doesNotMatch(source, /is-template-managed|额外进行一次独立 HTML|另有自适应排版请求/);
     const toggle = source.match(/<input[^>]*id="theater-interactive-toggle"[^>]*>/)?.[0];
-    assert.ok(toggle);
-    assert.doesNotMatch(toggle, /disabled|selectedAdaptiveRender/);
+    assert.equal(toggle, undefined);
+    assert.doesNotMatch(source, /INTERACTIVE_ADDON|settings\.interactiveMode/);
 });
 
 test('iframe 没有回报渲染状态时会触发正文兜底', async () => {

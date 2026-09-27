@@ -1,4 +1,5 @@
 import { createHtmlTextEdit, readingPosition } from './result-text-edit.js';
+import { readableCharCount } from './text-counter.js';
 
 export function readerPaneHTML(lamp = '') {
     const actions = [['save', 'bookmark', '保存'], ['copy', 'copy', '复制HTML'], ['fullscreen', 'expand', '全屏阅读'],
@@ -22,6 +23,7 @@ export function readerPaneHTML(lamp = '') {
                     <span class="theater-result-bookmark-grip" aria-hidden="true"><i></i><i></i><i></i></span><span class="theater-result-inline-more" aria-hidden="true">•••</span>
                 </button>
             </div></div>
+            <div class="theater-result-character-count" data-reader-characters></div>
             <iframe class="theater-iframe" data-reader-frame sandbox="" title="已完成的小剧场"></iframe>
             <div class="theater-reader-editor" hidden>
                 <p class="theater-hint-inline" data-reader-edit-hint></p>
@@ -53,7 +55,9 @@ export function mountResultReader(root, state, options) {
         find('[data-reader-action="copy"] span').textContent = options.isText(item.mode) ? '复制文字' : '复制HTML';
         if (renderedItem === item && renderedHtml === item.html) return;
         renderedItem = item; renderedHtml = item.html;
-        options.render(find('[data-reader-frame]'), item.html, { sourceHasText: !!options.text(item.html), fallbackOnNoReport: false });
+        const sourceText = options.text(item.html);
+        find('[data-reader-characters]').textContent = `约 ${readableCharCount(sourceText).toLocaleString('zh-CN')} 字`;
+        options.render(find('[data-reader-frame]'), item.html, { sourceHasText: !!sourceText, fallbackOnNoReport: false, onWorkspaceSwipe: options.swipe });
     }
     function leaveEdit() {
         edit = null;

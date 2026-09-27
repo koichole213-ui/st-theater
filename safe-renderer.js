@@ -1,4 +1,7 @@
+import { bindResultSwipe } from './result-swipe.js';
+
 const HEIGHT_MESSAGE = 'st-theater:height';
+const SWIPE_MESSAGE = 'st-theater:workspace-swipe';
 const frames = new WeakMap();
 const frameStates = new WeakMap();
 const pendingStates = new Set();
@@ -11,9 +14,10 @@ export function sandboxPermissions() {
     return 'allow-scripts';
 }
 
-export function injectResizeReporter(html) {
+export function injectResizeReporter(html, workspaceSwipe = false) {
     const reporter = `<script data-st-theater-reporter>
 (() => {
+    ${workspaceSwipe ? `(${bindResultSwipe.toString()})(document, page => parent.postMessage({ type: '${SWIPE_MESSAGE}', page }, '*'));` : ''}
     const report = () => {
         const root = document.documentElement;
         const body = document.body;
@@ -63,6 +67,7 @@ export function renderSafeIframe(frame, html, {
     fixedHeight = false,
     fallbackOnNoReport = true,
     blankGraceMs = RENDER_EMPTY_GRACE_MS,
+    onWorkspaceSwipe = null,
 } = {}) {
     configureSafeIframe(frame);
     if (fixedHeight) frame.style.height = '100%';
@@ -72,13 +77,14 @@ export function renderSafeIframe(frame, html, {
         clearTimeout(previousState.blankTimeoutId);
         pendingStates.delete(previousState);
     }
-    frame.srcdoc = injectResizeReporter(html);
+    frame.srcdoc = injectResizeReporter(html, typeof onWorkspaceSwipe === 'function');
     const sourceWindow = frame.contentWindow;
     const state = {
         frame,
         sourceWindow,
         sourceHasText,
         onBlank,
+        onWorkspaceSwipe,
         fixedHeight,
         blankGraceMs: Math.max(0, Number(blankGraceMs) || 0),
         blankHandled: false,
@@ -105,7 +111,7 @@ export function installSafeResizeListener() {
     if (installed) return;
     installed = true;
     window.addEventListener('message', event => {
-        if (event?.data?.type !== HEIGHT_MESSAGE) return;
+        if (![HEIGHT_MESSAGE, SWIPE_MESSAGE].includes(event?.data?.type)) return;
         let state = frames.get(event.source);
         if (!state || frameStates.get(state.frame) !== state || state.frame.contentWindow !== event.source) {
             state = [...pendingStates].find(candidate =>
@@ -114,6 +120,12 @@ export function installSafeResizeListener() {
             );
         }
         if (!state || frameStates.get(state.frame) !== state || state.frame.contentWindow !== event.source) return;
+        if (event.data.type === SWIPE_MESSAGE) {
+            if (['read', 'generate'].includes(event.data.page) && state.frame.isConnected && state.frame.getClientRects().length) {
+                state.onWorkspaceSwipe?.(event.data.page);
+            }
+            return;
+        }
         state.sourceWindow = event.source;
         frames.set(event.source, state);
         pendingStates.delete(state);

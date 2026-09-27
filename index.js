@@ -1,3 +1,4 @@
+import { bindResultSwipe, animateResultPage } from './result-swipe.js';
 import { createHtmlTextEdit, previousResults } from './result-text-edit.js';
 import { readerPaneHTML, mountResultReader } from './result-reader.js';
 import { restoreStorySummary } from './long-dream-story-summary.js';
@@ -52,7 +53,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.7';
+const VERSION = '4.3.8';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -335,13 +336,6 @@ function quickRenderButtonContent() {
     return `<i class="fa-solid ${state.meta.icon}" aria-hidden="true"></i><span>${esc(state.slot)} · ${esc(state.meta.shortName)}</span>`;
 }
 
-const INTERACTIVE_ADDON = `
-额外要求 - 交互模式：
-- 必须包含可交互元素（按钮、选择、切换、展开收起等）
-- 使用JavaScript实现交互逻辑
-- 可点击元素有:active缩放反馈
-- 可包含选项分支、隐藏内容、角色回复切换、小游戏等`;
-
 // ============================================================
 let settings = {};
 const defaultSettings = Object.freeze({
@@ -373,7 +367,6 @@ const defaultSettings = Object.freeze({
     manualTargetPanelOpen: false,
     history: [],
     longDreams: [],
-    interactiveMode: false,
     customCSS: '',
     skinMode: 'default',  // 'default' (内置粉彩) | 'theater' (跟随酒馆) | 'custom' (用户CSS接管)
     uiFontSize: 13.5,
@@ -1659,9 +1652,6 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <span id="theater-token-summary-value">正在估算…</span><span>明细 ▾</span>
             </div>
             <div id="theater-token-details" class="theater-hint-inline" style="display:none;margin:-2px 1px 8px;line-height:1.6;"></div>
-            <div class="theater-toggle-row" id="theater-interactive-row">
-                <label class="theater-toggle-label"><input type="checkbox" id="theater-interactive-toggle" ${settings.interactiveMode ? 'checked' : ''}><span>交互模式</span></label>
-            </div>
             <div class="theater-btn-row">
                 <button type="button" id="theater-save-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-floppy-disk"></i><span>存为模板</span></button>
                 <button type="button" id="theater-clear-instruction-btn" class="theater-btn generate"><i class="fa-solid fa-eraser"></i><span>清空</span></button>
@@ -1706,6 +1696,7 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 </div>
             </div>
             <div id="theater-length-hint" class="theater-hint-inline" style="display:none; margin:-4px 0 8px;"></div>
+            <div id="theater-result-characters" class="theater-result-character-count"></div>
             <div id="theater-output-container">
                 <iframe id="theater-output-frame" sandbox="" class="theater-iframe"></iframe>
                 <div id="theater-output-text-fallback" class="theater-output-text-fallback" role="document" style="display:none;"></div>
@@ -4471,6 +4462,9 @@ async function openTheaterPopup() {
         if (activeTheaterPopupSession !== session) return;
         activeTheaterPopupSession = null;
         closeInstructionActionMenus();
+        resultSwipeCleanup?.();
+        resultSwipeCleanup = null;
+        resultReader?.destroy();
         if (instructionSweepCleanup) {
             instructionSweepCleanup();
             instructionSweepCleanup = null;
@@ -4794,7 +4788,6 @@ function refreshRenderSelectionControls({ refreshOptions = false } = {}) {
         .html(quickRenderButtonContent())
         .toggleClass('is-adaptive', !!adaptive)
         .prop('disabled', isGenerating);
-    $('#theater-interactive-toggle').prop('checked', !!settings.interactiveMode);
     scheduleTokenEstimate();
 }
 
@@ -4867,7 +4860,7 @@ function bindEvents() {
     // 恢复入口最先绑定。即使后续某个功能按钮初始化异常，用户仍能拉取修复。
     $d.off('click.tup').on('click.tup', '#theater-update-btn', updateExtension);
     $d.off('click.treload').on('click.treload', '#theater-reload-after-update-btn', confirmReloadAfterUpdate);
-    const tokenAffectingSelectors = '#theater-interactive-toggle,#theater-context-range,#theater-read-chat-context,#theater-render-select,#theater-preset-name-select,#theater-style-addon,#theater-nsfw-addon,.theater-preset-check,.theater-wb-check';
+    const tokenAffectingSelectors = '#theater-context-range,#theater-read-chat-context,#theater-render-select,#theater-preset-name-select,#theater-style-addon,#theater-nsfw-addon,.theater-preset-check,.theater-wb-check';
     $d.off('change.ttoken').on('change.ttoken', tokenAffectingSelectors, scheduleTokenEstimate);
 
     // Tabs
@@ -4941,7 +4934,6 @@ function bindEvents() {
         closeResultActions();
     });
     $(window).off('resize.tra').on('resize.tra', positionResultToolbox);
-    $d.off('change.ti').on('change.ti', '#theater-interactive-toggle', function () { settings.interactiveMode = $(this).is(':checked'); save(); });
     $d.off('input.tii').on('input.tii', '#theater-instruction', function () {
         if (continuationSession) continuationSession.direction = String($(this).val() || '');
         settings.lastInstruction = $(this).val();
@@ -8497,7 +8489,6 @@ function resolveRenderSelection(forcePlainText = false) {
     if (!isPlainTextRender && selectedRender === '__default_pc__') rules = DEFAULT_RENDER_TEMPLATE_PC;
     else if (!isPlainTextRender && adaptiveProfile) rules = adaptiveProfile.rules;
     else if (!isPlainTextRender && selectedRender !== '__default__' && customRender) rules = customRender.content;
-    if (settings.interactiveMode && !isPlainTextRender) rules += INTERACTIVE_ADDON;
     if (!isPlainTextRender) rules += `\n\n${HTML_RENDER_FINAL_GUARDRAILS}`;
     const label = isPlainTextRender
         ? (textTheme === 'dark' ? '纯文字·暗色夜读' : '纯文字·亮色')
@@ -10674,9 +10665,11 @@ function showInIframe(html, mode = 'html', allowTextFallback = true) {
     updateContinueHint();
     updateRecentNav();
     const sourceText = htmlToPlainText(html);
+    $('#theater-result-characters').text(`约 ${readableCharCount(sourceText).toLocaleString('zh-CN')} 字`);
     if (textMode) lastGeneratedText = sourceText;
     $('#theater-copy-html-btn span').text(textMode ? '复制文字' : '复制HTML');
     renderSafeIframe(f, html, {
+        onWorkspaceSwipe: switchResultWorkspace,
         sourceHasText: !!sourceText,
         // 没有尺寸回报不等于 HTML 没有渲染；复杂模板启动较慢时继续保留丰富预览。
         // 只有 iframe 明确、持续回报正文为空，才切换到父页面纯文字兜底。
@@ -10812,17 +10805,22 @@ function openFullscreenReader(overridePayload = null) {
     $overlay.find('.theater-reader-close').trigger('focus');
 }
 
+let resultSwipeCleanup = null;
+
 function switchResultWorkspace(page) {
     const next = page === 'read' ? 'read' : 'generate';
+    const changed = resultWorkspacePage !== next;
     const wrapper = document.querySelector('.theater-panels-wrapper');
     if (wrapper && resultWorkspacePage !== next) resultPageScroll[resultWorkspacePage] = wrapper.scrollTop;
     resultWorkspacePage = next;
     closeResultActions();
     document.querySelectorAll('[data-result-page]').forEach(node => { node.hidden = node.dataset.resultPage !== next; });
     document.querySelectorAll('[data-result-tab]').forEach(node => node.setAttribute('aria-selected', String(node.dataset.resultTab === next)));
-    if (wrapper) wrapper.scrollTop = resultPageScroll[next];
+    if (wrapper && changed) wrapper.scrollTop = resultPageScroll[next];
     if (next === 'read') resultReader?.refresh();
+    if (changed) animateResultPage(document.querySelector(`[data-result-page="${next}"]`), next);
     requestAnimationFrame(positionResultToolbox);
+    return changed;
 }
 
 function initializeResultWorkspace() {
@@ -10832,6 +10830,7 @@ function initializeResultWorkspace() {
     resultReader = mountResultReader(root, readingState, {
         recent: () => recentCache,
         render: renderSafeIframe,
+        swipe: switchResultWorkspace,
         text: htmlToPlainText,
         isText: isTextOutputMode,
         plainHtml: (text, mode) => textFallbackHtml(text, textThemeForOutputMode(mode)),
@@ -10856,9 +10855,7 @@ function initializeResultWorkspace() {
     });
     const nav = document.querySelector('.theater-result-subnav');
     // Replace handlers on popup rebuild rather than accumulate document listeners.
-    let swiped = false;
     nav.onclick = event => {
-        if (swiped) { swiped = false; return; }
         const button = event.target.closest('[data-result-tab]');
         if (button) switchResultWorkspace(button.dataset.resultTab);
     };
@@ -10868,15 +10865,8 @@ function initializeResultWorkspace() {
         switchResultWorkspace(event.key === 'ArrowRight' ? 'read' : 'generate');
         nav.querySelector(`[data-result-tab="${resultWorkspacePage}"]`)?.focus();
     };
-    let gesture = null;
-    nav.onpointerdown = event => { swiped = false; gesture = { x: event.clientX, y: event.clientY };  };
-    nav.onpointerup = event => {
-        if (!gesture) return;
-        const dx = event.clientX - gesture.x, dy = event.clientY - gesture.y;
-        gesture = null;
-        if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5) { swiped = true; switchResultWorkspace(dx < 0 ? 'read' : 'generate'); }
-    };
-    nav.onpointercancel = () => { gesture = null; };
+    resultSwipeCleanup?.();
+    resultSwipeCleanup = bindResultSwipe(root.closest('[data-panel="generate"]'), switchResultWorkspace);
     applyResultToolboxMode();
     switchResultWorkspace(resultWorkspacePage);
 }
