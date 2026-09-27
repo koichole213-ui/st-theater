@@ -2,6 +2,66 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { previousResults, readingPosition } from '../result-text-edit.js';
+
+test('生成结果独立保存，下一次开始才移入三篇历史，并保留被挤出的阅读对象', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const functions = ['queueResultStorage', 'archiveCurrentResult', 'storeCurrentResult', 'updateResultItem']
+        .map(name => source.match(new RegExp('function ' + name + '\\([^]*?^}', 'm'))[0]).join('\n');
+    const old = [3, 2, 1].map(n => ({ html: `<p>${n}</p>`, resultId: String(n) }));
+    const pinned = old[2];
+    const disk = [];
+    let fail = false;
+    const scope = { recentCache: old, currentGenerationResult: null, resultStorageQueue: Promise.resolve(),
+        previousResults, resultReader: { refresh() {} }, htmlToPlainText: html => html.replace(/<[^>]*>/g, ''),
+        recentPersist: async (recent, current) => { if (fail) return false; disk.push(JSON.parse(JSON.stringify({ recent, current }))); return true; } };
+    runInNewContext(functions, scope);
+    const four = { html: '<p>4</p>', resultId: '4', mode: 'html' };
+    await scope.storeCurrentResult(four);
+    assert.deepEqual(scope.recentCache.map(x => x.resultId), ['3', '2', '1']);
+    assert.equal(scope.currentGenerationResult, four);
+    fail = true;
+    assert.equal(await scope.archiveCurrentResult(), false);
+    assert.equal(scope.currentGenerationResult, four);
+    assert.equal(scope.recentCache, old);
+    fail = false;
+    await scope.archiveCurrentResult();
+    assert.deepEqual(scope.recentCache.map(x => x.resultId), ['4', '3', '2']);
+    assert.equal(scope.currentGenerationResult, null);
+    assert.equal(readingPosition(pinned, scope.recentCache).retained, true);
+    assert.equal(pinned.html, '<p>1</p>');
+    const five = { html: '<p>5</p>', resultId: '5', mode: 'html' };
+    await scope.storeCurrentResult(five);
+    assert.deepEqual(scope.recentCache.map(x => x.resultId), ['4', '3', '2']);
+    assert.equal(disk.at(-1).current.resultId, '5');
+    // Editing the right page and completing a new generation are serialized.
+    await Promise.all([scope.updateResultItem(four, '<p>四</p>', 'html'), scope.storeCurrentResult(five)]);
+    assert.equal(four.html, '<p>四</p>');
+    assert.equal(scope.currentGenerationResult.html, '<p>5</p>');
+    assert.equal(disk.at(-1).recent[0].html, '<p>四</p>');
+    fail = true;
+    assert.equal(await scope.updateResultItem(four, '<p>不应保存</p>', 'html'), false);
+    assert.equal(four.html, '<p>四</p>');
+});
+
+test('阅读页保存显式作品，不串入左边的新结果与元数据', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const fn = source.match(/async function saveToHistory\([^]*?^}/m)[0];
+    let saved;
+    const item = { html: '<p>右页</p>', mode: 'html', instruction: '右页指令', tags: ['右页标签'], continuationRounds: ['右页前情'] };
+    const scope = { lastGeneratedHtml: '<p>左页</p>', currentDisplayHtml: '', resultEditSnapshot: null, currentGenerationResult: { html: '<p>左页</p>' },
+        historyCache: [], currentOutputMode: 'text', activeInstructionTags: ['左页标签'], settings: { instructionTags: [] },
+        knownInstructionTags: () => [], itemTags: entry => entry.tags, mergeTagLists: (_a, b) => b,
+        normalizeTagList: x => x, normalizeContinuationRounds: x => x,
+        chooseTagsWithNew: async () => ({ name: '右页作品', tags: item.tags, newTags: [] }),
+        histAdd: async value => { saved = value; return true; }, save() {}, refreshHistList() {}, toastr: { success() {} } };
+    runInNewContext(fn, scope);
+    await scope.saveToHistory(item);
+    assert.equal(saved.html, item.html);
+    assert.equal(saved.mode, 'html');
+    assert.equal(saved.instruction, '右页指令');
+    assert.deepEqual(saved.continuationRounds, ['右页前情']);
+});
 import { recognizeInstructionTitle } from '../instruction-title.js';
 import { listPage, listPaginationHTML, requestedListPage } from '../pagination.js';
 
@@ -906,7 +966,7 @@ test('长梦首帧使用当前页面，慢资料完成后不重建输入或抢�
         } }) },
         normalizeTheaterTab: value => value, restoreLongDreamNavigation() {}, waitForPopupElements: async () => true,
         setBallDot() {}, bindEvents() {}, decorateConfigLayout() {}, applyResultToolboxMode() {}, renderRuntimeLog() {},
-        updateContinueHint() {}, histBatchMode: false, continuationSession: null,
+        updateContinueHint() {}, initializeResultWorkspace() {}, currentGenerationResult: null, histBatchMode: false, continuationSession: null,
         loadWorldBookList: async () => {}, loadPresetNameList: () => materials,
         reloadWorldBooks: async () => {}, refreshTokenEstimate: async () => { finishEstimate(); },
         refreshLongDreamCreateWorldBookState() {}, queueLongDreamMemoryWeave() {},
@@ -3386,13 +3446,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.3.6 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.3.7 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.3\.6'/);
-    assert.equal(manifest.version, '4.3.6');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.6/);
+    assert.match(source, /const VERSION = '4\.3\.7'/);
+    assert.equal(manifest.version, '4.3.7');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.7/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -3804,7 +3864,7 @@ test('普通、自动和续写连续执行生成启动流程，完成日志和�
                     text() { return this; }, empty() { return this; }, prop() { return this; } };
                 const context = {
                     settings: { manualTargetEnabled: manual, manualTargetChars: target, maxAutoRounds: 3, autoContinue },
-                    isGenerating: false, isPreparingGeneration: false,
+                    isGenerating: false, isPreparingGeneration: false, resultEditSnapshot: null,
                     continueContext: mode === 'manual' ? '' : '合成前情',
                     continuationSession: { direction: '合成方向', source: { rounds: ['合成前情'] } },
                     resolveTargetWordCount, isStagedRenderTarget, classifyLengthTier,
@@ -3816,6 +3876,7 @@ test('普通、自动和续写连续执行生成启动流程，完成日志和�
                             systemPrompt: '合成系统', userPrompt: '合成任务', isPlainTextRender: options.forcePlainText };
                     },
                     updateContinueHint() {}, clearRequestIssue() {}, knownInstructionTags: () => [],
+                    archiveCurrentResult: async () => true,
                     captureGenerationApiRoute: () => ({ protocol: 'test', model: 'synthetic' }),
                     runtimeLog: (...args) => logs.push(args),
                     $: () => ui, AbortController,
@@ -6063,7 +6124,7 @@ test('标签迁移会把大小写不同的模板标签归一到标签库名称',
 
 test('保存小剧场在同一弹窗编辑标题与标签，成功后才登记新标签', async () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const saveSource = source.match(/async function saveToHistory\(\)[^]*?^}/m)?.[0];
+    const saveSource = source.match(/async function saveToHistory\([^)]*\)[^]*?^}/m)?.[0];
     assert.ok(saveSource);
 
     const execute = async ({ selection, stored = true }) => {
@@ -6071,6 +6132,7 @@ test('保存小剧场在同一弹窗编辑标题与标签，成功后才登记�
         const settings = { instructionTags: ['来源标签'] };
         const html = '<html><body>问卷结果</body></html>';
         const context = {
+            currentGenerationResult: null, resultEditSnapshot: null,
             lastGeneratedHtml: html,
             currentDisplayHtml: '',
             currentOutputMode: 'html',
@@ -6398,7 +6460,7 @@ test('普通续写入口直接携带两轮完整纯正文，不再截断8000字'
     const context = { isGenerating: false, isPreparingGeneration: false, resultEditSnapshot: null,
         htmlToPlainText: html => html.replace(/<[^>]*>/g, ''), normalizeContinuationRounds, createContinuationSession,
         itemTags: ({tags}) => tags, knownInstructionTags: () => [], clearDisplayedResult() {}, updateContinueHint() {},
-        revealContinuationInput() {}, scheduleTokenEstimate() {}, $: () => jq, toastr: { warning() {}, info() {} },
+        switchResultWorkspace() {}, revealContinuationInput() {}, scheduleTokenEstimate() {}, $: () => jq, toastr: { warning() {}, info() {} },
         inputHtml: `<main>${b}</main>`, prior: [a, b],
     };
     const result = runInNewContext(`${prepare}\n${start}\nstartContinue(inputHtml, [], {sourceRounds: prior}); continuationSession`, context);
@@ -6423,11 +6485,11 @@ test('两轮完整正文通过JSON及ZIP历史备份恢复，旧作品不虚构�
 test('普通新稿第三轮中断后保存再续写只带第二轮和未完成第三轮', async () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const retain = source.match(/retainedResultSource = \{\s*html: lastGeneratedHtml, mode: currentOutputMode, instruction,[\s\S]*?\n            \};/)[0];
-    const saveSource = source.match(/async function saveToHistory\(\)[^]*?^}/m)[0];
+    const saveSource = source.match(/async function saveToHistory\([^)]*\)[^]*?^}/m)[0];
     const rounds = ['第一轮' + '甲'.repeat(9000), '第二轮' + '乙'.repeat(9000)];
     const live = '第三轮未完成' + '丙'.repeat(4000);
     let saved;
-    const context = { lastGeneratedHtml: '<main>中断保留正文</main>', currentDisplayHtml: '', currentOutputMode:'text',
+    const context = { currentGenerationResult: null, resultEditSnapshot: null, lastGeneratedHtml: '<main>中断保留正文</main>', currentDisplayHtml: '', currentOutputMode:'text',
         retainedResultSource:null, instruction:'创作指令', sourceTags:['标签'], generationSourceConfig:{},
         continuationRun:null, currentGenerationJob:{segments:rounds}, liveBodyText:live,
         continuationRoundHistory, prepareContinuationContext:value=>value.trim(), normalizeContinuationRounds,

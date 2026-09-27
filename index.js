@@ -1,3 +1,5 @@
+import { createHtmlTextEdit, previousResults } from './result-text-edit.js';
+import { readerPaneHTML, mountResultReader } from './result-reader.js';
 import { restoreStorySummary } from './long-dream-story-summary.js';
 import { refreshLongDreamSummary } from './long-dream-summary.js';
 // 千夜浮梦 · 小剧场生成器 — by 禾禾 & 麓克
@@ -50,7 +52,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.6';
+const VERSION = '4.3.7';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -434,6 +436,12 @@ const SKIN_LABELS = { default: '内置默认', theater: '跟随酒馆', custom: 
 // ============================================================
 let idb = null;            // 打不开时为 null，回退到 settings 存储
 let historyCache = [];     // [{ id, title, html, mode, instruction, date }]
+let currentGenerationResult = null;
+let resultStorageQueue = Promise.resolve();
+const readingState = { reading: null };
+let resultReader = null;
+let resultWorkspacePage = 'generate';
+const resultPageScroll = { generate: 0, read: 0 };
 let recentCache = [];      // 最近 3 条生成 [{ html, mode, time, instruction }]
 let longDreamCache = [];   // 独立长卷；正文较大，和历史一样放在 IndexedDB
 let recentIndex = 0;       // 当前查看的最近生成索引（仅内存）
@@ -589,6 +597,7 @@ async function storageInit() {
         settings.history.forEach((h, i) => { if (h.id === undefined || h.id === null) h.id = i + 1; });
         historyCache = settings.history;
         recentCache = settings.recentGenerations;
+        currentGenerationResult = settings.currentGenerationResult || null;
         longDreamCache = settings.longDreams
             .map(record => normalizeLongDreamRecord(record))
             .map(record => recoverInterruptedLongDreamMemory(record))
@@ -597,6 +606,13 @@ async function storageInit() {
         return;
     }
 
+    if (settings.currentGenerationResult?.html) {
+        try {
+            await idbReq(idb.transaction('kv', 'readwrite').objectStore('kv').put(settings.currentGenerationResult, 'current-result'));
+            settings.currentGenerationResult = null;
+            save();
+        } catch { toastr.warning('当前生成结果迁移失败，原数据仍保留'); }
+    }
     // 迁移：把还留在 settings 里的旧数据搬进 IndexedDB（搬成功才清空 settings）
     try {
         if (Array.isArray(settings.history) && settings.history.length) {
@@ -646,6 +662,7 @@ async function storageInit() {
     try {
         historyCache = (await idbReq(idb.transaction('history').objectStore('history').getAll())) || [];
         recentCache = (await idbReq(idb.transaction('kv').objectStore('kv').get('recent'))) || [];
+        currentGenerationResult = (await idbReq(idb.transaction('kv').objectStore('kv').get('current-result'))) || null;
         longDreamCache = ((await idbReq(idb.transaction('dreams').objectStore('dreams').getAll())) || [])
             .map(record => normalizeLongDreamRecord(record))
             .map(record => recoverInterruptedLongDreamMemory(record))
@@ -707,14 +724,67 @@ async function histDelete(ids) {
     }
 }
 
-async function recentPersist() {
-    if (!idb) { save(); return; }
+async function recentPersist(recent = recentCache, current = currentGenerationResult) {
+    if (!idb) {
+        settings.recentGenerations = recent.slice(0, 3);
+        settings.currentGenerationResult = current;
+        save(); return true;
+    }
     try {
-        await idbReq(idb.transaction('kv', 'readwrite').objectStore('kv').put(recentCache.slice(0, 3), 'recent'));
+        const tx = idb.transaction('kv', 'readwrite');
+        const done = new Promise((resolve, reject) => {
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error || new Error('aborted'));
+        });
+        tx.objectStore('kv').put(recent.slice(0, 3), 'recent');
+        tx.objectStore('kv').put(current, 'current-result');
+        await done;
+        return true;
     } catch (e) {
         console.error('[Theater] 保存最近生成失败:', e);
-        toastr.error('保存最近生成失败：' + (e?.message || e));
+        toastr.error('本地保存失败，原有结果已保留，请先保存重要作品');
+        return false;
     }
+}
+
+function queueResultStorage(operation) {
+    const task = resultStorageQueue.then(operation);
+    resultStorageQueue = task.catch(() => {});
+    return task;
+}
+
+function archiveCurrentResult() {
+    return queueResultStorage(async () => {
+        if (!currentGenerationResult) return true;
+        const next = previousResults(currentGenerationResult, recentCache);
+        if (!await recentPersist(next, null)) return false;
+        recentCache = next;
+        currentGenerationResult = null;
+        resultReader?.refresh();
+        return true;
+    });
+}
+
+function storeCurrentResult(item) {
+    return queueResultStorage(async () => {
+        if (!await recentPersist(recentCache, item)) return false;
+        currentGenerationResult = item;
+        return true;
+    });
+}
+
+function updateResultItem(item, html, mode) {
+    return queueResultStorage(async () => {
+        const text = htmlToPlainText(html);
+        const updated = { ...item, html, mode, continuationRounds: [text] };
+        const next = recentCache.map(entry => entry === item ? updated : entry);
+        const current = currentGenerationResult === item ? updated : currentGenerationResult;
+        if (!await recentPersist(next, current)) return false;
+        // Keep the reader's pinned identity so completing a generation never replaces it.
+        Object.assign(item, updated);
+        return true;
+    });
 }
 
 async function longDreamAdd(record) {
@@ -1556,6 +1626,11 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
 
     <!-- ===== 1. 生成 ===== -->
     <div class="theater-panel${activeTabClass('generate')}" data-panel="generate">
+        <nav class="theater-result-subnav" aria-label="生成与阅读">
+            <button type="button" data-result-tab="generate" aria-selected="true">生成</button>
+            <button type="button" data-result-tab="read" aria-selected="false">阅读</button>
+        </nav>
+        <div class="theater-workspace-page" data-result-page="generate">
         <div id="theater-continuation-session">${continuationSessionHTML()}</div>
         <div class="theater-section">
             <div class="theater-instruction-heading-row">
@@ -1650,6 +1725,8 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                 <p class="theater-hint-inline theater-continuation-retention">本段版本临时保留；接写下一段、退出或刷新前，请保存重要版本。</p>
             </div>
         </div>
+        </div>
+        ${readerPaneHTML(LAMP_SVG_HTML)}
     </div>
 
     <!-- ===== 长梦续章 ===== -->
@@ -4480,17 +4557,13 @@ async function openTheaterPopup() {
         showInIframe(html, currentOutputMode);
         $('#theater-output-section').show();
         updateRecentNav();
-    } else if (recentCache.length && !continuationSession) {
-        // 没有当前生成但有最近记录，恢复最近一条
-        recentIndex = Math.min(recentIndex, recentCache.length - 1);
-        const item = recentCache[recentIndex];
-        if (item) {
-            lastGeneratedHtml = item.html;
-            showInIframe(item.html, item.mode || 'html');
-            $('#theater-output-section').show();
-            updateRecentNav();
-        }
+    } else if (currentGenerationResult && !continuationSession) {
+        lastGeneratedHtml = currentGenerationResult.html;
+        lastGeneratedText = htmlToPlainText(lastGeneratedHtml);
+        showInIframe(lastGeneratedHtml, currentGenerationResult.mode || 'html');
+        $('#theater-output-section').show();
     }
+    initializeResultWorkspace();
 
     updateContinueHint();
     await p;
@@ -4593,7 +4666,7 @@ function findApiPreset(id = settings.selectedApiPresetId) {
 
 function closeResultActions() {
     $('.theater-result-toolbox').removeClass('is-open')
-        .find('#theater-result-actions-toggle').attr('aria-expanded', 'false');
+        .find('.theater-result-actions-toggle').attr('aria-expanded', 'false');
 }
 
 function resultBookmarkRect() {
@@ -4609,8 +4682,8 @@ function resultBookmarkRect() {
 }
 
 function positionResultToolbox() {
-    const toolbox = document.querySelector('.theater-result-toolbox.is-bookmark');
-    const toggle = toolbox?.querySelector('#theater-result-actions-toggle');
+    const toolbox = [...document.querySelectorAll('.theater-result-toolbox.is-bookmark')].find(node => node.getClientRects().length && !node.closest('[hidden]'));
+    const toggle = toolbox?.querySelector('.theater-result-actions-toggle');
     if (!toolbox || !toggle) return;
     const toggleRect = toggle.getBoundingClientRect();
     const position = bookmarkPosition({
@@ -4807,7 +4880,7 @@ function bindEvents() {
     $d.off('click.tquickrender').on('click.tquickrender', '#theater-quick-render-toggle', switchQuickRenderSelection);
     let bookmarkDragged = false;
     let bookmarkDrag = null;
-    $d.off('pointerdown.trad').on('pointerdown.trad', '.theater-result-toolbox.is-bookmark #theater-result-actions-toggle', function (event) {
+    $d.off('pointerdown.trad').on('pointerdown.trad', '.theater-result-toolbox.is-bookmark .theater-result-actions-toggle', function (event) {
         if (event.button !== undefined && event.button !== 0) return;
         const toolbox = this.closest('.theater-result-toolbox');
         const rect = toolbox.getBoundingClientRect();
@@ -4847,7 +4920,7 @@ function bindEvents() {
         }
         bookmarkDrag = null;
     });
-    $d.off('click.tra').on('click.tra', '#theater-result-actions-toggle', function (event) {
+    $d.off('click.tra').on('click.tra', '.theater-result-actions-toggle', function (event) {
         event.stopPropagation();
         if (bookmarkDragged) {
             bookmarkDragged = false;
@@ -4861,7 +4934,7 @@ function bindEvents() {
     });
     $d.off('click.trac').on('click.trac', '.theater-result-actions .theater-btn', function () {
         const $toolbox = $(this).closest('.theater-result-toolbox');
-        $toolbox.removeClass('is-open').find('#theater-result-actions-toggle').attr('aria-expanded', 'false');
+        $toolbox.removeClass('is-open').find('.theater-result-actions-toggle').attr('aria-expanded', 'false');
     });
     $d.off('click.trao').on('click.trao', function (event) {
         if ($(event.target).closest('.theater-result-toolbox').length) return;
@@ -5907,10 +5980,15 @@ function bindEvents() {
     });
     // ---- Edit result text ----
     $d.off('click.ter').on('click.ter', '#theater-edit-result-btn', function () {
+        if (isGenerating || isPreparingGeneration) { toastr.warning('请等当前生成完成后再编辑生成页'); return; }
         const html = lastGeneratedHtml || currentDisplayHtml;
-        const text = htmlToPlainText(html);
+        let htmlEdit = null;
+        try { if (!isTextOutputMode(currentOutputMode)) htmlEdit = createHtmlTextEdit(html); }
+        catch (error) { toastr.warning(error.message); return; }
+        const text = htmlEdit?.text ?? htmlToPlainText(html);
         if (!text) { toastr.warning('没有可编辑的正文'); return; }
         resultEditSnapshot = {
+            htmlEdit,
             html,
             text,
             mode: currentOutputMode || 'html',
@@ -5922,7 +6000,7 @@ function bindEvents() {
         setResultEditControls(true);
         toastr.info(isTextOutputMode(currentOutputMode)
             ? '正在编辑纯文字正文；可应用修改或直接退出编辑'
-            : '正在编辑文字；直接退出不会改变原排版，应用修改前会再次确认');
+            : '保留原 HTML 排版；请保持行数，只修改行内文字');
     });
     $d.off('click.tce').on('click.tce', '#theater-cancel-edit-btn', function () {
         cancelResultEdit();
@@ -5932,25 +6010,23 @@ function bindEvents() {
         if (!text) { toastr.warning('正文不能为空'); return; }
         const snapshot = resultEditSnapshot;
         if (!snapshot) { cancelResultEdit(); return; }
-        if (!isTextOutputMode(snapshot.mode)) {
-            const { Popup } = SillyTavern.getContext();
-            const ok = await Popup.show.confirm('应用文字修改后，这一条结果会切换成纯文字阅读卡。', '原来的 HTML 排版不会被乱码覆盖；如果想保留原排版，请选择取消并点击“退出编辑”。');
-            if (!ok) return;
-        }
-        const textTheme = textThemeForOutputMode(snapshot.mode);
-        const newMode = textOutputModeForTheme(textTheme);
-        const newHtml = textFallbackHtml(text, textTheme);
+        if (snapshot.saving) return;
+        let newHtml;
+        const newMode = snapshot.mode;
+        try {
+            newHtml = snapshot.htmlEdit ? snapshot.htmlEdit.apply(text) : textFallbackHtml(text, textThemeForOutputMode(snapshot.mode));
+        } catch (error) { toastr.warning(error.message); return; }
+        const target = currentGenerationResult?.html === snapshot.html ? currentGenerationResult : recentCache.find(item => item.html === snapshot.html);
+        snapshot.saving = true;
+        let stored = true;
+        try { if (target) stored = await updateResultItem(target, newHtml, newMode); }
+        finally { snapshot.saving = false; }
+        if (!stored) return;
+        if (resultEditSnapshot !== snapshot) return;
         lastGeneratedHtml = newHtml;
         lastGeneratedText = text;
         currentDisplayHtml = newHtml;
         currentOutputMode = newMode;
-        if (snapshot.recentIndex >= 0 && recentCache[snapshot.recentIndex]?.html === snapshot.html) {
-            recentCache[snapshot.recentIndex].html = newHtml;
-            recentCache[snapshot.recentIndex].mode = newMode;
-            recentCache[snapshot.recentIndex].continuationRounds = [text];
-            recentIndex = snapshot.recentIndex;
-            recentPersist();
-        }
         const version = displayedContinuationVersion(continuationSession, snapshot.html);
         if (version) Object.assign(version, { html: newHtml, text, mode: newMode, continuationRounds: [text] });
         if (retainedResultSource?.html === snapshot.html) retainedResultSource = { ...retainedResultSource, html: newHtml, mode: newMode, continuationRounds: [text] };
@@ -5961,11 +6037,18 @@ function bindEvents() {
         toastr.success('文字修改已应用');
     });
     $d.off('click.tdr').on('click.tdr', '#theater-delete-result-btn', async function () {
+        if (isGenerating || isPreparingGeneration) { toastr.warning('请等当前生成结束'); return; }
         const html = currentDisplayHtml || lastGeneratedHtml;
         if (!html) { toastr.warning('没有可移除的结果'); return; }
         const { Popup } = SillyTavern.getContext();
         const ok = await Popup.show.confirm('从“最近生成”移除当前结果？', '只清除生成页副本；已经保存到历史的小剧场不会受影响。');
-        if (!ok) return;
+        if (!ok || isGenerating || isPreparingGeneration || (currentDisplayHtml || lastGeneratedHtml) !== html) return;
+        if (currentGenerationResult?.html === html) {
+            if (!await queueResultStorage(async () => {
+                if (!await recentPersist(recentCache, null)) return false;
+                currentGenerationResult = null; return true;
+            })) return;
+        }
         if (resultEditSnapshot) cancelResultEdit();
         const targetIndex = displayedRecentIndex(html);
         if (targetIndex >= 0) {
@@ -5987,7 +6070,7 @@ function bindEvents() {
     $d.off('click.tcont').on('click.tcont', '#theater-continue-btn', function () {
         const html = lastGeneratedHtml || currentDisplayHtml;
         if (!html) { toastr.warning('没有可续写的内容'); return; }
-        const source = displayedContinuationVersion(continuationSession, html) || recentCache.find(item => item.html === html) || historyCache.find(item => item.html === html) || (retainedResultSource?.html === html ? retainedResultSource : null);
+        const source = (currentGenerationResult?.html === html ? currentGenerationResult : null) || displayedContinuationVersion(continuationSession, html) || recentCache.find(item => item.html === html) || historyCache.find(item => item.html === html) || (retainedResultSource?.html === html ? retainedResultSource : null);
         startContinue(html, source?.tags || activeInstructionTags, { sourceLabel: source?.title || '当前结果', sourceRounds: source?.continuationRounds });
     });
     // 取消续写
@@ -6016,9 +6099,11 @@ function bindEvents() {
     $d.off('click.tcvn').on('click.tcvn', '#theater-cont-version-next', () => showContinuationVersion(continuationSession?.selected + 1));
     $d.off('click.thv').on('click.thv', '.theater-history-view', function () {
         const item = historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
-        lastGeneratedHtml = item.html;
-        setActiveInstructionTags(itemTags(item, knownInstructionTags()), item.instruction || '');
-        showInIframe(item.html, item.mode || 'html'); $('.theater-tab[data-tab="generate"]').click(); $('#theater-output-section').show();
+        if (resultReader?.isEditing()) { toastr.warning('请先完成阅读页的文字编辑'); return; }
+        readingState.reading = { ...item }; // viewing and editing a copy never overwrites a saved work
+        $('.theater-tab[data-tab="generate"]').click();
+        resultReader?.refresh();
+        switchResultWorkspace('read');
     });
     // 续写：从历史记录
     $d.off('click.thc').on('click.thc', '.theater-history-continue', function () {
@@ -8030,11 +8115,13 @@ function exportInstructionTemplates() {
 // ============================================================
 // History
 // ============================================================
-async function saveToHistory() {
-    const html = lastGeneratedHtml || currentDisplayHtml;
+async function saveToHistory(sourceOverride = null) {
+    const supplied = sourceOverride?.html ? { ...sourceOverride } : null;
+    if (!supplied && resultEditSnapshot) { toastr.warning('请先应用修改或退出编辑，再保存'); return; }
+    const html = supplied?.html || lastGeneratedHtml || currentDisplayHtml;
     if (!html) return;
     const count = historyCache.length + 1;
-    const sourceMeta = displayedContinuationVersion(continuationSession, html) || recentCache.find(item => item.html === html)
+    const sourceMeta = supplied || (currentGenerationResult?.html === html ? currentGenerationResult : null) || displayedContinuationVersion(continuationSession, html) || recentCache.find(item => item.html === html)
         || historyCache.slice().reverse().find(item => item.html === html)
         || (retainedResultSource?.html === html ? retainedResultSource : null);
     const sourceTags = sourceMeta
@@ -8072,6 +8159,7 @@ async function saveToHistory() {
 }
 
 function copyHtml() {
+    if (resultEditSnapshot) { toastr.warning('请先应用修改或退出编辑，再复制'); return; }
     // 只从已知干净的变量取 HTML，不读 iframe.srcdoc（酒馆环境里可能被改写/清空）
     const html = lastGeneratedHtml || currentDisplayHtml;
     if (!html) { toastr.warning('没有可复制的内容'); return; }
@@ -8079,7 +8167,6 @@ function copyHtml() {
         copyToClipboard(lastGeneratedText || htmlToPlainText(html));
         return;
     }
-    console.log('[Theater] copyHtml (first 200):', html.slice(0, 200));
     copyToClipboard(html);
 }
 
@@ -9690,6 +9777,7 @@ function startContinue(html, tags = [], { sourceLabel = '当前小剧场', segme
 
     // 跳转到生成面板
     $('.theater-tab[data-tab="generate"]').click();
+    switchResultWorkspace('generate');
     clearDisplayedResult();
     $('#theater-instruction').val('').attr('placeholder', '可留空直接自然续写，也可填写本次方向…');
     updateContinueHint();
@@ -9738,7 +9826,7 @@ async function generateTheater() {
 
 // 生成核心。isAuto = 自动模式触发（弹窗可能根本没开，所有 UI 操作都已有 popupAlive 保护）
 async function runGeneration(instruction, isAuto, sourceTags = []) {
-    if (isGenerating || isPreparingGeneration) return false;
+    if (isGenerating || isPreparingGeneration || resultEditSnapshot) return false;
     const contCtx = isAuto ? '' : continueContext;  // 自动生成永远是全新的，不掺手动的续写上下文
     const continuationRun = !isAuto && contCtx ? continuationSession : null;
     const continuationDirection = continuationRun?.direction || '';
@@ -9797,6 +9885,12 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         staged_multi_round_mode: stagedMultiRoundMode,
     });
 
+    // Move the previous completed result only when the next generation is ready.
+    isPreparingGeneration = true;
+    let archived;
+    try { archived = await archiveCurrentResult(); }
+    finally { isPreparingGeneration = false; }
+    if (!archived) { updateContinueHint(); return false; }
     // 标记开始生成
     isGenerating = true;
     bgStreamText = '';
@@ -10003,20 +10097,19 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             });
         }
 
-        // 自动保留到最近生成（最多 3 条）
+        // The current result is independent of the three older results on the reading page.
         if (lastGeneratedHtml) {
-            recentCache.unshift({
-                html: lastGeneratedHtml,
-                mode: currentOutputMode,
-                continuationRounds,
+            const item = {
+                resultId: crypto.randomUUID(), html: lastGeneratedHtml,
+                mode: currentOutputMode, continuationRounds,
                 time: new Date().toLocaleString('zh-CN', { hour12: false }),
-                instruction: instruction || '',
-                sourceConfig: generationSourceConfig,
+                instruction: instruction || '', sourceConfig: generationSourceConfig,
                 tags: itemTags({ tags: sourceTags }, knownInstructionTags()),
-            });
-            if (recentCache.length > 3) recentCache.length = 3;
-            recentIndex = 0;
-            recentPersist();
+            };
+            if (!await storeCurrentResult(item)) {
+                // Still keep the completed result in this session even if the browser's store is full.
+                currentGenerationResult = item;
+            }
             setActiveInstructionTags(sourceTags, instruction);
         }
 
@@ -10070,6 +10163,9 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                     direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig, complete: false,
                 });
             }
+            const partialItem = { ...retainedResultSource, html: lastGeneratedHtml, mode: currentOutputMode,
+                resultId: crypto.randomUUID(), complete: false, time: new Date().toLocaleString('zh-CN', { hour12: false }) };
+            if (!await storeCurrentResult(partialItem)) currentGenerationResult = partialItem;
             if (popupAlive()) {
                 showInIframe(lastGeneratedHtml, 'text');
                 $('#theater-stream-section').hide();
@@ -10716,21 +10812,78 @@ function openFullscreenReader(overridePayload = null) {
     $overlay.find('.theater-reader-close').trigger('focus');
 }
 
+function switchResultWorkspace(page) {
+    const next = page === 'read' ? 'read' : 'generate';
+    const wrapper = document.querySelector('.theater-panels-wrapper');
+    if (wrapper && resultWorkspacePage !== next) resultPageScroll[resultWorkspacePage] = wrapper.scrollTop;
+    resultWorkspacePage = next;
+    closeResultActions();
+    document.querySelectorAll('[data-result-page]').forEach(node => { node.hidden = node.dataset.resultPage !== next; });
+    document.querySelectorAll('[data-result-tab]').forEach(node => node.setAttribute('aria-selected', String(node.dataset.resultTab === next)));
+    if (wrapper) wrapper.scrollTop = resultPageScroll[next];
+    if (next === 'read') resultReader?.refresh();
+    requestAnimationFrame(positionResultToolbox);
+}
+
+function initializeResultWorkspace() {
+    const root = document.querySelector('[data-result-page="read"]');
+    if (!root) return;
+    resultReader?.destroy();
+    resultReader = mountResultReader(root, readingState, {
+        recent: () => recentCache,
+        render: renderSafeIframe,
+        text: htmlToPlainText,
+        isText: isTextOutputMode,
+        plainHtml: (text, mode) => textFallbackHtml(text, textThemeForOutputMode(mode)),
+        warn: message => toastr.warning(message), success: message => toastr.success(message),
+        copy: copyToClipboard, save: saveToHistory, fullscreen: openFullscreenReader,
+        position: positionResultToolbox,
+        update: updateResultItem,
+        continue: item => {
+            if (isGenerating || isPreparingGeneration || resultEditSnapshot) { toastr.warning('请先完成当前生成或文字编辑'); return; }
+            startContinue(item.html, item.tags, { sourceLabel: item.title || '阅读中的小剧场', sourceRounds: item.continuationRounds });
+        },
+        remove: async item => {
+            const { Popup } = SillyTavern.getContext();
+            if (!await Popup.show.confirm('移除当前阅读结果？', '只移除最近生成副本，已保存的历史作品不受影响。')) return false;
+            return queueResultStorage(async () => {
+                const next = recentCache.filter(entry => entry !== item);
+                if (!await recentPersist(next, currentGenerationResult)) return false;
+                recentCache = next;
+                return true;
+            });
+        },
+    });
+    const nav = document.querySelector('.theater-result-subnav');
+    // Replace handlers on popup rebuild rather than accumulate document listeners.
+    let swiped = false;
+    nav.onclick = event => {
+        if (swiped) { swiped = false; return; }
+        const button = event.target.closest('[data-result-tab]');
+        if (button) switchResultWorkspace(button.dataset.resultTab);
+    };
+    nav.onkeydown = event => {
+        if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+        event.preventDefault();
+        switchResultWorkspace(event.key === 'ArrowRight' ? 'read' : 'generate');
+        nav.querySelector(`[data-result-tab="${resultWorkspacePage}"]`)?.focus();
+    };
+    let gesture = null;
+    nav.onpointerdown = event => { swiped = false; gesture = { x: event.clientX, y: event.clientY };  };
+    nav.onpointerup = event => {
+        if (!gesture) return;
+        const dx = event.clientX - gesture.x, dy = event.clientY - gesture.y;
+        gesture = null;
+        if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5) { swiped = true; switchResultWorkspace(dx < 0 ? 'read' : 'generate'); }
+    };
+    nav.onpointercancel = () => { gesture = null; };
+    applyResultToolboxMode();
+    switchResultWorkspace(resultWorkspacePage);
+}
+
 function updateRecentNav() {
-    const $nav = $('#theater-recent-nav');
-    if (displayedContinuationVersion(continuationSession, currentDisplayHtml || lastGeneratedHtml)) { $nav.hide(); return; }
-    if (!recentCache.length) { $nav.hide(); return; }
-    const displayed = displayedRecentIndex();
-    if (displayed < 0) { $nav.hide(); return; }
-    recentIndex = displayed;
-    $nav.show();
-    const item = recentCache[recentIndex];
-    const timeStr = item?.time || '';
-    $('#theater-recent-indicator').empty()
-        .append($('<span class="theater-recent-count">').text(`${recentIndex + 1} / ${recentCache.length}`))
-        .append(timeStr ? $('<span class="theater-recent-time">').text(` · ${timeStr}`) : null);
-    $('#theater-recent-prev').toggleClass('disabled', recentIndex <= 0);
-    $('#theater-recent-next').toggleClass('disabled', recentIndex >= recentCache.length - 1);
+    $('#theater-recent-nav').hide();
+    resultReader?.refresh();
     requestAnimationFrame(positionResultToolbox);
 }
 
@@ -10741,16 +10894,11 @@ function displayedRecentIndex(html = currentDisplayHtml || lastGeneratedHtml) {
 }
 
 function showRecentResult(index) {
-    if (!recentCache.length) return false;
+    if (!recentCache.length || resultReader?.isEditing()) return false;
     recentIndex = Math.min(recentCache.length - 1, Math.max(0, Number(index) || 0));
-    const item = recentCache[recentIndex];
-    lastGeneratedHtml = item.html;
-    lastGeneratedText = htmlToPlainText(item.html);
-    currentOutputMode = item.mode || 'html';
-    setActiveInstructionTags(item.tags || [], item.instruction || '');
-    showInIframe(item.html, currentOutputMode);
-    $('#theater-output-section').show();
-    updateRecentNav();
+    readingState.reading = recentCache[recentIndex];
+    resultReader?.refresh();
+    switchResultWorkspace('read');
     return true;
 }
 
@@ -10762,6 +10910,7 @@ function setResultEditControls(editing) {
 
 function cancelResultEdit() {
     const snapshot = resultEditSnapshot;
+    if (snapshot?.saving) { toastr.warning('正在保存文字修改，请稍等'); return; }
     $('#theater-result-text-editor').hide().val('');
     resultEditSnapshot = null;
     setResultEditControls(false);

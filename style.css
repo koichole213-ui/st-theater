@@ -1,9 +1,52 @@
-/* 千夜浮梦 · 小剧场生成器 v4.3.6
+/* 千夜浮梦 · 小剧场生成器 v4.3.7
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
  *   "custom"               — minimal scaffolding, fully overridable via custom CSS
  */
+
+/* Ordinary generation / completed-result reader: same subnavigation as long dream. */
+.theater-result-subnav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    padding: 10px 0 8px;
+    margin: 0 0 12px;
+    background: var(--t-bg);
+    touch-action: pan-y;
+}
+.theater-result-subnav button {
+    position: relative;
+    min-height: 40px;
+    border: 0;
+    border-radius: 0;
+    padding: 7px 10px;
+    background: transparent;
+    color: var(--t-fg-soft);
+    font: inherit;
+    font-size: var(--t-text-sm);
+    cursor: pointer;
+}
+.theater-result-subnav button + button::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 1px;
+    height: 24px;
+    transform: translateY(-50%);
+    background: var(--t-border-strong);
+}
+.theater-result-subnav button[aria-selected="true"] { color: var(--t-accent-deep); font-weight: 600; }
+.theater-workspace-page[hidden], .theater-workspace-page [hidden] { display: none !important; }
+.theater-workspace-page { min-width: 0; }
+.theater-reader-recent-nav { display: flex; justify-content: center; align-items: center; gap: 12px; margin: 0 0 12px; }
+.theater-reader-recent-nav button { background: transparent; border: 0; min-height: 40px; min-width: 40px; color: var(--t-fg-soft); font-size: 22px; cursor: pointer; }
+.theater-reader-recent-nav button:disabled { opacity: .3; cursor: default; }
+.theater-reader-retained, .theater-reader-editor .theater-hint-inline { text-align: left; line-height: 1.7; }
+.theater-reader-retained { padding: 8px 12px; border-left: 2px solid var(--t-accent-soft); }
+.theater-reader-editor textarea { margin-bottom: 10px; }
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-workspace-page[data-result-page="generate"] > .theater-section:first-of-type { background: var(--t-card-warm); }
 
 /* ============================================================
  * Base scaffolding (shared by all skins — structure only)
