@@ -2,7 +2,8 @@ import { collectionPage, collectionChapters } from './history-collections.js';
 
 export const escapeHistoryText = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const e = escapeHistoryText;
-const button = (action, label, id, disabled = false) => `<button type="button" class="theater-btn" data-collection-action="${action}" data-collection-id="${e(id)}" ${disabled ? 'disabled' : ''}>${label}</button>`;
+const collectionIcons = { up: 'arrow-up', down: 'arrow-down', move: 'folder-open', remove: 'arrow-right-from-bracket', add: 'folder-plus', rename: 'pen', dissolve: 'folder-minus' };
+const button = (action, label, id, disabled = false) => `<button type="button" class="theater-btn" data-collection-action="${action}" data-collection-id="${e(id)}" ${disabled ? 'disabled' : ''}><i class="fa-solid fa-${collectionIcons[action]}" aria-hidden="true"></i><span>${label}</span></button>`;
 
 export function collectionCardHTML(entry, { expanded, selected, itemHTML, batch = false, searching = false }) {
     const { folder, chapters, count } = entry;

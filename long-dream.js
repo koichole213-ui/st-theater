@@ -298,6 +298,8 @@ function normalizeDraftCandidate(candidate, fallbackDate) {
     return {
         text,
         html,
+        retained: candidate.retained === true,
+        versionNumber: Math.max(1, Math.floor(Number(candidate.versionNumber) || 1)),
         instruction: String(candidate.instruction ?? ''),
         title: cleanText(candidate.title, 80),
         targetChars: Math.max(500, Math.min(8000, Math.round(Number(candidate.targetChars) || 3000))),
@@ -306,17 +308,31 @@ function normalizeDraftCandidate(candidate, fallbackDate) {
     };
 }
 
+export function normalizeLongDreamVersions(versions, fallbackDate) {
+    return (Array.isArray(versions) ? versions : []).map((candidate, index) =>
+        normalizeDraftCandidate(candidate && typeof candidate === 'object'
+            ? { versionNumber: index + 1, ...candidate } : candidate, fallbackDate)).filter(Boolean);
+}
+
+export function retainLongDreamDraftCandidate(record, candidateIndex, retained, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (normalized?.draft?.status !== LONG_DREAM_DRAFT_STATUS.REVIEW) throw new Error('当前没有可保留的候选');
+    const index = Number(candidateIndex);
+    if (!Number.isInteger(index) || !normalized.draft.candidates[index]) throw new Error('候选版本不存在');
+    normalized.draft.candidates[index].retained = retained === true;
+    return saveLongDreamDraft(normalized, { ...normalized.draft }, now);
+}
+
 function normalizeDraft(draft, chapterNumber, fallbackDate) {
     if (!draft || typeof draft !== 'object') return null;
     const draftText = String(draft.text || '');
     const draftHtml = String(draft.html || '');
     const instruction = String(draft.instruction || '');
     const candidates = (Array.isArray(draft.candidates) ? draft.candidates : [])
-        .map(candidate => normalizeDraftCandidate(candidate && typeof candidate === 'object'
-            ? { instruction, title: draft.title, targetChars: draft.targetChars, ...candidate }
+        .map((candidate, index) => normalizeDraftCandidate(candidate && typeof candidate === 'object'
+            ? { instruction, title: draft.title, targetChars: draft.targetChars, versionNumber: index + 1, ...candidate }
             : candidate, fallbackDate))
-        .filter(Boolean)
-        .slice(0, LONG_DREAM_MAX_CANDIDATES);
+        .filter(Boolean);
     if (!candidates.length && draft.status === LONG_DREAM_DRAFT_STATUS.REVIEW) {
         const legacyCandidate = normalizeDraftCandidate({
             text: draftText,
@@ -485,6 +501,8 @@ export function normalizeLongDreamRecord(record = {}) {
                 number: index + 1,
                 title: cleanText(chapter?.title, 80) || `第 ${index + 1} 章`,
                 instruction: String(chapter?.instruction || ''),
+                ...(chapter.versionNumber ? { versionNumber: Math.max(1, Math.floor(Number(chapter.versionNumber) || 1)) } : {}),
+                ...(Array.isArray(chapter.retainedVersions) ? { retainedVersions: normalizeLongDreamVersions(chapter.retainedVersions, createdAt) } : {}),
                 text,
                 html,
                 mode: cleanText(chapter?.mode, 40) || 'html',
@@ -610,6 +628,8 @@ export function appendLongDreamChapter(record, source = {}, now = new Date()) {
                 number,
                 title: cleanText(source.title, 80) || `第 ${number} 章`,
                 instruction: String(source.instruction || ''),
+                versionNumber: Math.max(1, Math.floor(Number(source.versionNumber) || 1)),
+                retainedVersions: normalizeLongDreamVersions(source.retainedVersions, createdAt),
                 text,
                 html,
                 mode: cleanText(source.mode, 40) || 'html',
@@ -999,7 +1019,10 @@ export function appendLongDreamDraftCandidate(record, candidate = {}, now = new 
     if (!nextCandidate) throw new Error('待确认候选必须同时包含纯正文与最终 HTML');
     const candidates = Array.isArray(normalized.draft.candidates) ? normalized.draft.candidates : [];
     // Evict only when a complete new candidate is ready; writing checkpoints keep all old candidates.
-    const nextCandidates = [...candidates, nextCandidate].slice(-LONG_DREAM_MAX_CANDIDATES);
+    nextCandidate.versionNumber = Math.max(0, ...candidates.map(item => item.versionNumber)) + 1;
+    const all = [...candidates, nextCandidate];
+    const recent = new Set(all.filter(item => !item.retained).slice(-LONG_DREAM_MAX_CANDIDATES));
+    const nextCandidates = all.filter(item => item.retained || recent.has(item));
     return saveLongDreamDraft(normalized, {
         ...normalized.draft,
         status: LONG_DREAM_DRAFT_STATUS.REVIEW,
@@ -1061,6 +1084,7 @@ export function promoteLongDreamDraft(record, now = new Date()) {
     const withChapter = appendLongDreamChapter(normalized, {
         ...normalized.draft,
         ...candidate,
+        retainedVersions: normalized.draft.candidates.filter((item, index) => item.retained && index !== normalized.draft.selectedCandidateIndex),
     }, now);
     return { ...withChapter, draft: null };
 }

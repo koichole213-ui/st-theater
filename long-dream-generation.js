@@ -212,7 +212,7 @@ export function createLongDreamGenerationController({
             firstChunkAt: cleanText(existingDraftText) ? Number(clock()) : null,
             currentChars: readableCharCount(existingDraftText),
             targetChars: target,
-            candidateNumber: retainedCandidates.length + 1,
+            candidateNumber: Math.max(0, ...retainedCandidates.map((item, index) => item.versionNumber || index + 1)) + 1,
             retainedCandidateCount: retainedCandidates.length,
         };
 

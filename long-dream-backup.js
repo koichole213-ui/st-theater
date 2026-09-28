@@ -1,5 +1,5 @@
 import { normalizeStoryFields } from './long-dream-story-summary.js';
-import { LONG_DREAM_SCHEMA_VERSION, normalizeLongDreamRecord } from './long-dream.js';
+import { LONG_DREAM_SCHEMA_VERSION, normalizeLongDreamRecord, normalizeLongDreamVersions } from './long-dream.js';
 import { normalizeLongDreamMemoryV2 } from './long-dream-memory-model.js';
 
 export const LONG_DREAM_BACKUP_FORMAT = 'st-theater-long-dream';
@@ -91,6 +91,8 @@ function safeChapter(chapter = {}, fallbackDate, index = 0) {
     return {
         id: `chapter-${index + 1}`,
         number: index + 1,
+        versionNumber: Math.max(1, Math.floor(Number(chapter.versionNumber) || 1)),
+        retainedVersions: normalizeLongDreamVersions(chapter.retainedVersions, fallbackDate),
         title: cleanText(chapter?.title, 80) || `第 ${index + 1} 章`,
         instruction: String(chapter?.instruction || ''),
         targetChars: Math.max(500, Math.min(8000, Math.round(Number(chapter?.targetChars) || 3000))),
@@ -104,7 +106,7 @@ function safeChapter(chapter = {}, fallbackDate, index = 0) {
 function safeDraft(draft = null, fallbackDate, nextNumber, { includeReviewDraft = false } = {}) {
     if (!draft || typeof draft !== 'object') return null;
     const hasCandidates = Array.isArray(draft.candidates) && draft.candidates.length > 0;
-    if ((draft.status === 'review' || hasCandidates) && !includeReviewDraft) return null;
+    if ((draft.status === 'review' || hasCandidates) && !includeReviewDraft && !draft.candidates?.some(item => item.retained)) return null;
     const text = String(draft.text || '');
     const html = String(draft.html || '');
     const instruction = String(draft.instruction || '');
@@ -116,6 +118,8 @@ function safeDraft(draft = null, fallbackDate, nextNumber, { includeReviewDraft 
             ? 'rendering'
             : 'writing',
         chapterNumber: nextNumber,
+        candidates: normalizeLongDreamVersions(draft.candidates, fallbackDate),
+        selectedCandidateIndex: Math.max(0, Math.floor(Number(draft.selectedCandidateIndex) || 0)),
         ...(typeof draft.lastRevisionInstruction === 'string' ? { lastRevisionInstruction: draft.lastRevisionInstruction } : {}),
         title: cleanText(draft.title, 80) || `第 ${nextNumber} 章`,
         instruction,

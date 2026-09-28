@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.3.11
+/* 千夜浮梦 · 小剧场生成器 v4.3.12
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -7219,3 +7219,21 @@ body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-
 .theater-reader-collection label { display:flex; align-items:center; gap:8px; max-width:100%; text-align:left; }
 .theater-reader-collection select { min-width:0; max-width:75%; }
 @media(max-width:360px) { .theater-history-six-buttons { gap:6px; } .theater-history-six-buttons .theater-btn { font-size:11px; } .theater-organize-dialog { padding:16px; } .theater-collection-card { padding:13px; } }
+
+/* Approved folder controls: compact, centered, and consistent with history actions. */
+.theater-popup .theater-chapter-organize { gap:7px; padding:10px 0 14px; border-top:1px dashed var(--t-border); margin-top:12px; }
+.theater-popup .theater-collection-actions { gap:7px; padding-top:14px; margin-top:6px; border-top:1px solid var(--t-border); }
+.theater-popup .theater-chapter-organize .theater-btn,.theater-popup .theater-collection-actions .theater-btn { display:flex; align-items:center; justify-content:center; gap:6px; min-height:42px; padding:9px 5px; border:1px solid transparent; border-radius:9px; background:var(--t-surface-2); color:var(--t-fg-soft); box-shadow:none; font-size:12px; font-weight:400; white-space:nowrap; }
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) :is(.theater-chapter-organize,.theater-collection-actions) .theater-btn { background:#f4efe7; color:#897051; }
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-collection-actions [data-collection-action="dissolve"] { background:#f9f2ee; color:#a27d70; }
+.theater-popup :is(.theater-chapter-organize,.theater-collection-actions) .theater-btn:disabled { opacity:.36; cursor:default; }
+.theater-dream-kept-versions { margin-top:16px; padding-top:14px; border-top:1px solid var(--t-border); }
+.theater-dream-kept-versions h4 { font-size:13px; font-weight:500; text-align:left; margin:0 0 10px; }
+.theater-dream-kept-row { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:10px 0; border-bottom:1px solid var(--t-border); }
+.theater-dream-kept-row > span { flex:1; min-width:100px; font-size:12px; text-align:left; }
+.theater-dream-kept-row .ui-btn { min-height:38px; justify-content:center; }
+.theater-dream-retention-note { text-align:left; font-size:12px; line-height:1.8; color:var(--t-fg-mute); }
+#theater-dream-keep-candidate[aria-pressed="true"] { background:var(--t-surface-2); color:var(--t-accent-deep); }
+@media(max-width:420px) { .theater-popup .theater-collection-actions .theater-btn { font-size:11px; gap:4px; } }
+
+.theater-panel[data-panel="long-dream"] .theater-dream-candidate-actions > #theater-dream-discard-draft { grid-column:1 / -1; order:1; justify-content:center; background:transparent; border-color:transparent; color:var(--t-fg-mute); }
