@@ -55,7 +55,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.10';
+const VERSION = '4.3.11';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -8231,8 +8231,9 @@ async function organizeHistory(action, folderId, trigger) {
             name: action === 'new' ? '' : undefined, items: historyCache.filter(item => !owned.has(String(item.id))),
             note: '选择已有剧场，也可以先建空文件夹。翻页或搜索不会清除已选。' });
         if (!choice) return;
-        const id = action === 'new' ? newHistoryKey() : folderId;
+        let id = folderId;
         if (await commitHistoryCollection((items, folders) => {
+            if (action === 'new') id = newHistoryKey();
             if (action === 'new') folders.push({ id, title: choice.title, itemIds: [] });
             // Recheck ownership after the dialog closes; do not steal a concurrently moved work.
             const ownedNow = new Set(folders.flatMap(folder => folder.itemIds));

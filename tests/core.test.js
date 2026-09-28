@@ -6,6 +6,44 @@ import { runInNewContext } from 'node:vm';
 import { previousResults, readingPosition } from '../result-text-edit.js';
 import { bindResultSwipe } from '../result-swipe.js';
 
+test('历史编号兼容缺少 randomUUID 的浏览器，保持 UUID 格式和唯一性', () => {
+    const source = readFileSync(new URL('../history-collections.js', import.meta.url), 'utf8').replaceAll('export ', '');
+    const native = { randomUUID() { assert.equal(this, native); return 'native-id'; } };
+    assert.equal(runInNewContext(`${source}\nnewHistoryKey()`, { crypto: native }), 'native-id');
+    const keys = runInNewContext(`${source}\nArray.from({length: 1000}, () => newHistoryKey())`, {
+        crypto: { getRandomValues: bytes => globalThis.crypto.getRandomValues(bytes) },
+    });
+    assert.equal(new Set(keys).size, 1000);
+    keys.forEach(key => assert.match(key, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/));
+});
+
+test('文件夹保存兼容编号缺失，失败时提示且不改作品标签', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const functions = source.slice(source.indexOf('function queueHistoryWrite('), source.indexOf('function openHistoryReading('));
+    const keys = readFileSync(new URL('../history-collections.js', import.meta.url), 'utf8').replaceAll('export ', '');
+    for (const supported of [true, false]) {
+        const items = [{id:'1',title:'甲',tags:['原标签'],html:'<p>原文</p>'}, {id:'2',title:'乙',tags:[]}];
+        const before = JSON.stringify(items), errors = [];
+        const scope = {
+            crypto: supported ? {getRandomValues: bytes => globalThis.crypto.getRandomValues(bytes)} : {},
+            historyCache: items, historyCollections: [], historyWriteQueue: Promise.resolve(),
+            historyExpanded: new Set(), historyVersionSelection: new Map(), idb: null,
+            settings: {historyTagFilter:['原标签']}, save() {}, refreshHistList() {},
+            document: {querySelector: () => ({})}, toastr: {error: message => errors.push(message)},
+            collectionDialog: async () => ({title:'测试',ids:['1','2']}),
+        };
+        await runInNewContext(`${keys}\n${functions}\norganizeHistory('new')`, scope);
+        assert.equal(JSON.stringify(items), before);
+        assert.deepEqual(scope.settings.historyTagFilter, ['原标签']);
+        assert.equal(scope.historyCollections.length, supported ? 1 : 0);
+        assert.equal(errors.length, supported ? 0 : 1);
+        if (supported) {
+            assert.equal(scope.historyCollections[0].title, '测试');
+            assert.equal(JSON.stringify(scope.historyCollections[0].itemIds), '["1","2"]');
+        } else assert.match(errors[0], /收纳保存失败，原作品保留/);
+    }
+});
+
 test('历史搜索只匹配保存名和文件夹名，保留归属与标签交集', () => {
     const items = [{id:1,title:'初遇',html:'隐藏内容'}, {id:2,title:'雨停',tags:['甲']}, {id:3,title:'独立雨停'}];
     const folders = [{id:'f',title:'雨夜系列',itemIds:['1','2']}, {id:'empty',title:'空文件夹',itemIds:[]}];
@@ -3618,13 +3656,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.3.10 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.3.11 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.3\.10'/);
-    assert.equal(manifest.version, '4.3.10');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.10/);
+    assert.match(source, /const VERSION = '4\.3\.11'/);
+    assert.equal(manifest.version, '4.3.11');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.11/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
