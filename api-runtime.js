@@ -8,7 +8,7 @@ import {
     isContentBlockedErrorMessage,
     isContentBlockedStopReason,
     isHtmlErrorResponse,
-    isMaxTokenLimitError,
+    classifyTokenLimitError,
     isRateLimitErrorMessage,
     maxTokenFallbackSequence,
     resolveMainApiModel,
@@ -133,8 +133,16 @@ function statusError(status, body = '', { phase = 'body', transport = '' } = {})
             code: 'THEATER_RATE_LIMIT', status: numericStatus, phase, transport,
         });
     }
-    if (isMaxTokenLimitError(numericStatus, body)) {
-        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TOKEN_LIMIT, {
+    const tokenLimit = classifyTokenLimitError(numericStatus, body);
+    if (tokenLimit.kind === 'input' || tokenLimit.kind === 'context') {
+        return createDiagnosticError(tokenLimit.kind === 'input'
+            ? REQUEST_DIAGNOSTIC_SIGNAL.INPUT_LIMIT : REQUEST_DIAGNOSTIC_SIGNAL.CONTEXT_LIMIT, {
+            code: tokenLimit.kind === 'input' ? 'THEATER_INPUT_LIMIT' : 'THEATER_CONTEXT_LIMIT',
+            status: numericStatus, phase, transport,
+        });
+    }
+    if (tokenLimit.kind === 'output') {
+        return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.OUTPUT_LIMIT, {
             code: 'THEATER_OUTPUT_LIMIT', status: numericStatus, phase, transport,
         });
     }
@@ -655,7 +663,7 @@ export async function requestCustomApi({
         return finalized;
     };
     try {
-    for (let index = 0; index < candidates.length; index++) {
+    for (let index = 0; index < candidates.length && index < 8; index++) {
         const maxTokens = candidates[index];
         const request = buildApiRequest({
             url,
@@ -724,8 +732,12 @@ export async function requestCustomApi({
         rateLimitRetried = rateLimitResult.retried;
         if (!response.ok) {
             const errorBody = await response.text().catch(() => '');
+            const tokenLimit = classifyTokenLimitError(response.status, errorBody);
+            if (tokenLimit.kind === 'output' && tokenLimit.outputLimit && tokenLimit.outputLimit < maxTokens) {
+                candidates.splice(index + 1, candidates.length, ...maxTokenFallbackSequence(tokenLimit.outputLimit));
+            }
             const nextLimit = candidates[index + 1];
-            if (nextLimit && isMaxTokenLimitError(response.status, errorBody)) {
+            if (nextLimit && index < 7 && tokenLimit.kind === 'output') {
                 log('warn', '模型拒绝单轮输出上限，自动降低后重试', { status: response.status, from: maxTokens, to: nextLimit });
                 onFallback(`custom:max-token ${maxTokens}→${nextLimit}`);
                 continue;

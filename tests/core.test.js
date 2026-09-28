@@ -413,7 +413,7 @@ test('新建名称是空输入和默认提示，留空或空格采用默认，�
 import { createTokenBreakdownEstimator, estimateTokenBreakdown, estimateTokenCount } from '../token-estimator.js';
 import { STORY_RELATION_CONTINUITY_RULE, buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, createFinalRenderPlan, hydrateFinalRenderHtml, recentGenerationRoundsContext } from '../generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection } from '../adaptive-render.js';
-import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, MESSAGE_COMPATIBILITY, applyIndependentOpenAICompatibility, buildApiRequest, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, hasReasoningContent, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
+import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, MESSAGE_COMPATIBILITY, applyIndependentOpenAICompatibility, buildApiRequest, classifyTokenLimitError, contentBlockReason, extractApiErrorMessage, extractResponseMeta, extractStreamText, hasReasoningContent, isContentBlockedErrorMessage, isContentBlockedStopReason, isHtmlErrorResponse, isMaxTokenLimitError, isRateLimitErrorMessage, maxTokenFallbackSequence, normalizeMaxTokens, resolveMainApiModel, retryAfterMilliseconds } from '../api-client.js';
 import { CUSTOM_STREAM_IDLE_TIMEOUT_MS, readNonStreamingResponse, readSSEStream, requestCustomApi, requestMainApi } from '../api-runtime.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, generationTextWithLiveSegment, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from '../generation-job.js';
 import { MAX_CONTINUATION_CONTEXT_CHARS, continuationContextWindow, normalizeContinuationText, readableCharCount } from '../text-counter.js';
@@ -3618,13 +3618,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.3.9 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.3.10 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.3\.9'/);
-    assert.equal(manifest.version, '4.3.9');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.9/);
+    assert.match(source, /const VERSION = '4\.3\.10'/);
+    assert.equal(manifest.version, '4.3.10');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.10/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -4622,6 +4622,112 @@ test('独立 API 的 Token 降档继续生效且每一档都不带预设采样�
     assert.deepEqual(fallbacks, ['custom:max-token 16384→8192']);
 });
 
+test('独立 API 输入与总容量错误只请求一次，不误降输出或泄露错误原文', async () => {
+    const cases = [
+        ['input exceeds maximum context length', 'INPUT_LIMIT'],
+        ['prompt is too long: 210000 tokens > 200000 maximum context length', 'INPUT_LIMIT'],
+        ['输入内容超过允许上限', 'INPUT_LIMIT'],
+        ['input_too_long', 'INPUT_LIMIT'],
+        ['maximum context length is 200000 tokens, requested 220000 tokens (156000 in messages, 64000 in completion)', 'CONTEXT_LIMIT'],
+        ['input tokens + max_tokens exceed the limit of 200000', 'CONTEXT_LIMIT'],
+        ['上下文窗口已满。减少对话历史记录、系统提示或工具', 'CONTEXT_LIMIT'],
+    ];
+    for (const protocol of [API_PROTOCOLS.OPENAI, API_PROTOCOLS.ANTHROPIC]) {
+        for (const [message, kind] of cases) {
+            const bodies = [], fallbacks = [], logs = [];
+            const config = { apiUrl: 'https://example.invalid/v1', apiProtocol: protocol,
+                apiKey: 'synthetic-placeholder', apiModel: 'fixture', maxOutputTokens: 64000 };
+            await assert.rejects(requestCustomApi({ config, shouldStream: true,
+                messages: [{ role: 'user', content: '虚构输入' }],
+                onFallback: value => fallbacks.push(value), log: (...value) => logs.push(value),
+                fetchImpl: async (_url, options) => {
+                    bodies.push(JSON.parse(options.body));
+                    return new Response(JSON.stringify({ error: { message: message + ' PRIVATE_ERROR_MARKER' } }), { status: 400 });
+                },
+            }), error => {
+                assert.equal(error.diagnosticSignal, REQUEST_DIAGNOSTIC_SIGNAL[kind], message);
+                assert.equal(classifyRequestFailure(error).signal, REQUEST_DIAGNOSTIC_SIGNAL[kind]);
+                assert.doesNotMatch(JSON.stringify(error), /PRIVATE_ERROR_MARKER/);
+                assert.match(diagnosticSignalInfo(error.diagnosticSignal).detail, /没有/);
+                return true;
+            });
+            assert.equal(bodies.length, 1, message);
+            assert.equal(bodies[0].max_tokens, 64000);
+            assert.equal(config.maxOutputTokens, 64000);
+            assert.deepEqual(fallbacks, []);
+            assert.doesNotMatch(JSON.stringify(logs), /PRIVATE_ERROR_MARKER/);
+        }
+    }
+});
+
+test('独立 API 按明确输出边界调整，重试保留完整输入与设置', async () => {
+    for (const [message, expected] of [
+        ['max_tokens must be less than or equal to 32768', 32768],
+        ['max_tokens must be less than 32768', 32767],
+        ['maximum output tokens is 32,768', 32768],
+        ['max_tokens: 64000 is too large. Maximum output tokens is 32768', 32768],
+        ['max_tokens: 64000 exceeds the maximum allowed value of 32768', 32768],
+        ['max_tokens must be between 1 and 32768', 32768],
+        ['max_tokens exceeds maximum allowed output tokens of 32768', 32768],
+        ['This model supports at most 32768 completion tokens, max_tokens was 64000', 32768],
+        ['max_tokens exceeds the allowed limit', 16384],
+    ]) {
+        const bodies = [];
+        const config = { apiUrl: 'https://example.invalid/v1', apiProtocol: API_PROTOCOLS.OPENAI,
+            apiModel: 'fixture', maxOutputTokens: 64000 };
+        const result = await requestCustomApi({ config, shouldStream: false,
+            messages: [{ role: 'system', content: '保留设定' }, { role: 'user', content: '<article>保留前文</article>' }],
+            fetchImpl: async (_url, options) => {
+                bodies.push(JSON.parse(options.body));
+                return bodies.length === 1 ? new Response(JSON.stringify({ error: { message } }), { status: 400 })
+                    : new Response(JSON.stringify({ choices: [{ message: { content: '<article>虚构正文</article>' } }] }), { status: 200 });
+            },
+        });
+        assert.deepEqual(bodies.map(body => body.max_tokens), [64000, expected], message);
+        assert.deepEqual(bodies[1].messages, bodies[0].messages);
+        assert.equal(config.maxOutputTokens, 64000);
+        assert.equal(result.text, '<article>虚构正文</article>');
+    }
+});
+
+test('Token 分类不从请求回显取限制，未知错误不触发降档', () => {
+    for (const message of ['model not found', 'max_tokens must be a positive integer', 'requested tokens exceed limit',
+        'max_tokens must be at least 1024; minimum limit is 1024']) {
+        assert.equal(classifyTokenLimitError(400, message).kind, null);
+    }
+    assert.equal(classifyTokenLimitError(401, 'max_tokens exceeds limit').kind, null);
+    assert.equal(classifyTokenLimitError(400, JSON.stringify({ error: { message: 'model not found' },
+        request: { max_tokens: 64000, messages: 'max_tokens must be less than 1000' } })).kind, null);
+});
+
+test('独立 API 输出限制持续变化时最多尝试八次', async () => {
+    const bodies = [];
+    await assert.rejects(requestCustomApi({
+        config: { apiUrl: 'https://example.invalid/v1', apiModel: 'fixture', maxOutputTokens: 64000 },
+        shouldStream: false, messages: [{ role: 'user', content: '虚构内容' }],
+        fetchImpl: async (_url, options) => {
+            const body = JSON.parse(options.body);
+            bodies.push(body);
+            return new Response('max_tokens must be less than or equal to ' + (body.max_tokens - 1), { status: 400 });
+        },
+    }), error => error.diagnosticSignal === REQUEST_DIAGNOSTIC_SIGNAL.OUTPUT_LIMIT);
+    assert.equal(bodies.length, 8);
+    assert.equal(bodies[7].max_tokens, 63993);
+});
+
+test('独立 API 输出下限错误不会反向降低输出重试', async () => {
+    let attempts = 0;
+    await assert.rejects(requestCustomApi({
+        config: { apiUrl: 'https://example.invalid/v1', apiModel: 'fixture', maxOutputTokens: 64000 },
+        shouldStream: false, messages: [{ role: 'user', content: '虚构内容' }],
+        fetchImpl: async () => {
+            attempts++;
+            return new Response('max_tokens is below the minimum limit of 1024', { status: 400 });
+        },
+    }), error => error.diagnosticSignal === 'T-HTTP-400');
+    assert.equal(attempts, 1);
+});
+
 test('正式生成与连接测试都不再读取创作预设采样参数', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     assert.doesNotMatch(source, /cachedPresetGenerationOptions|extractPresetGenerationOptions|generationOptions/);
@@ -5472,7 +5578,7 @@ test('单轮输出默认 16384，低上限模型按标准档位回落', () => {
     assert.equal(normalizeMaxTokens(undefined), 16384);
     assert.deepEqual(maxTokenFallbackSequence(16384), [16384, 8192, 4096, 2048, 1024, 512, 256]);
     assert.equal(isMaxTokenLimitError(400, 'max_tokens must be less than or equal to 8192'), true);
-    assert.equal(isMaxTokenLimitError(400, 'status_code=400,上下文窗口已满。减少对话历史记录、系统提示或工具'), true);
+    assert.equal(isMaxTokenLimitError(400, 'status_code=400,上下文窗口已满。减少对话历史记录、系统提示或工具'), false);
     assert.equal(isMaxTokenLimitError(401, 'invalid api key'), false);
 });
 
@@ -5738,7 +5844,7 @@ test('续写提示携带当前、目标和本轮篇幅，但不携带原始指�
     });
     assert.match(longFinalRound, /仍差约 4400 字/);
     assert.match(longFinalRound, /本轮请新增约 5300 字/);
-    assert.match(longFinalRound, /可以.*自然收束结局/);
+    assert.match(longFinalRound, /按上方剩余篇幅.*再自然收束结局/);
 });
 
 test('5000 字起后续正文轮补完同一份稿件，而不是把前稿当成独立成品续写', () => {
@@ -5956,7 +6062,7 @@ test('旧用户升级时默认开启目标字数自动补写，迁移只执行�
     assert.equal(settings.autoContinue, false);
 });
 
-test('动态收束轮正常完成但不足 90% 时直接结束，不再请求', () => {
+test('动态收束轮正常完成但不足 90% 时继续补写，不把允许收尾当作达标', () => {
     const job = createGenerationJob({ targetChars: 1000, maxRounds: 3, autoContinue: true });
     addGenerationSegment(job, '字'.repeat(500), 'stop');
     assert.equal(shouldContinueJob(job, readableCharCount), true);
@@ -5964,10 +6070,87 @@ test('动态收束轮正常完成但不足 90% 时直接结束，不再请求', 
     job.round++;
     authorizeFinish(job, true);
     addGenerationSegment(job, '字'.repeat(300), 'stop');
-    assert.equal(shouldContinueJob(job, readableCharCount), false);
+    assert.equal(shouldContinueJob(job, readableCharCount), true);
     assert.equal(job.actualChars, 800);
-    assert.equal(job.completedBelowTarget, true);
+    assert.equal(job.completedBelowTarget, false);
     assert.equal(job.round, 2);
+    job.round++;
+    addGenerationSegment(job, '字'.repeat(100), 'stop');
+    assert.equal(shouldContinueJob(job, readableCharCount), false);
+    assert.equal(job.actualChars, 900);
+});
+
+test('真实生成循环的普通续写不在两万目标的一万一千字处提前停止', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const start = source.indexOf("        let firstHtml = '';", source.indexOf('async function runGeneration('));
+    const end = source.indexOf('        let newText =', start);
+    assert.ok(start > 0 && end > start);
+    const loop = source.slice(start, end);
+    for (const scenario of [
+        { enabled: true, max: 5, chunks: [10000, 1000, 3000, 4000], expected: 18000 },
+        { enabled: true, max: 3, chunks: [10000, 1000, 1000], expected: 12000 },
+        { enabled: false, max: 5, chunks: [10000], expected: 10000 },
+    ]) {
+        const requests = [], prompts = [];
+        const job = createGenerationJob({ targetChars: 20000, maxRounds: scenario.enabled ? scenario.max : 1,
+            autoContinue: scenario.enabled, requireTargetCompletion: false });
+        const run = runInNewContext('(async () => {' + loop + '\n})', {
+            currentGenerationJob: job, payload: { systemPrompt: '系统', userPrompt: '续写要求', ctx: {}, generationFoundation: {} },
+            isPlainTextRender: true, stagedMultiRoundMode: false,
+            targetWordCount: 20000, popupAlive: () => false,
+            apiRoute: {}, settings: {}, lastRequestMetrics: {}, abortController: null,
+            onChunk() {}, markCompleted() {}, recordRequestMetrics() {}, runtimeLog() {},
+            requestConfiguredGenerationApi: async options => {
+                const size = scenario.chunks[requests.length];
+                assert.ok(size, '不得超出达标或总轮数边界继续请求');
+                requests.push(options);
+                return { text: '字'.repeat(size), stopReason: 'stop' };
+            },
+            htmlToPlainText: html => html.replace(/<[^>]*>/g, ''),
+            readableCharCount, addGenerationSegment, shouldContinueJob,
+            shouldAuthorizeFinishRound, authorizeFinish, buildContinuationInstruction,
+            continuationRoundHistory, recentGenerationRoundsContext,
+            prepareContinuationContext: text => text,
+            continuationRun: { source: { rounds: ['已有前情'.repeat(10000)] } },
+            buildGenerationContinuationRoundPayload: ({ instruction }) => {
+                prompts.push(instruction);
+                return { systemPrompt: '系统', userPrompt: instruction, ctx: {} };
+            },
+            streamRenderer: { reset() {} }, DOMException,
+        });
+        await run();
+        assert.equal(requests.length, scenario.chunks.length);
+        assert.equal(readableCharCount(job.segments.join('\n\n')), scenario.expected);
+        assert.equal(job.completedBelowTarget, false);
+        for (const prompt of prompts) {
+            assert.match(prompt, /允许收尾不代表可以忽略篇幅要求/);
+            assert.doesNotMatch(prompt, /如果故事已经完成，就直接结束|本轮继续推进有效情节/);
+            assert.match(prompt, /不得撤销已经发生的结局/);
+        }
+        if (prompts.length > 1) {
+            assert.match(prompts[1], /当前可读正文约 11000 字/);
+            assert.doesNotMatch(prompts[1], /已有前情/);
+            assert.ok(prompts[1].includes('字'.repeat(10000) + '\n\n' + '字'.repeat(1000)));
+        }
+    }
+});
+
+test('达到自动补写总轮数但字数不足时，结果提示明确原因且保留续写入口', () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const start = source.indexOf('function updateLengthHint(');
+    const end = source.indexOf('function continuationSessionHTML(', start);
+    const hint = { length: 1, value: '', hide() { return this; }, empty() { return this; },
+        text(value) { this.value = value; return this; }, toggleClass() { return this; }, show() { return this; } };
+    const update = runInNewContext(source.slice(start, end) + '\nupdateLengthHint', {
+        $: () => hint, targetCompletionChars,
+    });
+    update(20000, 12000, { maxRoundsReached: true });
+    assert.match(hint.value, /已达到自动补写总轮数上限，仍未达到目标/);
+    assert.match(hint.value, /已保留正文.*续写/);
+    update(20000, 18000, { maxRoundsReached: true });
+    assert.doesNotMatch(hint.value, /仍未达到目标/);
+    update(20000, 12000);
+    assert.doesNotMatch(hint.value, /总轮数上限/);
 });
 
 test('动态收束轮若被 Token 截断，仍可在轮数范围内继续', () => {
@@ -6088,11 +6271,11 @@ test('最大轮数较多时一旦进入最终补完，后续轮也不能退回�
     assert.doesNotMatch(prompt, /继续完成作品中段/);
 });
 
-test('收束状态只在同一稿件补完模式保持单向，普通短篇仍按每轮重新判断', () => {
+test('普通续写和同一稿件补完进入收尾后均不退回中段', () => {
     const ordinaryJob = createGenerationJob({ targetChars: 4000, maxRounds: 3, autoContinue: true });
     authorizeFinish(ordinaryJob, true);
     authorizeFinish(ordinaryJob, false);
-    assert.equal(ordinaryJob.finishAuthorized, false);
+    assert.equal(ordinaryJob.finishAuthorized, true);
 
     const manuscriptJob = createGenerationJob({
         targetChars: 5000,

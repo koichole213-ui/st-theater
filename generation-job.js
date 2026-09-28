@@ -52,10 +52,7 @@ export function shouldContinueJob(job, countChars) {
         if (job.requireTargetCompletion && !job.finishAuthorized && job.round < job.maxRounds) return true;
         return false;
     }
-    if (!job.requireTargetCompletion && job.finishAuthorized && job.stopReason !== 'length') {
-        job.completedBelowTarget = true;
-        return false;
-    }
+    // Permission to conclude the plot is not proof that the length target was met.
     return job.round < job.maxRounds;
 }
 
@@ -69,9 +66,8 @@ export function shouldAuthorizeFinishRound(job, countChars) {
 }
 
 export function authorizeFinish(job, allowed = true) {
-    job.finishAuthorized = job.requireTargetCompletion
-        ? (job.finishAuthorized || !!allowed)
-        : !!allowed;
+    // Once the story is concluding, extra rounds must not reopen its middle.
+    job.finishAuthorized = job.finishAuthorized || !!allowed;
     return job;
 }
 

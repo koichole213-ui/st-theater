@@ -55,7 +55,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.9';
+const VERSION = '4.3.10';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -8953,7 +8953,7 @@ async function refreshTokenEstimate() {
 
 const scheduleTokenEstimate = debounce(refreshTokenEstimate, 220);
 
-function updateLengthHint(target, actual, { completedBelowTarget = false } = {}) {
+function updateLengthHint(target, actual, { completedBelowTarget = false, maxRoundsReached = false } = {}) {
     const $hint = $('#theater-length-hint');
     if (!$hint.length) return;
     if (!target || !actual) {
@@ -8961,7 +8961,9 @@ function updateLengthHint(target, actual, { completedBelowTarget = false } = {})
         return;
     }
     const enough = actual >= targetCompletionChars(target);
-    const text = completedBelowTarget
+    const text = maxRoundsReached && !enough
+        ? `本次约 ${actual} 字（指令目标约 ${target} 字）。已达到自动补写总轮数上限，仍未达到目标；已保留正文，可点击下方“续写”。`
+        : completedBelowTarget
         ? `已完成，约 ${actual} 字，低于目标 ${target} 字`
         : enough
         ? `本次约 ${actual} 字（指令目标约 ${target} 字）`
@@ -10254,6 +10256,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         }
         updateLengthHint(targetWordCount, currentGenerationJob.actualChars, {
             completedBelowTarget: currentGenerationJob.completedBelowTarget,
+            maxRoundsReached: currentGenerationJob.autoContinue && currentGenerationJob.round >= currentGenerationJob.maxRounds,
         });
         const continuationRounds = continuationRoundHistory(continuationRun?.source.rounds, currentGenerationJob.segments.map(prepareContinuationContext));
         retainedResultSource = null;

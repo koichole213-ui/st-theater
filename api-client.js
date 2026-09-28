@@ -151,10 +151,45 @@ export function maxTokenFallbackSequence(value) {
 }
 
 export function isMaxTokenLimitError(status, body = '') {
-    if (![400, 413, 422].includes(Number(status))) return false;
-    const text = String(body || '');
-    return /max[_\s-]?tokens|max(?:imum)?\s+output\s+tokens|maximum\s+context\s+length|context[_\s-]?length|requested\s+tokens|上下文(?:窗口|长度)?|对话历史|系统提示/i.test(text)
-        && /too\s+(?:large|high|many)|exceed|limit|maximum|at\s+most|less\s+than|must\s+be|<=|not\s+support|已满|超出|过长|减少|限制|上限/i.test(text);
+    return classifyTokenLimitError(status, body).kind === 'output';
+}
+
+// Context failures must never authorize silently reducing the output budget.
+// Read only error fields from JSON, not echoed request data or model content.
+export function classifyTokenLimitError(status, body = '') {
+    const unknown = { kind: null, outputLimit: null };
+    if (![400, 413, 422].includes(Number(status))) return unknown;
+    let text = String(body || '');
+    try {
+        const json = JSON.parse(text);
+        const error = json?.error;
+        text = [typeof error === 'string' ? error : error?.message, error?.code, error?.type,
+            json?.message, json?.code].filter(value => typeof value === 'string').join(' ');
+    } catch { /* Plain-text errors are supported too. */ }
+    text = text.replaceAll('_', ' ');
+    const exceeded = /too\s+(?:long|large|high|many)|exceed|limit|maximum|at\s+most|less\s+than|between\s+\d+\s+and\s+\d+|<=|已满|超出|超过|过长|减少|限制|上限/i;
+    if (!exceeded.test(text)) return unknown;
+    const context = /context[_\s-]*(?:length|window)|上下文|对话历史|系统提示/i.test(text);
+    const input = /\b(?:input|prompt)[_\s-]*(?:tokens?|length)?\b|输入/i.test(text);
+    const output = /max[_\s-]?(?:completion[_\s-]?)?tokens|(?:output|completion)[_\s-]*tokens?|输出/i.test(text);
+    const combined = /\+|sum\s+of|combined|total|in\s+messages|合计|总|加上/i.test(text);
+    if ((context && output) || (input && output && combined)) return { kind: 'context', outputLimit: null };
+    if (input && /(?:input|prompt)[\s\S]{0,70}(?:too\s+long|exceed|too\s+many)|输入[\s\S]{0,40}(?:过长|超出|超过)/i.test(text)) {
+        return { kind: 'input', outputLimit: null };
+    }
+    if (context) return { kind: 'context', outputLimit: null };
+    if (input) return { kind: 'input', outputLimit: null };
+    if (!output) return unknown;
+    // A lower-bound/typing error cannot be fixed by reducing the output budget.
+    if (/at\s+least|minimum|greater\s+than|>=|正整数|最小|至少|不小于/i.test(text)) return unknown;
+    // Bind the number to an explicit output upper bound, never a requested value.
+    const bound = text.match(/(?:max[_\s-]?(?:completion[_\s-]?)?tokens|(?:maximum\s+)?output[_\s-]*tokens?|输出(?:\s*token)?)\s*['"`]?\s*(?:(?:must\s+be|is|are)\s+)?(less\s+than\s+or\s+equal\s+to|less\s+than|at\s+most|<=|cannot\s+exceed|must\s+not\s+exceed|maximum(?:\s+is)?|上限(?:为|是)?|不能超过|不得超过|最大(?:为|是)?)\s*([0-9][0-9,]*)(?![0-9.])/i);
+    const namedMaximum = text.match(/(?:maximum\s+(?:(?:allowed\s+)?(?:output|completion)\s+tokens?|allowed\s+value)|输出(?:\s*token)?上限)\s*(is|of|为|是|:)\s*([0-9][0-9,]*)(?![0-9.])/i);
+    const precedingMaximum = text.match(/(at\s+most)\s+([0-9][0-9,]*)(?![0-9.])\s+(?:output|completion)\s+tokens?/i);
+    const rangeMaximum = text.match(/max\s+(?:completion\s+)?tokens\s+(?:must\s+be\s+)?(between\s+[0-9,]+\s+and)\s+([0-9][0-9,]*)(?![0-9.])/i);
+    const explicitBound = bound || namedMaximum || precedingMaximum || rangeMaximum;
+    const parsed = explicitBound ? Number(explicitBound[2].replaceAll(',', '')) - (/^less\s+than$/i.test(explicitBound[1]) ? 1 : 0) : null;
+    return { kind: 'output', outputLimit: Number.isSafeInteger(parsed) && parsed >= 256 ? parsed : null };
 }
 
 export function retryAfterMilliseconds(value, now = Date.now()) {
