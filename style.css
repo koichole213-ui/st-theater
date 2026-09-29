@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.3.14
+/* 千夜浮梦 · 小剧场生成器 v4.4.0
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -7241,4 +7241,34 @@ body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-
 #theater-dream-keep-candidate[aria-pressed="true"] { background:var(--t-surface-2); color:var(--t-accent-deep); }
 @media(max-width:420px) { .theater-popup .theater-collection-actions .theater-btn { font-size:11px; gap:4px; } }
 
-.theater-panel[data-panel="long-dream"] .theater-dream-candidate-actions > #theater-dream-discard-draft { grid-column:1 / -1; order:1; justify-content:center; background:transparent; border-color:transparent; color:var(--t-fg-mute); }
+/* 4.4: approved compact candidate choices and explicit summary confirmation. */
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice { margin-top:0; padding:14px; border:1px solid var(--t-border); border-radius:13px; background:var(--t-surface-1); }
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-review-actions { width:100%; margin:0; grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr); gap:10px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice .ui-btn { min-height:44px; height:auto; padding:10px 12px; border-radius:10px; line-height:1.35; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-retention-note { margin:10px 0 0; text-align:left; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-kept-versions { margin-top:14px; padding-top:12px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice h4 { display:flex; justify-content:space-between; align-items:center; gap:10px; margin:0 0 3px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice h4 small { padding:2px 7px; border:1px solid var(--t-border); border-radius:5px; color:var(--t-fg-mute); font-size:11px; font-weight:400; text-align:left; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-kept-row { padding:9px 0 0; border:0; flex-wrap:nowrap; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-kept-row > span { min-width:0; font-size:14px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-kept-current { display:inline-block; padding:3px 5px; margin-left:7px; border-radius:4px; background:var(--t-surface-2); color:var(--t-accent-deep); font-size:10px; text-align:left; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-kept-row .ui-btn { min-height:36px; padding:7px 4px 7px 12px; background:transparent; border-color:transparent; box-shadow:none; color:var(--t-accent-deep); font-size:13px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review .theater-dream-candidate-actions { width:100%; margin:0; gap:9px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review .theater-dream-candidate-actions .ui-btn { min-height:42px; height:auto; padding:10px 8px; border-radius:10px; line-height:1.35; }
+.theater-panel[data-panel="long-dream"] .theater-dream-summary-blocked-reason { margin:12px 0; padding:9px 11px; border-radius:7px; background:var(--t-surface-2); color:var(--t-fg-soft); font-size:12px; line-height:1.75; text-align:left; }
+.theater-panel[data-panel="long-dream"] :is(.theater-dream-summary-blocked-reason,.theater-dream-summary-note)[hidden] { display:none; }
+.theater-panel[data-panel="long-dream"] .theater-dream-summary-version { border:1px solid var(--t-border); border-radius:10px; padding:0 12px; margin-top:8px; background:var(--t-surface-1); }
+.theater-panel[data-panel="long-dream"] .theater-dream-summary-version-row { min-height:48px; padding:10px 0; }
+.theater-panel[data-panel="long-dream"] .theater-dream-summary-version-preview { padding:0 0 12px; margin:0; background:transparent; }
+.theater-panel[data-panel="long-dream"] .theater-dream-summary-version-actions { margin-top:10px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-summary-version-actions > button { min-height:38px; border:1px solid var(--t-border); background:var(--t-surface-1); color:var(--t-accent-deep); }
+.theater-popup.theater-dream-summary-confirmation { flex:0 0 auto; min-height:0; padding:22px; border-radius:0; }
+.theater-popup.theater-dream-summary-confirmation h3 { margin:0 0 15px; font-size:20px; font-weight:500; text-align:left; }
+.theater-popup.theater-dream-summary-confirmation p { margin:8px 0 16px; color:var(--t-fg-soft); font-size:13px; line-height:1.9; text-align:left; }
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-summary-confirmation[data-skin]) { display:flex !important; flex-direction:column !important; width:min(400px,calc(100vw - 28px)) !important; min-width:0 !important; max-width:calc(100vw - 28px) !important; height:auto !important; min-height:0 !important; max-height:calc(100dvh - 28px) !important; border-radius:16px !important; }
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-summary-confirmation[data-skin]) .popup-content { overflow-y:auto !important; }
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-summary-confirmation[data-skin]) :is(.popup-controls,.popup-buttons) { display:grid !important; grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important; gap:10px !important; padding:12px 22px 22px !important; flex:0 0 auto !important; }
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-summary-confirmation[data-skin]) :is(.popup-button-ok,.popup-button-cancel) { width:100% !important; min-width:0 !important; min-height:44px !important; height:auto !important; margin:0 !important; padding:10px 8px !important; border-radius:10px !important; font-size:14px !important; line-height:1.4 !important; }
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-summary-confirmation[data-skin]) .popup-button-cancel { grid-column:1; grid-row:1; }
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-summary-confirmation[data-skin]) .popup-button-ok { grid-column:2; grid-row:1; }
+@media(max-width:420px) { .theater-panel[data-panel="long-dream"] .theater-dream-review-choice { padding:12px; } .theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-review-actions .ui-btn { padding:10px 8px; font-size:13px; } }

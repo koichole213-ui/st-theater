@@ -1,3 +1,5 @@
+import { summaryUnavailableReason } from '../long-dream-summary-ui.js';
+
 import { retainLongDreamDraftCandidate, appendLongDreamDraftCandidate } from '../long-dream.js';
 import { remapHistorySource, historyOrder, orderedHistory, collectionPage, historyEntries, normalizeCollections, collectionChapters, moveCollectionItems, continuationHistoryMetadata, planHistorySave, remapHistoryImport } from '../history-collections.js';
 import test from 'node:test';
@@ -3713,13 +3715,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.3.14 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.0 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.3\.14'/);
-    assert.equal(manifest.version, '4.3.14');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.14/);
+    assert.match(source, /const VERSION = '4\.4\.0'/);
+    assert.equal(manifest.version, '4.4.0');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.0/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -3741,7 +3743,7 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.doesNotMatch(creation, /dream-hero-container|data-dream-back|返回作品/);
     assert.doesNotMatch(definition, /dream-hero-container|DREAM CANON/);
     assert.match(continuation, /data-dream-continuation-stage="review"/);
-    assert.match(continuation, /放弃重写/);
+    assert.doesNotMatch(continuation, /放弃重写/);
     assert.match(continuation, /用这版继续/);
     assert.match(continuation, /data-dream-continuation-bottom="memory"/);
     assert.ok(continuation.indexOf('data-dream-continuation-bottom="memory"') > continuation.indexOf('data-dream-continuation-stage="review"'));
@@ -7024,7 +7026,7 @@ test('概要点击立即反馈、去重、超时解锁和配置异常提示', as
     const notices = [];
     let handler, calls = 0, saves = 0;
     const scope = { activeLongDreamId: record.id, longDreamCache: [record], refreshingLongDreamSummaries: new Set(),
-        LONG_DREAM_MEMORY_STATUS, $: () => button, normalizeMaxTokens: v => v, runtimeLog() {},
+        LONG_DREAM_MEMORY_STATUS, summaryUnavailableReason, $: () => button, normalizeMaxTokens: v => v, runtimeLog() {},
         selectedLongDreamMemoryApiPreset: () => ({ maxOutputTokens: 4096 }),
         refreshLongDreamSummary: options => refreshLongDreamSummary({ ...options, timeoutMs: 10 }),
         requestCustomApi: ({ signal }) => { calls++; assert.equal(signal instanceof AbortSignal, true); return new Promise(() => {}); },
@@ -7033,6 +7035,7 @@ test('概要点击立即反馈、去重、超时解锁和配置异常提示', as
         diagnosticSignalInfo: () => ({ title: '网络连接没有完成' }),
         $d: { off() { return this; }, on(type, selector, callback) { assert.equal(selector, '[data-dream-summary-refresh]'); handler=callback; return this; } },
     };
+    scope.confirmLongDreamSummaryAction = id => scope.refreshLongDreamSummaryNow(id);
     runInNewContext(functions + '\n' + binding, scope);
     const pending = handler();
     assert.equal(button.label, '正在更新…');
@@ -7688,8 +7691,8 @@ test('概要刷新成功及失败均同步恢复按钮，保留失效正文和�
         {id:'changed',text:'正文已变',chapterNumber:1,sources:['wrong'],storyEntries:[]},
     ]};
     const buttons=['valid','invalid','changed'].map(id=>({disabled:true,getAttribute:()=>id}));
-    const refresh={prop(){return this},attr(){return this},text(){return this}};
-    const scope={activeLongDreamId:dream.id,longDreamCache:[dream],refreshingLongDreamSummaries:new Set(),LONG_DREAM_MEMORY_STATUS,restoreStorySummary,
+    const refresh={prop(){return this},attr(){return this},text(){return this},each(){return this}};
+    const scope={activeLongDreamId:dream.id,longDreamCache:[dream],refreshingLongDreamSummaries:new Set(),LONG_DREAM_MEMORY_STATUS,restoreStorySummary,summaryUnavailableReason,
         $:selector=>selector==='[data-dream-summary-restore]'?{each(fn){buttons.forEach(b=>fn.call(b));}}:refresh,
         selectedLongDreamMemoryApiPreset:()=>({}),refreshLongDreamSummary:async()=>dream,rememberLongDreamComposerDraft(){},
         renderLongDreamPanel(){buttons.forEach(b=>b.disabled=scope.refreshingLongDreamSummaries.has(String(dream.id)));},
@@ -7704,4 +7707,58 @@ test('概要刷新成功及失败均同步恢复按钮，保留失效正文和�
         assert.ok(buttons.every(b=>b.disabled));dream.memory=original;
     }
     scope.activeLongDreamId='other';scope.syncLongDreamSummaryButton(String(dream.id));assert.ok(buttons.every(b=>b.disabled));
+});
+
+test('手动概要确认取消不执行，确认后重新检查作品和版本，避免旧弹窗覆盖', async () => {
+    const { saveStorySummary, restoreStorySummary, chapterSummarySources } = await import('../long-dream-story-summary.js');
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const handler = source.match(/async function confirmLongDreamSummaryAction\([^]*?(?=\nfunction syncLongDreamSummaryButton)/)[0];
+    for (const mode of ['cancel', 'update', 'restore', 'changed', 'switched', 'busy', 'blocked', 'failed-save']) {
+        let dream = createLongDreamRecord({ source: { text: '虚构第一章', html: '<p>虚构第一章</p>' } });
+        dream = applyLongDreamMemoryPatch(dream, { operations: [] }, 1);
+        dream = saveStorySummary(dream, [{ chapterNumber: 1, text: '旧概要', source: chapterSummarySources(dream.chapters)[0] }]);
+        const id = dream.memory.summaryVersions.at(-1).id;
+        dream = { ...dream, memory: { ...dream.memory, currentState: '当前概要' } };
+        const before = JSON.stringify(dream);
+        let prompts = 0, requests = 0, saves = 0, renders = 0, saved;
+        const scope = { activeLongDreamId: dream.id, longDreamCache: [dream], settings: {},
+            confirmingLongDreamSummaries: new Set(), refreshingLongDreamSummaries: new Set(),
+            summaryUnavailableReason, restoreStorySummary, esc: String,
+            refreshLongDreamSummaryNow: async () => { requests++; },
+            longDreamPut: async value => { saves++; saved = value; return mode === 'failed-save' ? null : value; },
+            rememberLongDreamComposerDraft() {}, renderLongDreamPanel() { renders++; },
+            toastr: { info() {}, warning() {}, success() {} },
+            SillyTavern: { getContext: () => ({ POPUP_TYPE: { CONFIRM: 1 }, Popup: class {
+                constructor(html, type, value, options) { assert.match(html, /取消|重新整理|恢复到/); assert.equal(options.cancelButton, '取消'); }
+                async show() {
+                    prompts++;
+                    if (mode === 'changed') scope.longDreamCache = [{ ...dream, updatedAt: 'new' }];
+                    if (mode === 'switched') scope.activeLongDreamId = 'other';
+                    if (mode === 'busy') scope.refreshingLongDreamSummaries.add(String(dream.id));
+                    return mode !== 'cancel';
+                }
+            } }) },
+        };
+        if (mode === 'blocked') dream.memory.pendingChapterNumbers = [1];
+        runInNewContext(handler, scope);
+        await scope.confirmLongDreamSummaryAction(dream.id, mode === 'update' ? null : id);
+        assert.equal(requests, mode === 'update' ? 1 : 0, mode);
+        assert.equal(saves, ['restore', 'failed-save'].includes(mode) ? 1 : 0, mode);
+        assert.equal(renders, mode === 'restore' ? 1 : 0, mode);
+        assert.equal(prompts, mode === 'blocked' ? 0 : 1, mode);
+        assert.equal(scope.confirmingLongDreamSummaries.size, 0);
+        if (mode === 'restore') { assert.equal(saved.memory.currentState, dream.memory.summaryVersions.at(-1).text); assert.deepEqual(saved.chapters, dream.chapters); }
+        if (mode !== 'blocked') assert.equal(JSON.stringify(dream), before);
+    }
+});
+
+test('概要禁用说明与原恢复保护一致，不把正文生成本身当禁用条件', () => {
+    const dream = synopsisFixture(1);
+    assert.equal(summaryUnavailableReason(dream), '');
+    assert.match(summaryUnavailableReason(dream, true), /概要正在更新/);
+    for (const [patch, expected] of [[{ status: 'weaving' }, /正在织录/], [{ pendingChapterNumbers: [2] }, /待织录/], [{ pendingConflicts: [{}] }, /冲突/]]) {
+        assert.match(summaryUnavailableReason({ ...dream, memory: { ...dream.memory, ...patch } }), expected);
+    }
+    assert.match(summaryUnavailableReason(dream, false, 'missing'), /不能恢复/);
+    assert.match(summaryUnavailableReason({ ...dream, memory: { ...dream.memory, summaryVersions: [{ id: 'old', canRestore: false }] } }, false, 'old'), /仅供查看/);
 });

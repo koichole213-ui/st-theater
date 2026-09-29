@@ -4,6 +4,7 @@ import { bindResultSwipe, animateResultPage } from './result-swipe.js';
 import { createHtmlTextEdit, previousResults } from './result-text-edit.js';
 import { readerPaneHTML, mountResultReader } from './result-reader.js';
 import { restoreStorySummary } from './long-dream-story-summary.js';
+import { summaryUnavailableReason } from './long-dream-summary-ui.js';
 import { refreshLongDreamSummary } from './long-dream-summary.js';
 // 千夜浮梦 · 小剧场生成器 — by 禾禾 & 麓克
 // Icon: "magic-lamp" by Lorc, game-icons.net, CC BY 3.0 — https://game-icons.net/1x1/lorc/magic-lamp.html
@@ -55,7 +56,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.14';
+const VERSION = '4.4.0';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -3099,7 +3100,7 @@ function longDreamActiveMemoryCount(dream) {
     return v2 + legacy;
 }
 
-function longDreamSummaryHistoryHTML(memory, blocked = false) {
+function longDreamSummaryHistoryHTML(memory, blocked = false, dream = null) {
     const versions = (memory.summaryVersions || []).slice().reverse();
     if (!versions.length) return '';
     return `<details class="theater-dream-summary-history">
@@ -3107,6 +3108,8 @@ function longDreamSummaryHistoryHTML(memory, blocked = false) {
         <p class="theater-dream-summary-note">可查看并恢复旧版，仅切换概要，不回退正文或人物关系。</p>
         ${versions.map((version, i) => {
             const date = longDreamDate(version.createdAt);
+            const reason = dream ? summaryUnavailableReason(dream, refreshingLongDreamSummaries.has(String(dream.id)), version.id)
+                : version.canRestore === false ? '用户决定已改变，这版仅供查看。' : blocked ? '请先完成概要更新、织录和冲突确认。' : '';
             return `<article class="theater-dream-summary-version">
                 <button type="button" class="theater-dream-summary-version-row" data-dream-summary-preview aria-expanded="false">
                     <span class="theater-dream-summary-version-info"><span class="theater-dream-summary-version-title">${i === 0 ? '最新保存' : i === 1 ? '上一版' : `较早 ${i} 版`}${i === 0 ? '<small class="theater-dream-summary-version-tag">最新</small>' : ''}</span><small class="theater-dream-summary-version-meta">截至第 ${version.chapterNumber} 章${date ? ` · ${esc(date)}` : ''}</small></span>
@@ -3114,8 +3117,8 @@ function longDreamSummaryHistoryHTML(memory, blocked = false) {
                 </button>
                 <div class="theater-dream-summary-version-preview" hidden>
                     <div class="theater-dream-summary-version-text">${esc(version.text)}</div>
-                    ${version.canRestore === false ? '<p class="theater-dream-summary-note">用户决定已改变，这版仅供查看。</p>' : ''}
-                    <div class="theater-dream-summary-version-actions"><button type="button" data-dream-summary-restore="${esc(version.id)}" ${blocked || version.canRestore === false ? 'disabled' : ''}>${version.canRestore === false ? '仅供查看' : '恢复这版概要'}</button></div>
+                    <p class="theater-dream-summary-note" data-dream-summary-version-reason="${esc(version.id)}" ${reason ? '' : 'hidden'}>${esc(reason)}</p>
+                    <div class="theater-dream-summary-version-actions"><button type="button" data-dream-summary-restore="${esc(version.id)}" ${blocked || reason ? 'disabled' : ''}>${version.canRestore === false ? '仅供查看' : '恢复这版概要'}</button></div>
                 </div>
             </article>`;
         }).join('')}
@@ -3294,7 +3297,8 @@ function longDreamMemoryCardsHTML(dream) {
             <div class="theater-dream-memory-current-state-readonly ${currentState ? 'is-clamped' : ''}">${currentState ? esc(currentState) : '尚未形成全篇概要。'}</div>
             <div class="theater-dream-summary-actions"><button type="button" data-dream-summary-refresh aria-busy="${refreshingLongDreamSummaries.has(String(dream.id))}" ${refreshingLongDreamSummaries.has(String(dream.id)) || memoryLocked || conflicts.length || memory.pendingChapterNumbers?.length ? 'disabled' : ''}>${refreshingLongDreamSummaries.has(String(dream.id)) ? '正在更新…' : '更新概要'}</button></div>
             ${memory.summaryThroughChapter ? `<small class="theater-dream-summary-note">当前概要截至第 ${memory.summaryThroughChapter} 章 · 正文共 ${dream.chapters.length} 章</small>` : ''}
-            ${longDreamSummaryHistoryHTML(memory, memoryLocked || !!conflicts.length || !!memory.pendingChapterNumbers?.length || refreshingLongDreamSummaries.has(String(dream.id)))}
+            <p class="theater-dream-summary-blocked-reason" data-dream-summary-blocked-reason ${summaryUnavailableReason(dream, refreshingLongDreamSummaries.has(String(dream.id))) ? '' : 'hidden'}>${esc(summaryUnavailableReason(dream, refreshingLongDreamSummaries.has(String(dream.id))))}</p>
+            ${longDreamSummaryHistoryHTML(memory, memoryLocked || !!conflicts.length || !!memory.pendingChapterNumbers?.length || refreshingLongDreamSummaries.has(String(dream.id)), dream)}
         </div>
         ${conflicts.length ? `<section class="theater-dream-memory-conflicts"><h4>有 ${conflicts.length} 处需要你决定</h4>${conflicts.map(conflict => {
             const details = longDreamMemoryConflictDetails(memory, conflict);
@@ -3692,11 +3696,10 @@ function longDreamDetailHTML(dream) {
             <p class="theater-dream-review-count">第 ${state.draftCandidates[state.selectedCandidateIndex]?.versionNumber || state.selectedCandidateIndex + 1} 版 · 正文约 ${readableCharCount(state.draft.text || '')} 字</p>
         </div>
         <div class="review-canvas theater-dream-review-canvas"><iframe id="theater-dream-review-frame" sandbox="" title="待确认长梦章节"></iframe><div id="theater-dream-review-fallback" class="theater-dream-review-fallback" hidden></div></div>
-        <div class="theater-dream-review-actions"><button type="button" id="theater-dream-keep-candidate" class="ui-btn ui-btn-sm" aria-pressed="${state.draftCandidates[state.selectedCandidateIndex]?.retained === true}"><i class="fa-${state.draftCandidates[state.selectedCandidateIndex]?.retained ? 'solid' : 'regular'} fa-heart"></i><span>${state.draftCandidates[state.selectedCandidateIndex]?.retained ? '已保留' : '保留这版'}</span></button><button type="button" id="theater-dream-confirm-chapter" class="ui-btn ui-btn-sm ui-btn-primary"><i class="fa-solid fa-check"></i><span>用这版继续</span></button></div>
-        <p class="theater-dream-retention-note">喜欢的版本可以分别保留。选定继续的版本后，其他已保留版本仍可在本章查看。</p>
-        ${longDreamKeptVersionsHTML(dream)}
+        <div class="theater-dream-review-choice"><div class="theater-dream-review-actions"><button type="button" id="theater-dream-keep-candidate" class="ui-btn ui-btn-sm" aria-pressed="${state.draftCandidates[state.selectedCandidateIndex]?.retained === true}"><i class="fa-${state.draftCandidates[state.selectedCandidateIndex]?.retained ? 'solid' : 'regular'} fa-heart"></i><span>${state.draftCandidates[state.selectedCandidateIndex]?.retained ? '已保留' : '保留这版'}</span></button><button type="button" id="theater-dream-confirm-chapter" class="ui-btn ui-btn-sm ui-btn-primary"><i class="fa-solid fa-check"></i><span>用这版继续</span></button></div>
+        <p class="theater-dream-retention-note">其他已保留版本也会收入本章，可随时回看。</p>
+        ${longDreamKeptVersionsHTML(dream)}</div>
         <div class="theater-dream-candidate-actions">
-        <button type="button" id="theater-dream-discard-draft" class="ui-btn ui-btn-sm"><span>放弃重写</span></button>
         <button type="button" id="theater-dream-regenerate-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="按原要求再生成一版；成功后未保留候选仅留最新三版，已保留版本不被替换"><i class="fa-solid fa-plus"></i><span>再来一版</span></button>
         <button type="button" id="theater-dream-revise-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="修改要求再生成；成功后未保留候选仅留最新三版，已保留版本不被替换"><i class="fa-solid fa-pen-to-square"></i><span>改要求重写</span></button>
         </div>
@@ -3711,8 +3714,8 @@ function longDreamKeptVersionsHTML(dream, chapter = null) {
     const candidates = chapter ? [chapter, ...(chapter.retainedVersions || [])] : (dream.draft?.candidates || []);
     const rows = candidates.map((item, index) => ({ item, index })).filter(({ item }) => chapter || item.retained);
     if (chapter && candidates.length < 2) return '';
-    return `<section class="theater-dream-kept-versions"><h4>${chapter ? '本章版本' : '已保留的版本'}</h4>
-        ${rows.length ? rows.map(({ item, index }) => `<div class="theater-dream-kept-row"><span>第 ${item.versionNumber || index + 1} 版${chapter && index === 0 ? ' · 续写采用' : ''}</span>
+    return `<section class="theater-dream-kept-versions"><h4>${chapter ? '本章版本' : '已保留的版本'}${chapter ? '' : `<small>${rows.length} 版</small>`}</h4>
+        ${rows.length ? rows.map(({ item, index }) => `<div class="theater-dream-kept-row"><span>第 ${item.versionNumber || index + 1} 版${chapter && index === 0 ? ' · 续写采用' : ''}${!chapter && index === dream.draft.selectedCandidateIndex ? '<small class="theater-dream-kept-current">当前查看</small>' : ''}</span>
             <button type="button" class="ui-btn ui-btn-sm" ${chapter ? `data-dream-retained-read="${index}"` : `data-dream-kept-pick="${index}"`}>阅读</button>
             ${chapter ? `<button type="button" class="ui-btn ui-btn-sm" data-dream-retained-export="${index}">导出</button>` : ''}</div>`).join('') : '<p class="theater-dream-retention-note">读到喜欢的版本时，点一下「保留这版」。</p>'}
         ${chapter ? '<p class="theater-dream-retention-note">阅读其他版本不会改变后续剧情和梦脉。</p>' : ''}</section>`;
@@ -5588,18 +5591,10 @@ function bindEvents() {
             toastr.warning(error?.message || String(error));
         }
     });
-    $d.off('click.tdsummary').on('click.tdsummary', '[data-dream-summary-refresh]', () => refreshLongDreamSummaryNow(activeLongDreamId));
+    $d.off('click.tdsummary').on('click.tdsummary', '[data-dream-summary-refresh]', () => confirmLongDreamSummaryAction(activeLongDreamId));
     $d.off('click.tdsummarypreview').on('click.tdsummarypreview', '[data-dream-summary-preview]', function () { toggleLongDreamSummaryPreview(this); });
-    $d.off('click.tdsummaryrestore').on('click.tdsummaryrestore', '[data-dream-summary-restore]', async function () {
-        const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
-        if (!dream || refreshingLongDreamSummaries.has(String(dream.id))) return;
-        try {
-            const saved = await longDreamPut(restoreStorySummary(dream, String($(this).attr('data-dream-summary-restore'))));
-            if (!saved) { toastr.warning('概要恢复未保存，请重试'); return; }
-            rememberLongDreamComposerDraft(dream.id);
-            renderLongDreamPanel();
-            toastr.success('已恢复这版概要，正文和人物关系保持不变');
-        } catch { toastr.warning('当前章节或梦脉已变化，请完成补织并重新查看概要'); }
+    $d.off('click.tdsummaryrestore').on('click.tdsummaryrestore', '[data-dream-summary-restore]', function () {
+        return confirmLongDreamSummaryAction(activeLongDreamId, String($(this).attr('data-dream-summary-restore')));
     });
     $d.off('click.tdmemoryconflict').on('click.tdmemoryconflict', '[data-dream-memory-conflict-action]', async function () {
         const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
@@ -9851,23 +9846,63 @@ function queueLongDreamMemoryWeave(dreamId, { force = false, announce = false } 
 }
 
 const refreshingLongDreamSummaries = new Set();
+const confirmingLongDreamSummaries = new Set();
+async function confirmLongDreamSummaryAction(dreamId, versionId = null) {
+    const key = String(dreamId);
+    if (confirmingLongDreamSummaries.has(key)) return;
+    const dream = longDreamCache.find(item => String(item.id) === key);
+    const reason = summaryUnavailableReason(dream, refreshingLongDreamSummaries.has(key), versionId);
+    if (reason) { toastr.info(reason); return; }
+    const version = versionId === null ? null : dream.memory.summaryVersions.find(item => item.id === versionId);
+    const restoring = versionId !== null;
+    const title = restoring ? '恢复到这版概要？' : '重新整理全篇概要？';
+    const paragraphs = restoring
+        ? [`将当前概要切换为这份截至第 ${version.chapterNumber} 章的版本，不调用 API。`,
+            `正文和人物关系不回退。${version.chapterNumber < dream.chapters.length ? `第 ${version.chapterNumber + 1}～${dream.chapters.length} 章仍在，但不包含在这版概要里，会标记概要待更新。` : '这版概要已覆盖当前全部已保存章节。'}`]
+        : ['将使用梦脉副 API，根据已保存章节和确认后的梦脉重新整理概要，会产生更新用量。',
+            '成功后替换当前概要并保留最近版本；失败时保留原概要。正文和梦脉条目不变。'];
+    confirmingLongDreamSummaries.add(key);
+    try {
+        const { Popup, POPUP_TYPE } = SillyTavern.getContext();
+        const popup = new Popup(`<div class="theater-popup theater-compact-popup theater-dream-summary-confirmation" data-skin="${settings.skinMode || 'default'}"><h3>${title}</h3>${paragraphs.map(text => `<p>${esc(text)}</p>`).join('')}</div>`,
+            POPUP_TYPE.CONFIRM, '', { wide: false, okButton: restoring ? '确认恢复' : '确认更新', cancelButton: '取消', allowVerticalScrolling: true });
+        if (!await popup.show()) return;
+        const current = longDreamCache.find(item => String(item.id) === key);
+        if (String(activeLongDreamId) !== key || current !== dream) {
+            toastr.info('作品或梦脉刚刚发生变化，请重新查看后再确认'); return;
+        }
+        const currentReason = summaryUnavailableReason(current, refreshingLongDreamSummaries.has(key), versionId);
+        if (currentReason) { toastr.info(currentReason); return; }
+        if (!restoring) { await refreshLongDreamSummaryNow(key); return; }
+        const saved = await longDreamPut(restoreStorySummary(current, versionId));
+        if (!saved) { toastr.warning('概要恢复未保存，请重试'); return; }
+        if (String(activeLongDreamId) === key) {
+            rememberLongDreamComposerDraft(dream.id);
+            renderLongDreamPanel();
+        }
+        toastr.success('已恢复这版概要，正文和人物关系保持不变');
+    } catch (error) {
+        toastr.warning('概要操作未完成，原概要已保留，请重新查看后再试');
+    } finally { confirmingLongDreamSummaries.delete(key); }
+}
 function syncLongDreamSummaryButton(key) {
     if (String(activeLongDreamId) !== key) return;
     const dream = longDreamCache.find(item => String(item.id) === key);
     const memory = dream?.memory;
     const busy = refreshingLongDreamSummaries.has(key);
-    const blocked = busy || !memory || memory.status === LONG_DREAM_MEMORY_STATUS.WEAVING || !!memory.pendingConflicts?.length || !!memory.pendingChapterNumbers?.length;
+    const reason = summaryUnavailableReason(dream, busy);
+    const blocked = !!reason;
+    $('[data-dream-summary-blocked-reason]').prop('hidden', !reason).text(reason);
     $('[data-dream-summary-refresh]')
         .prop('disabled', blocked)
         .attr('aria-busy', String(busy)).text(busy ? '正在更新…' : '更新概要');
     $('[data-dream-summary-restore]').each(function () {
-        let disabled = blocked;
-        if (!disabled) {
-            // This pure operation returns a copy; only the click handler persists it.
-            try { restoreStorySummary(dream, this.getAttribute('data-dream-summary-restore')); }
-            catch { disabled = true; }
-        }
-        this.disabled = disabled;
+        this.disabled = !!summaryUnavailableReason(dream, busy, this.getAttribute('data-dream-summary-restore'));
+    });
+    $('[data-dream-summary-version-reason]').each(function () {
+        const versionReason = summaryUnavailableReason(dream, busy, this.getAttribute('data-dream-summary-version-reason'));
+        this.hidden = !versionReason;
+        this.textContent = versionReason;
     });
 }
 async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {}) {
@@ -10002,7 +10037,7 @@ async function weaveLongDreamMemory(dreamId, { force = false, announce = false }
 async function discardLongDreamDraft() {
     if (longDreamCandidateSavePending || isPreparingGeneration) return;
     const dream = longDreamCache.find(item => String(item.id) === String(activeLongDreamId));
-    if (!dream?.draft) return;
+    if (dream?.draft?.status !== LONG_DREAM_DRAFT_STATUS.WRITING) return;
     const composerDraft = getLongDreamComposerDraft(dream.id);
     const retainedComposer = {
         instruction: $('#theater-dream-next-instruction').length
@@ -10016,13 +10051,11 @@ async function discardLongDreamDraft() {
             : Number(dream.draft.targetChars ?? composerDraft.targetChars ?? 3000),
     };
     const candidateCount = Array.isArray(dream.draft.candidates) ? dream.draft.candidates.length : 0;
-    const isWritingCandidate = dream.draft.status === LONG_DREAM_DRAFT_STATUS.WRITING && candidateCount > 0;
-    const label = dream.draft.status === LONG_DREAM_DRAFT_STATUS.REVIEW
-        ? `${candidateCount || 1} 版待确认候选`
-        : (isWritingCandidate ? '本轮生成' : '未完成草稿');
+    const isWritingCandidate = candidateCount > 0;
+    const label = isWritingCandidate ? '本轮生成' : '未完成草稿';
     const detail = isWritingCandidate
         ? `本轮尚未完成的内容会被清除，已经完成的 ${candidateCount} 版候选仍会保留。本章指令也会保留。`
-        : `本章全部候选（包括已点保留的 ${dream.draft.candidates.filter(item => item.retained).length} 版）会被清除，已有章节不会受影响。本章指令会保留。`;
+        : '未完成草稿会被清除，已有章节不会受影响。本章指令会保留。';
     const ok = await SillyTavern.getContext().Popup.show.confirm(`放弃${label}？`, detail);
     if (!ok) return;
     const saved = await longDreamPut(isWritingCandidate
