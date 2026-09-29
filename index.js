@@ -55,7 +55,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.12';
+const VERSION = '4.3.13';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -9743,9 +9743,10 @@ async function confirmLongDreamChapter() {
         const saved = await getLongDreamGenerationController().confirm(current);
         activeLongDreamId = saved.id;
         clearLongDreamComposerDraft(saved.id);
-        longDreamWorkspaceSection = 'works';
-        longDreamWorkLevel = 'chapter';
-        activeLongDreamChapterId = saved.chapters.at(-1).id;
+        longDreamWorkspaceSection = 'continue';
+        longDreamView = 'detail';
+        longDreamWorkLevel = 'detail';
+        activeLongDreamChapterId = null;
         rememberLongDreamNavigation();
         renderLongDreamPanel();
         toastr.success(`第 ${saved.chapters.length} 章已收入长卷，共保留 ${count} 版`);
@@ -9768,11 +9769,22 @@ function queueLongDreamMemoryWeave(dreamId, { force = false, announce = false } 
 const refreshingLongDreamSummaries = new Set();
 function syncLongDreamSummaryButton(key) {
     if (String(activeLongDreamId) !== key) return;
-    const memory = longDreamCache.find(item => String(item.id) === key)?.memory;
+    const dream = longDreamCache.find(item => String(item.id) === key);
+    const memory = dream?.memory;
     const busy = refreshingLongDreamSummaries.has(key);
+    const blocked = busy || !memory || memory.status === LONG_DREAM_MEMORY_STATUS.WEAVING || !!memory.pendingConflicts?.length || !!memory.pendingChapterNumbers?.length;
     $('[data-dream-summary-refresh]')
-        .prop('disabled', busy || !memory || memory.status === LONG_DREAM_MEMORY_STATUS.WEAVING || !!memory.pendingConflicts?.length || !!memory.pendingChapterNumbers?.length)
+        .prop('disabled', blocked)
         .attr('aria-busy', String(busy)).text(busy ? '正在更新…' : '更新概要');
+    $('[data-dream-summary-restore]').each(function () {
+        let disabled = blocked;
+        if (!disabled) {
+            // This pure operation returns a copy; only the click handler persists it.
+            try { restoreStorySummary(dream, this.getAttribute('data-dream-summary-restore')); }
+            catch { disabled = true; }
+        }
+        this.disabled = disabled;
+    });
 }
 async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {}) {
     const key = String(dreamId);

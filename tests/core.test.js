@@ -3657,13 +3657,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.3.12 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.3.13 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.3\.12'/);
-    assert.equal(manifest.version, '4.3.12');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.12/);
+    assert.match(source, /const VERSION = '4\.3\.13'/);
+    assert.equal(manifest.version, '4.3.13');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.13/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -6960,7 +6960,7 @@ test('概要点击立即反馈、去重、超时解锁和配置异常提示', as
     const { refreshLongDreamSummary } = await import('../long-dream-summary.js');
     let record = createLongDreamRecord({ source: { text: '合成正文', html: '<p>合成正文</p>' } });
     record = applyLongDreamMemoryPatch(record, { currentState: '原概要', operations: [] }, 1);
-    const button = { prop(k,v) { this[k]=v; return this; }, attr(k,v) { this[k]=v; return this; }, text(v) { this.label=v; return this; } };
+    const button = { each() { return this; }, prop(k,v) { this[k]=v; return this; }, attr(k,v) { this[k]=v; return this; }, text(v) { this.label=v; return this; } };
     const notices = [];
     let handler, calls = 0, saves = 0;
     const scope = { activeLongDreamId: record.id, longDreamCache: [record], refreshingLongDreamSummaries: new Set(),
@@ -7586,4 +7586,62 @@ test('长梦慢资料准备期间锁定保留操作，状态变化后不拿旧�
     release({});await pending;
     assert.equal(runs,0);assert.equal(scope.isPreparingGeneration,false);
     assert.equal(scope.longDreamCache[0].draft.candidates[0].retained,true);
+});
+
+
+test('长梦确认采用版后回续写，取消或保存失败保持原页且不自动生成', async () => {
+    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
+    const code=source.match(/async function confirmLongDreamChapter\([^]*?^}/m)[0];
+    for(const mode of ['success','cancel','failure']) {
+        let dream=createLongDreamRecord({source:{text:'首章',html:'<p>首章</p>'}});
+        dream=saveLongDreamDraft(dream,{status:LONG_DREAM_DRAFT_STATUS.WRITING,instruction:'续写'});
+        dream=appendLongDreamDraftCandidate(dream,{text:'保留版',html:'<p>保留版</p>'});
+        dream=retainLongDreamDraftCandidate(dream,0,true);
+        dream=appendLongDreamDraftCandidate(dream,{text:'采用版',html:'<p>采用版</p>'});
+        let saved,queued=0,renders=0;
+        const scope={activeLongDreamId:dream.id,longDreamCache:[dream],LONG_DREAM_DRAFT_STATUS,
+            longDreamCandidateSavePending:false,isPreparingGeneration:false,longDreamGenerationController:{active:false},
+            longDreamWorkspaceSection:'works',longDreamView:'detail',longDreamWorkLevel:'chapter',activeLongDreamChapterId:'chapter-1',
+            SillyTavern:{getContext:()=>({Popup:{show:{confirm:async()=>mode!=='cancel'}}})},
+            getLongDreamGenerationController:()=>({confirm:async record=>{if(mode==='failure')throw new Error('synthetic');saved=promoteLongDreamDraft(record);return saved;}}),
+            clearLongDreamComposerDraft(){},rememberLongDreamNavigation(){},renderLongDreamPanel(){renders++;},queueLongDreamMemoryWeave(){queued++;},
+            toastr:{info(){},success(){}},theaterError(){},
+        };
+        runInNewContext(code,scope);await scope.confirmLongDreamChapter();
+        assert.equal(scope.longDreamCandidateSavePending,false);
+        if(mode==='success'){
+            assert.equal(scope.longDreamWorkspaceSection,'continue');assert.equal(scope.activeLongDreamChapterId,null);
+            assert.equal(saved.chapters[1].text,'采用版');assert.equal(saved.chapters[1].retainedVersions[0].text,'保留版');
+            assert.equal(queued,1);assert.equal(renders,1);
+        }else{assert.equal(scope.longDreamWorkspaceSection,'works');assert.equal(queued,0);assert.equal(renders,0);}
+    }
+});
+
+test('概要刷新成功及失败均同步恢复按钮，保留失效正文和梦脉限制，切换作品不误解锁', async () => {
+    const {restoreStorySummary,chapterSummarySources}=await import('../long-dream-story-summary.js');
+    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
+    const functions=source.match(/function syncLongDreamSummaryButton\(key\) \{[^]*?(?=\nasync function weaveLongDreamMemory)/)[0];
+    let dream=createLongDreamRecord({source:{text:'正式正文',html:'<p>正式正文</p>'}});
+    dream.memory={...dream.memory,status:'ready',pendingChapterNumbers:[],pendingConflicts:[],summaryVersions:[
+        {id:'valid',text:'可恢复',chapterNumber:1,sources:chapterSummarySources(dream.chapters),storyEntries:[]},
+        {id:'invalid',text:'用户决定已变',chapterNumber:1,canRestore:false,sources:[],storyEntries:[]},
+        {id:'changed',text:'正文已变',chapterNumber:1,sources:['wrong'],storyEntries:[]},
+    ]};
+    const buttons=['valid','invalid','changed'].map(id=>({disabled:true,getAttribute:()=>id}));
+    const refresh={prop(){return this},attr(){return this},text(){return this}};
+    const scope={activeLongDreamId:dream.id,longDreamCache:[dream],refreshingLongDreamSummaries:new Set(),LONG_DREAM_MEMORY_STATUS,restoreStorySummary,
+        $:selector=>selector==='[data-dream-summary-restore]'?{each(fn){buttons.forEach(b=>fn.call(b));}}:refresh,
+        selectedLongDreamMemoryApiPreset:()=>({}),refreshLongDreamSummary:async()=>dream,rememberLongDreamComposerDraft(){},
+        renderLongDreamPanel(){buttons.forEach(b=>b.disabled=scope.refreshingLongDreamSummaries.has(String(dream.id)));},
+        toastr:{info(){},warning(){},success(){}},
+    };
+    runInNewContext(functions,scope);await scope.refreshLongDreamSummaryNow(dream.id);
+    assert.deepEqual(buttons.map(b=>b.disabled),[false,true,true]);
+    scope.refreshLongDreamSummary=async()=>{throw new Error('synthetic failure')};await scope.refreshLongDreamSummaryNow(dream.id);
+    assert.deepEqual(buttons.map(b=>b.disabled),[false,true,true]);
+    for(const patch of [{status:'weaving'},{pendingChapterNumbers:[1]},{pendingConflicts:[{}]}]){
+        const original=dream.memory;dream.memory={...original,...patch};scope.syncLongDreamSummaryButton(String(dream.id));
+        assert.ok(buttons.every(b=>b.disabled));dream.memory=original;
+    }
+    scope.activeLongDreamId='other';scope.syncLongDreamSummaryButton(String(dream.id));assert.ok(buttons.every(b=>b.disabled));
 });
