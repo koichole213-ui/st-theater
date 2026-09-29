@@ -2698,6 +2698,59 @@ test('梦脉 v2 未完事项保存推进历史、解决结果，并阻止已关�
     assert.equal(record.memory.currentState, '两人仍在调查。');
 });
 
+test('梦脉冲突提示展示原梦脉和本章新变化，不再只给冲突类型', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章。', html: '<main>第一章。</main>' } });
+    for (let number = 2; number <= 4; number++) record = appendLongDreamChapter(record, { text: `第${number}章。`, html: `<main>第${number}章。</main>` });
+    record = applyLongDreamMemoryPatch(record, { operations: [
+        { op: 'open_thread', threadKey: '失踪列车记录', kind: 'mystery', content: '寻找失踪列车记录', chapterNumber: 1 },
+        { op: 'resolve_thread', threadKey: '失踪列车记录', resolution: '在钟楼暗门后找到完整记录', chapterNumber: 3 },
+    ] }, 3);
+    record = applyLongDreamMemoryPatch(record, { operations: [
+        { op: 'open_thread', threadKey: '失踪列车记录', kind: 'mystery', content: '重新寻找记录', chapterNumber: 4 },
+    ] }, 4);
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const helpers = source.slice(source.indexOf('function longDreamMemoryConflictTarget('), source.indexOf('function longDreamMemoryCardsHTML('));
+    const scope = { longDreamExcerpt: (value, limit) => String(value || '').slice(0, limit) };
+    const result = runInNewContext(`${helpers}\nlongDreamMemoryConflictDetails(memory, conflict);`, {
+        ...scope,
+        memory: record.memory,
+        conflict: record.memory.pendingConflicts[0],
+    });
+    assert.match(result.original, /失踪列车记录[\s\S]*已解决[\s\S]*钟楼暗门/);
+    assert.match(result.incoming, /失踪列车记录[\s\S]*重新寻找记录/);
+
+    const operations = [
+        [{ op: 'set_state', subjects: '林岚', attribute: 'location', value: '钟楼顶层' }, /林岚[\s\S]*钟楼顶层/],
+        [{ op: 'append_transition', subjects: ['林岚', '周砚'], from: '互相试探', to: '共同承担风险', cause: '坦白身份' }, /林岚、周砚[\s\S]*互相试探 → 共同承担风险[\s\S]*坦白身份/],
+        [{ op: 'advance_thread', threadKey: '失踪列车记录', progress: '发现列车编号' }, /失踪列车记录[\s\S]*发现列车编号/],
+        [{ op: 'resolve_thread', threadKey: '失踪列车记录', resolution: '找回完整记录' }, /本章提出已解决[\s\S]*找回完整记录/],
+        [{ op: 'abandon_thread', threadKey: '旧约定', reason: '双方明确取消' }, /本章提出已放弃[\s\S]*双方明确取消/],
+        [{ op: 'upsert_deviation', deviationKey: '人物关系', dreamChange: '两人没有血缘关系' }, /人物关系[\s\S]*没有血缘关系/],
+    ];
+    for (const [operation, expected] of operations) {
+        const text = runInNewContext(`${helpers}\nlongDreamMemoryConflictOperationText(operation);`, { ...scope, operation });
+        assert.match(text, expected);
+    }
+    const restored = normalizeLongDreamRecord({
+        ...record,
+        memory: {
+            ...record.memory,
+            pendingConflicts: [{
+                id: 'legacy-string-subjects',
+                reason: 'locked-by-user',
+                operation: { op: 'set_state', subjects: '旧备份主体', attribute: 'location', value: '旧港入口', chapterNumber: 4 },
+                chapterNumber: 4,
+            }],
+        },
+    });
+    const restoredDetails = runInNewContext(`${helpers}\nlongDreamMemoryConflictDetails(memory, conflict);`, {
+        ...scope,
+        memory: restored.memory,
+        conflict: restored.memory.pendingConflicts[0],
+    });
+    assert.match(restoredDetails.incoming, /旧备份主体[\s\S]*旧港入口/);
+});
+
 test('用户锁定状态产生持久冲突，用户可选择采用新变化或保留原记忆', () => {
     let record = createLongDreamRecord({ source: { text: '第一章。', html: '<main>第一章。</main>' } });
     record = appendLongDreamChapter(record, { text: '第二章。', html: '<main>第二章。</main>' });
@@ -3596,6 +3649,9 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /data-dream-memory-action="\$\{dismissed \? 'restore' : 'dismiss'\}"/);
     assert.match(source, /theater-dream-memory-current-state-readonly/);
     assert.match(source, /data-dream-memory-v2-action="save"/);
+    assert.match(source, /class="theater-dream-memory-conflict-details"/);
+    assert.match(source, /<b>原梦脉<\/b>/);
+    assert.match(source, /<b>本章新变化<\/b>/);
     assert.match(source, /data-dream-memory-conflict-action="\$\{conflict.reason === 'missing-target' \? 'reweave' : 'accept'\}"/);
     assert.match(source, /id="theater-dream-memory-analysis-preset"/);
     assert.match(source, /id="theater-import-dream-memory-preset"/);
@@ -3657,13 +3713,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.3.13 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.3.14 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.3\.13'/);
-    assert.equal(manifest.version, '4.3.13');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.13/);
+    assert.match(source, /const VERSION = '4\.3\.14'/);
+    assert.equal(manifest.version, '4.3.14');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.3\.14/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -3722,6 +3778,8 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-category,[\s\S]*?max-width:\s*none/);
     assert.match(source, /<span class="relation-card-copy"><b>/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.relation-card \{[^}]*display:block !important[^}]*height:auto !important/);
+    assert.doesNotMatch(styles, /\.theater-panel\[data-panel="long-dream"\] \.relation-card\.selected/);
+    assert.match(styles, /\.relation-card small,[\s\S]*?\.theater-dream-memory-conflicts p \{ text-align:left; text-justify:auto; \}/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.relation-card-copy \{[^}]*width:100% !important[^}]*writing-mode:horizontal-tb !important/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.relation-card b \{[^}]*word-break:keep-all !important[^}]*writing-mode:horizontal-tb !important/);
     assert.match(styles, /@media \(max-width:520px\)[\s\S]*?\.theater-panel\[data-panel="long-dream"\] \.relation-cards \{ grid-template-columns:1fr; \}/);
@@ -3737,6 +3795,8 @@ test('旧历史开卷不会因世界书尚未同步而锁死世界线选项', ()
     const restoreHandler = source.match(/click\.tdrestorebooks[\s\S]*?click\.tdopenbooks/)?.[0] || '';
     assert.match(relationChoices, /const isDisabled = disabled/);
     assert.doesNotMatch(relationChoices, /isDisabled = disabled \|\| \(needsBooks && !hasBooks\)/);
+    assert.doesNotMatch(relationChoices, /class="[^"]*\$\{selected === option\.value \? 'selected'/);
+    assert.match(relationChoices, /\$\{selected === option\.value \? 'checked' : ''\}/);
     assert.match(source, /data-dream-restore-source-world-books/);
     assert.match(source, /data-dream-open-world-books/);
     assert.match(restoreHandler, /Popup\.show\.confirm/);

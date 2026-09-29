@@ -55,7 +55,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.3.13';
+const VERSION = '4.3.14';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -2923,7 +2923,7 @@ function longDreamRelationChoicesHTML({ name, selected, hasBooks, disabled = fal
     return LONG_DREAM_RELATION_OPTIONS.map(option => {
         const needsBooks = option.value !== LONG_DREAM_WORLD_LINE_RELATION.ISOLATED;
         const isDisabled = disabled;
-        return `<label class="theater-dream-choice relation-card ${selected === option.value ? 'selected' : ''} ${isDisabled ? 'is-disabled' : ''}" ${needsBooks && !hasBooks ? 'data-needs-world-book="true"' : ''}>
+        return `<label class="theater-dream-choice relation-card ${isDisabled ? 'is-disabled' : ''}" ${needsBooks && !hasBooks ? 'data-needs-world-book="true"' : ''}>
             <input type="radio" name="${esc(name)}" value="${esc(option.value)}" ${selected === option.value ? 'checked' : ''} ${isDisabled ? 'disabled' : ''}>
             <span class="relation-card-copy"><b>${esc(option.label)}${option.value === LONG_DREAM_WORLD_LINE_RELATION.ISOLATED ? '（推荐）' : ''}</b><small>${esc(option.description)}</small></span>
         </label>`;
@@ -3134,6 +3134,87 @@ function toggleLongDreamSummaryPreview(button) {
     });
 }
 
+function longDreamMemoryConflictTarget(memory, conflict) {
+    const targetId = String(conflict?.targetId || conflict?.operation?.targetId || '');
+    if (!targetId) return null;
+    for (const key of ['states', 'transitions', 'threads', 'deviations']) {
+        const item = (memory?.[key] || []).find(entry => String(entry?.id) === targetId);
+        if (item) return item;
+    }
+    return null;
+}
+
+function longDreamMemoryConflictSubjects(value) {
+    return (Array.isArray(value) ? value : [value])
+        .map(item => String(item || '').trim())
+        .filter(Boolean)
+        .join('、');
+}
+
+function longDreamMemoryConflictItemText(item) {
+    if (!item) return '';
+    if (item.threadKey) {
+        const status = item.status === 'resolved'
+            ? `已解决${item.resolution ? `：${item.resolution}` : ''}`
+            : (item.status === 'abandoned'
+                ? `已放弃${item.abandonedReason ? `：${item.abandonedReason}` : ''}`
+                : (item.progress ? `当前进展：${item.progress}` : '尚未结束'));
+        return longDreamExcerpt(`${item.threadKey}：${item.content || item.threadKey}（${status}）`, 260);
+    }
+    if (item.value) {
+        const subject = longDreamMemoryConflictSubjects(item.subjects);
+        return longDreamExcerpt(`${subject ? `${subject} · ` : ''}${item.topic || item.attribute || '当前状态'}：${item.value}`, 260);
+    }
+    if (item.to || item.cause) {
+        const subject = longDreamMemoryConflictSubjects(item.subjects);
+        const change = [item.from, item.to].filter(Boolean).join(' → ') || item.cause;
+        return longDreamExcerpt(`${subject ? `${subject}：` : ''}${change}${item.cause && change !== item.cause ? `（原因：${item.cause}）` : ''}`, 260);
+    }
+    if (item.deviationKey || item.dreamChange) {
+        return longDreamExcerpt(`${item.deviationKey || '世界线变化'}：${item.dreamChange || item.originalCanon || ''}`, 260);
+    }
+    return longDreamExcerpt(item.content || '', 260);
+}
+
+function longDreamMemoryConflictOperationText(operation = {}) {
+    const subject = longDreamMemoryConflictSubjects(operation.subjects);
+    if (operation.op === 'set_state') {
+        return longDreamExcerpt(`${subject ? `${subject} · ` : ''}${operation.topic || operation.attribute || '当前状态'}：${operation.value || '未提供内容'}`, 260);
+    }
+    if (operation.op === 'append_transition') {
+        const change = [operation.from, operation.to].filter(Boolean).join(' → ') || operation.cause || operation.impact;
+        return longDreamExcerpt(`${subject ? `${subject}：` : ''}${change || '未提供变化内容'}${operation.cause && change !== operation.cause ? `（原因：${operation.cause}）` : ''}`, 260);
+    }
+    if (operation.op === 'open_thread') {
+        return longDreamExcerpt(`${operation.threadKey || '未完事项'}：${operation.content || '再次出现'}${operation.progress ? `；新进展：${operation.progress}` : ''}`, 260);
+    }
+    if (operation.op === 'advance_thread') {
+        return longDreamExcerpt(`${operation.threadKey ? `${operation.threadKey}：` : ''}${operation.progress || '事项出现新进展'}`, 260);
+    }
+    if (operation.op === 'resolve_thread') {
+        return longDreamExcerpt(`${operation.threadKey ? `${operation.threadKey}：` : ''}本章提出已解决${operation.resolution ? `，结果是${operation.resolution}` : ''}`, 260);
+    }
+    if (operation.op === 'abandon_thread') {
+        return longDreamExcerpt(`${operation.threadKey ? `${operation.threadKey}：` : ''}本章提出已放弃${operation.reason ? `，原因是${operation.reason}` : ''}`, 260);
+    }
+    if (operation.op === 'upsert_deviation') {
+        return longDreamExcerpt(`${operation.deviationKey || '世界线变化'}：${operation.dreamChange || '未提供变化内容'}`, 260);
+    }
+    return '本章提出了新的梦脉变化，但没有可显示的内容。';
+}
+
+function longDreamMemoryConflictDetails(memory, conflict) {
+    const target = longDreamMemoryConflictTarget(memory, conflict);
+    let original = longDreamMemoryConflictItemText(target);
+    if (!original && conflict?.reason === 'rejected-by-user') original = '这条内容曾被你标记为错误。';
+    if (!original && conflict?.reason === 'missing-target') original = '原记录已经不存在，需要从已保存正文补织。';
+    if (!original) original = '没有找到对应的旧梦脉记录。';
+    return {
+        original,
+        incoming: longDreamMemoryConflictOperationText(conflict?.operation),
+    };
+}
+
 function longDreamMemoryCardsHTML(dream) {
     const memory = dream?.memory || {};
     const cards = Array.isArray(memory.cards) ? memory.cards : [];
@@ -3215,7 +3296,10 @@ function longDreamMemoryCardsHTML(dream) {
             ${memory.summaryThroughChapter ? `<small class="theater-dream-summary-note">当前概要截至第 ${memory.summaryThroughChapter} 章 · 正文共 ${dream.chapters.length} 章</small>` : ''}
             ${longDreamSummaryHistoryHTML(memory, memoryLocked || !!conflicts.length || !!memory.pendingChapterNumbers?.length || refreshingLongDreamSummaries.has(String(dream.id)))}
         </div>
-        ${conflicts.length ? `<section class="theater-dream-memory-conflicts"><h4>有 ${conflicts.length} 处需要你决定</h4>${conflicts.map(conflict => `<article data-dream-memory-conflict="${esc(conflict.id)}"><p>${esc(conflictLabels[conflict.reason] || '新章节提出了不能静默覆盖的变化')}。</p><small>来自第 ${conflict.chapterNumber} 章 · ${conflict.reason === 'missing-target' ? '需要从已保存正文补织缺失记录' : '原记忆暂时保持不变'}</small><div class="theater-dream-memory-card-actions"><button type="button" class="theater-btn" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="${conflict.reason === 'missing-target' ? 'reweave' : 'accept'}">${conflict.reason === 'missing-target' ? '补织后再确认' : '以新章节为准'}</button><button type="button" class="theater-btn danger" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="keep">保留我的版本</button></div></article>`).join('')}</section>` : ''}
+        ${conflicts.length ? `<section class="theater-dream-memory-conflicts"><h4>有 ${conflicts.length} 处需要你决定</h4>${conflicts.map(conflict => {
+            const details = longDreamMemoryConflictDetails(memory, conflict);
+            return `<article data-dream-memory-conflict="${esc(conflict.id)}"><p>${esc(conflictLabels[conflict.reason] || '新章节提出了不能静默覆盖的变化')}。</p><div class="theater-dream-memory-conflict-details"><div><b>原梦脉</b><span>${esc(details.original)}</span></div><div><b>本章新变化</b><span>${esc(details.incoming)}</span></div></div><small>来自第 ${conflict.chapterNumber} 章 · ${conflict.reason === 'missing-target' ? '需要从已保存正文补织缺失记录' : '原记忆暂时保持不变'}</small><div class="theater-dream-memory-card-actions"><button type="button" class="theater-btn" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="${conflict.reason === 'missing-target' ? 'reweave' : 'accept'}">${conflict.reason === 'missing-target' ? '补织后再确认' : '以新章节为准'}</button><button type="button" class="theater-btn danger" ${memoryLocked ? 'disabled' : ''} data-dream-memory-conflict-action="keep">保留我的版本</button></div></article>`;
+        }).join('')}</section>` : ''}
         <div class="theater-dream-memory-flow-list">
         ${groups.map(([kind, , , items]) => items.map(item => v2Card(kind, item)).join('')).join('')}
         ${(cards.length || legacyCards.length) ? [...cards, ...legacyCards].map(card => {

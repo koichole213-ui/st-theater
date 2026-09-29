@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.3.13
+/* 千夜浮梦 · 小剧场生成器 v4.3.14
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -6054,7 +6054,6 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-panel[data-panel="long-dream"] .canon-suggest-item.accepted { border:1px solid var(--t-success); background:color-mix(in srgb,var(--t-success) 10%,var(--t-surface-1)); }
 .theater-panel[data-panel="long-dream"] .relation-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; gap:8px; }
 .theater-panel[data-panel="long-dream"] .relation-card { display:block !important; width:100% !important; min-width:0 !important; min-height:0 !important; height:auto !important; padding:10px; border:1px solid var(--t-border); border-radius:12px; background:var(--t-surface-2); cursor:pointer; writing-mode:horizontal-tb !important; }
-.theater-panel[data-panel="long-dream"] .relation-card.selected,
 .theater-panel[data-panel="long-dream"] .relation-card:has(input:checked) { border-color:var(--t-accent); background:color-mix(in srgb,var(--t-accent) 10%,var(--t-surface-1)); }
 .theater-panel[data-panel="long-dream"] .relation-card input { display:none; }
 .theater-panel[data-panel="long-dream"] .relation-card-copy { display:block !important; width:100% !important; min-width:0 !important; max-width:100% !important; writing-mode:horizontal-tb !important; }
@@ -6612,6 +6611,12 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-panel[data-panel="long-dream"] .theater-dream-memory-conflicts { gap:0; margin:0; padding:14px 0 14px 12px; border:0; border-bottom:1px solid var(--t-line); border-left:2px solid var(--t-danger); border-radius:0; background:transparent; }
 .theater-panel[data-panel="long-dream"] .theater-dream-memory-conflicts article { padding:10px 0; border:0; border-bottom:1px solid var(--t-line); border-radius:0; background:transparent; }
 .theater-panel[data-panel="long-dream"] .theater-dream-memory-conflicts article:last-child { border-bottom:0; }
+.theater-panel[data-panel="long-dream"] .relation-card small,
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-conflicts p { text-align:left; text-justify:auto; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-conflict-details { display:grid; gap:7px; margin:9px 0; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-conflict-details > div { display:grid; gap:3px; padding:8px 10px; border:1px solid var(--t-line); border-radius:8px; background:color-mix(in srgb,var(--t-surface-2) 76%,transparent); }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-conflict-details b { color:var(--t-accent-deep); font-size:9px; letter-spacing:.08em; }
+.theater-panel[data-panel="long-dream"] .theater-dream-memory-conflict-details span { color:var(--t-fg-soft); font-family:var(--t-font-serif); font-size:11px; line-height:1.65; text-align:left; overflow-wrap:anywhere; }
 
 .theater-panel[data-panel="long-dream"] dialog.theater-dream-memory-editor {
     position:fixed;
