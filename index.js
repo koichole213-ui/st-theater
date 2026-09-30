@@ -56,7 +56,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.4.1';
+const VERSION = '4.4.0';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
