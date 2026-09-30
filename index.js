@@ -27,7 +27,7 @@ import { REQUEST_DIAGNOSTIC_SIGNAL, classifyRequestFailure, diagnosticSignalCata
 import { autoSourceLabel, resolveAutoInstruction } from './auto-mode.js';
 import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenerationJob, generationTextWithLiveSegment, shouldAuthorizeFinishRound, shouldContinueJob, targetCompletionChars } from './generation-job.js';
 import { readableCharCount } from './text-counter.js';
-import { classifyLengthTier, firstRoundGuidance, isStagedRenderTarget, longFormFirstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
+import { classifyLengthTier, continuationFirstRoundGuidance, firstRoundGuidance, isStagedRenderTarget, longFormFirstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
 import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, sanitizeLogText, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
 import { MAX_API_PRESETS, apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from './api-presets.js';
 import { splitInstructionTextFile } from './instruction-import.js';
@@ -56,7 +56,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.4.0';
+const VERSION = '4.4.1';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -1737,11 +1737,6 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
             </div>
             <div id="theater-length-hint" class="theater-hint-inline" style="display:none; margin:-4px 0 8px;"></div>
             <div id="theater-result-characters" class="theater-result-character-count"></div>
-            <div id="theater-output-container">
-                <iframe id="theater-output-frame" sandbox="" class="theater-iframe"></iframe>
-                <div id="theater-output-text-fallback" class="theater-output-text-fallback" role="document" style="display:none;"></div>
-            </div>
-            <textarea id="theater-result-text-editor" class="theater-textarea" rows="12" style="display:none;margin-top:8px;" placeholder="编辑小剧场正文…"></textarea>
             <div id="theater-continuation-result" hidden>
                 <div class="theater-continuation-versions">
                     <button type="button" class="theater-btn" id="theater-cont-version-prev" aria-label="查看本段上一版">‹</button>
@@ -1752,9 +1747,13 @@ function buildPopupHTML(initialTab = settings.lastTheaterTab) {
                     <button type="button" class="theater-btn" id="theater-cont-rewrite">重写本段</button>
                     <button type="button" class="theater-btn primary" id="theater-cont-next">接着这一版续写</button>
                 </div>
-                <div class="theater-continuation-actions-note"><span>沿用本段前情</span><span>以当前结果为新前情</span></div>
-                <p class="theater-hint-inline theater-continuation-retention">本段版本临时保留；接写下一段、退出或刷新前，请保存重要版本。</p>
             </div>
+            <div id="theater-output-container">
+                <iframe id="theater-output-frame" sandbox="" class="theater-iframe"></iframe>
+                <div id="theater-output-text-fallback" class="theater-output-text-fallback" role="document" style="display:none;"></div>
+            </div>
+            <textarea id="theater-result-text-editor" class="theater-textarea" rows="12" style="display:none;margin-top:8px;" placeholder="编辑小剧场正文…"></textarea>
+            <p id="theater-continuation-retention" class="theater-hint-inline theater-continuation-retention" hidden>本段版本临时保留；接写下一段、退出或刷新前，请保存重要版本。</p>
         </div>
         </div>
         ${readerPaneHTML(LAMP_SVG_HTML)}
@@ -8846,7 +8845,7 @@ function buildGenerationContinuationRoundPayload({ foundation, instruction, ctx,
     };
 }
 
-async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, longFormPlan = false, loadPreset = true, evaluateWorldBook = true, estimateOnly = false } = {}) {
+async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, longFormPlan = false, loadPreset = true, evaluateWorldBook = true, estimateOnly = false, maxContinuationRounds = null } = {}) {
     const ctx = SillyTavern.getContext();
     const preparationKey = generationPreparationKey(ctx);
     const { chat = [] } = ctx;
@@ -8948,7 +8947,16 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         manualTarget: settings.manualTargetChars,
     });
     const cleanInstruction = stripTargetWordCountRequirement(instruction) || '请根据现有角色设定与剧情创作小剧场。';
-    const continuation = contCtx ? `以下是已有正文，请承接结尾、不要重复：\n${contCtx}` : '';
+    const continuation = contCtx ? `【续写前情｜仅供承接，不计入本次新增字数】\n${contCtx}\n【前情结束｜从上述结尾继续，不重复输出】` : '';
+    const continuationMaxRounds = isStagedRenderTarget(targetWordCount) && settings.autoContinue
+        ? Math.min(10, Math.max(1, Number(maxContinuationRounds ?? settings.maxAutoRounds) || 3))
+        : 1;
+    const lengthGuidance = contCtx
+        ? continuationFirstRoundGuidance(targetWordCount, { maxRounds: continuationMaxRounds })
+        : (longFormPlan ? longFormFirstRoundGuidance(targetWordCount) : firstRoundGuidance(targetWordCount));
+    const taskInstruction = `用户指令：${cleanInstruction}` + (contCtx && targetWordCount
+        ? `\n本次续写任务：从前情结尾继续，新增约 ${targetWordCount} 字的正文，旧正文不计入此目标。`
+        : '');
     const protagonistAnchor = buildProtagonistAnchor({
         userName: name1,
         charName: name2 || character?.name || character?.data?.name,
@@ -8957,11 +8965,11 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         ? `只输出新增内容，保持人物语气、视角和时态，不要复述前文。\n${STORY_RELATION_CONTINUITY_RULE}`
         : '请根据以上所有信息生成小剧场，严格遵守渲染规则。';
     fixed += `\n${protagonistAnchor}`;
-    fixed += `\n【创作节奏】${longFormPlan ? longFormFirstRoundGuidance(targetWordCount) : firstRoundGuidance(targetWordCount)}`;
+    fixed += `\n【创作节奏】${lengthGuidance}`;
     const payload = buildGenerationPayload({
         preset, role, persona, worldBook, context, continuation, rules, addons,
         fixed,
-        instruction: `用户指令：${cleanInstruction}`,
+        instruction: taskInstruction,
     });
     // 预估仅使用同一份 tokenParts，不需要编排请求或复制冻结续写资料。
     if (estimateOnly) return { tokenParts: payload.tokenParts };
@@ -8980,7 +8988,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         continuation
             ? { role: 'user', content: continuation, source: 'theater-continuation', sourceId: 'continuation' }
             : null,
-        { role: 'user', content: `用户指令：${cleanInstruction}`, source: 'theater-instruction', sourceId: 'instruction' },
+        { role: 'user', content: taskInstruction, source: 'theater-instruction', sourceId: 'instruction' },
         { role: 'system', content: [rules, fixed].filter(Boolean).join('\n\n'), source: 'theater-rules', sourceId: 'final-rules' },
     ].filter(Boolean);
     const identitySlots = generationIdentitySlots(identity);
@@ -9107,7 +9115,7 @@ function updateContinueHint() {
     const hasVersion = !!version && !resultEditSnapshot;
     const index = version ? continuationSession.versions.indexOf(version) : -1;
     if (version) continuationSession.selected = index;
-    $('#theater-continuation-result').prop('hidden', !hasVersion || busy);
+    $('#theater-continuation-result, #theater-continuation-retention').prop('hidden', !hasVersion || busy);
     $('#theater-cont-version-label').text(version ? `第 ${index + 1} 版 / 共 ${continuationSession.versions.length} 版${version.complete ? '' : ' · 未完成'}` : '');
     $('#theater-cont-version-prev').prop('disabled', busy || index <= 0);
     $('#theater-cont-version-next').prop('disabled', busy || !version || index >= continuationSession.versions.length - 1);
@@ -10216,6 +10224,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             continuationText: contCtx,
             forcePlainText: stagedRenderMode,
             longFormPlan: stagedMultiRoundMode,
+            maxContinuationRounds: configuredMaxRounds,
         });
     } finally {
         isPreparingGeneration = false;
@@ -10390,6 +10399,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 targetChars: currentGenerationJob.targetChars,
                 roundsRemaining: currentGenerationJob.maxRounds - currentGenerationJob.round + 1,
                 manuscriptMode: stagedMultiRoundMode,
+                continuationTask: !!contCtx,
                 originalInstruction: payload.generationFoundation?.originalInstruction || '',
                 draft: recentGenerationRoundsContext(continuationRoundHistory(continuationRun?.source.rounds, currentGenerationJob.segments.map(prepareContinuationContext))),
             });

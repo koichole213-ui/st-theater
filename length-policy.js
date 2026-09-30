@@ -104,6 +104,18 @@ export function firstRoundGuidance(targetChars) {
     return `本篇小剧场的可读中文正文目标约为 ${target} 字（不含 HTML、CSS、JavaScript 和排版代码）。请从开篇开始按照这一完整篇幅规划剧情，在接近目标前不要过早收束；用有效情节、动作、对白和心理变化充分展开，不要复述、注水，也不要在正文中报告或标注字数。`;
 }
 
+export function continuationFirstRoundGuidance(targetChars, { maxRounds = 1 } = {}) {
+    const target = Math.round(Number(targetChars));
+    const rounds = Math.max(1, Math.floor(Number(maxRounds) || 1));
+    const continuity = '从提供的前情最后位置继续，围绕用户本段续写方向充分展开新的动作、对白、心理变化和有效情节；不重写开头，不复述旧正文，不用总结、空话或重复情节凑字，也不要在正文中报告或标注字数。';
+    if (!Number.isFinite(target) || target <= 0) return `本次任务是继续创作充分展开的新正文，不是概括前情或只补一句结尾。${continuity}`;
+    const scope = `本次续写新增的可读中文正文目标约为 ${target} 字（不含 HTML、CSS、JavaScript 和排版代码）。目标只计算本次续写新生成的正文；提供的旧正文、聊天前文和其他参考资料均不计入，不是把旧正文与新增内容合计凑到 ${target} 字。`;
+    const plan = rounds === 1
+        ? `本次只生成这一轮，请在本轮一次性充分展开约 ${target} 字的新正文后再自然停笔；不要只写一小段收尾，也不要把应写内容留给假定的下一轮。`
+        : `本次续写最多允许 ${rounds} 轮，约 ${target} 字是这些轮次新增正文的合计目标。轮数是上限，不是必须拆分；本轮应尽量充分展开，不要因为允许后续补写就只输出短段或提前停笔。`;
+    return `${scope}${plan}${continuity}`;
+}
+
 export function isLongFormTarget(targetChars) {
     const target = Math.round(Number(targetChars));
     return Number.isFinite(target) && target >= LONG_FORM_SPLIT_THRESHOLD;

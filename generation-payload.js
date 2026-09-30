@@ -141,6 +141,7 @@ export function buildContinuationInstruction({
     targetChars = 0,
     roundsRemaining = 1,
     manuscriptMode = false,
+    continuationTask = false,
     originalInstruction = '',
     draft = '',
 }) {
@@ -152,7 +153,9 @@ export function buildContinuationInstruction({
         ? Math.ceil((remaining / availableRounds) * 1.2 / 100) * 100
         : 0;
     const lengthPlan = target
-        ? `【本轮篇幅】程序已统计当前可读正文约 ${current} 字，目标约 ${target} 字，仍差约 ${remaining} 字。本轮请新增约 ${suggestedChars} 字的有效正文；不需要自行计算、报告或标注字数。`
+        ? (continuationTask
+            ? `【本次续写篇幅】本次续写新增正文的合计目标约 ${target} 字；程序已统计本次各轮新增约 ${current} 字，仍需新增约 ${remaining} 字。开始本次续写之前的旧正文、聊天前文和参考资料均不计入目标；下方引用的前情可能包含旧正文，不要依据引用长度判断本次已经写够。本轮请新增约 ${suggestedChars} 字的有效正文，充分展开后再停笔；不需要自行计算、报告或标注字数。`
+            : `【本轮篇幅】程序已统计当前可读正文约 ${current} 字，目标约 ${target} 字，仍差约 ${remaining} 字。本轮请新增约 ${suggestedChars} 字的有效正文；不需要自行计算、报告或标注字数。`)
         : '';
     const currentDraft = String(draft || tail || '').trim();
     const continuityRule = '已有正文中已经确定的人物状态、事件事实和物品信息必须延续；再次引用录音、信件、留言或约定中的原话时须保留原文，不得自行换词或改写其内容。';
@@ -178,7 +181,7 @@ ${lengthPlan}
             ? '本轮是最终正文补完轮：请在充分完成剩余发展后，完成核心事件及其直接反应，并为整篇作品写出明确、自然的最终落点。最终落点必须停在本篇核心事件的直接后果或人物反应之内；核心事件及直接反应完成后，不得回到触发事件前的起始活动，不得继续下一轮、开启新任务或恢复日常活动来延长正文。'
             : '本轮继续完成作品中段，保留尚待完成的核心发展，不要提前写出整篇结局。'}`;
     }
-    return `这是同一篇小剧场的第 ${round} 次续写。
+    return `${continuationTask ? `这是本次续写任务的第 ${round} 轮，承接同一篇小剧场。` : `这是同一篇小剧场的第 ${round} 次续写。`}
 
 【最近两轮已有正文（不足两轮则提供已有的一轮）｜按先后顺序排列，从最后一段继续】
 【本篇小剧场正文开始｜本轮唯一补写对象，不是聊天正文】
@@ -190,7 +193,7 @@ ${lengthPlan}
 请直接承接上一段结尾继续正文：
 1. 不要复述、改写或总结已经发生的内容；
 2. 保持相同人物语气、视角、时态和叙事风格；${continuityRule}
-3. 只输出新增正文片段，不要输出前文、HTML、CSS、JavaScript或标题；
+3. ${continuationTask ? '只输出本轮要求的新增正文' : '只输出新增正文片段'}，不要输出前文、HTML、CSS、JavaScript或标题；
 4. 用新的动作、对白、心理变化和情节推进继续展开，不要用复述、空话或重复情节填充；
 5. 如果上一段已经进入收尾，只能沿着同一个收尾补足余波、情绪和人物落点；不得撤销已经发生的结局、制造新的主要冲突或重新开启一条剧情；
 6. ${finishThisRound

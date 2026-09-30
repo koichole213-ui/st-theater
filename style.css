@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.4.0
+/* 千夜浮梦 · 小剧场生成器 v4.4.1
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -353,7 +353,7 @@
 .theater-panel.active { display: block; }
 
 /* 普通续写：固定前情、同段版本与显式推进。 */
-#theater-continuation-result[hidden], #theater-cont-exit-confirm[hidden] { display:none !important; }
+#theater-continuation-result[hidden], #theater-continuation-retention[hidden], #theater-cont-exit-confirm[hidden] { display:none !important; }
 .theater-continuation-return { margin-top:8px; min-height:44px; }
 #theater-cont-exit-confirm { font-size:var(--t-text-sm); }
 .theater-continuation-session { margin:0 var(--t-space-3) var(--t-space-3); padding:10px 12px; border:1px solid var(--t-border-strong); border-radius:12px; background:var(--t-card-green, var(--t-surface-2)); color:var(--t-fg); }
@@ -363,13 +363,14 @@
 .theater-continuation-source { border-top:1px solid var(--t-border); padding-top:8px; color:var(--t-fg-soft); }
 .theater-continuation-source summary { cursor:pointer; min-height:32px; font-size:var(--t-text-sm); line-height:1.7; overflow-wrap:anywhere; }
 .theater-continuation-source p { max-height:180px; overflow:auto; margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.8; font-size:var(--t-text-sm); }
-.theater-continuation-versions { display:flex; align-items:center; gap:10px; margin:12px 0; }
-.theater-continuation-versions .theater-btn { min-width:44px; min-height:44px; padding:6px 10px; font-size:20px; }
-#theater-cont-version-label { flex:1; text-align:center; color:var(--t-fg-soft); font-size:var(--t-text-sm); }
-.theater-continuation-actions, .theater-continuation-actions-note { display:grid; grid-template-columns:1fr 1.35fr; gap:8px; }
+#theater-continuation-result { padding:10px; margin:0 0 12px; border:1px solid var(--t-border); border-radius:12px; background:var(--t-surface-1); }
+.theater-continuation-versions { display:flex; align-items:center; justify-content:center; gap:10px; margin:0 0 10px; }
+#theater-continuation-result .theater-btn { justify-content:center; text-align:center; }
+.theater-continuation-versions .theater-btn { flex:0 0 36px; width:36px; min-width:36px; min-height:36px; padding:4px; border-radius:8px; font-size:20px; }
+#theater-cont-version-label { min-width:0; text-align:center; color:var(--t-fg-soft); font-size:var(--t-text-sm); overflow-wrap:anywhere; }
+.theater-continuation-actions { display:grid; grid-template-columns:1fr 1.35fr; gap:8px; }
 .theater-continuation-actions .theater-btn { min-width:0; min-height:44px; padding:9px 6px; border-radius:12px; white-space:normal; font-size:var(--t-text-sm); touch-action:manipulation; }
-.theater-continuation-actions-note { margin-top:6px; text-align:center; font-size:var(--t-text-xs); line-height:1.6; color:var(--t-fg-soft); }
-.theater-continuation-retention { margin:12px 0 0; text-align:center; }
+.theater-hint-inline.theater-continuation-retention { margin:12px 0 0; text-align:left; }
 
 /* ============================================================
  * Section (card)

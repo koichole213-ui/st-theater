@@ -467,7 +467,7 @@ import { autoSourceLabel, resolveAutoInstruction } from '../auto-mode.js';
 import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, sanitizeLogText, setRuntimeLogSecretProvider, writeRuntimeLog } from '../runtime-log.js';
 import { apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from '../api-presets.js';
 import { splitInstructionTextFile } from '../instruction-import.js';
-import { LENGTH_TIERS, LONG_FORM_SPLIT_THRESHOLD, STAGED_RENDER_THRESHOLD, classifyLengthTier, firstRoundGuidance, isLongFormTarget, isStagedRenderTarget, longFormFirstRoundGuidance, longFormFirstRoundTarget, parseTargetWordCount, resolveTargetWordCount, stripTargetWordCountRequirement } from '../length-policy.js';
+import { LENGTH_TIERS, LONG_FORM_SPLIT_THRESHOLD, STAGED_RENDER_THRESHOLD, classifyLengthTier, continuationFirstRoundGuidance, firstRoundGuidance, isLongFormTarget, isStagedRenderTarget, longFormFirstRoundGuidance, longFormFirstRoundTarget, parseTargetWordCount, resolveTargetWordCount, stripTargetWordCountRequirement } from '../length-policy.js';
 import { AUTO_CONTINUE_SCHEMA, migrateAutoContinueDefault } from '../settings-migration.js';
 import { createInstructionBackup, parseInstructionBackup } from '../instruction-backup.js';
 import { WORLD_BOOK_STRATEGIES, rememberWorldBookEntryStates, shouldReadWorldBookEntry, syncFollowedWorldBooks, worldBookEntryStrategy } from '../world-book-policy.js';
@@ -753,6 +753,7 @@ test('前文排除同时进入预估、正式消息和世界书扫描，不改�
         currentPresetSnapshot: () => snapshot, ensureSelectedPresetLoaded: async () => snapshot,
         DEFAULT_SYSTEM_PROMPT: '默认', prepareContinuationContext: value => value || '', continueContext: '续写' + EXCLUSION_TEST_FOOTER,
         resolveTargetWordCount: () => 0, buildProtagonistAnchor: () => '人物锚点', firstRoundGuidance: () => '节奏',
+        continuationFirstRoundGuidance, isStagedRenderTarget,
         STORY_RELATION_CONTINUITY_RULE, buildGenerationPayload, generationIdentitySlots: () => ({}),
         composePresetMessages: options => [...options.chatMessages, ...options.tailMessages],
         freezeGenerationFoundationList: items => Object.freeze(items.map(item => Object.freeze({ ...item }))),
@@ -3715,13 +3716,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.0 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.1 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.4\.0'/);
-    assert.equal(manifest.version, '4.4.0');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.0/);
+    assert.match(source, /const VERSION = '4\.4\.1'/);
+    assert.equal(manifest.version, '4.4.1');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.1/);
     assert.match(source, /当前版本 v\$\{VERSION\}/);
 });
 
@@ -4110,6 +4111,7 @@ test('内置、自定义与默认模板的普通、自动、历史续写和长�
                     assert.equal(result.payload.forcePlainText, expectedStaged);
                     assert.equal(result.payload.longFormPlan, expectedStaged);
                     assert.equal(result.payload.continuationText, isAuto ? '' : continueContext);
+                    assert.equal(result.payload.maxContinuationRounds, settings.maxAutoRounds);
                 }
             }
         }
@@ -6080,6 +6082,106 @@ test('普通生成多轮复用首轮资料包而不是退回简化续写请求',
     assert.doesNotMatch(ordinaryGeneration, /\.\.\.buildContinuationPayload/);
 });
 
+test('普通续写单轮明确一次新增目标，多轮总目标排除旧前情', () => {
+    for (const target of [4000, 20000]) {
+        const single = continuationFirstRoundGuidance(target);
+        assert.match(single, new RegExp(`本轮一次性充分展开约 ${target} 字`));
+        assert.match(single, /本次只生成这一轮/);
+        assert.match(single, /旧正文、聊天前文和其他参考资料均不计入/);
+        assert.match(single, /不含 HTML、CSS、JavaScript 和排版代码/);
+        assert.doesNotMatch(single, /从开篇开始|前半部分|只输出新增正文片段/);
+        const multi = continuationFirstRoundGuidance(target, { maxRounds: 3 });
+        assert.match(multi, /最多允许 3 轮/);
+        assert.match(multi, new RegExp(`${target} 字是这些轮次新增正文的合计目标`));
+        assert.match(multi, /不要因为允许后续补写就只输出短段/);
+        assert.doesNotMatch(multi, /本次只生成这一轮/);
+    }
+    assert.doesNotMatch(continuationFirstRoundGuidance(null), /NaN|约 0 字|undefined/);
+});
+
+test('普通续写真实首轮装配匹配实际轮数，保留完整前情及新生成规则', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const assembly = source.match(/async function assembleGenerationPayload\([^]*?^}/m)[0];
+    const autoLine = source.match(/const autoTargetContinue = .*;/)[0];
+    const config = source.match(/currentGenerationJob = createGenerationJob\(\{[\s\S]*?\}\);/)[0];
+    const snapshot = { prompt: '合成预设', selectedEntries: [], name: '合成预设' };
+    const context = {
+        settings: { manualTargetEnabled: true, manualTargetChars: 4000, contextRange: 0, selectedWorldBooks: [] },
+        SillyTavern: { getContext: () => ({ chat: [] }) }, generationPreparationKey: () => 'stable',
+        resolveGenerationIdentity: () => ({ character: {}, role: '虚构角色', persona: '虚构人设', name1: '甲', name2: '乙' }),
+        normalizeContextRange, takeRecentMessages, createChatContextReader, wbEntries: [], wbStates: {},
+        ensureWorldBooksCurrent: async () => {}, stripTargetWordCountRequirement, resolveTargetWordCount,
+        resolveRenderSelection: () => ({ isPlainTextRender: false, textTheme: 'light', rules: '保留完整美化 HTML 规则' }),
+        currentPresetSnapshot: () => snapshot, ensureSelectedPresetLoaded: async () => snapshot,
+        DEFAULT_SYSTEM_PROMPT: '默认', prepareContinuationContext: value => value || '', continueContext: '',
+        buildProtagonistAnchor: () => '人物锚点', firstRoundGuidance, continuationFirstRoundGuidance, isStagedRenderTarget,
+        STORY_RELATION_CONTINUITY_RULE, buildGenerationPayload, generationIdentitySlots: () => ({}),
+        composePresetMessages, freezeGenerationFoundationList: items => Object.freeze(items.map(item => Object.freeze({ ...item }))),
+    };
+    const assemble = runInNewContext(assembly + '\nassembleGenerationPayload;', context);
+    const previous = '旧正文开始\n' + '雨停以后，两人继续交谈。'.repeat(1000) + '\n旧正文结尾';
+    for (const target of [4000, 20000]) for (const autoContinue of [false, true]) for (const max of [1, 3]) {
+        Object.assign(context.settings, { manualTargetChars: target, autoContinue, maxAutoRounds: max });
+        const payload = await assemble('继续展开雨夜重逢，写8000字', { continuationText: previous });
+        const job = runInNewContext(`${autoLine}\nlet currentGenerationJob; ${config}; currentGenerationJob`, {
+            targetWordCount: target, settings: context.settings, isStagedRenderTarget,
+            configuredMaxRounds: max, stagedMultiRoundMode: false, createGenerationJob,
+        });
+        const expected = continuationFirstRoundGuidance(target, { maxRounds: job.maxRounds });
+        assert.equal(payload.targetWordCount, target);
+        assert.ok(payload.messages.find(message => message.sourceId === 'final-rules').content.includes(expected));
+        const task = payload.messages.find(message => message.sourceId === 'instruction').content;
+        assert.match(task, new RegExp(`新增约 ${target} 字`));
+        assert.doesNotMatch(task, /8000/);
+        assert.ok(payload.messages.find(message => message.sourceId === 'continuation').content.includes(previous));
+        assert.match(payload.tokenParts.continuation, /不计入本次新增字数/);
+        assert.match(payload.tokenParts.rules, /保留完整美化 HTML 规则/);
+        assert.doesNotMatch(payload.tokenParts.rules, /从开篇开始|本篇小剧场的可读中文正文目标/);
+        const fresh = await assemble('继续展开雨夜重逢，写8000字', { continuationText: '' });
+        assert.ok(fresh.tokenParts.rules.includes(firstRoundGuidance(target)));
+        assert.doesNotMatch(fresh.tokenParts.instruction, /本次续写任务/);
+        assert.equal(fresh.isPlainTextRender, payload.isPlainTextRender);
+    }
+    for (const [planned, changed] of [[3, 1], [1, 3]]) {
+        Object.assign(context.settings, { manualTargetChars: 20000, autoContinue: true, maxAutoRounds: planned });
+        context.ensureSelectedPresetLoaded = async () => {
+            await Promise.resolve();
+            context.settings.maxAutoRounds = changed;
+            return snapshot;
+        };
+        const payload = await assemble('继续写20000字', { continuationText: previous, maxContinuationRounds: planned });
+        const job = runInNewContext(`${autoLine}\nlet currentGenerationJob; ${config}; currentGenerationJob`, {
+            targetWordCount: payload.targetWordCount, settings: context.settings, isStagedRenderTarget,
+            configuredMaxRounds: planned, stagedMultiRoundMode: false, createGenerationJob,
+        });
+        assert.equal(context.settings.maxAutoRounds, changed);
+        assert.equal(job.maxRounds, planned);
+        assert.ok(payload.tokenParts.rules.includes(continuationFirstRoundGuidance(20000, { maxRounds: job.maxRounds })));
+    }
+});
+
+test('普通续写后续轮以本次新增计数，不把引用的旧正文当作完成目标', () => {
+    for (const target of [4000, 20000]) {
+        const draft = '旧前情'.repeat(3000) + '\n本次首轮新增正文';
+        const prompt = buildContinuationInstruction({
+            round: 2, targetChars: target, currentChars: 1200, roundsRemaining: 2,
+            continuationTask: true, draft, finishThisRound: false,
+        });
+        assert.match(prompt, /本次续写任务的第 2 轮/);
+        assert.match(prompt, /程序已统计本次各轮新增约 1200 字/);
+        assert.match(prompt, new RegExp(`仍需新增约 ${target - 1200} 字`));
+        assert.match(prompt, /不要依据引用长度判断本次已经写够/);
+        assert.ok(prompt.includes(draft));
+        assert.doesNotMatch(prompt, /只输出新增正文片段/);
+        const final = buildContinuationInstruction({ round: 3, targetChars: target, currentChars: 1200,
+            continuationTask: true, draft, finishThisRound: true });
+        assert.match(final, /允许收尾不代表可以忽略篇幅要求/);
+        const normal = buildContinuationInstruction({ round: 2, targetChars: target, currentChars: 1200, draft });
+        assert.match(normal, /程序已统计当前可读正文约 1200 字/);
+        assert.doesNotMatch(normal, /本次续写篇幅/);
+    }
+});
+
 test('四档分诊边界保留，首轮明确告诉模型目标正文字数', () => {
     assert.equal(classifyLengthTier(null), LENGTH_TIERS.UNSPECIFIED);
     assert.equal(classifyLengthTier(3000), LENGTH_TIERS.SHORT);
@@ -6213,6 +6315,7 @@ test('真实生成循环的普通续写不在两万目标的一万一千字处�
             continuationRoundHistory, recentGenerationRoundsContext,
             prepareContinuationContext: text => text,
             continuationRun: { source: { rounds: ['已有前情'.repeat(10000)] } },
+            contCtx: '已有前情'.repeat(10000),
             buildGenerationContinuationRoundPayload: ({ instruction }) => {
                 prompts.push(instruction);
                 return { systemPrompt: '系统', userPrompt: instruction, ctx: {} };
@@ -6229,7 +6332,7 @@ test('真实生成循环的普通续写不在两万目标的一万一千字处�
             assert.match(prompt, /不得撤销已经发生的结局/);
         }
         if (prompts.length > 1) {
-            assert.match(prompts[1], /当前可读正文约 11000 字/);
+            assert.match(prompts[1], /本次各轮新增约 11000 字/);
             assert.doesNotMatch(prompts[1], /已有前情/);
             assert.ok(prompts[1].includes('字'.repeat(10000) + '\n\n' + '字'.repeat(1000)));
         }
