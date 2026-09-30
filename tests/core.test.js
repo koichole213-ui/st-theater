@@ -20,6 +20,37 @@ test('历史编号兼容缺少 randomUUID 的浏览器，保持 UUID 格式和�
     keys.forEach(key => assert.match(key, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/));
 });
 
+test('生成完成与中断保留结果在缺少 randomUUID 时仍可保存，存储失败也留在会话', async () => {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const keys = readFileSync(new URL('../history-collections.js', import.meta.url), 'utf8').replaceAll('export ', '');
+    const completeStart = source.indexOf('            const item = {', source.indexOf('// The current result is independent'));
+    const completeCode = source.slice(completeStart, source.indexOf('            setActiveInstructionTags', completeStart));
+    const partialStart = source.indexOf('            const partialItem = {');
+    const partialCode = source.slice(partialStart, source.indexOf('            if (popupAlive())', partialStart));
+    assert.ok(completeStart > 0 && partialStart > 0);
+    for (const partial of [false, true]) for (const supported of [false, true]) for (const stored of [false, true]) {
+        const saved = [];
+        const html = '<style>p{color:gold}</style><p>需要保留的正文</p>';
+        const context = {
+            crypto: supported ? globalThis.crypto : { getRandomValues: bytes => globalThis.crypto.getRandomValues(bytes) },
+            lastGeneratedHtml: html, currentOutputMode: 'html', continuationRun: null,
+            continuationRounds: ['旧前情', '本次正文'], instruction: '本轮方向', generationSourceConfig: { presetName: '合成' },
+            sourceTags: ['标签'], itemTags: ({ tags }) => tags, knownInstructionTags: () => [],
+            retainedResultSource: { instruction: '本轮方向', continuationRounds: ['旧前情', '本次正文'] },
+            currentGenerationResult: null, storeCurrentResult: async item => { saved.push(item); return stored; },
+        };
+        const run = runInNewContext(`${keys}\n(async () => {${partial ? partialCode : completeCode}\n})`, context);
+        await run();
+        assert.equal(saved.length, 1);
+        assert.match(saved[0].resultId, /^[0-9a-f-]{36}$/);
+        assert.equal(saved[0].html, html);
+        assert.equal(saved[0].mode, 'html');
+        assert.deepEqual(Array.from(saved[0].continuationRounds), ['旧前情', '本次正文']);
+        if (partial) assert.equal(saved[0].complete, false);
+        assert.equal(context.currentGenerationResult, stored ? null : saved[0]);
+    }
+});
+
 test('文件夹保存兼容编号缺失，失败时提示且不改作品标签', async () => {
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const functions = source.slice(source.indexOf('function queueHistoryWrite('), source.indexOf('function openHistoryReading('));

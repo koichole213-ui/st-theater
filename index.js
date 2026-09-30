@@ -10483,7 +10483,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         if (lastGeneratedHtml) {
             const item = {
                 ...continuationRun?.historyMetadata,
-                resultId: crypto.randomUUID(), html: lastGeneratedHtml,
+                resultId: newHistoryKey(), html: lastGeneratedHtml,
                 mode: currentOutputMode, continuationRounds,
                 time: new Date().toLocaleString('zh-CN', { hour12: false }),
                 instruction: instruction || '', sourceConfig: generationSourceConfig,
@@ -10549,7 +10549,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 });
             }
             const partialItem = { ...retainedResultSource, html: lastGeneratedHtml, mode: currentOutputMode,
-                resultId: crypto.randomUUID(), complete: false, time: new Date().toLocaleString('zh-CN', { hour12: false }) };
+                resultId: newHistoryKey(), complete: false, time: new Date().toLocaleString('zh-CN', { hour12: false }) };
             if (!await storeCurrentResult(partialItem)) currentGenerationResult = partialItem;
             if (popupAlive()) {
                 showInIframe(lastGeneratedHtml, 'text');
