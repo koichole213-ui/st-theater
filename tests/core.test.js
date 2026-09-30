@@ -5,7 +5,8 @@ import { remapHistorySource, historyOrder, orderedHistory, collectionPage, histo
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runInNewContext } from 'node:vm';
+import { readTheaterImplementation, runInNewContext } from './theater-source.js';
+import './modules.test.js';
 import { previousResults, readingPosition } from '../result-text-edit.js';
 import { bindResultSwipe } from '../result-swipe.js';
 
@@ -21,10 +22,10 @@ test('历史编号兼容缺少 randomUUID 的浏览器，保持 UUID 格式和�
 });
 
 test('生成完成与中断保留结果在缺少 randomUUID 时仍可保存，存储失败也留在会话', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const keys = readFileSync(new URL('../history-collections.js', import.meta.url), 'utf8').replaceAll('export ', '');
     const completeStart = source.indexOf('            const item = {', source.indexOf('// The current result is independent'));
-    const completeCode = source.slice(completeStart, source.indexOf('            setActiveInstructionTags', completeStart));
+    const completeCode = source.slice(completeStart, source.indexOf("            runtime.setActiveInstructionTags", completeStart));
     const partialStart = source.indexOf('            const partialItem = {');
     const partialCode = source.slice(partialStart, source.indexOf('            if (popupAlive())', partialStart));
     assert.ok(completeStart > 0 && partialStart > 0);
@@ -52,7 +53,7 @@ test('生成完成与中断保留结果在缺少 randomUUID 时仍可保存，�
 });
 
 test('文件夹保存兼容编号缺失，失败时提示且不改作品标签', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const functions = source.slice(source.indexOf('function queueHistoryWrite('), source.indexOf('function openHistoryReading('));
     const keys = readFileSync(new URL('../history-collections.js', import.meta.url), 'utf8').replaceAll('export ', '');
     for (const supported of [true, false]) {
@@ -167,7 +168,7 @@ test('随机存储主键不改变历史保存顺序', () => {
 });
 
 test('系列保存事务失败不改缓存，排队写入基于上一笔完成后的状态', async () => {
-    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
+    const source=readTheaterImplementation();
     const code=['queueHistoryWrite','commitHistoryCollection'].map(name=>source.match(new RegExp(`function ${name}\\([^]*?^}`, 'm'))[0]).join('\n');
     let fail=true;
     const scope={historyWriteQueue:Promise.resolve(),historyCache:[{id:1,html:'原文'}],historyCollections:[],normalizeCollections,historyOrder,
@@ -224,8 +225,8 @@ test('结果横滑识别方向并避开纵向滚动、多指、输入控件和�
 });
 
 test('结果页重复选择或无效方向横滑保留滚动位置，换页仍各自恢复', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const body = source.match(/function switchResultWorkspace\([^]*?^}/m)[0];
+    const source = readTheaterImplementation();
+    const body = source.match(/function (?:runtime\.)?switchResultWorkspace\([^]*?^}/m)[0];
     const wrapper = { scrollTop: 230 };
     const state = { generate: 0, read: 75 };
     const scope = { resultWorkspacePage: 'generate', resultPageScroll: state,
@@ -245,7 +246,7 @@ test('结果页重复选择或无效方向横滑保留滚动位置，换页仍�
 });
 
 test('生成结果独立保存，下一次开始才移入三篇历史，并保留被挤出的阅读对象', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const functions = ['queueResultStorage', 'archiveCurrentResult', 'storeCurrentResult', 'updateResultItem']
         .map(name => source.match(new RegExp('function ' + name + '\\([^]*?^}', 'm'))[0]).join('\n');
     const old = [3, 2, 1].map(n => ({ html: `<p>${n}</p>`, resultId: String(n) }));
@@ -285,8 +286,8 @@ test('生成结果独立保存，下一次开始才移入三篇历史，并保�
 });
 
 test('阅读页保存显式作品，不串入左边的新结果与元数据', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const fn = source.match(/async function saveToHistory\([^]*?^}/m)[0];
+    const source = readTheaterImplementation();
+    const fn = source.match(/async function (?:runtime\.)?saveToHistory\([^]*?^}/m)[0];
     let saved;
     const item = { html: '<p>右页</p>', mode: 'html', instruction: '右页指令', tags: ['右页标签'], continuationRounds: ['右页前情'] };
     const scope = { lastGeneratedHtml: '<p>左页</p>', currentDisplayHtml: '', resultEditSnapshot: null, currentGenerationResult: { html: '<p>左页</p>' },
@@ -328,8 +329,8 @@ test('无标题、不明确标题、正文中间标题与占位符保持原文',
 });
 
 test('存为模板保存识别结果与开关，无标题沿用编号默认名称且不改生成框', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const code = source.match(/async function saveInstructionTpl\(\) \{[^]*?^}/m)[0];
+    const source = readTheaterImplementation();
+    const code = source.match(/async function (?:runtime\.)?saveInstructionTpl\(\) \{[^]*?^}/m)[0];
     for (const cancel of [false, true]) {
         const original = '没有标题的完整指令';
         const settings = { instructionTemplates: [{ name: '已有模板', content: '已有内容' }], instructionTags: [], autoRecognizeInstructionTitle: false };
@@ -355,8 +356,8 @@ test('存为模板保存识别结果与开关，无标题沿用编号默认名�
 });
 
 test('标题识别开关预览可还原原文，手填名称不被切换覆盖，取消不保存', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const code = source.match(/async function chooseTagsWithNew\([^]*?^}/m)[0];
+    const source = readTheaterImplementation();
+    const code = source.match(/async function (?:runtime\.)?chooseTagsWithNew\([^]*?^}/m)[0];
     async function run({ enabled = false, cancel = false, original = '# 标题\n完整内容', interact = () => {} } = {}) {
         const fields = new Map();
         const events = {};
@@ -402,8 +403,8 @@ test('标题识别开关预览可还原原文，手填名称不被切换覆盖�
 });
 
 test('历史分页跳转、跨页全选和删除末页回退不丢其他页的选择', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const render = source.match(/function renderHistoryList\([^]*?^}/m)[0];
+    const source = readTheaterImplementation();
+    const render = source.match(/function (?:runtime\.)?renderHistoryList\([^]*?^}/m)[0];
     const select = source.match(/'#theater-hist-select-all', function \(\) \{([^]*?)\n    \}\);/)[1];
     const scope = { historyCache: Array.from({length:23}, (_,id) => ({id})), histPage:0,
         histSelected:new Set(), histBatchMode:true, listPage, listPaginationHTML,
@@ -431,7 +432,7 @@ test('历史分页跳转、跨页全选和删除末页回退不丢其他页的�
 });
 
 test('长梦输入清空保留每部目标字数，删除长梦才移除，重新读取设置仍有效', () => {
-    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
+    const source=readTheaterImplementation();
     const functions=['longDreamComposerDrafts','getLongDreamComposerDraft','setLongDreamComposerDraft','clearLongDreamComposerDraft']
         .map(name=>source.match(new RegExp(`function ${name}\\([^]*?^}`, 'm'))[0]).join('\n');
     const scope={settings:{},save(){}};
@@ -447,7 +448,7 @@ test('长梦输入清空保留每部目标字数，删除长梦才移除，重�
 });
 
 test('新建长梦来源切换只更新默认提示，空名保存采用来源标题', () => {
-    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
+    const source=readTheaterImplementation();
     const change=source.match(/'#theater-dream-source', function \(\) \{([^]*?)\n    \}\);/)[1];
     const create=source.match(/'#theater-dream-create-confirm', async function \(\) \{([^]*?)const worldLineRelation/)[1];
     for(const input of ['', '  ', '自己的长梦']) {
@@ -466,7 +467,7 @@ test('新建长梦来源切换只更新默认提示，空名保存采用来源�
 });
 
 test('新建名称是空输入和默认提示，留空或空格采用默认，取消不保存', async () => {
-    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
+    const source=readTheaterImplementation();
     for(const fn of ['askNewItemName','chooseTagsWithNew']) {
         const code=source.match(new RegExp(`async function ${fn}\\([^]*?^}`, 'm'))[0];
         for(const [input,confirmed,expected] of [['',true,'默认名称'],['  ',true,'默认名称'],[' 我的名字 ',true,'我的名字'],['',false,null]]) {
@@ -549,8 +550,8 @@ test('普通续写重写保留前情和所有候选，选回旧版恢复其方�
 });
 
 test('普通续写入口不依赖弹窗标记，重写重复使用原始前情并允许空方向', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const generate = source.match(/async function generateTheater\([^]*?^}/m)[0];
+    const source = readTheaterImplementation();
+    const generate = source.match(/async function (?:runtime\.)?generateTheater\([^]*?^}/m)[0];
     const session = createContinuationSession({ sourceText: '固定前情' });
     let input = '第一次方向';
     const calls = [];
@@ -578,7 +579,7 @@ test('普通续写入口不依赖弹窗标记，重写重复使用原始前情�
 });
 
 test('历史批量管理只切换父面板，退出清掉选中展示且不逐条测量样式', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const extract = name => source.match(new RegExp(`function ${name}\\([^]*?^}`, 'm'))[0];
     const classes = new Set();
     const checked = { checked: true };
@@ -634,7 +635,7 @@ test('输入预估只重新计数变化项，删除资料或切换资料时不�
 });
 
 test('延迟进入历史会加载一次，批量恢复与刷新不显示全部导出，退出后恢复', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const extract = name => source.match(new RegExp(`function ${name}\\([^]*?^}`, 'm'))[0];
     const pending = new Set(['data-pending-list']);
     const visible = new Map();
@@ -764,7 +765,7 @@ test('空规则和停用保持旧正文读取；排除先于 content 选取，�
 });
 
 test('前文排除同时进入预估、正式消息和世界书扫描，不改角色、世界书、指令或续写', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const assembly = source.match(/async function assembleGenerationPayload\([^]*?^}/m)[0];
     const chat = [{ mes: '<p>正常段落</p>' + EXCLUSION_TEST_FOOTER, is_user: false }, { mes: EXCLUSION_TEST_FOOTER, is_user: true }];
     const before = JSON.stringify(chat);
@@ -898,14 +899,14 @@ test('弹窗缺少必要容器时会在期限内停止等待', async () => {
 });
 
 test('主弹窗不再固定等待，并独立读取预设和世界书列表', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     assert.match(source, /waitForPopupElements\([\s\S]*?'theater-preset-name-select'[\s\S]*?'theater-wb-books'/);
-    assert.match(source, /Promise\.allSettled\(\[[\s\S]*?loadWorldBookList\(\)[\s\S]*?loadPresetNameList\(\)/);
+    assert.match(source, /Promise\.allSettled\(\[[\s\S]*?(?:runtime\.)?loadWorldBookList\(\)[\s\S]*?(?:runtime\.)?loadPresetNameList\(\)/);
     assert.doesNotMatch(source, /setTimeout\(r, 50\)/);
 });
 
 test('主弹窗直接绑定的命名处理器都有真实实现', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const bindStart = source.indexOf('function bindEvents() {');
     const bindEnd = source.indexOf('function refreshInstUI', bindStart);
     assert.ok(bindStart >= 0 && bindEnd > bindStart);
@@ -924,11 +925,11 @@ test('主弹窗直接绑定的命名处理器都有真实实现', () => {
     const updateBinding = bindSource.indexOf("$d.off('click.tup')");
     const ordinaryBindings = bindSource.indexOf('const tokenAffectingSelectors');
     assert.ok(updateBinding >= 0 && updateBinding < ordinaryBindings);
-    assert.match(source, /try \{\s*bindEvents\(\);\s*\} catch \(error\) \{[\s\S]*?按钮初始化失败/);
+    assert.match(source, /try \{\s*(?:runtime\.)?bindEvents\(\);\s*\} catch \(error\) \{[\s\S]*?按钮初始化失败/);
 });
 
 test('主弹窗事件命名空间不互相覆盖，历史操作保持完整绑定', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const bindStart = source.indexOf('function bindEvents() {');
     const bindEnd = source.indexOf('function refreshInstUI', bindStart);
     assert.ok(bindStart >= 0 && bindEnd > bindStart);
@@ -953,13 +954,13 @@ test('主弹窗事件命名空间不互相覆盖，历史操作保持完整绑�
 });
 
 test('历史卡片按标题标签、时间、操作三层排列，并提供即时触控与连续多选', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
-    const renderer = source.match(/function historyItemHTML[\s\S]*?function longDreamSources/)?.[0] || '';
+    const renderer = source.match(/function (?:runtime\.)?historyItemHTML[\s\S]*?function longDreamSources/)?.[0] || '';
     const bindStart = source.indexOf('function bindEvents() {');
     const bindEnd = source.indexOf('function refreshInstUI', bindStart);
     const bindings = source.slice(bindStart, bindEnd);
-    const touchAttachment = source.match(/function attachHistoryTouchMoveHandler[\s\S]*?function resetHistorySelectionGesture/)?.[0] || '';
+    const touchAttachment = source.match(/function (?:runtime\.)?attachHistoryTouchMoveHandler[\s\S]*?function (?:runtime\.)?resetHistorySelectionGesture/)?.[0] || '';
     const titleRow = renderer.indexOf('theater-history-title-row');
     const tags = renderer.indexOf('theater-history-tags');
     const meta = renderer.indexOf('theater-history-meta');
@@ -976,18 +977,18 @@ test('历史卡片按标题标签、时间、操作三层排列，并提供即�
     assert.match(bindings, /pointerdown\.thhistgesture/);
     assert.match(bindings, /pointermove\.thhistgesture/);
     assert.match(bindings, /touchstart\.thhistgesture/);
-    assert.match(bindings, /touchstart\.thhistgesture[\s\S]*?attachHistoryTouchMoveHandler\(\)/);
-    assert.doesNotMatch(bindings, /document\.addEventListener\('touchmove', histTouchMoveHandler/);
-    assert.match(touchAttachment, /histTouchMoveHandler = function[\s\S]*?event\.preventDefault\(\)[\s\S]*?updateHistorySelectionAutoScroll/);
-    assert.match(touchAttachment, /document\.addEventListener\('touchmove', histTouchMoveHandler, \{ passive: false \}\)/);
-    assert.match(source, /function detachHistoryTouchMoveHandler[\s\S]*?document\.removeEventListener\('touchmove', histTouchMoveHandler\)/);
-    assert.match(source, /const onPopupClosed = \(\) => \{[\s\S]*?activeTheaterPopupSession !== session[\s\S]*?detachHistoryTouchMoveHandler\(\);[\s\S]*?resetHistorySelectionGesture\(\)/);
+    assert.match(bindings, /touchstart\.thhistgesture[\s\S]*?(?:runtime\.)?attachHistoryTouchMoveHandler\(\)/);
+    assert.doesNotMatch(bindings, /document\.addEventListener\('touchmove', (?:runtime\.)?histTouchMoveHandler/);
+    assert.match(touchAttachment, /(?:runtime\.)?histTouchMoveHandler = function[\s\S]*?event\.preventDefault\(\)[\s\S]*?(?:runtime\.)?updateHistorySelectionAutoScroll/);
+    assert.match(touchAttachment, /document\.addEventListener\('touchmove', (?:runtime\.)?histTouchMoveHandler, \{ passive: false \}\)/);
+    assert.match(source, /function (?:runtime\.)?detachHistoryTouchMoveHandler[\s\S]*?document\.removeEventListener\('touchmove', (?:runtime\.)?histTouchMoveHandler\)/);
+    assert.match(source, /const onPopupClosed = \(\) => \{[\s\S]*?(?:runtime\.)?activeTheaterPopupSession !== session[\s\S]*?(?:runtime\.)?detachHistoryTouchMoveHandler\(\);[\s\S]*?(?:runtime\.)?resetHistorySelectionGesture\(\)/);
     assert.match(source, /Promise\.resolve\(p\)\.then\(onPopupClosed, onPopupClosed\)/);
     assert.match(source, /if \(!isCurrentPopup\(\)\) return;/);
-    assert.match(bindings, /histSelectionGesture\.timer = setTimeout\(activateHistorySelectionGesture, 420\)/);
-    assert.doesNotMatch(bindings, /if \(histBatchMode\) activateHistorySelectionGesture\(\)/);
-    assert.match(source, /function runHistorySelectionAutoScroll[\s\S]*?scrollTop \+= gesture\.autoScrollSpeed[\s\S]*?applyHistorySelectionGestureAt/);
-    assert.match(source, /function updateHistorySelectionAutoScroll[\s\S]*?rect\.top \+ edge[\s\S]*?rect\.bottom - edge/);
+    assert.match(bindings, /(?:runtime\.)?histSelectionGesture\.timer = setTimeout\((?:runtime\.)?activateHistorySelectionGesture, 420\)/);
+    assert.doesNotMatch(bindings, /if \((?:runtime\.)?histBatchMode\) (?:runtime\.)?activateHistorySelectionGesture\(\)/);
+    assert.match(source, /function runHistorySelectionAutoScroll[\s\S]*?scrollTop \+= gesture\.autoScrollSpeed[\s\S]*?(?:runtime\.)?applyHistorySelectionGestureAt/);
+    assert.match(source, /function (?:runtime\.)?updateHistorySelectionAutoScroll[\s\S]*?rect\.top \+ edge[\s\S]*?rect\.bottom - edge/);
     assert.match(styles, /\.theater-history-top-bar > \.theater-btn[\s\S]*?touch-action: manipulation/);
     assert.match(styles, /\.theater-history-actions > button[\s\S]*?touch-action: manipulation/);
     assert.match(styles, /\.theater-history-top-bar \{[\s\S]*?grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
@@ -999,15 +1000,15 @@ test('历史卡片按标题标签、时间、操作三层排列，并提供即�
     assert.match(styles, /\.theater-history-title-row \{[\s\S]*?flex-wrap: nowrap/);
     assert.match(styles, /\.theater-history-title \{[\s\S]*?text-overflow: ellipsis[\s\S]*?white-space: nowrap/);
     assert.doesNotMatch(bindings, /\$\('\.theater-inst-item'\)\.removeClass\('theater-inst-actions-open'\)/);
-    assert.match(source, /function closeInstructionActionMenus[\s\S]*?querySelectorAll\('\.theater-inst-item\.theater-inst-actions-open'\)/);
+    assert.match(source, /function (?:runtime\.)?closeInstructionActionMenus[\s\S]*?querySelectorAll\('\.theater-inst-item\.theater-inst-actions-open'\)/);
 });
 
 test('模板列表保持单行紧凑布局，手机菜单不被裁切并支持长按扫选', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
-    const renderer = source.match(/function renderInstList[\s\S]*?function updateBulkBar/)?.[0] || '';
-    const menu = source.match(/function positionInstructionActionMenu[\s\S]*?function bindInstructionSweepSelection/)?.[0] || '';
-    const gesture = source.match(/function bindInstructionSweepSelection[\s\S]*?\/\/ ---- World Book/)?.[0] || '';
+    const renderer = source.match(/function (?:runtime\.)?renderInstList[\s\S]*?function (?:runtime\.)?updateBulkBar/)?.[0] || '';
+    const menu = source.match(/function (?:runtime\.)?positionInstructionActionMenu[\s\S]*?function (?:runtime\.)?bindInstructionSweepSelection/)?.[0] || '';
+    const gesture = source.match(/function (?:runtime\.)?bindInstructionSweepSelection[\s\S]*?\/\/ ---- World Book/)?.[0] || '';
 
     assert.doesNotMatch(renderer, /itemTagBadgesHTML|tagBadges/);
     assert.match(renderer, /class="theater-inst-tags"/);
@@ -1020,8 +1021,8 @@ test('模板列表保持单行紧凑布局，手机菜单不被裁切并支持�
     assert.match(styles, /\.theater-inst-actions\.is-viewport-positioned \{[\s\S]*?position: fixed;[\s\S]*?z-index: 10020/);
     assert.match(styles, /\.theater-drawer\.theater-inst-menu-open \{ overflow: visible; \}/);
 
-    assert.match(gesture, /INSTRUCTION_SWEEP_HOLD_MS/);
-    assert.match(gesture, /INSTRUCTION_SWEEP_MOVE_TOLERANCE/);
+    assert.match(gesture, /(?:runtime\.)?INSTRUCTION_SWEEP_HOLD_MS/);
+    assert.match(gesture, /(?:runtime\.)?INSTRUCTION_SWEEP_MOVE_TOLERANCE/);
     assert.match(gesture, /touchmove[\s\S]*?passive: false/);
     assert.match(gesture, /document\.elementFromPoint/);
     assert.match(gesture, /const autoScrollStep[\s\S]*?scrollTop \+= direction \* speed[\s\S]*?applyAt\(gesture\.lastX, gesture\.lastY\)/);
@@ -1065,41 +1066,41 @@ test('当前分支检查会拒绝坏响应，并在酒馆接口卡住时及时�
 });
 
 test('预设、世界书缓存只接受当前选择，启动后立即后台检查更新', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const presetLoader = source.match(/async function loadPresetEntries[\s\S]*?async function ensureSelectedPresetLoaded/)?.[0] || '';
-    const worldBookLoader = source.match(/function reloadWorldBooks[\s\S]*?async function ensureWorldBooksCurrent/)?.[0] || '';
-    const foundation = source.match(/async function assembleGenerationPayload[\s\S]*?async function refreshTokenEstimate/)?.[0] || '';
-    const updateCheck = source.match(/async function checkRemoteVersion[\s\S]*?function hasRemoteUpdate/)?.[0] || '';
+    const source = readTheaterImplementation();
+    const presetLoader = source.match(/async function (?:runtime\.)?loadPresetEntries[\s\S]*?async function (?:runtime\.)?ensureSelectedPresetLoaded/)?.[0] || '';
+    const worldBookLoader = source.match(/function (?:runtime\.)?reloadWorldBooks[\s\S]*?async function (?:runtime\.)?ensureWorldBooksCurrent/)?.[0] || '';
+    const foundation = source.match(/async function assembleGenerationPayload[\s\S]*?async function (?:runtime\.)?refreshTokenEstimate/)?.[0] || '';
+    const updateCheck = source.match(/async function checkRemoteVersion[\s\S]*?function (?:runtime\.)?hasRemoteUpdate/)?.[0] || '';
 
-    assert.match(presetLoader, /const requestId = \+\+presetLoadSequence/);
-    assert.match(presetLoader, /requestId !== presetLoadSequence \|\| String\(settings\.selectedPresetName \|\| ''\) !== sel/);
-    assert.match(source, /loadPreset \? await ensureSelectedPresetLoaded\(\) : currentPresetSnapshot\(\)/);
-    assert.match(source, /async function resolveLongDreamRequestFoundation[\s\S]*?const presetSnapshot = await ensureSelectedPresetLoaded\(\)/);
+    assert.match(presetLoader, /const requestId = \+\+(?:runtime\.)?presetLoadSequence/);
+    assert.match(presetLoader, /requestId !== (?:runtime\.)?presetLoadSequence \|\| String\((?:runtime\.)?settings\.selectedPresetName \|\| ''\) !== sel/);
+    assert.match(source, /loadPreset \? await (?:runtime\.)?ensureSelectedPresetLoaded\(\) : (?:runtime\.)?currentPresetSnapshot\(\)/);
+    assert.match(source, /async function resolveLongDreamRequestFoundation[\s\S]*?const presetSnapshot = await (?:runtime\.)?ensureSelectedPresetLoaded\(\)/);
 
-    assert.match(worldBookLoader, /const books = \[\.\.\.\(settings\.selectedWorldBooks \|\| \[\]\)\]/);
-    assert.match(worldBookLoader, /const requestId = \+\+wbReloadSequence/);
-    assert.match(worldBookLoader, /requestId !== wbReloadSequence \|\| cacheKey !== worldBookCacheKey\(\)/);
-    assert.match(foundation, /await ensureWorldBooksCurrent\(\{ silent: true \}\)/);
+    assert.match(worldBookLoader, /const books = \[\.\.\.\((?:runtime\.)?settings\.selectedWorldBooks \|\| \[\]\)\]/);
+    assert.match(worldBookLoader, /const requestId = \+\+(?:runtime\.)?wbReloadSequence/);
+    assert.match(worldBookLoader, /requestId !== (?:runtime\.)?wbReloadSequence \|\| cacheKey !== (?:runtime\.)?worldBookCacheKey\(\)/);
+    assert.match(foundation, /await (?:runtime\.)?ensureWorldBooksCurrent\(\{ silent: true \}\)/);
     assert.match(foundation, /entry\.manual \|\| selectedBookNames\.has\(entry\.book\)/);
-    assert.match(source, /即使弹窗关闭也刷新缓存[\s\S]*?await reloadWorldBooks\(\{ silent: true \}\)/);
+    assert.match(source, /即使弹窗关闭也刷新缓存[\s\S]*?await (?:runtime\.)?reloadWorldBooks\(\{ silent: true \}\)/);
     assert.doesNotMatch(source, /if \(names\.length < 2\) \{\s*try \{\s*const r = await fetch\('\/api\/worldinfo\/list'/);
 
     assert.match(source, /void checkRemoteVersion\(\)/);
     assert.doesNotMatch(source, /setTimeout\(\(\) => \{ checkRemoteVersion\(\); \}, 3000\)/);
-    assert.match(updateCheck, /if \(updateCheckPromise\) return updateCheckPromise/);
+    assert.match(updateCheck, /if \((?:runtime\.)?updateCheckPromise\) return (?:runtime\.)?updateCheckPromise/);
     assert.match(updateCheck, /fetchInstalledExtensionStatus\(\{ headers \}\)/);
-    assert.match(updateCheck, /installedBranchCheckPending = true/);
-    assert.match(source, /if \(installedBranchCheckPending && !installedBranchStatusKnown\) return false/);
-    assert.match(source, /if \(installedBranchStatusKnown\) return installedBranchHasUpdate/);
+    assert.match(updateCheck, /(?:runtime\.)?installedBranchCheckPending = true/);
+    assert.match(source, /if \((?:runtime\.)?installedBranchCheckPending && !(?:runtime\.)?installedBranchStatusKnown\) return false/);
+    assert.match(source, /if \((?:runtime\.)?installedBranchStatusKnown\) return (?:runtime\.)?installedBranchHasUpdate/);
     assert.match(source, /\.theater-update-notice[\s\S]*?\.prop\('hidden', !hasUpdate\)/);
-    assert.match(source, /let isPreparingGeneration = false/);
+    assert.match(source, /let (?:runtime\.)?isPreparingGeneration = false/);
     assert.match(source, /if \(preparationKey !== generationPreparationKey\(\)\)/);
-    assert.match(source, /async function generateNextLongDreamChapter[\s\S]*?isPreparingGeneration = true;[\s\S]*?Long dream preparation failed:[\s\S]*?finally \{\s*isPreparingGeneration = false/);
-    assert.match(source, /catch \(error\) \{\s*if \(settings\.autoAnchors\[chatId\] === floors\)[\s\S]*?Auto generation preparation failed:/);
+    assert.match(source, /async function (?:runtime\.)?generateNextLongDreamChapter[\s\S]*?(?:runtime\.)?isPreparingGeneration = true;[\s\S]*?Long dream preparation failed:[\s\S]*?finally \{\s*(?:runtime\.)?isPreparingGeneration = false/);
+    assert.match(source, /catch \(error\) \{\s*if \((?:runtime\.)?settings\.autoAnchors\[chatId\] === floors\)[\s\S]*?Auto generation preparation failed:/);
 });
 
 test('预设读取保留收起或展开状态，旧请求不能覆盖新选择或填回已清空的选择', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const start = source.indexOf('function setPresetEntryControlsEnabled');
     const functions = source.slice(start, source.indexOf('function renderPresetEntries', start));
     const settings = { selectedPresetName: 'A', presetEntryStatesByPreset: {} };
@@ -1170,7 +1171,7 @@ test('预设读取保留收起或展开状态，旧请求不能覆盖新选择�
 });
 
 test('长梦首帧使用当前页面，慢资料完成后不重建输入或抢回已切换的标签', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const extract = name => source.match(new RegExp(`(?:async )?function ${name}\\([^]*?^}`, 'm'))?.[0] || '';
     let finishMaterials;
     const materials = new Promise(resolve => { finishMaterials = resolve; });
@@ -1242,8 +1243,8 @@ test('长梦首帧使用当前页面，慢资料完成后不重建输入或抢�
 });
 
 test('资料完成只更新长梦计数和进度，已展示的候选正文不重复载入', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const sync = source.match(/function syncLongDreamPanel\([^]*?^}/m)?.[0];
+    const source = readTheaterImplementation();
+    const sync = source.match(/function (?:runtime\.)?syncLongDreamPanel\([^]*?^}/m)?.[0];
     const calls = { review: 0, candidate: 0, progress: 0, estimate: 0, label: '' };
     const harness = runInNewContext(`
         let longDreamWorkspaceSection = 'continue';
@@ -1266,7 +1267,7 @@ test('资料完成只更新长梦计数和进度，已展示的候选正文不�
 });
 
 test('世界书旧请求不能覆盖新书单，失败回退不会跨读取模式复用缓存', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const keyStart = source.indexOf('function worldBookCacheKey');
     const keyFunctions = source.slice(keyStart, source.indexOf('// 每本书一个节点', keyStart));
     const loadStart = source.indexOf('function reloadWorldBooks');
@@ -1328,9 +1329,9 @@ test('世界书旧请求不能覆盖新书单，失败回退不会跨读取模�
 });
 
 test('定梦单次更新读取新资料后保存，失败或切换不覆盖，保留未保存编辑', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const code = source.match(/let refreshingLongDreamWorldBooks = false;[^]*?(?=\nfunction longDreamDefinitionHTML)/)[0];
-    const syncCode = source.match(/function syncLongDreamPanel\([^]*?^}/m)[0];
+    const source = readTheaterImplementation();
+    const code = source.match(/let (?:runtime\.)?refreshingLongDreamWorldBooks = false;[^]*?(?=\nfunction longDreamDefinitionHTML)/)[0];
+    const syncCode = source.match(/function (?:runtime\.)?syncLongDreamPanel\([^]*?^}/m)[0];
     for (const mode of ['success', 'read-failed', 'read-threw', 'save-failed', 'save-threw', 'books-changed', 'dream-switched', 'deleted', 'record-changed', 'generation-started', 'review-started', 'no-entries', 'initial-review', 'initial-generating', 'initial-preparing', 'initial-isolated', 'no-books']) {
         const original = { ...createLongDreamRecord({ title: '已保存标题', canon: '已保存正典',
             worldBookPolicy: LONG_DREAM_WORLD_BOOK_POLICY.SELECTED, worldBookNames: ['A'],
@@ -1404,8 +1405,8 @@ test('定梦单次更新读取新资料后保存，失败或切换不覆盖，�
 });
 
 test('世界书更新期间同一长梦不能保存旧定梦或启动续写，结束后可进入原流程', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const generation = source.match(/async function generateNextLongDreamChapter\([^]*?^}/m)[0];
+    const source = readTheaterImplementation();
+    const generation = source.match(/async function (?:runtime\.)?generateNextLongDreamChapter\([^]*?^}/m)[0];
     const saveStart = source.indexOf("$d.off('click.tdsave')");
     const saveEnd = source.indexOf("\n    });", saveStart) + '\n    });'.length;
     const saveCode = source.slice(saveStart, saveEnd);
@@ -1423,7 +1424,7 @@ test('世界书更新期间同一长梦不能保存旧定梦或启动续写，�
     assert.equal(notices.length, 2); assert.ok(notices.every(text => !text.includes('世界书更新完成')));
 });
 test('世界书慢读取提交时保留用户刚修改的条目开关', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const keyStart = source.indexOf('function worldBookCacheKey');
     const keyFunctions = source.slice(keyStart, source.indexOf('// 每本书一个节点', keyStart));
     const loadStart = source.indexOf('function reloadWorldBooks');
@@ -1496,9 +1497,9 @@ test('旧版公共勾选记录迁移给当前预设，且不会覆盖已有的�
     });
     assert.deepEqual(presetEntryStatesForPreset(preserved, '当前预设'), { main: false });
 
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    assert.doesNotMatch(source, /settings\.presetEntryStates\s*=\s*\{\}/);
-    assert.match(source, /currentPresetEntryStates\(\{ create: true \}\)/);
+    const source = readTheaterImplementation();
+    assert.doesNotMatch(source, /(?:runtime\.)?settings\.presetEntryStates\s*=\s*\{\}/);
+    assert.match(source, /(?:runtime\.)?currentPresetEntryStates\(\{ create: true \}\)/);
 });
 
 test('AI 定梦建议只读取第一章正文，并明确输出待确认草稿', () => {
@@ -1758,10 +1759,10 @@ test('长梦正文、自动补写和最终排版沿用同一份生成线路快�
     assert.deepEqual(seen.map(item => item.stage), ['round-1', 'round-2', 'render']);
     assert.equal(seen.every(item => item.route === apiRoute), true);
     assert.equal(seen.at(-1).originalInstruction, '按钮使用指定的 HTML、CSS 和 JavaScript。');
-    const indexSource = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const longDreamRenderer = indexSource.match(/async function renderLongDreamChapter\([^]*?^}/m)?.[0] || '';
+    const indexSource = readTheaterImplementation();
+    const longDreamRenderer = indexSource.match(/async function (?:runtime\.)?renderLongDreamChapter\([^]*?^}/m)?.[0] || '';
     assert.match(longDreamRenderer, /originalInstruction = ''/);
-    assert.match(longDreamRenderer, /requestFinalRenderedHtml\(\{[^]*?originalInstruction/);
+    assert.match(longDreamRenderer, /(?:runtime\.)?requestFinalRenderedHtml\(\{[^]*?originalInstruction/);
 });
 
 test('长梦高频流片段只合并保存最新草稿，不排队写入每个中间版本', async () => {
@@ -1831,8 +1832,8 @@ test('长梦连续生成并确认五章时只按顺序追加一次，不重复�
 });
 
 test('修改要求入口确认采用并记住新指令，取消或状态变化不保存不生成', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const code = source.match(/async function regenerateLongDreamDraft\([^]*?^}/m)[0];
+    const source = readTheaterImplementation();
+    const code = source.match(/async function (?:runtime\.)?regenerateLongDreamDraft\([^]*?^}/m)[0];
     for (const mode of ['confirm', 'empty', 'cancel', 'stale', 'full', 'original']) {
         const draft = { status: LONG_DREAM_DRAFT_STATUS.REVIEW, instruction: '原要求', title: '章名', targetChars: 3000, candidates: Array(mode === 'full' ? 3 : 1).fill({ text: '保留正文', html: '<p>保留正文</p>' }) };
         const dream = { id: 7, draft };
@@ -2015,8 +2016,8 @@ test('满三版后请求失败、停止、排版或保存失败均保留旧候�
 });
 
 test('修改要求再次打开带回上次补充，取消和保存失败不覆盖，再来一版沿用当前候选要求', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const code = source.match(/async function regenerateLongDreamDraft\([^]*?^}/m)[0];
+    const source = readTheaterImplementation();
+    const code = source.match(/async function (?:runtime\.)?regenerateLongDreamDraft\([^]*?^}/m)[0];
     const draft = { status: LONG_DREAM_DRAFT_STATUS.REVIEW, instruction: '旧候选要求', lastRevisionInstruction: '原要求\nchar更温柔', title: '章名', targetChars: 3000, candidates: [] };
     let markup, cancel = true, failSave = false, generated = [];
     const scope = { longDreamCandidateSavePending: false, isPreparingGeneration: false, activeLongDreamId: 7, longDreamCache: [{ id: 7, draft }], settings: {}, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_MAX_CANDIDATES,
@@ -2360,33 +2361,33 @@ test('待确认长梦草稿不会被新一轮生成静默覆盖', async () => {
 });
 
 test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     assert.match(source, /data-tab="long-dream">长梦<\/div>/);
     assert.match(source, /data-panel="long-dream"/);
     assert.match(source, /indexedDB\.open\('st-theater', 2\)/);
     assert.match(source, /createObjectStore\('dreams', \{ keyPath: 'id', autoIncrement: true \}\)/);
     assert.match(source, /createLongDreamGenerationController/);
-    assert.match(source, /#theater-dream-generate-next', generateNextLongDreamChapter/);
+    assert.match(source, /#theater-dream-generate-next', (?:runtime\.)?generateNextLongDreamChapter/);
     assert.match(source, /id="theater-dream-stop-generation"/);
     assert.match(source, /id="theater-dream-confirm-chapter"/);
     assert.match(source, /id="theater-dream-review-fullscreen"/);
     assert.match(source, /id="theater-dream-regenerate-draft"/);
     assert.match(source, /data-dream-candidate-step="-1"/);
     assert.match(source, /data-dream-candidate-step="1"/);
-    assert.match(source, /changeLongDreamDraftCandidate/);
+    assert.match(source, /(?:runtime\.)?changeLongDreamDraftCandidate/);
     assert.match(source, /按原要求再生成一版/);
     assert.match(source, /LONG_DREAM_MAX_CANDIDATES/);
     assert.match(source, /longDreamComposerDrafts/);
     assert.match(source, /lastTheaterTab/);
-    assert.match(source, /regenerateLongDreamDraft/);
-    assert.match(source, /requestFinalRenderedHtml/);
-    assert.match(source, /autoContinue: settings\.autoContinue !== false/);
-    assert.match(source, /maxRounds: Math\.min\(10, Math\.max\(1, Number\(settings\.maxAutoRounds\) \|\| 3\)\)/);
+    assert.match(source, /(?:runtime\.)?regenerateLongDreamDraft/);
+    assert.match(source, /(?:runtime\.)?requestFinalRenderedHtml/);
+    assert.match(source, /autoContinue: (?:runtime\.)?settings\.autoContinue !== false/);
+    assert.match(source, /maxRounds: Math\.min\(10, Math\.max\(1, Number\((?:runtime\.)?settings\.maxAutoRounds\) \|\| 3\)\)/);
     assert.match(source, /class="[^"]*theater-dream-next-options/);
     assert.match(source, /id="theater-dream-token-summary-value"/);
     assert.match(source, /id="theater-dream-refresh-world-book"/);
-    assert.match(source, /class="[^"]*theater-dream-settings is-workspace/);
+    assert.match(source, /class="[^"]*theater-dream-(?:runtime\.)?settings is-workspace/);
     assert.match(source, /旧记录中有一份指令，请核对/);
     assert.match(styles, /梦中页只保留一条主线：续写/);
     assert.match(styles, /\.theater-dream-candidate-switcher/);
@@ -2395,8 +2396,8 @@ test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => 
 });
 
 test('定梦页只保留手写 canon，不再显示 AI 整理建议入口', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const creation = source.match(/function longDreamCreateHTML\(\) \{[\s\S]*?function longDreamGenerationStageText/)?.[0] || '';
+    const source = readTheaterImplementation();
+    const creation = source.match(/function longDreamCreateHTML\(\) \{[\s\S]*?function (?:runtime\.)?longDreamGenerationStageText/)?.[0] || '';
     assert.match(creation, /id="theater-dream-canon"/);
     assert.doesNotMatch(creation, /longDreamCanonSuggestionHTML|theater-dream-canon-assist|AI 帮我整理/);
     assert.match(source, /composeLongDreamCanon\(/);
@@ -2742,7 +2743,7 @@ test('梦脉冲突提示展示原梦脉和本章新变化，不再只给冲突�
     record = applyLongDreamMemoryPatch(record, { operations: [
         { op: 'open_thread', threadKey: '失踪列车记录', kind: 'mystery', content: '重新寻找记录', chapterNumber: 4 },
     ] }, 4);
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const helpers = source.slice(source.indexOf('function longDreamMemoryConflictTarget('), source.indexOf('function longDreamMemoryCardsHTML('));
     const scope = { longDreamExcerpt: (value, limit) => String(value || '').slice(0, limit) };
     const result = runInNewContext(`${helpers}\nlongDreamMemoryConflictDetails(memory, conflict);`, {
@@ -3125,7 +3126,7 @@ test('编辑正式章节会保留既有梦脉并从修改章起重新织录，�
 });
 
 test('长梦再生成会显示真实版本、等待时间、字数、轮次与旧候选切换', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const progress = source.match(/<section id="theater-dream-generation-status"[\s\S]*?<section class="ui-card theater-dream-latest">/)?.[0] || '';
     assert.match(source, /第 \$\{state\.activeProgress\?\.candidateNumber/);
@@ -3148,7 +3149,7 @@ test('长梦再生成会显示真实版本、等待时间、字数、轮次与�
 });
 
 test('长梦候选切换居中且无方框，三个审阅操作的内容保持居中', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const reviewFlow = source.match(/const reviewFlow = state\.hasReviewDraft[\s\S]*?return `<div class="theater-dream-detail/)?.[0] || '';
     assert.ok(reviewFlow.indexOf('theater-dream-candidate-switcher') >= 0);
@@ -3163,20 +3164,20 @@ test('长梦候选切换居中且无方框，三个审阅操作的内容保持�
 });
 
 test('长梦待确认页的字数统计按整个标题区居中', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     assert.match(source, /<p class="theater-dream-review-count">[^\n]*正文约 \$\{readableCharCount/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.theater-dream-review-count \{[^}]*grid-column:1 \/ -1;[^}]*width:100%;[^}]*text-align:center;/);
 });
 
 test('长梦最终排版进度只通过统一状态刷新，避免完成提示与字符数交替闪烁', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const renderer = source.match(/async function renderLongDreamChapter[\s\S]*?function createCumulativeStreamRenderer/)?.[0] || '';
-    const synchronizer = source.match(/function syncLongDreamProgressDisplay[\s\S]*?function renderLongDreamReviewDraft/)?.[0] || '';
+    const source = readTheaterImplementation();
+    const renderer = source.match(/async function (?:runtime\.)?renderLongDreamChapter[\s\S]*?function (?:runtime\.)?createCumulativeStreamRenderer/)?.[0] || '';
+    const synchronizer = source.match(/function (?:runtime\.)?syncLongDreamProgressDisplay[\s\S]*?function renderLongDreamReviewDraft/)?.[0] || '';
     assert.match(renderer, /updateLongDreamRenderProgress\(\{/);
     assert.doesNotMatch(renderer, /\$\('#theater-dream-generation-label'\)\.text/);
     assert.match(synchronizer, /longDreamProgressLabelText\(progress\)/);
-    assert.match(source, /longDreamRenderReceivedChars\.toLocaleString\(\)/);
+    assert.match(source, /(?:runtime\.)?longDreamRenderReceivedChars\.toLocaleString\(\)/);
 });
 
 test('重新生成整部梦脉会清理自动结果并保留人工校正、隐藏与否定记录', () => {
@@ -3561,7 +3562,7 @@ test('正文已完成的长梦草稿经过备份恢复后仍只需重新排版',
 });
 
 test('全屏阅读使用原生模态弹窗进入浏览器顶层', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     assert.match(source, /<dialog id="theater-reader-overlay"/);
     assert.match(source, /readerDialog\.showModal\(\)/);
@@ -3570,31 +3571,31 @@ test('全屏阅读使用原生模态弹窗进入浏览器顶层', () => {
 });
 
 test('点击续写会切回生成页、滚到顶部并聚焦指令框', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const match = source.match(/function revealContinuationInput\(\) \{[\s\S]*?\n\}/)?.[0] || '';
     assert.match(source, /\.theater-tab\[data-tab="generate"\][\s\S]*?\.click\(\)/);
     assert.match(match, /\.theater-panels-wrapper/);
     assert.match(match, /panels\.scrollTop = 0/);
     assert.match(match, /input\.focus\(\{ preventScroll: true \}\)/);
-    assert.match(source, /scheduleTokenEstimate\(\);\s*revealContinuationInput\(\);/);
+    assert.match(source, /(?:runtime\.)?scheduleTokenEstimate\(\);\s*revealContinuationInput\(\);/);
 });
 
 test('悬浮球打开弹窗时会吞掉同一触点补发的点击并在下一轮再显示界面', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const guard = source.match(/function openTheaterPopupFromFloatingBall\([\s\S]*?\n\}/)?.[0] || '';
-    const floatingBall = source.match(/function createFloatingBall\(\)[\s\S]*?\/\/ Popup HTML/)?.[0] || '';
+    const floatingBall = source.match(/function (?:runtime\.)?createFloatingBall\(\)[\s\S]*?\/\/ Popup HTML/)?.[0] || '';
     assert.match(guard, /document\.addEventListener\('click', guardOpeningClick, true\)/);
     assert.match(guard, /Math\.hypot\(clickX - releaseX, clickY - releaseY\)/);
     assert.match(guard, /event\.preventDefault\(\)/);
     assert.match(guard, /event\.stopImmediatePropagation\(\)/);
-    assert.match(guard, /setTimeout\(\(\) => \{[\s\S]*?openTheaterPopup\(\)[\s\S]*?\}, 0\)/);
+    assert.match(guard, /setTimeout\(\(\) => \{[\s\S]*?(?:runtime\.)?openTheaterPopup\(\)[\s\S]*?\}, 0\)/);
     assert.match(floatingBall, /openTheaterPopupFromFloatingBall\(releasePoint\)/);
-    assert.doesNotMatch(floatingBall, /else \{\s*try \{ openTheaterPopup\(\)/);
+    assert.doesNotMatch(floatingBall, /else \{\s*try \{ (?:runtime\.)?openTheaterPopup\(\)/);
 });
 
 test('悬浮球拖动被系统取消时会清理监听，旧浏览器也使用对应的鼠标事件', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const floatingBall = source.match(/function createFloatingBall\(\)[\s\S]*?\/\/ Popup HTML/)?.[0] || '';
+    const source = readTheaterImplementation();
+    const floatingBall = source.match(/function (?:runtime\.)?createFloatingBall\(\)[\s\S]*?\/\/ Popup HTML/)?.[0] || '';
     assert.match(floatingBall, /document\.addEventListener\('pointercancel', onPointerCancel\)/);
     assert.match(floatingBall, /document\.addEventListener\('touchcancel', onPointerCancel\)/);
     assert.match(floatingBall, /document\.addEventListener\('mousemove', onPointerMove/);
@@ -3609,19 +3610,19 @@ test('悬浮球拖动被系统取消时会清理监听，旧浏览器也使用�
     assert.match(floatingBall, /e\.type === 'mousedown' && Date\.now\(\) < suppressMouseUntil/);
     assert.match(floatingBall, /touchstart', onPointerDown, \{ passive: false \}/);
     assert.match(floatingBall, /function removeGestureListeners\(\)[\s\S]*?removeEventListener\('touchcancel', onPointerCancel\)/);
-    assert.match(source, /let floatingBallCleanup = null/);
-    assert.match(floatingBall, /if \(floatingBallCleanup\) floatingBallCleanup\(\)/);
-    assert.match(floatingBall, /floatingBallCleanup = \(\) => \{[\s\S]*?cancelTuck\(\)[\s\S]*?removeGestureListeners\(\)[\s\S]*?removeEventListener\('resize', onViewportResize\)[\s\S]*?ball\.remove\(\)/);
+    assert.match(source, /let (?:runtime\.)?floatingBallCleanup = null/);
+    assert.match(floatingBall, /if \((?:runtime\.)?floatingBallCleanup\) (?:runtime\.)?floatingBallCleanup\(\)/);
+    assert.match(floatingBall, /(?:runtime\.)?floatingBallCleanup = \(\) => \{[\s\S]*?cancelTuck\(\)[\s\S]*?removeGestureListeners\(\)[\s\S]*?removeEventListener\('resize', onViewportResize\)[\s\S]*?ball\.remove\(\)/);
 });
 
 test('插件更新成功后只提供需确认的酒馆刷新操作', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
-    const confirmFlow = source.match(/async function confirmReloadAfterUpdate\(\) \{[\s\S]*?\n\}/)?.[0] || '';
-    const updateFlow = source.match(/async function updateExtension\(\) \{[\s\S]*?\n\}/)?.[0] || '';
+    const confirmFlow = source.match(/async function (?:runtime\.)?confirmReloadAfterUpdate\(\) \{[\s\S]*?\n\}/)?.[0] || '';
+    const updateFlow = source.match(/async function (?:runtime\.)?updateExtension\(\) \{[\s\S]*?\n\}/)?.[0] || '';
 
     assert.match(source, /id="theater-reload-after-update-btn"[\s\S]*?刷新酒馆并启用/);
-    assert.match(source, /#theater-reload-after-update-btn', confirmReloadAfterUpdate/);
+    assert.match(source, /#theater-reload-after-update-btn', (?:runtime\.)?confirmReloadAfterUpdate/);
     assert.match(updateFlow, /if \(resp\.ok\) \{\s*showReloadAfterUpdateAction\(\)/);
     assert.match(confirmFlow, /Popup\.show\.confirm\('现在刷新酒馆并启用新版本？'/);
     assert.match(confirmFlow, /if \(!confirmed\) return;[\s\S]*?window\.location\.reload\(\)/);
@@ -3633,7 +3634,7 @@ test('插件更新成功后只提供需确认的酒馆刷新操作', () => {
 });
 
 test('常见问题汇总是诊断报告后的独立可折叠界面', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const signals = readFileSync(new URL('../request-diagnostics.js', import.meta.url), 'utf8');
     const diagnosticsPanel = source.indexOf('data-panel="diagnostics"');
@@ -3645,7 +3646,7 @@ test('常见问题汇总是诊断报告后的独立可折叠界面', () => {
     assert.match(source, /theater-diagnostic-catalog-reason/);
     assert.match(source, /theater-diagnostic-catalog-action/);
     assert.doesNotMatch(source, /【常见问题汇总｜按错误信号查询】/);
-    assert.doesNotMatch(source.match(/function runDiagnostics\(\)[\s\S]*?\n\}/)?.[0] || '', /diagnostic-catalog/);
+    assert.doesNotMatch(source.match(/function (?:runtime\.)?runDiagnostics\(\)[\s\S]*?\n\}/)?.[0] || '', /diagnostic-catalog/);
     assert.match(signals, /T-API-CONTENT-FILTER/);
     assert.match(styles, /\.theater-diagnostic-catalog\s*\{/);
     assert.match(styles, /\.theater-diagnostic-catalog\[open\]/);
@@ -3653,18 +3654,18 @@ test('常见问题汇总是诊断报告后的独立可折叠界面', () => {
 });
 
 test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     assert.match(source, /id="theater-dream-import-backup"/);
     assert.match(source, /id="theater-dream-export-all"/);
     assert.match(source, /id="theater-dream-export-current"/);
     assert.match(source, /data-dream-export-one/);
     assert.match(source, /data-dream-open-work/);
-    assert.match(source, /requestLongDreamExport\(\[dream\], 'single'\)/);
-    assert.match(source, /function chooseExportFormat/);
+    assert.match(source, /(?:runtime\.)?requestLongDreamExport\(\[dream\], 'single'\)/);
+    assert.match(source, /function (?:runtime\.)?chooseExportFormat/);
     assert.match(source, /ZIP 可读归档/);
     assert.match(source, /JSON 完整备份/);
-    assert.match(source, /requestHistoryExport/);
+    assert.match(source, /(?:runtime\.)?requestHistoryExport/);
     assert.doesNotMatch(source, /ZIP 生成失败，已回退为 JSON 备份/);
     assert.match(source, /'theater-dream-complete'/);
     assert.match(source, /'theater-dream-reopen'/);
@@ -3679,10 +3680,10 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /data-dream-chapter-action="rewrite"/);
     assert.match(source, /data-dream-chapter-action="rollback"/);
     assert.match(source, /data-dream-chapter-action="delete-from"/);
-    assert.match(source, /data-dream-memory-action="save"/);
+    assert.match(source, /data-dream-memory-action="(?:runtime\.)?save"/);
     assert.match(source, /data-dream-memory-action="\$\{dismissed \? 'restore' : 'dismiss'\}"/);
     assert.match(source, /theater-dream-memory-current-state-readonly/);
-    assert.match(source, /data-dream-memory-v2-action="save"/);
+    assert.match(source, /data-dream-memory-v2-action="(?:runtime\.)?save"/);
     assert.match(source, /class="theater-dream-memory-conflict-details"/);
     assert.match(source, /<b>原梦脉<\/b>/);
     assert.match(source, /<b>本章新变化<\/b>/);
@@ -3690,7 +3691,7 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(source, /id="theater-dream-memory-analysis-preset"/);
     assert.match(source, /id="theater-import-dream-memory-preset"/);
     assert.match(source, /id="theater-dream-memory-selection"/);
-    assert.match(source, /refreshLongDreamMemorySelection/);
+    assert.match(source, /(?:runtime\.)?refreshLongDreamMemorySelection/);
     assert.match(source, /class="[^"]*theater-dream-memory-selection-chip/);
     assert.match(source, /class="theater-dream-memory-chip-text"/);
     assert.match(source, /class="[^"]*theater-dream-memory-v2-card/);
@@ -3747,24 +3748,24 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.0 版本号在代码、清单、样式头和设置页保持一致', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+test('v4.4.2 版本号在代码、清单、样式头和设置页保持一致', () => {
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const VERSION = '4\.4\.0'/);
-    assert.equal(manifest.version, '4.4.0');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.0/);
-    assert.match(source, /当前版本 v\$\{VERSION\}/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.2'/);
+    assert.equal(manifest.version, '4.4.2');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.2/);
+    assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 
 test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦脉和章节操作归入正确层级', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const workspace = source.match(/function longDreamWorkspaceHTML\([\s\S]*?\n\}/)?.[0] || '';
-    const creation = source.match(/function longDreamCreateHTML\(\) \{[\s\S]*?function longDreamGenerationStageText/)?.[0] || '';
+    const creation = source.match(/function longDreamCreateHTML\(\) \{[\s\S]*?function (?:runtime\.)?longDreamGenerationStageText/)?.[0] || '';
     const definition = source.match(/function longDreamDefinitionHTML\(dream\) \{[\s\S]*?function longDreamDetailHTML/)?.[0] || '';
     const continuation = source.match(/function longDreamDetailHTML\(dream\) \{[\s\S]*?function longDreamChapterDirectoryHTML/)?.[0] || '';
-    const shelf = source.match(/function longDreamListHTML\(\) \{[\s\S]*?const LONG_DREAM_RELATION_OPTIONS/)?.[0] || '';
+    const shelf = source.match(/function longDreamListHTML\(\) \{[\s\S]*?const (?:runtime\.)?LONG_DREAM_RELATION_OPTIONS/)?.[0] || '';
     const workDetail = source.match(/function longDreamWorkDetailHTML\(dream\) \{[\s\S]*?function longDreamChapterDetailHTML/)?.[0] || '';
     const chapterDetail = source.match(/function longDreamChapterDetailHTML\(dream, chapter\) \{[\s\S]*?function longDreamUnavailableHTML/)?.[0] || '';
 
@@ -3797,9 +3798,9 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(chapterDetail, /class="[^"]*theater-dream-chapter-operations/);
     assert.doesNotMatch(chapterDetail, /<details class="[^"]*theater-dream-chapter-operations/);
     assert.doesNotMatch(shelf, /<details class="[^"]*theater-dream-library-tools/);
-    assert.match(source, /function exportLongDreamChapter\(dream, chapter\)/);
-    assert.match(source, /downloadFile\(longDreamChapterFileName\(dream, chapter, 'html'\), chapter\.html/);
-    assert.match(source, /renderLongDreamChapter\(\{[\s\S]*?text,[\s\S]*?originalInstruction: chapter\.instruction \|\| ''[\s\S]*?apiRoute: captureGenerationApiRoute/);
+    assert.match(source, /function (?:runtime\.)?exportLongDreamChapter\(dream, chapter\)/);
+    assert.match(source, /(?:runtime\.)?downloadFile\(longDreamChapterFileName\(dream, chapter, 'html'\), chapter\.html/);
+    assert.match(source, /(?:runtime\.)?renderLongDreamChapter\(\{[\s\S]*?text,[\s\S]*?originalInstruction: chapter\.instruction \|\| ''[\s\S]*?apiRoute: (?:runtime\.)?captureGenerationApiRoute/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subnav\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\][\s\S]*?--dream-gemini-bg:\s*var\(--t-bg\)/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.ia-subtab \{[^}]*width:100% !important[^}]*min-height:40px !important[^}]*max-height:none !important/);
@@ -3824,8 +3825,8 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
 });
 
 test('旧历史开卷不会因世界书尚未同步而锁死世界线选项', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const relationChoices = source.match(/function longDreamRelationChoicesHTML\([\s\S]*?function longDreamSourceWorldBooks/)?.[0] || '';
+    const source = readTheaterImplementation();
+    const relationChoices = source.match(/function longDreamRelationChoicesHTML\([\s\S]*?function (?:runtime\.)?longDreamSourceWorldBooks/)?.[0] || '';
     const restoreHandler = source.match(/click\.tdrestorebooks[\s\S]*?click\.tdopenbooks/)?.[0] || '';
     assert.match(relationChoices, /const isDisabled = disabled/);
     assert.doesNotMatch(relationChoices, /isDisabled = disabled \|\| \(needsBooks && !hasBooks\)/);
@@ -3834,26 +3835,26 @@ test('旧历史开卷不会因世界书尚未同步而锁死世界线选项', ()
     assert.match(source, /data-dream-restore-source-world-books/);
     assert.match(source, /data-dream-open-world-books/);
     assert.match(restoreHandler, /Popup\.show\.confirm/);
-    assert.match(restoreHandler, /settings\.selectedWorldBooks = \[\.\.\.sourceBooks\]/);
-    assert.match(restoreHandler, /await reloadWorldBooks\(\{ silent: true \}\)/);
+    assert.match(restoreHandler, /(?:runtime\.)?settings\.selectedWorldBooks = \[\.\.\.sourceBooks\]/);
+    assert.match(restoreHandler, /await (?:runtime\.)?reloadWorldBooks\(\{ silent: true \}\)/);
 });
 
 test('放弃长梦草稿保留续写指令，只有独立清空按钮会确认后清除', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const discard = source.match(/async function discardLongDreamDraft\(\) \{[\s\S]*?async function regenerateLongDreamDraft/)?.[0] || '';
+    const source = readTheaterImplementation();
+    const discard = source.match(/async function (?:runtime\.)?discardLongDreamDraft\(\) \{[\s\S]*?async function (?:runtime\.)?regenerateLongDreamDraft/)?.[0] || '';
     const clearHandler = source.match(/click\.tdclearinstruction[\s\S]*?click\.tdmemoryregenerate/)?.[0] || '';
     assert.match(source, /id="theater-dream-clear-next-instruction"/);
     assert.match(discard, /const retainedComposer =/);
-    assert.match(discard, /setLongDreamComposerDraft\(dream\.id, retainedComposer\)/);
-    assert.doesNotMatch(discard, /clearLongDreamComposerDraft/);
+    assert.match(discard, /(?:runtime\.)?setLongDreamComposerDraft\(dream\.id, retainedComposer\)/);
+    assert.doesNotMatch(discard, /(?:runtime\.)?clearLongDreamComposerDraft/);
     assert.match(discard, /本章指令会保留/);
     assert.match(clearHandler, /确定清空本章续写指令/);
-    assert.match(clearHandler, /rememberLongDreamComposerDraft\(\)/);
-    assert.match(clearHandler, /refreshLongDreamMemorySelection\(\)/);
+    assert.match(clearHandler, /(?:runtime\.)?rememberLongDreamComposerDraft\(\)/);
+    assert.match(clearHandler, /(?:runtime\.)?refreshLongDreamMemorySelection\(\)/);
 });
 
 test('长梦参考稿样式只作用于长梦面板，不改坏其他页面按钮与插件外壳', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const parity = styles.split('Long Dream HTML parity')[1] || '';
     assert.doesNotMatch(source, /theater-popup-header ia-header/);
@@ -3869,11 +3870,11 @@ test('长梦参考稿样式只作用于长梦面板，不改坏其他页面按�
 });
 
 test('长梦章节阅读走独立沉浸阅读器，不覆写普通生成结果', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const reader = source.match(/function readLongDreamChapter\(chapter\) \{[\s\S]*?\n\}/)?.[0] || '';
-    assert.match(reader, /openFullscreenReader\(\{/);
-    assert.doesNotMatch(reader, /lastGenerated(Text|Html)|currentOutputMode|showInIframe/);
-    assert.match(source, /function openFullscreenReader\(overridePayload = null\)/);
+    const source = readTheaterImplementation();
+    const reader = source.match(/function (?:runtime\.)?readLongDreamChapter\(chapter\) \{[\s\S]*?\n\}/)?.[0] || '';
+    assert.match(reader, /(?:runtime\.)?openFullscreenReader\(\{/);
+    assert.doesNotMatch(reader, /lastGenerated(Text|Html)|(?:runtime\.)?currentOutputMode|(?:runtime\.)?showInIframe/);
+    assert.match(source, /function (?:runtime\.)?openFullscreenReader\(overridePayload = null\)/);
 });
 
 test('纯文字亮色与暗色共用纯正文协议，但使用不同的本地阅读主题', () => {
@@ -3899,7 +3900,7 @@ test('暗色纯文字阅读壳转义正文并声明夜间配色', () => {
 });
 
 test('生成结果使用可关闭的页边书签，并保留安全退出编辑与移除结果', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const actionsAt = source.indexOf('id="theater-result-actions"');
     const outputAt = source.indexOf('id="theater-output-container"');
@@ -3916,16 +3917,16 @@ test('生成结果使用可关闭的页边书签，并保留安全退出编辑�
 });
 
 test('手机端主弹窗铺满可用屏幕，保留紧凑圆角关闭键并让内容独立滚动', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const tabHandler = source.match(/\/\/ Tabs[\s\S]*?\/\/ ---- Generate ----/)?.[0] || '';
-    const tabActivator = source.match(/function activateTheaterTab\([\s\S]*?\n\}/)?.[0] || '';
+    const tabActivator = source.match(/function (?:runtime\.)?activateTheaterTab\([\s\S]*?\n\}/)?.[0] || '';
     const mobileShell = styles.match(/\/\* Mobile fullscreen shell:[\s\S]*?\/\* End mobile fullscreen shell\. \*\//)?.[0] || '';
-    assert.match(tabHandler, /activateTheaterTab/);
+    assert.match(tabHandler, /(?:runtime\.)?activateTheaterTab/);
     assert.match(tabActivator, /panels\.scrollTop = 0/);
     assert.doesNotMatch(source, /target\.scrollIntoView/);
     assert.match(source, /okButton: '关闭'/);
-    assert.match(source, /new Popup\(buildPopupHTML\(initialTab\)/);
+    assert.match(source, /new Popup\((?:runtime\.)?buildPopupHTML\(initialTab\)/);
     assert.match(source, /const activeTabClass = tab => initialTab === tab \? ' active' : ''/);
     assert.doesNotMatch(source, /class="theater-tab active" data-tab="generate"/);
     assert.doesNotMatch(source, /class="theater-panel active" data-panel="generate"/);
@@ -3962,9 +3963,9 @@ test('页边书签位置会限制在可见范围并按拖动落点吸附', () =>
 });
 
 test('设置页按六个清晰模块展示全部功能且字号跟随全局设置', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
-    const popupBuilder = source.match(/function buildPopupHTML\([\s\S]*?\/\/ Rendering helpers/)?.[0] || '';
+    const popupBuilder = source.match(/function (?:runtime\.)?buildPopupHTML\([\s\S]*?\/\/ Rendering helpers/)?.[0] || '';
     for (const id of [
         'theater-api-mode', 'theater-api-preset-select', 'theater-api-protocol', 'theater-api-url',
         'theater-api-key', 'theater-api-model', 'theater-max-output-tokens', 'theater-stream-enabled',
@@ -3981,7 +3982,7 @@ test('设置页按六个清晰模块展示全部功能且字号跟随全局设�
     for (const group of ['api', 'generation', 'automation', 'materials', 'access', 'extension']) {
         assert.match(source, new RegExp(`data-config-group="\\$\\{group.id\\}"|id: '${group}'`));
     }
-    const decorator = source.match(/function decorateConfigLayout\(\)[\s\S]*?\n\}/)?.[0] || '';
+    const decorator = source.match(/function (?:runtime\.)?decorateConfigLayout\(\)[\s\S]*?\n\}/)?.[0] || '';
     assert.match(popupBuilder, /<div class="theater-config-layout"><div class="theater-config-groups">/);
     assert.match(popupBuilder, /configGroupOrder = \{ api: 1, generation: 2, automation: 3, materials: 4, access: 5, extension: 6 \}/);
     assert.ok(popupBuilder.indexOf('theater-config-layout') < popupBuilder.indexOf('data-config-section="api"'));
@@ -4080,9 +4081,9 @@ test('三份 HTML 规则按阅读、参与、探索区分，不要求插件标�
 });
 
 test('HTML 模板统一覆盖 Markdown 输出并检查配色，保留代码要求且不影响纯文字', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const resolve = source.match(/function resolveRenderSelection\([^]*?^}/m)?.[0];
-    const guardrails = source.match(/const HTML_RENDER_FINAL_GUARDRAILS = `([^]*?)`;/)?.[1];
+    const source = readTheaterImplementation();
+    const resolve = source.match(/function (?:runtime\.)?resolveRenderSelection\([^]*?^}/m)?.[0];
+    const guardrails = source.match(/const (?:runtime\.)?HTML_RENDER_FINAL_GUARDRAILS = `([^]*?)`;/)?.[1];
     assert.ok(resolve && guardrails);
     assert.match(guardrails, /Markdown或Markdown代码块时，仅把标题、编号、列表、强调层级转为语义化HTML/);
     assert.match(guardrails, /HTML\/CSS\/JavaScript、视觉、交互、内容要求照常实现/);
@@ -4119,9 +4120,9 @@ test('HTML 模板统一覆盖 Markdown 输出并检查配色，保留代码要�
 });
 
 test('内置、自定义与默认模板的普通、自动、历史续写和长文计划一致', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const runSource = source.slice(source.indexOf('async function runGeneration('));
-    const plan = runSource.slice(runSource.indexOf('    const contCtx ='), runSource.indexOf('    isPreparingGeneration = true;'));
+    const plan = runSource.slice(runSource.indexOf('    const contCtx ='), runSource.indexOf("    runtime.isPreparingGeneration = true;"));
     const assembly = runSource.match(/payload = await assembleGenerationPayload\(instruction, \{[^]*?\n        \}\);/)?.[0];
     assert.ok(assembly);
     for (const selection of ['__default__', '0', ...Object.values(ADAPTIVE_RENDER_SELECTIONS)]) {
@@ -4150,7 +4151,7 @@ test('内置、自定义与默认模板的普通、自动、历史续写和长�
 });
 
 test('普通、自动和续写连续执行生成启动流程，完成日志和任务初始化', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+    const source = readTheaterImplementation().replace(/\r\n/g, '\n');
     const start = source.indexOf('async function runGeneration(');
     const end = source.indexOf("    try {\n        let firstHtml = '';", start);
     // 保留入口到任务创建之间的全部代码，包括日志、界面状态和流式初始化。
@@ -4203,10 +4204,10 @@ test('普通、自动和续写连续执行生成启动流程，完成日志和�
 });
 
 test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在失败时保留全文', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const runSource = source.slice(source.indexOf('async function runGeneration('));
-    const dispatch = runSource.slice(runSource.indexOf('        if (selectedPlainTextRender) {'), runSource.indexOf("        runtimeLog('info', '渲染路径'"));
-    const request = source.match(/async function requestFinalRenderedHtml\([^]*?^}\r?$/m)?.[0];
+    const dispatch = runSource.slice(runSource.indexOf('        if (selectedPlainTextRender) {'), runSource.indexOf("        runtime.runtimeLog('info', '渲染路径'"));
+    const request = source.match(/async function (?:runtime\.)?requestFinalRenderedHtml\([^]*?^}\r?$/m)?.[0];
     const validate = source.match(/function validateFinalRenderedHtml\([^]*?^}/m)?.[0];
     assert.ok(dispatch && request && validate);
     for (const profile of adaptiveRenderProfiles()) {
@@ -4216,6 +4217,8 @@ test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在�
             const harness = runInNewContext('(async () => {'
                 + "let lastGeneratedHtml = '', currentOutputMode = 'html';"
                 + 'let activeRound, firstChunkShown, bgStreamText, retainStreamAsBody, currentRoundStreamText, lastRequestContext;\n'
+                + 'const runtime = Object.create(globalThis.runtime);\n'
+                + 'Object.defineProperties(runtime, { lastGeneratedHtml: { get: () => lastGeneratedHtml, set: value => { lastGeneratedHtml = value; } }, currentOutputMode: { get: () => currentOutputMode, set: value => { currentOutputMode = value; } }, bgStreamText: { get: () => bgStreamText, set: value => { bgStreamText = value; } }, lastRequestContext: { get: () => lastRequestContext, set: value => { lastRequestContext = value; } } });\n'
                 + validate + '\n' + request + '\n' + dispatch
                 + '\nreturn { html: lastGeneratedHtml, mode: currentOutputMode }; })', {
                 selectedPlainTextRender: false, selectedTextTheme: 'light',
@@ -4257,7 +4260,7 @@ test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在�
 });
 
 test('生成页双模板切换保留，旧交互开关与追加规则已移除', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     assert.match(source, /id="theater-quick-render-toggle"/);
     assert.match(source, /id="theater-quick-render-a"/);
     assert.match(source, /id="theater-quick-render-b"/);
@@ -4265,7 +4268,7 @@ test('生成页双模板切换保留，旧交互开关与追加规则已移除',
     assert.doesNotMatch(source, /is-template-managed|额外进行一次独立 HTML|另有自适应排版请求/);
     const toggle = source.match(/<input[^>]*id="theater-interactive-toggle"[^>]*>/)?.[0];
     assert.equal(toggle, undefined);
-    assert.doesNotMatch(source, /INTERACTIVE_ADDON|settings\.interactiveMode/);
+    assert.doesNotMatch(source, /INTERACTIVE_ADDON|(?:runtime\.)?settings\.interactiveMode/);
 });
 
 test('iframe 没有回报渲染状态时会触发正文兜底', async () => {
@@ -4863,7 +4866,7 @@ test('独立 API 输出下限错误不会反向降低输出重试', async () => 
 });
 
 test('正式生成与连接测试都不再读取创作预设采样参数', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     assert.doesNotMatch(source, /cachedPresetGenerationOptions|extractPresetGenerationOptions|generationOptions/);
     const start = source.indexOf('async function testAPIConnection()');
     const end = source.indexOf('// Update', start);
@@ -4981,7 +4984,7 @@ test('共用独立 API 流在长时间无新数据时结束等待并保留已收
 });
 
 test('普通生成与长梦正文、排版共用同一个线路请求入口', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const longDreamRequest = source.slice(
         source.indexOf('async function requestLongDreamChapter'),
         source.indexOf('async function generateLongDreamCanonSuggestions'),
@@ -4994,12 +4997,12 @@ test('普通生成与长梦正文、排版共用同一个线路请求入口', ()
         source.indexOf('async function runGeneration'),
         source.indexOf('function currentAutoInstruction'),
     );
-    assert.match(longDreamRequest, /requestConfiguredGenerationApi/);
-    assert.doesNotMatch(longDreamRequest, /settings\.apiMode|generateWithMainAPI|callCustomAPIStream/);
-    assert.match(finalRenderRequest, /requestConfiguredGenerationApi/);
-    assert.doesNotMatch(finalRenderRequest, /settings\.apiMode|generateWithMainAPI|callCustomAPIStream/);
-    assert.match(ordinaryGeneration, /requestConfiguredGenerationApi/);
-    assert.match(source, /function captureGenerationApiRoute/);
+    assert.match(longDreamRequest, /(?:runtime\.)?requestConfiguredGenerationApi/);
+    assert.doesNotMatch(longDreamRequest, /(?:runtime\.)?settings\.apiMode|(?:runtime\.)?generateWithMainAPI|(?:runtime\.)?callCustomAPIStream/);
+    assert.match(finalRenderRequest, /(?:runtime\.)?requestConfiguredGenerationApi/);
+    assert.doesNotMatch(finalRenderRequest, /(?:runtime\.)?settings\.apiMode|(?:runtime\.)?generateWithMainAPI|(?:runtime\.)?callCustomAPIStream/);
+    assert.match(ordinaryGeneration, /(?:runtime\.)?requestConfiguredGenerationApi/);
+    assert.match(source, /function (?:runtime\.)?captureGenerationApiRoute/);
 });
 
 test('内容策略结束原因会被统一识别，不把用户指令直接定性为 NSFW', () => {
@@ -5569,11 +5572,11 @@ test('创作请求结构来自传输层输入且不包含正文、Key、Authoriz
 });
 
 test('诊断界面只展示创作请求结构，不渲染或复制真实消息正文', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     assert.match(source, /查看创作请求结构/);
     assert.match(source, /tracePurpose: round === 1 \? 'creative' : 'continuation'/);
     assert.match(source, /if \(purpose !== 'creative'\) return/);
-    assert.doesNotMatch(source.match(/function runDiagnostics\(\)[\s\S]*?\n\}/)?.[0] || '', /message\.content|<pre>/);
+    assert.doesNotMatch(source.match(/function (?:runtime\.)?runDiagnostics\(\)[\s\S]*?\n\}/)?.[0] || '', /message\.content|<pre>/);
 });
 
 test('429 限流识别支持 Retry-After 秒数、日期和常见错误文字', () => {
@@ -5615,10 +5618,10 @@ test('Token 分类相加等于总数', () => {
 });
 
 test('世界书勾选上限与生成预览复用同一个 Token 估算口径', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const worldBookText = `世界书设定：\n${['第一条设定。', '第二条设定。'].join('\n\n')}`;
     assert.equal(estimateTokenBreakdown({ worldBook: worldBookText }).worldBook, estimateTokenCount(worldBookText));
-    const updateSource = source.match(/function updateWBCount\(\)[\s\S]*?\n\}/)?.[0] || '';
+    const updateSource = source.match(/function (?:runtime\.)?updateWBCount\(\)[\s\S]*?\n\}/)?.[0] || '';
     assert.match(updateSource, /estimateTokenCount\(worldBookText\)/);
     assert.match(updateSource, /已勾选上限约/);
     assert.doesNotMatch(updateSource, /chars\s*\/\s*1\.5/);
@@ -6087,17 +6090,17 @@ test('普通生成中途失败会合并已完成轮次和当前流式正文，�
     assert.equal(generationTextWithLiveSegment(job, '第二轮已流出正文'), '第一轮正文\n\n第二轮已流出正文');
     assert.equal(generationTextWithLiveSegment(createGenerationJob(), '首轮已流出正文'), '首轮已流出正文');
 
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const ordinaryGeneration = source.slice(
         source.indexOf('async function runGeneration'),
         source.indexOf('function currentAutoInstruction'),
     );
-    assert.match(ordinaryGeneration, /retainStreamAsBody = false;[\s\S]*?requestFinalRenderedHtml/);
-    assert.match(ordinaryGeneration, /generationTextWithLiveSegment\(currentGenerationJob, liveBodyText\)/);
+    assert.match(ordinaryGeneration, /retainStreamAsBody = false;[\s\S]*?(?:runtime\.)?requestFinalRenderedHtml/);
+    assert.match(ordinaryGeneration, /generationTextWithLiveSegment\((?:runtime\.)?currentGenerationJob, liveBodyText\)/);
 });
 
 test('普通生成多轮复用首轮资料包而不是退回简化续写请求', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const ordinaryGeneration = source.slice(
         source.indexOf('async function runGeneration'),
         source.indexOf('function currentAutoInstruction'),
@@ -6105,10 +6108,10 @@ test('普通生成多轮复用首轮资料包而不是退回简化续写请求',
     assert.match(source, /generationFoundation: Object\.freeze/);
     assert.match(source, /originalInstruction: cleanInstruction/);
     assert.match(ordinaryGeneration, /buildGenerationContinuationRoundPayload/);
-    assert.match(ordinaryGeneration, /stagedMultiRoundMode = stagedRenderMode && settings\.autoContinue && configuredMaxRounds >= 2/);
+    assert.match(ordinaryGeneration, /stagedMultiRoundMode = stagedRenderMode && (?:runtime\.)?settings\.autoContinue && configuredMaxRounds >= 2/);
     assert.match(ordinaryGeneration, /minimumRounds: stagedMultiRoundMode \? 2 : 1/);
     assert.match(ordinaryGeneration, /requireTargetCompletion: stagedMultiRoundMode/);
-    assert.match(ordinaryGeneration, /draft: recentGenerationRoundsContext\(continuationRoundHistory\(continuationRun\?\.source.rounds, currentGenerationJob.segments.map\(prepareContinuationContext\)\)\)/);
+    assert.match(ordinaryGeneration, /draft: recentGenerationRoundsContext\(continuationRoundHistory\(continuationRun\?\.source.rounds, (?:runtime\.)?currentGenerationJob.segments.map\(prepareContinuationContext\)\)\)/);
     assert.doesNotMatch(ordinaryGeneration, /continuationContextWindow\(|tailText\(/);
     assert.doesNotMatch(ordinaryGeneration, /\.\.\.buildContinuationPayload/);
 });
@@ -6131,10 +6134,10 @@ test('普通续写单轮明确一次新增目标，多轮总目标排除旧前�
 });
 
 test('普通续写真实首轮装配匹配实际轮数，保留完整前情及新生成规则', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const assembly = source.match(/async function assembleGenerationPayload\([^]*?^}/m)[0];
     const autoLine = source.match(/const autoTargetContinue = .*;/)[0];
-    const config = source.match(/currentGenerationJob = createGenerationJob\(\{[\s\S]*?\}\);/)[0];
+    const config = source.match(/(?:runtime\.)?currentGenerationJob = createGenerationJob\(\{[\s\S]*?\}\);/)[0];
     const snapshot = { prompt: '合成预设', selectedEntries: [], name: '合成预设' };
     const context = {
         settings: { manualTargetEnabled: true, manualTargetChars: 4000, contextRange: 0, selectedWorldBooks: [] },
@@ -6315,7 +6318,7 @@ test('动态收束轮正常完成但不足 90% 时继续补写，不把允许收
 });
 
 test('真实生成循环的普通续写不在两万目标的一万一千字处提前停止', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const start = source.indexOf("        let firstHtml = '';", source.indexOf('async function runGeneration('));
     const end = source.indexOf('        let newText =', start);
     assert.ok(start > 0 && end > start);
@@ -6371,7 +6374,7 @@ test('真实生成循环的普通续写不在两万目标的一万一千字处�
 });
 
 test('达到自动补写总轮数但字数不足时，结果提示明确原因且保留续写入口', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const start = source.indexOf('function updateLengthHint(');
     const end = source.indexOf('function continuationSessionHTML(', start);
     const hint = { length: 1, value: '', hide() { return this; }, empty() { return this; },
@@ -6712,8 +6715,8 @@ test('标签迁移会把大小写不同的模板标签归一到标签库名称',
 });
 
 test('保存小剧场在同一弹窗编辑标题与标签，成功后才登记新标签', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const saveSource = source.match(/async function saveToHistory\([^)]*\)[^]*?^}/m)?.[0];
+    const source = readTheaterImplementation();
+    const saveSource = source.match(/async function (?:runtime\.)?saveToHistory\([^)]*\)[^]*?^}/m)?.[0];
     assert.ok(saveSource);
 
     const execute = async ({ selection, stored = true }) => {
@@ -6785,7 +6788,7 @@ test('导入目标标签会追加到原标签并按现有标签名称归一', ()
 });
 
 test('标签界面、历史未分类、数字触发间隔和渲染模板删除入口都接入主面板', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     assert.match(source, /id="theater-inst-tag-filter"/);
     assert.match(source, /id="theater-history-tag-filter"/);
@@ -6794,7 +6797,7 @@ test('标签界面、历史未分类、数字触发间隔和渲染模板删除�
     assert.doesNotMatch(source, /id="theater-auto-interval" type="range"/);
     assert.match(source, /删除这个自定义模板/);
     assert.match(source, /内置模板不可删除/);
-    assert.match(source, /async function chooseTagsWithNew/);
+    assert.match(source, /async function (?:runtime\.)?chooseTagsWithNew/);
     assert.match(source, /class="theater-popup theater-compact-popup"/);
     assert.match(source, /class="theater-tag-choice-list is-compact"/);
     assert.match(source, /class="theater-tag-create-confirm theater-btn"/);
@@ -6803,15 +6806,15 @@ test('标签界面、历史未分类、数字触发间隔和渲染模板删除�
     assert.match(style, /\.theater-tag-choice-list\.is-compact\s*\{[\s\S]*?flex-wrap:\s*wrap/);
     assert.match(style, /body \.popup:has\(\.theater-compact-popup\)[\s\S]*?width: min\(430px, calc\(100vw - 28px\)\) !important/);
     assert.match(style, /\.theater-compact-popup \.theater-popup-header[\s\S]*?text-align: left/);
-    const saveTemplateFlow = source.match(/async function saveInstructionTpl\(\)[\s\S]*?async function bulkEditSelectedTemplateTags/)?.[0] || '';
+    const saveTemplateFlow = source.match(/async function (?:runtime\.)?saveInstructionTpl\(\)[\s\S]*?async function (?:runtime\.)?bulkEditSelectedTemplateTags/)?.[0] || '';
     assert.doesNotMatch(saveTemplateFlow, /Popup\.show\.input/);
-    assert.match(saveTemplateFlow, /title: '保存指令模板'[\s\S]*?templateName: defaultName[\s\S]*?name: selection\.name[\s\S]*?settings\.instructionTemplates\.push\(tpl\)/);
+    assert.match(saveTemplateFlow, /title: '保存指令模板'[\s\S]*?templateName: defaultName[\s\S]*?name: selection\.name[\s\S]*?(?:runtime\.)?settings\.instructionTemplates\.push\(tpl\)/);
     assert.match(source, /给这 \$\{imported\.length\} 条导入模板统一加标签[\s\S]*?if \(target === null\) return;[\s\S]*?mergeTagLists\(item\.tags, target\.tags/);
-    const popupBuilder = source.match(/function buildPopupHTML[\s\S]*?function historyItemHTML/)?.[0] || '';
-    assert.match(popupBuilder, /const allHistory = historyCache;\s*const hist = initialTab === 'history' \? filterHistoryAll\(allHistory\) : \[\]/);
+    const popupBuilder = source.match(/function (?:runtime\.)?buildPopupHTML[\s\S]*?function (?:runtime\.)?historyItemHTML/)?.[0] || '';
+    assert.match(popupBuilder, /const allHistory = (?:runtime\.)?historyCache;\s*const hist = initialTab === 'history' \? (?:runtime\.)?filterHistoryAll\(allHistory\) : \[\]/);
     assert.match(source, /没有找到符合条件的剧场或文件夹/);
-    assert.match(source, /async function addHistoryItems[\s\S]*?commitHistoryCollection[\s\S]*?settings\.instructionTags = normalizeTagList[\s\S]*?save\(\);/);
-    assert.match(source, /#theater-hist-batch-enter'\)\.toggle\(!histBatchMode\)/);
+    assert.match(source, /async function addHistoryItems[\s\S]*?commitHistoryCollection[\s\S]*?(?:runtime\.)?settings\.instructionTags = normalizeTagList[\s\S]*?(?:runtime\.)?save\(\);/);
+    assert.match(source, /#theater-hist-batch-enter'\)\.toggle\(!(?:runtime\.)?histBatchMode\)/);
 });
 
 test('梦脉只保留一个明确标注的完善版内置预设', () => {
@@ -6856,8 +6859,8 @@ test('运行日志只保留最近 200 条且不写入外部设置', () => {
 });
 
 test('悬浮球拖动后跨重建恢复位置，缩屏不覆盖偏好，点击与收纳不改位置', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const createSource = source.match(/function createFloatingBall\(\) \{[\s\S]*?\n\}/)[0];
+    const source = readTheaterImplementation();
+    const createSource = source.match(/function (?:runtime\.)?createFloatingBall\(\) \{[\s\S]*?\n\}/)[0];
     const settings = { floatingBall: true, floatingBallTuck: true, floatingBallPosition: null };
     let saves = 0;
     function launch(width = 390, height = 844) {
@@ -6946,9 +6949,9 @@ test('悬浮球拖动后跨重建恢复位置，缩屏不覆盖偏好，点击�
 });
 
 test('短稿只写一轮，5000起不再按8000阈值降低用户轮数上限', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const autoLine = source.match(/const autoTargetContinue = .*;/)[0];
-    const config = source.match(/currentGenerationJob = createGenerationJob\(\{[\s\S]*?\}\);/)[0];
+    const config = source.match(/(?:runtime\.)?currentGenerationJob = createGenerationJob\(\{[\s\S]*?\}\);/)[0];
     for (const target of [0, 4999, 5000, 7000, 8000, 9000, 20000]) {
         for (const enabled of [false, true]) for (const max of [1, 3, 5]) {
             const job = runInNewContext(`${autoLine}\nlet currentGenerationJob; ${config}; currentGenerationJob`, {
@@ -6972,8 +6975,8 @@ test('短稿只写一轮，5000起不再按8000阈值降低用户轮数上限', 
 });
 
 test('模板分页每页10条，跨页筛选保持原索引和勾选，删除末页可回退', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const render = source.match(/function renderInstList\(arr\) \{[\s\S]*?\n\}/)[0];
+    const source = readTheaterImplementation();
+    const render = source.match(/function (?:runtime\.)?renderInstList\(arr\) \{[\s\S]*?\n\}/)[0];
     const filter = source.match(/function filterInstAll\(arr\) \{[\s\S]*?\n\}/)[0];
     const templates = Array.from({ length: 23 }, (_, i) => ({ name: `模板${i}`, tags: [i % 2 ? '奇数' : '偶数'] }));
     const scope = { settings: { instructionTagFilter: [] }, instSearch: '', instPage: 0, INST_PAGE_SIZE: 10, listPage, listPaginationHTML,
@@ -6994,8 +6997,8 @@ test('模板分页每页10条，跨页筛选保持原索引和勾选，删除末
 });
 
 test('历史改名只更新最新记录标题，取消、空名、写入失败与期间删除不报成功', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const rename = source.match(/async function renameHistoryItem\(id, anchor = null\) \{[\s\S]*?\n\}/)[0];
+    const source = readTheaterImplementation();
+    const rename = source.match(/async function (?:runtime\.)?renameHistoryItem\(id, anchor = null\) \{[\s\S]*?\n\}/)[0];
     for (const scenario of ['ok', 'cancel', 'blank', 'fail', 'deleted']) {
         const record = { id: 1, title: '旧名称', html: '<main>原正文</main>', tags: ['旧标签'], date: '原日期' };
         const cache = [record]; let writes = 0, refreshes = 0, success = 0;
@@ -7041,9 +7044,9 @@ test('手动续写与内部补写沿同一两轮窗口滚动，重写候选不�
 });
 
 test('普通续写入口直接携带两轮完整纯正文，不再截断8000字', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const prepare = source.match(/function prepareContinuationContext\(value\) \{[\s\S]*?\n\}/)[0];
-    const start = source.match(/function startContinue\(html,[\s\S]*?\n\}/)[0];
+    const start = source.match(/function (?:runtime\.)?startContinue\(html,[\s\S]*?\n\}/)[0];
     const a = '甲'.repeat(9500), b = '乙'.repeat(11000);
     const jq = { click() { return this; }, val() { return this; }, attr() { return this; }, text() { return this; }, show() { return this; }, hide() { return this; } };
     const context = { isGenerating: false, isPreparingGeneration: false, resultEditSnapshot: null,
@@ -7072,9 +7075,9 @@ test('两轮完整正文通过JSON及ZIP历史备份恢复，旧作品不虚构�
 });
 
 test('普通新稿第三轮中断后保存再续写只带第二轮和未完成第三轮', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const retain = source.match(/retainedResultSource = \{\s*html: lastGeneratedHtml, mode: currentOutputMode, instruction,[\s\S]*?\n            \};/)[0];
-    const saveSource = source.match(/async function saveToHistory\([^)]*\)[^]*?^}/m)[0];
+    const source = readTheaterImplementation();
+    const retain = source.match(/(?:runtime\.)?retainedResultSource = \{\s*html: (?:runtime\.)?lastGeneratedHtml, mode: (?:runtime\.)?currentOutputMode, instruction,[\s\S]*?\n            \};/)[0];
+    const saveSource = source.match(/async function (?:runtime\.)?saveToHistory\([^)]*\)[^]*?^}/m)[0];
     const rounds = ['第一轮' + '甲'.repeat(9000), '第二轮' + '乙'.repeat(9000)];
     const live = '第三轮未完成' + '丙'.repeat(4000);
     let saved;
@@ -7150,7 +7153,7 @@ test('概要超时中止请求，迟到响应不能保存，并可再次更新',
 });
 
 test('概要点击立即反馈、去重、超时解锁和配置异常提示', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const functions = source.match(/function syncLongDreamSummaryButton\(key\) \{[^]*?(?=\nasync function weaveLongDreamMemory)/)[0];
     const binding = source.split('\n').find(line => line.includes("$d.off('click.tdsummary')"));
     const { refreshLongDreamSummary } = await import('../long-dream-summary.js');
@@ -7272,11 +7275,11 @@ test('概要兼容数字字符串，后批提示使用真实章号且全篇一�
 });
 
 test('小剧场下拉框保留原生选择，避开全局下拉美化脚本', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     const selects = [...source.matchAll(/<select\b[^>]*>/g)].map(match => match[0]);
     assert.ok(selects.length >= 20);
-    for (const select of selects) assert.match(select, /\bdata-select2-id="\$\{theaterNativeSelectCompatId\(\)\}"/);
-    assert.match(source, /return `\$\{theaterNativeSelectCompatPrefix\}-\$\{\+\+theaterNativeSelectCompatCounter\}`/);
+    for (const select of selects) assert.match(select, /\bdata-select2-id="\$\{(?:runtime\.)?theaterNativeSelectCompatId\(\)\}"/);
+    assert.match(source, /return `\$\{(?:runtime\.)?theaterNativeSelectCompatPrefix\}-\$\{\+\+(?:runtime\.)?theaterNativeSelectCompatCounter\}`/);
     assert.match(source, /id="theater-preset-search"/);
     assert.match(source, /'change\.tpns'[^\n]*'#theater-preset-name-select'/);
     assert.match(source, /'change\.tsp'[^\n]*'#theater-sound-preset'/);
@@ -7303,10 +7306,10 @@ test('小剧场下拉框保留原生选择，避开全局下拉美化脚本', ()
 });
 
 test('排查 TXT 点击时汇总最新报告和日志，并再次脱敏', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const source = readTheaterImplementation();
     assert.match(source, /id="theater-export-diagnostics-btn"/);
-    assert.match(source, /#theater-export-diagnostics-btn', exportDiagnosticsText/);
-    const exportSource = source.match(/function exportDiagnosticsText\(\) \{[\s\S]*?\n\}/)?.[0];
+    assert.match(source, /#theater-export-diagnostics-btn', (?:runtime\.)?exportDiagnosticsText/);
+    const exportSource = source.match(/function (?:runtime\.)?exportDiagnosticsText\(\) \{[\s\S]*?\n\}/)?.[0];
     assert.ok(exportSource);
     let downloads = [];
     let reportVersion = 0;
@@ -7386,8 +7389,8 @@ test('概要错误分阶段且失败不保存、不泄露响应或异常原文',
 });
 
 test('概要版本列表转义内容、缺失日期不伪造时间、受限版本不可恢复', () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const render = source.match(/function longDreamSummaryHistoryHTML\([^]*?(?=\nfunction toggleLongDreamSummaryPreview)/)[0];
+    const source = readTheaterImplementation();
+    const render = source.match(/function longDreamSummaryHistoryHTML\([^]*?(?=\nfunction (?:runtime\.)?toggleLongDreamSummaryPreview)/)[0];
     const date = source.match(/function longDreamDate\([^]*?(?=\nfunction longDreamExcerpt)/)[0];
     const scope = { esc: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;') };
     runInNewContext(date + '\n' + render, scope);
@@ -7485,8 +7488,8 @@ test('用户纠正事实后旧版仅供查看，补织重新取章节概要，�
 
 
 test('织录迟到成功或失败都不能复活已删除作品，也不覆盖请求期间的改写', async () => {
-    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
-    const fn=source.match(/async function weaveLongDreamMemory\([^]*?(?=\nasync function discardLongDreamDraft)/)[0];
+    const source=readTheaterImplementation();
+    const fn=source.match(/async function weaveLongDreamMemory\([^]*?(?=\nasync function (?:runtime\.)?discardLongDreamDraft)/)[0];
     const { setLongDreamMemoryStatus }=await import('../long-dream.js');
     const { DEFAULT_LONG_DREAM_MEMORY_PRESET }=await import('../long-dream-memory.js');
     for (const outcome of ['deleted-success','deleted-failure','changed-success','changed-failure']) {
@@ -7653,9 +7656,9 @@ test('新增网络阶段分类出现在常见问题汇总，报告不把心跳�
 });
 
 test('真实独立API适配器保留失败阶段，切换主API发起请求时清除旧连接报告', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const dispatcher = source.match(/async function requestConfiguredGenerationApi\([^]*?^}$/m)[0];
-    const custom = source.match(/async function callCustomAPIStream\([^]*?^}/m)[0];
+    const source = readTheaterImplementation();
+    const dispatcher = source.match(/async function (?:runtime\.)?requestConfiguredGenerationApi\([^]*?^}$/m)[0];
+    const custom = source.match(/async function (?:runtime\.)?callCustomAPIStream\([^]*?^}/m)[0];
     const scope = { settings: {}, lastApiResponseSummary: null, lastApiConnectionSummary: null, lastRequestMetrics: null,
         createRequestMetrics: path => ({ path }), captureActualRequestTrace() {}, runtimeLog() {}, markFallback() {},
         requestCustomApi: options => requestCustomApi({ ...options, fetchImpl: async () => { throw new TypeError('Failed to fetch PRIVATE'); } }),
@@ -7692,8 +7695,8 @@ test('流式请求收到HTML后按实际文本读取阶段诊断，完整HTML仍
 });
 
 test('主API定梦建议直达入口也清除独立API旧失败报告', async () => {
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const main = source.match(/async function generateWithMainAPI\([^]*?^}$/m)[0];
+    const source = readTheaterImplementation();
+    const main = source.match(/async function (?:runtime\.)?generateWithMainAPI\([^]*?^}$/m)[0];
     const scope = { lastApiConnectionSummary: { state: 'failed' }, lastApiResponseSummary: { httpStatus: 500 }, settings: {},
         window: { TavernHelper: {} }, SillyTavern: { getContext: () => ({}) },
         captureActualRequestTrace() {}, runtimeLog() {}, markFallback() {},
@@ -7761,10 +7764,10 @@ test('长梦取消保留不立刻删除当前候选，确认不重复收录选�
 
 
 test('长梦慢资料准备期间锁定保留操作，状态变化后不拿旧草稿启动生成', async () => {
-    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
-    const generation=source.match(/async function generateNextLongDreamChapter\([^]*?^}/m)[0];
-    const keep=source.match(/async function keepLongDreamCandidate\([^]*?^}/m)[0];
-    const confirm=source.match(/async function confirmLongDreamChapter\([^]*?^}/m)[0];
+    const source=readTheaterImplementation();
+    const generation=source.match(/async function (?:runtime\.)?generateNextLongDreamChapter\([^]*?^}/m)[0];
+    const keep=source.match(/async function (?:runtime\.)?keepLongDreamCandidate\([^]*?^}/m)[0];
+    const confirm=source.match(/async function (?:runtime\.)?confirmLongDreamChapter\([^]*?^}/m)[0];
     const dream={id:1,status:'active',chapters:[{id:'first'}],draft:{status:LONG_DREAM_DRAFT_STATUS.REVIEW,candidates:[{text:'旧版',html:'<p>旧版</p>'}],selectedCandidateIndex:0}};
     let release, saves=0, runs=0;
     const scope={longDreamCandidateSavePending:false,isPreparingGeneration:false,isGenerating:false,refreshingLongDreamWorldBookId:null,
@@ -7787,8 +7790,8 @@ test('长梦慢资料准备期间锁定保留操作，状态变化后不拿旧�
 
 
 test('长梦确认采用版后回续写，取消或保存失败保持原页且不自动生成', async () => {
-    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
-    const code=source.match(/async function confirmLongDreamChapter\([^]*?^}/m)[0];
+    const source=readTheaterImplementation();
+    const code=source.match(/async function (?:runtime\.)?confirmLongDreamChapter\([^]*?^}/m)[0];
     for(const mode of ['success','cancel','failure']) {
         let dream=createLongDreamRecord({source:{text:'首章',html:'<p>首章</p>'}});
         dream=saveLongDreamDraft(dream,{status:LONG_DREAM_DRAFT_STATUS.WRITING,instruction:'续写'});
@@ -7816,7 +7819,7 @@ test('长梦确认采用版后回续写，取消或保存失败保持原页且�
 
 test('概要刷新成功及失败均同步恢复按钮，保留失效正文和梦脉限制，切换作品不误解锁', async () => {
     const {restoreStorySummary,chapterSummarySources}=await import('../long-dream-story-summary.js');
-    const source=readFileSync(new URL('../index.js',import.meta.url),'utf8');
+    const source=readTheaterImplementation();
     const functions=source.match(/function syncLongDreamSummaryButton\(key\) \{[^]*?(?=\nasync function weaveLongDreamMemory)/)[0];
     let dream=createLongDreamRecord({source:{text:'正式正文',html:'<p>正式正文</p>'}});
     dream.memory={...dream.memory,status:'ready',pendingChapterNumbers:[],pendingConflicts:[],summaryVersions:[
@@ -7845,8 +7848,8 @@ test('概要刷新成功及失败均同步恢复按钮，保留失效正文和�
 
 test('手动概要确认取消不执行，确认后重新检查作品和版本，避免旧弹窗覆盖', async () => {
     const { saveStorySummary, restoreStorySummary, chapterSummarySources } = await import('../long-dream-story-summary.js');
-    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    const handler = source.match(/async function confirmLongDreamSummaryAction\([^]*?(?=\nfunction syncLongDreamSummaryButton)/)[0];
+    const source = readTheaterImplementation();
+    const handler = source.match(/async function (?:runtime\.)?confirmLongDreamSummaryAction\([^]*?(?=\nfunction syncLongDreamSummaryButton)/)[0];
     for (const mode of ['cancel', 'update', 'restore', 'changed', 'switched', 'busy', 'blocked', 'failed-save']) {
         let dream = createLongDreamRecord({ source: { text: '虚构第一章', html: '<p>虚构第一章</p>' } });
         dream = applyLongDreamMemoryPatch(dream, { operations: [] }, 1);
