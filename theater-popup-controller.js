@@ -1,9 +1,11 @@
 // theater-popup-controller: receives live state and cross-feature callbacks from index.js.
+import { closeHistoryMenus } from './history-menus.js';
 import { waitForPopupElements } from './popup-lifecycle.js';
 
 export function createTheaterPopupController(runtime) {
 // @theater-source-begin activateTheaterTab
 function activateTheaterTab(tabName, { persist = true, resetScroll = true } = {}) {
+    closeHistoryMenus();
     const tab = runtime.normalizeTheaterTab(tabName);
     $('.theater-tab').removeClass('active');
     $(`.theater-tab[data-tab="${tab}"]`).addClass('active');
@@ -40,6 +42,7 @@ async function openTheaterPopup() {
         if (runtime.activeTheaterPopupSession !== session) return;
         runtime.activeTheaterPopupSession = null;
         runtime.closeInstructionActionMenus();
+        closeHistoryMenus();
         runtime.resultSwipeCleanup?.();
         runtime.resultSwipeCleanup = null;
         runtime.resultReader?.destroy();

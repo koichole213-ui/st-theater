@@ -1,3 +1,5 @@
+import { normalizeRoleSources, captureHistoryRoles, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED } from '../history-roles.js';
+import { closeHistoryMenus } from '../history-menus.js';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
@@ -24,6 +26,9 @@ export function readTheaterImplementation() {
 // A factory receives live bindings to the same sandbox state used by the older
 // fixtures. This preserves their assertions about writes, identity and failures.
 export function runInNewContext(code, sandbox = {}, options) {
+    // Real imported helpers used by relocated production bodies. Fixtures remain synthetic.
+    Object.assign(sandbox, { normalizeRoleSources, captureHistoryRoles, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED, closeHistoryMenus, ...sandbox });
+    if (!sandbox.SillyTavern) sandbox.SillyTavern = { getContext: () => ({}) };
     const context = createContext(sandbox);
     const entry = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     const bindings = entry.slice(entry.indexOf('const runtime = {'), entry.indexOf('\n};', entry.indexOf('const runtime = {')) + 3);

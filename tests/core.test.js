@@ -7,11 +7,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { readTheaterImplementation, runInNewContext } from './theater-source.js';
 import './modules.test.js';
+import './history-roles.test.js';
 import { previousResults, readingPosition } from '../result-text-edit.js';
 import { bindResultSwipe } from '../result-swipe.js';
 
 test('历史编号兼容缺少 randomUUID 的浏览器，保持 UUID 格式和唯一性', () => {
-    const source = readFileSync(new URL('../history-collections.js', import.meta.url), 'utf8').replaceAll('export ', '');
+    const source = readFileSync(new URL('../history-collections.js', import.meta.url), 'utf8').replace(/^import .+;\r?\n/gm, '').replaceAll('export ', '');
     const native = { randomUUID() { assert.equal(this, native); return 'native-id'; } };
     assert.equal(runInNewContext(`${source}\nnewHistoryKey()`, { crypto: native }), 'native-id');
     const keys = runInNewContext(`${source}\nArray.from({length: 1000}, () => newHistoryKey())`, {
@@ -23,7 +24,7 @@ test('历史编号兼容缺少 randomUUID 的浏览器，保持 UUID 格式和�
 
 test('生成完成与中断保留结果在缺少 randomUUID 时仍可保存，存储失败也留在会话', async () => {
     const source = readTheaterImplementation();
-    const keys = readFileSync(new URL('../history-collections.js', import.meta.url), 'utf8').replaceAll('export ', '');
+    const keys = readFileSync(new URL('../history-collections.js', import.meta.url), 'utf8').replace(/^import .+;\r?\n/gm, '').replaceAll('export ', '');
     const completeStart = source.indexOf('            const item = {', source.indexOf('// The current result is independent'));
     const completeCode = source.slice(completeStart, source.indexOf("            runtime.setActiveInstructionTags", completeStart));
     const partialStart = source.indexOf('            const partialItem = {');
@@ -36,7 +37,7 @@ test('生成完成与中断保留结果在缺少 randomUUID 时仍可保存，�
             crypto: supported ? globalThis.crypto : { getRandomValues: bytes => globalThis.crypto.getRandomValues(bytes) },
             lastGeneratedHtml: html, currentOutputMode: 'html', continuationRun: null,
             continuationRounds: ['旧前情', '本次正文'], instruction: '本轮方向', generationSourceConfig: { presetName: '合成' },
-            sourceTags: ['标签'], itemTags: ({ tags }) => tags, knownInstructionTags: () => [],
+            generationRoles: [], sourceTags: ['标签'], itemTags: ({ tags }) => tags, knownInstructionTags: () => [],
             retainedResultSource: { instruction: '本轮方向', continuationRounds: ['旧前情', '本次正文'] },
             currentGenerationResult: null, storeCurrentResult: async item => { saved.push(item); return stored; },
         };
@@ -55,7 +56,7 @@ test('生成完成与中断保留结果在缺少 randomUUID 时仍可保存，�
 test('文件夹保存兼容编号缺失，失败时提示且不改作品标签', async () => {
     const source = readTheaterImplementation();
     const functions = source.slice(source.indexOf('function queueHistoryWrite('), source.indexOf('function openHistoryReading('));
-    const keys = readFileSync(new URL('../history-collections.js', import.meta.url), 'utf8').replaceAll('export ', '');
+    const keys = readFileSync(new URL('../history-collections.js', import.meta.url), 'utf8').replace(/^import .+;\r?\n/gm, '').replaceAll('export ', '');
     for (const supported of [true, false]) {
         const items = [{id:'1',title:'甲',tags:['原标签'],html:'<p>原文</p>'}, {id:'2',title:'乙',tags:[]}];
         const before = JSON.stringify(items), errors = [];
@@ -645,7 +646,7 @@ test('延迟进入历史会加载一次，批量恢复与刷新不显示全部�
         settings: {}, historyCache: [{ id: '合成历史' }], histBatchMode: true, histPage: 0, listPage, listPaginationHTML,
         normalizeTheaterTab: tab => tab, filterHistoryAll: items => items,
         historyItemHTML: () => { renders++; return '<p>合成历史</p>'; },
-        updateHistBulkBar() {}, refreshTagControls() {}, save() {},
+        updateHistBulkBar() {}, refreshTagControls() {}, historyRoleFilterHTML: () => '<option>全部</option>', save() {},
         document: {
             getElementById: id => id === 'theater-history-list' ? list : null,
             querySelector: () => ({ classList: { add() {}, remove() {} }, querySelectorAll: () => [] }),
@@ -653,7 +654,7 @@ test('延迟进入历史会加载一次，批量恢复与刷新不显示全部�
         $: selector => {
             const api = {
                 addClass: () => api, removeClass: () => api,
-                html: () => api, removeAttr: name => { pending.delete(name); return api; },
+                html: () => api, text: () => api, removeAttr: name => { pending.delete(name); return api; },
                 hide: () => visible.set(selector, false), show: () => visible.set(selector, true),
                 toggle: value => visible.set(selector, value),
             };
@@ -953,7 +954,7 @@ test('主弹窗事件命名空间不互相覆盖，历史操作保持完整绑�
     requiredHistorySelectors.forEach(selector => assert.ok(bindSource.includes(`'${selector}'`), `${selector} 没有绑定`));
 });
 
-test('历史卡片按标题标签、时间、操作三层排列，并提供即时触控与连续多选', () => {
+test('历史卡片紧凑呈现标题标签与时间操作，保留即时触控与连续多选', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const renderer = source.match(/function (?:runtime\.)?historyItemHTML[\s\S]*?function longDreamSources/)?.[0] || '';
@@ -963,13 +964,13 @@ test('历史卡片按标题标签、时间、操作三层排列，并提供即�
     const touchAttachment = source.match(/function (?:runtime\.)?attachHistoryTouchMoveHandler[\s\S]*?function (?:runtime\.)?resetHistorySelectionGesture/)?.[0] || '';
     const titleRow = renderer.indexOf('theater-history-title-row');
     const tags = renderer.indexOf('theater-history-tags');
-    const meta = renderer.indexOf('theater-history-meta');
+    const meta = renderer.indexOf('theater-history-bottom-row');
     const actions = renderer.indexOf('theater-history-actions');
 
     assert.ok(titleRow >= 0 && tags > titleRow && meta > tags && actions > meta);
-    assert.match(renderer, /function historyTagBadgesHTML[\s\S]*?tags\.slice\(0, 2\)[\s\S]*?hidden\.join\('、'\)/);
+    assert.match(renderer, /function historyTagBadgesHTML[\s\S]*?tags\.slice\(0, 1\)[\s\S]*?hidden\.join\('、'\)/);
     ['view', 'continue', 'export', 'tags-edit', 'delete'].forEach(action => {
-        assert.match(renderer, new RegExp(`<button type="button" class="theater-history-${action}"`));
+        assert.ok(renderer.includes(`theater-history-${action}`));
     });
     ['theater-export-all-history', 'theater-import-history-btn', 'theater-history-tag-filter', 'theater-history-manage-tags', 'theater-hist-batch-enter'].forEach(id => {
         assert.match(source, new RegExp(`<button type="button" id="${id}"`));
@@ -996,7 +997,7 @@ test('历史卡片按标题标签、时间、操作三层排列，并提供即�
     assert.match(styles, /\.theater-history-actions \{[\s\S]*?grid-template-columns: repeat\(6, minmax\(0, 1fr\)\)/);
     assert.match(styles, /\.theater-history-top-bar > \.theater-btn \{[\s\S]*?border-radius: var\(--t-radius-md\)/);
     assert.match(styles, /\.theater-history-actions > button \{[\s\S]*?border-radius: var\(--t-radius-md\)/);
-    assert.match(renderer, /theater-history-export[^>]*title="导出 HTML"[\s\S]*?<span>导出<\/span>/);
+    assert.match(renderer, /action\('theater-history-export', '导出', 'download', 'title="导出 HTML"'\)/);
     assert.match(styles, /\.theater-history-title-row \{[\s\S]*?flex-wrap: nowrap/);
     assert.match(styles, /\.theater-history-title \{[\s\S]*?text-overflow: ellipsis[\s\S]*?white-space: nowrap/);
     assert.doesNotMatch(bindings, /\$\('\.theater-inst-item'\)\.removeClass\('theater-inst-actions-open'\)/);
@@ -3748,13 +3749,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.2 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.3 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.2'/);
-    assert.equal(manifest.version, '4.4.2');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.2/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.3'/);
+    assert.equal(manifest.version, '4.4.3');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.3/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 
@@ -7082,7 +7083,7 @@ test('普通新稿第三轮中断后保存再续写只带第二轮和未完成�
     const live = '第三轮未完成' + '丙'.repeat(4000);
     let saved;
     const context = { currentGenerationResult: null, resultEditSnapshot: null, lastGeneratedHtml: '<main>中断保留正文</main>', currentDisplayHtml: '', currentOutputMode:'text',
-        retainedResultSource:null, instruction:'创作指令', sourceTags:['标签'], generationSourceConfig:{},
+        retainedResultSource:null, generationRoles:[], instruction:'创作指令', sourceTags:['标签'], generationSourceConfig:{},
         continuationRun:null, currentGenerationJob:{segments:rounds}, liveBodyText:live,
         continuationRoundHistory, prepareContinuationContext:value=>value.trim(), normalizeContinuationRounds,
         continuationSession:null, displayedContinuationVersion:()=>null, recentCache:[], historyCache:[],

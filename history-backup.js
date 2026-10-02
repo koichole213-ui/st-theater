@@ -1,8 +1,9 @@
+import { normalizeRoleSources } from './history-roles.js';
 import { normalizeCollections } from './history-collections.js';
 import { normalizeContinuationRounds } from './continuation-session.js';
 
 export const HISTORY_BACKUP_FORMAT = 'st-theater-history';
-export const HISTORY_BACKUP_VERSION = 4;
+export const HISTORY_BACKUP_VERSION = 5;
 export const HISTORY_ARCHIVE_MANIFEST = 'theater-history.json';
 
 function cleanText(value) {
@@ -34,6 +35,7 @@ function normalizeHistoryItem(item, fallbackTitle = '导入的小剧场') {
                 textTheme: cleanText(item.sourceConfig.textTheme),
             }
             : null,
+        roleSources: normalizeRoleSources(item?.roleSources),
         continuationRounds: normalizeContinuationRounds(item?.continuationRounds),
         html,
         mode: cleanText(item?.mode) || 'html',
@@ -102,6 +104,7 @@ export function createHistoryArchive(items = [], folders = []) {
             instruction: item.instruction,
             tags: item.tags,
             sourceConfig: item.sourceConfig,
+            roleSources: item.roleSources,
             continuationRounds: item.continuationRounds,
             mode: item.mode,
             file,

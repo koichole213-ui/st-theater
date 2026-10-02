@@ -77,7 +77,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.4.2';
+const VERSION = '4.4.3';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -768,6 +768,7 @@ let refreshingLongDreamWorldBookId = null;
 // 临时状态：当前选中索引 + 搜索关键词，仅本次会话有效
 let instSelected = new Set();
 let histSelected = new Set();
+let historyRoleFilter = '';
 let histBatchMode = false;
 let histSelectionGesture = null;
 let histTouchMoveHandler = null;
@@ -881,6 +882,10 @@ let wbGroupCollapsed = {};  // { 书名或 __manual__: false 表示展开 }，�
 // @theater-source theater-storage.js histPut
 // @theater-source theater-storage.js histPutStorage
 
+// @theater-source theater-history.js historyRoleFilterHTML
+// @theater-source theater-history.js editHistoryRoles
+// @theater-source theater-history.js moveHistoryToCollection
+// @theater-source theater-history.js showHistoryMetadata
 // @theater-source theater-history.js inferHistoryTags
 
 // @theater-source theater-history.js migrateHistoryTags
@@ -1489,7 +1494,13 @@ const runtime = {
     get historyCollections() { return historyCollections; },
     set historyCollections(value) { historyCollections = value; },
     get historyExpanded() { return historyExpanded; },
+    get historyRoleFilterHTML() { return historyRoleFilterHTML; },
+    get editHistoryRoles() { return editHistoryRoles; },
+    get moveHistoryToCollection() { return moveHistoryToCollection; },
+    get showHistoryMetadata() { return showHistoryMetadata; },
     get historyItemHTML() { return historyItemHTML; },
+    get historyRoleFilter() { return historyRoleFilter; },
+    set historyRoleFilter(value) { historyRoleFilter = value; },
     get historyQuery() { return historyQuery; },
     set historyQuery(value) { historyQuery = value; },
     get historyReadingFolderId() { return historyReadingFolderId; },
@@ -1819,7 +1830,7 @@ const { readApiFormConfig, writeApiFormConfig, apiPresetDefaultName, apiPresetDi
 
 const { closeResultActions, resultBookmarkRect, positionResultToolbox, applyResultToolboxMode, extractHtml, textFallbackHtml, showInIframe, closeFullscreenReader, currentReaderPayload, openFullscreenReader, switchResultWorkspace, initializeResultWorkspace, updateRecentNav, displayedRecentIndex, showRecentResult, setResultEditControls, cancelResultEdit, clearDisplayedResult } = createTheaterResultWorkspace(runtime);
 
-const { inferHistoryTags, migrateHistoryTags, refreshInstUI, filterHistoryAll, setHistoryItemSelected, detachHistoryTouchMoveHandler, attachHistoryTouchMoveHandler, resetHistorySelectionGesture, activateHistorySelectionGesture, applyHistorySelectionGestureAt, runHistorySelectionAutoScroll, updateHistorySelectionAutoScroll, refreshHistList, currentHistoryPage, visibleHistoryItems, renderHistoryList, refreshTagControls, renameHistoryItem, editHistoryTags, bulkEditSelectedHistoryTags, updateHistBulkBar, enterHistBatchMode, exitHistBatchMode, commitHistoryCollection, organizeHistory, openHistoryReading, historyReadingVersions, chooseHistoryReadingVersion, saveToHistory, copyHtml, readClipboardMatch, copyToClipboard, fallbackCopy, showManualCopyPanel, downloadTextContent, exportAllHistory, requestHistoryExport, addHistoryItems, loadJSZip, readHistoryZip, normalizedZipEntryName, importHistoryBackup, downloadFile } = createTheaterHistory(runtime);
+const { historyRoleFilterHTML, editHistoryRoles, moveHistoryToCollection, showHistoryMetadata, inferHistoryTags, migrateHistoryTags, refreshInstUI, filterHistoryAll, setHistoryItemSelected, detachHistoryTouchMoveHandler, attachHistoryTouchMoveHandler, resetHistorySelectionGesture, activateHistorySelectionGesture, applyHistorySelectionGestureAt, runHistorySelectionAutoScroll, updateHistorySelectionAutoScroll, refreshHistList, currentHistoryPage, visibleHistoryItems, renderHistoryList, refreshTagControls, renameHistoryItem, editHistoryTags, bulkEditSelectedHistoryTags, updateHistBulkBar, enterHistBatchMode, exitHistBatchMode, commitHistoryCollection, organizeHistory, openHistoryReading, historyReadingVersions, chooseHistoryReadingVersion, saveToHistory, copyHtml, readClipboardMatch, copyToClipboard, fallbackCopy, showManualCopyPanel, downloadTextContent, exportAllHistory, requestHistoryExport, addHistoryItems, loadJSZip, readHistoryZip, normalizedZipEntryName, importHistoryBackup, downloadFile } = createTheaterHistory(runtime);
 
 const { bindEvents } = createTheaterEvents(runtime);
 

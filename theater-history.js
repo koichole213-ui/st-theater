@@ -1,6 +1,9 @@
 // theater-history: receives live state and cross-feature callbacks from index.js.
+import { normalizeRoleSources, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED } from './history-roles.js';
+import { historyRoleDialog } from './history-role-dialog.js';
+import { closeHistoryMenus } from './history-menus.js';
 import { itemTags, matchesTagFilter, mergeTagLists, normalizeTagList } from './tag-system.js';
-import { collectionPage, historyEntries, normalizeCollections, historyOrder, newHistoryKey, moveCollectionItems, collectionChapters, planHistorySave, remapHistoryImport } from './history-collections.js';
+import { collectionPage, historyEntries, normalizeCollections, historyOrder, historyKey, newHistoryKey, moveCollectionItems, collectionChapters, planHistorySave, remapHistoryImport } from './history-collections.js';
 import { collectionCardHTML, collectionDialog, collectionChapterIds } from './history-collections-ui.js';
 import { listPaginationHTML } from './pagination.js';
 import { withPreservedPopupViewport } from './popup-lifecycle.js';
@@ -54,7 +57,7 @@ function refreshInstUI() {
 
 // @theater-source-begin filterHistoryAll
 function filterHistoryAll(items = runtime.historyCache) {
-    return (Array.isArray(items) ? items : []).filter(item => matchesTagFilter(item, runtime.settings.historyTagFilter, runtime.knownInstructionTags()));
+    return (Array.isArray(items) ? items : []).filter(item => matchesTagFilter(item, runtime.settings.historyTagFilter, runtime.knownInstructionTags()) && matchesRoleFilter(item, runtime.historyRoleFilter));
 }
 // @theater-source-end filterHistoryAll
 
@@ -182,20 +185,26 @@ function updateHistorySelectionAutoScroll(clientX, clientY) {
 
 // @theater-source-begin refreshHistList
 function refreshHistList() {
+    closeHistoryMenus();
+    const roleOptions = historyRoleFilterHTML();
     const h = filterHistoryAll(runtime.historyCache);
     $('#theater-history-list').html(renderHistoryList()).removeAttr('data-pending-list');
     $('#theater-export-all-history').toggle(!runtime.histBatchMode);
     $('#theater-hist-select-all').toggle(h.length > 0);
     $('#theater-hist-batch-enter').toggle(!runtime.histBatchMode);
     updateHistBulkBar();
+    $('#theater-hist-batch-bar').toggle(runtime.histBatchMode);
     refreshTagControls();
+    const state = currentHistoryPage();
+    $('#theater-history-stats').text(`${state.total} 个条目 · ${h.length} 条保存记录`);
+    $('#theater-history-role-filter').html(roleOptions);
 }
 // @theater-source-end refreshHistList
 
 // @theater-source-begin currentHistoryPage
 function currentHistoryPage() {
     return collectionPage(historyEntries(runtime.historyCache, runtime.historyCollections, { query: runtime.historyQuery,
-        accepts: item => matchesTagFilter(item, runtime.settings.historyTagFilter, runtime.knownInstructionTags()) }), runtime.histPage);
+        accepts: item => matchesTagFilter(item, runtime.settings.historyTagFilter, runtime.knownInstructionTags()) && matchesRoleFilter(item, runtime.historyRoleFilter) }), runtime.histPage);
 }
 // @theater-source-end currentHistoryPage
 
@@ -220,7 +229,7 @@ function renderHistoryList() {
 // @theater-source-begin refreshTagControls
 function refreshTagControls() {
     $('#theater-inst-tag-filter span').text(runtime.tagFilterSummary(runtime.settings.instructionTagFilter));
-    $('#theater-history-tag-filter span').text(runtime.historyTagFilterLabel());
+    $('#theater-history-tag-filter span:first-child').text(runtime.historyTagFilterLabel());
     const randomTags = runtime.tagFilterSummary(runtime.settings.randomTagFilter, '选择');
     $('#theater-random-tag-picker').prop('hidden', runtime.settings.randomScope !== '__tags__').attr('title', runtime.tagFilterSummary(runtime.settings.randomTagFilter)).find('span').text(randomTags);
     const autoTags = runtime.tagFilterSummary(runtime.settings.autoTagFilter, '选择');
@@ -252,7 +261,9 @@ async function editHistoryTags(id) {
     if (!item) return;
     const chosen = await runtime.chooseTags({ title: `编辑「${item.title || '未命名小剧场'}」的标签`, selected: item.tags, subtitle: '不选择任何标签时显示为“未分类”' });
     if (chosen === null) return;
-    if (await runtime.histPut({ ...item, tags: chosen })) {
+    const latest = runtime.historyCache.find(history => history.id === id);
+    if (!latest) return;
+    if (await runtime.histPut({ ...latest, tags: chosen })) {
         refreshHistList();
         toastr.success(chosen.length ? '历史标签已更新' : '历史已设为未分类');
     }
@@ -281,6 +292,7 @@ function updateHistBulkBar() {
     const n = runtime.histSelected.size;
     $('#theater-hist-delete-selected').toggle(n > 0);
     $('#theater-hist-tag-selected').toggle(n > 0);
+    $('#theater-hist-role-selected, #theater-hist-move-selected').toggle(n > 0);
     $('#theater-hist-sel-count').text(n);
 }
 // @theater-source-end updateHistBulkBar
@@ -466,6 +478,7 @@ async function saveToHistory(sourceOverride = null) {
         // 优先跟随这篇结果生成时的元数据，避免把保存当下输入框里的另一条指令错配给它。
         instruction: sourceMeta ? (sourceMeta.instruction || '') : ($('#theater-instruction').val() || ''),
         sourceConfig: sourceMeta?.sourceConfig || null,
+        roleSources: normalizeRoleSources(sourceMeta?.roleSources),
         continuationRounds: normalizeContinuationRounds(sourceMeta?.continuationRounds),
         tags,
         date: `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
@@ -777,5 +790,59 @@ function downloadFile(filename, content, type) {
 }
 // @theater-source-end downloadFile
 
-return { inferHistoryTags, migrateHistoryTags, refreshInstUI, filterHistoryAll, setHistoryItemSelected, detachHistoryTouchMoveHandler, attachHistoryTouchMoveHandler, resetHistorySelectionGesture, activateHistorySelectionGesture, applyHistorySelectionGestureAt, runHistorySelectionAutoScroll, updateHistorySelectionAutoScroll, refreshHistList, currentHistoryPage, visibleHistoryItems, renderHistoryList, refreshTagControls, renameHistoryItem, editHistoryTags, bulkEditSelectedHistoryTags, updateHistBulkBar, enterHistBatchMode, exitHistBatchMode, commitHistoryCollection, organizeHistory, openHistoryReading, historyReadingVersions, chooseHistoryReadingVersion, saveToHistory, copyHtml, readClipboardMatch, copyToClipboard, fallbackCopy, showManualCopyPanel, downloadTextContent, exportAllHistory, requestHistoryExport, addHistoryItems, loadJSZip, readHistoryZip, normalizedZipEntryName, importHistoryBackup, downloadFile };
+// @theater-source-begin historyRoleFilterHTML
+function historyRoleFilterHTML() {
+    const e = runtime.esc;
+    const options = [{ id: '', label: '角色：全部' }, { id: ROLE_UNASSIGNED, label: '未指定角色' }, ...historyRoleOptions(runtime.historyCache, SillyTavern.getContext().characters || [])];
+    if (runtime.historyRoleFilter && !options.some(role => role.id === runtime.historyRoleFilter)) {
+        runtime.historyRoleFilter = ''; runtime.histPage = 0; runtime.histSelected.clear();
+    }
+    return options.map(role => `<option value="${e(role.id)}" ${role.id === runtime.historyRoleFilter ? 'selected' : ''}>${e(role.label)}</option>`).join('');
+}
+// @theater-source-end historyRoleFilterHTML
+
+// @theater-source-begin editHistoryRoles
+async function editHistoryRoles(id = null) {
+    const targets = id === null ? new Set(runtime.histSelected) : new Set([id]);
+    const items = runtime.historyCache.filter(item => targets.has(item.id));
+    if (!items.length) return;
+    const roles = historyRoleOptions(runtime.historyCache, SillyTavern.getContext().characters || []);
+    const selected = items.length === 1 ? normalizeRoleSources(items[0].roleSources) : [];
+    const choice = await historyRoleDialog({ root: document.querySelector('.theater-popup'), title: items.length === 1 ? '指定作品的来源角色' : `指定 ${items.length} 条记录的来源角色`, roles, selected });
+    if (choice === null) return;
+    if (await commitHistoryCollection((current, folders) => ({ items: current.map(item => targets.has(item.id) ? { ...item, roleSources: choice } : item), folders }))) {
+        refreshHistList(); toastr.success('角色归属已更新');
+    }
+}
+// @theater-source-end editHistoryRoles
+
+// @theater-source-begin moveHistoryToCollection
+async function moveHistoryToCollection(id = null) {
+    const targets = id === null ? new Set(runtime.histSelected) : new Set([id]);
+    const source = runtime.historyCache.filter(item => targets.has(item.id));
+    if (!source.length) return;
+    if (!runtime.historyCollections.length) { toastr.info('请先新建一个文件夹'); return; }
+    const keys = new Set(source.map(historyKey));
+    const choice = await collectionDialog({ root: document.querySelector('.theater-popup'), title: '移到文件夹', folders: runtime.historyCollections, note: '选中篇目的所有已存版本一起移动，正文与标签保留。' });
+    if (!choice) return;
+    await commitHistoryCollection((items, folders) => ({ items, folders: moveCollectionItems(folders, items.filter(item => keys.has(historyKey(item))).map(item => String(item.id)), choice.folderId) }));
+    refreshHistList();
+}
+// @theater-source-end moveHistoryToCollection
+
+// @theater-source-begin showHistoryMetadata
+async function showHistoryMetadata(id, folderId = null) {
+    const folder = folderId ? runtime.historyCollections.find(folder => folder.id === folderId) : null;
+    const items = folder ? runtime.historyCache.filter(item => folder.itemIds.includes(String(item.id))) : runtime.historyCache.filter(item => item.id === id);
+    if (!items.length && !folder) return;
+    const roles = normalizeRoleSources(items.flatMap(item => normalizeRoleSources(item.roleSources)));
+    const tags = normalizeTagList(items.flatMap(item => itemTags(item, runtime.knownInstructionTags())));
+    const e = runtime.esc;
+    const { Popup, POPUP_TYPE } = SillyTavern.getContext();
+    const html = `<div class="theater-history-info"><h3>${e(folder?.title || items[0]?.title || '未命名小剧场')}</h3><p>角色：${e(roles.map(role => `${role.name}${role.avatar ? `（${role.avatar}）` : ''}`).join('、') || '未指定角色')}</p><p>标签：${e(tags.join('、') || '未分类')}</p>${folder ? '<p>这里汇总系列中各篇的归属，不代表整夹统一角色。</p>' : `<p>${e(items[0]?.date || '')}</p>`}</div>`;
+    await new Popup(html, POPUP_TYPE.TEXT, '', { okButton: '关闭' }).show();
+}
+// @theater-source-end showHistoryMetadata
+
+return { historyRoleFilterHTML, editHistoryRoles, moveHistoryToCollection, showHistoryMetadata, inferHistoryTags, migrateHistoryTags, refreshInstUI, filterHistoryAll, setHistoryItemSelected, detachHistoryTouchMoveHandler, attachHistoryTouchMoveHandler, resetHistorySelectionGesture, activateHistorySelectionGesture, applyHistorySelectionGestureAt, runHistorySelectionAutoScroll, updateHistorySelectionAutoScroll, refreshHistList, currentHistoryPage, visibleHistoryItems, renderHistoryList, refreshTagControls, renameHistoryItem, editHistoryTags, bulkEditSelectedHistoryTags, updateHistBulkBar, enterHistBatchMode, exitHistBatchMode, commitHistoryCollection, organizeHistory, openHistoryReading, historyReadingVersions, chooseHistoryReadingVersion, saveToHistory, copyHtml, readClipboardMatch, copyToClipboard, fallbackCopy, showManualCopyPanel, downloadTextContent, exportAllHistory, requestHistoryExport, addHistoryItems, loadJSZip, readHistoryZip, normalizedZipEntryName, importHistoryBackup, downloadFile };
 }

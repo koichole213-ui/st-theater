@@ -1,3 +1,4 @@
+import { normalizeRoleSources } from './history-roles.js';
 import { collectionPage, collectionChapters } from './history-collections.js';
 
 export const escapeHistoryText = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -7,20 +8,25 @@ const button = (action, label, id, disabled = false) => `<button type="button" c
 
 export function collectionCardHTML(entry, { expanded, selected, itemHTML, batch = false, searching = false }) {
     const { folder, chapters, count } = entry;
+    const roles = normalizeRoleSources(chapters.flat(2).flatMap(item => normalizeRoleSources(item.roleSources)));
+    const tags = [...new Set(chapters.flat(2).flatMap(item => item.tags || []))];
     return `<section class="theater-collection-card">
-        <button type="button" class="theater-series-head" data-collection-action="toggle" data-collection-id="${e(folder.id)}" aria-expanded="${expanded}" ${searching || batch ? 'aria-disabled="true" title="搜索或批量管理时自动展开"' : ''}>
-            <i class="fa-regular fa-folder theater-folder-icon"></i><span class="theater-history-heading"><span class="theater-history-title">${e(folder.title)}</span><span class="theater-series-meta">${count} 篇${chapters.length !== count ? ` · 显示 ${chapters.length} 篇` : ''}</span></span><span aria-hidden="true">${expanded ? '⌄' : '›'}</span>
-        </button>
+        <div class="theater-history-title-row"><button type="button" class="theater-series-head" data-collection-action="toggle" data-collection-id="${e(folder.id)}" aria-expanded="${expanded}" ${searching || batch ? 'aria-disabled="true" title="搜索或批量管理时自动展开"' : ''}>
+            <i class="fa-solid fa-folder theater-folder-icon"></i><span class="theater-history-title">${e(folder.title)}</span><span aria-hidden="true">${expanded ? '⌄' : '›'}</span>
+        </button><button type="button" class="theater-history-info-trigger" data-info-folder="${e(folder.id)}" aria-label="查看系列完整信息"><span class="theater-history-role"><i class="fa-solid fa-user"></i><span>${e(roles[0]?.name || '未指定')}${roles.length > 1 ? ` +${roles.length - 1}` : ''}</span></span><span class="theater-tag-badge"><span>${e(tags[0] || '未分类')}${tags.length > 1 ? ` +${tags.length - 1}` : ''}</span></span></button></div>
+        <div class="theater-history-bottom-row"><span class="theater-series-meta">${count} 篇${chapters.length !== count ? ` · 显示 ${chapters.length} 篇` : ''} · ${expanded ? '已展开' : '已收起'}</span>
+            <div class="theater-history-actions"><button type="button" class="theater-history-menu-trigger" aria-label="系列更多操作" aria-expanded="false">⋮ 更多</button><template data-history-menu-content hidden>${button('add', '加入剧场', folder.id)}${button('rename', '改名', folder.id)}${button('dissolve', '解散文件夹', folder.id)}</template></div>
+        </div>
         ${expanded ? `<div class="theater-chapter-list">${chapters.map((versions, index) => {
             const position = entry.positions?.[index] ?? index;
             const item = versions.find(item => String(item.id) === selected.get(`${folder.id}:${index}`)) || versions.at(-1);
             return `<div class="theater-chapter-wrap" data-chapter-id="${e(item.id)}">
-                <div class="theater-chapter-line"><button type="button" class="theater-history-view theater-chapter" data-id="${e(item.id)}"><span class="theater-chapter-number">${String(position + 1).padStart(2, '0')}</span><span class="theater-chapter-copy"><strong>${e(item.title)}</strong><small>${e(item.date)}${versions.length > 1 ? ` · ${versions.length} 个版本` : ''}</small></span></button><button type="button" class="theater-chapter-options" data-collection-action="menu" data-collection-id="${e(folder.id)}" aria-label="${e(item.title)}的操作" aria-expanded="false">⋯</button></div>
-                ${versions.length > 1 ? `<label class="theater-history-version">本篇版本 <select class="theater-input" data-collection-version="${e(folder.id)}:${index}">${versions.map((version, n) => `<option value="${e(version.id)}" ${version.id === item.id ? 'selected' : ''}>版本 ${n + 1} · ${e(version.title)}</option>`).join('')}</select></label>` : ''}
-                <div class="theater-chapter-menu" ${batch ? '' : 'hidden'}>${batch ? versions.map(itemHTML).join('') : itemHTML(item)}<div class="theater-chapter-organize">${button('up', '上移', folder.id, position === 0)}${button('down', '下移', folder.id, position === count - 1)}${button('move', '移到文件夹', folder.id)}${button('remove', '移出文件夹', folder.id)}</div></div>
+                <div class="theater-chapter-menu">${batch ? versions.map(itemHTML).join('') : itemHTML(item)}</div>
+                ${versions.length > 1 ? `<label class="theater-history-version">第 ${position + 1} 篇 · 本篇版本 <select class="theater-select" data-collection-version="${e(folder.id)}:${index}">${versions.map((version, n) => `<option value="${e(version.id)}" ${String(version.id) === String(item.id) ? 'selected' : ''}>版本 ${n + 1} · ${e(version.title)}</option>`).join('')}</select></label>` : ''}
+                ${batch ? '' : `<details class="theater-chapter-organize-details"><summary>第 ${position + 1} 篇 · 收纳与排序</summary><div class="theater-chapter-organize">${button('up', '上移', folder.id, position === 0)}${button('down', '下移', folder.id, position === count - 1)}${button('move', '移到文件夹', folder.id)}${button('remove', '移出文件夹', folder.id)}</div></details>`}
             </div>`;
         }).join('')}</div>` : ''}
-        <div class="theater-collection-actions">${button('add', '加入剧场', folder.id)}${button('rename', '改名', folder.id)}${button('dissolve', '解散文件夹', folder.id)}</div>
+
     </section>`;
 }
 

@@ -1,4 +1,5 @@
 // theater-events: receives live state and cross-feature callbacks from index.js.
+import { toggleHistoryMenu, closeHistoryMenus } from './history-menus.js';
 import { bookmarkPlacementFromPoint } from './result-bookmark.js';
 import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_WORLD_LINE_RELATION, LONG_DREAM_WORLD_BOOK_POLICY, createLongDreamRecord, LONG_DREAM_STATUS, LONG_DREAM_MEMORY_STATUS, prepareLongDreamMemoryRegeneration, updateLongDreamMemoryV2RecordItem, setLongDreamMemoryV2RecordItemHidden, rejectLongDreamMemoryV2RecordItem, resolveLongDreamMemoryV2RecordConflict, updateLongDreamMemoryCard, setLongDreamMemoryCardStatus, updateLongDreamDefinition } from './long-dream.js';
 import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, composeLongDreamCanon } from './long-dream-canon-suggestions.js';
@@ -1264,12 +1265,20 @@ function bindEvents() {
     });
     $d.off('click.tcvp').on('click.tcvp', '#theater-cont-version-prev', () => runtime.showContinuationVersion(runtime.continuationSession?.selected - 1));
     $d.off('click.tcvn').on('click.tcvn', '#theater-cont-version-next', () => runtime.showContinuationVersion(runtime.continuationSession?.selected + 1));
+    $d.off('click.thmenu').on('click.thmenu', '.theater-history-menu-trigger', function (event) { event.preventDefault(); toggleHistoryMenu(this); });
+    $d.off('click.throles').on('click.throles', '.theater-history-roles-edit', function () { runtime.editHistoryRoles($(this).data('id')); });
+    $d.off('click.thbulkroles').on('click.thbulkroles', '#theater-hist-role-selected', () => runtime.editHistoryRoles());
+    $d.off('click.thmove').on('click.thmove', '.theater-history-move', function () { runtime.moveHistoryToCollection($(this).data('id')); });
+    $d.off('click.thbulkmove').on('click.thbulkmove', '#theater-hist-move-selected', () => runtime.moveHistoryToCollection());
+    $d.off('click.thinfo').on('click.thinfo', '.theater-history-info-trigger', function () { runtime.showHistoryMetadata($(this).data('id'), this.dataset.infoFolder || null); });
+    $d.off('change.throlefilter').on('change.throlefilter', '#theater-history-role-filter', function () { runtime.historyRoleFilter = this.value; runtime.histPage = 0; runtime.histSelected.clear(); runtime.refreshHistList(); });
     $d.off('input.thsearch').on('input.thsearch', '#theater-history-search', function () { runtime.historyQuery = this.value; runtime.histPage = 0; runtime.histSelected.clear(); runtime.refreshHistList(); });
     $d.off('click.thclearsearch').on('click.thclearsearch', '#theater-history-clear-search', () => { runtime.historyQuery = ''; runtime.histPage = 0; runtime.histSelected.clear(); $('#theater-history-search').val('').trigger('focus'); runtime.refreshHistList(); });
     $d.off('click.thnewfolder').on('click.thnewfolder', '#theater-history-new-folder', () => runtime.organizeHistory('new'));
     $d.off('click.thcollection').on('click.thcollection', '[data-collection-action]', function () { runtime.organizeHistory(this.dataset.collectionAction, this.dataset.collectionId, this); });
     $d.off('change.thcollectionversion').on('change.thcollectionversion', '[data-collection-version]', function () { runtime.historyVersionSelection.set(this.dataset.collectionVersion, this.value); runtime.refreshHistList(); });
     $d.off('click.thv').on('click.thv', '.theater-history-view', function () {
+        if (runtime.histBatchMode && this.closest('#theater-history-list')) return;
         const item = runtime.historyCache.find(h => h.id === $(this).data('id')); if (!item) return;
         if (runtime.resultReader?.isEditing()) { toastr.warning('请先完成阅读页的文字编辑'); return; }
         runtime.openHistoryReading(item); // reading copies never overwrites a saved work
@@ -1323,7 +1332,7 @@ function bindEvents() {
         runtime.setHistoryItemSelected(id, $(this).is(':checked'), $(this).closest('.theater-history-item')[0]);
     });
     $d.off('click.thcardselect').on('click.thcardselect', '.theater-history-item', function (event) {
-        if ($(event.target).closest('.theater-history-actions, .theater-hist-checkbox').length) return;
+        if ($(event.target).closest('.theater-history-actions, .theater-history-info-trigger, .theater-hist-checkbox').length) return;
         if (Date.now() < runtime.suppressHistoryCardClickUntil) {
             event.preventDefault();
             event.stopPropagation();

@@ -1,4 +1,5 @@
 // long-dream-workspace: receives live state and cross-feature callbacks from index.js.
+import { normalizeRoleSources } from './history-roles.js';
 import { itemTags } from './tag-system.js';
 import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES } from './long-dream-canon-suggestions.js';
 import { createLongDreamWorldBookSnapshot, updateLongDreamChapter, LONG_DREAM_STATUS, setLongDreamStatus, latestLongDreamChapter, LONG_DREAM_WORLD_LINE_RELATION, LONG_DREAM_MEMORY_STATUS, LONG_DREAM_MEMORY_TYPES, createLongDreamBranch, truncateLongDreamAfter, deleteLongDreamFrom, LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_DRAFT_STATUS, LONG_DREAM_DRAFT_RESUME_STAGE, updateLongDreamDefinition, LONG_DREAM_MAX_CANDIDATES } from './long-dream.js';
@@ -18,25 +19,34 @@ export function createLongDreamWorkspace(runtime) {
 function historyItemHTML(h) {
     const checked = runtime.histSelected.has(h.id) ? 'checked' : '';
     const selClass = runtime.histSelected.has(h.id) ? ' theater-history-item-selected' : '';
-    const title = h.title || '未命名小剧场';
-    return `<div class="theater-history-item${selClass}" data-id="${h.id}">
-        <div class="theater-history-header">
-            <input type="checkbox" class="theater-hist-checkbox" data-id="${h.id}" ${checked} aria-label="选择这条历史">
-            <div class="theater-history-heading">
-                <div class="theater-history-title-row">
-                    <span class="theater-history-title" title="${runtime.esc(title)}">${runtime.esc(title)}</span>
-                    <div class="theater-history-tags">${historyTagBadgesHTML(h)}</div>
-                </div>
-                <div class="theater-history-meta"><span class="theater-history-date">${runtime.esc(h.date || '')}</span></div>
+    const title = h.title || '未命名小剧场', id = runtime.esc(h.id);
+    const roles = normalizeRoleSources(h.roleSources);
+    const roleLabel = roles.length ? `${roles[0].name}${roles.length > 1 ? ` +${roles.length - 1}` : ''}` : '未指定';
+    const action = (cls, label, icon, extra = '') => `<button type="button" class="${cls}" data-id="${id}" ${extra}><i class="fa-solid fa-${icon}"></i><span>${label}</span></button>`;
+    return `<div class="theater-history-item${selClass}" data-id="${id}">
+        <input type="checkbox" class="theater-hist-checkbox" data-id="${id}" ${checked} aria-label="选择这条历史">
+        <div class="theater-history-heading">
+            <div class="theater-history-title-row">
+                <button type="button" class="theater-history-title theater-history-view" data-id="${id}" title="${runtime.esc(title)}">${runtime.esc(title)}</button>
+                <button type="button" class="theater-history-info-trigger" data-id="${id}" aria-label="查看完整标题、角色与标签">
+                    <span class="theater-history-role${roles.length ? '' : ' is-unassigned'}"><i class="fa-solid fa-user"></i><span>${runtime.esc(roleLabel)}</span></span>
+                    <span class="theater-history-tags">${historyTagBadgesHTML(h)}</span>
+                </button>
             </div>
-        </div>
-        <div class="theater-history-actions">
-            <button type="button" class="theater-history-view" data-id="${h.id}"><i class="fa-solid fa-eye"></i><span>查看</span></button>
-            <button type="button" class="theater-history-continue" data-id="${h.id}"><i class="fa-solid fa-forward"></i><span>续写</span></button>
-            <button type="button" class="theater-history-export" data-id="${h.id}" title="导出 HTML"><i class="fa-solid fa-download"></i><span>导出</span></button>
-            <button type="button" class="theater-history-rename" data-id="${h.id}"><i class="fa-solid fa-pen"></i><span>改名</span></button>
-            <button type="button" class="theater-history-tags-edit" data-id="${h.id}"><i class="fa-solid fa-tags"></i><span>标签</span></button>
-            <button type="button" class="theater-history-delete" data-id="${h.id}"><i class="fa-solid fa-trash"></i><span>删除</span></button>
+            <div class="theater-history-bottom-row"><span class="theater-history-date">${runtime.esc(h.date || '')}</span>
+                <div class="theater-history-actions">
+                    ${action('theater-history-continue', '续写', 'forward')}
+                    <button type="button" class="theater-history-menu-trigger" aria-label="${runtime.esc(title)}的更多操作" aria-expanded="false">⋮ 更多</button>
+                    <template data-history-menu-content hidden>
+                        ${action('theater-history-rename', '改名', 'pen')}
+                        ${action('theater-history-tags-edit', '标签', 'tags')}
+                        ${action('theater-history-roles-edit', '角色', 'user')}
+                        ${action('theater-history-move', '移到文件夹', 'folder-open')}
+                        ${action('theater-history-export', '导出', 'download', 'title="导出 HTML"')}
+                        ${action('theater-history-delete', '删除', 'trash')}
+                    </template>
+                </div>
+            </div>
         </div>
     </div>`;
 }
@@ -48,8 +58,8 @@ function historyTagBadgesHTML(item) {
     if (!tags.length) {
         return '<span class="theater-tag-badge is-uncategorized"><i class="fa-solid fa-tag"></i><span>未分类</span></span>';
     }
-    const visible = tags.slice(0, 2);
-    const hidden = tags.slice(2);
+    const visible = tags.slice(0, 1);
+    const hidden = tags.slice(1);
     const badges = visible.map(tag => `<span class="theater-tag-badge" title="${runtime.esc(tag)}"><i class="fa-solid fa-tag"></i><span>${runtime.esc(tag)}</span></span>`).join('');
     const more = hidden.length
         ? `<span class="theater-tag-badge theater-history-tag-more" title="${runtime.esc(hidden.join('、'))}"><span>+${hidden.length}</span></span>`

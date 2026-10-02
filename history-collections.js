@@ -1,3 +1,5 @@
+import { normalizeRoleSources } from './history-roles.js';
+
 // History organization is metadata only: story HTML and writing prompts are untouched.
 export const historyKey = item => String(item?.chapterId || `saved:${item?.id}`);
 export function newHistoryKey() {
@@ -91,7 +93,7 @@ export function continuationHistoryMetadata(source, makeKey = newHistoryKey) {
     if (!source?.html) return {};
     const chapterId = source.chapterId || (source.id != null ? historyKey(source) : source.resultId || makeKey());
     const { seriesSources, ...snapshot } = source;
-    return { chapterId: makeKey(), parentChapterId: chapterId,
+    return { roleSources: normalizeRoleSources(source.roleSources), chapterId: makeKey(), parentChapterId: chapterId,
         seriesSources: [...(Array.isArray(seriesSources) ? seriesSources : []), { ...snapshot, chapterId }] };
 }
 

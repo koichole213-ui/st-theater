@@ -14,6 +14,7 @@ import { targetCompletionChars, abortGenerationJob, createGenerationJob, addGene
 import { readableCharCount } from './text-counter.js';
 import { displayedContinuationVersion, selectContinuationVersion, normalizeContinuationRounds, createContinuationSession, continuationRoundHistory, appendContinuationVersion } from './continuation-session.js';
 import { markCompleted, markFirstToken } from './request-metrics.js';
+import { captureHistoryRoles, normalizeRoleSources } from './history-roles.js';
 import { continuationHistoryMetadata, newHistoryKey } from './history-collections.js';
 import { itemTags } from './tag-system.js';
 
@@ -667,6 +668,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     const contCtx = isAuto ? '' : runtime.continueContext;  // 自动生成永远是全新的，不掺手动的续写上下文
     const continuationRun = !isAuto && contCtx ? runtime.continuationSession : null;
     const continuationDirection = continuationRun?.direction || '';
+    const generationRoles = continuationRun ? normalizeRoleSources(continuationRun.historyMetadata?.roleSources) : captureHistoryRoles(SillyTavern.getContext());
     const plannedTargetWordCount = resolveTargetWordCount(instruction, {
         manualEnabled: runtime.settings.manualTargetEnabled,
         manualTarget: runtime.settings.manualTargetChars,
@@ -934,7 +936,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             appendContinuationVersion(continuationRun, {
                 ...continuationRun.historyMetadata,
                 html: runtime.lastGeneratedHtml, text: newText, mode: runtime.currentOutputMode, continuationRounds,
-                direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig,
+                direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig, roleSources: generationRoles,
             });
         }
 
@@ -945,7 +947,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 resultId: newHistoryKey(), html: runtime.lastGeneratedHtml,
                 mode: runtime.currentOutputMode, continuationRounds,
                 time: new Date().toLocaleString('zh-CN', { hour12: false }),
-                instruction: instruction || '', sourceConfig: generationSourceConfig,
+                instruction: instruction || '', sourceConfig: generationSourceConfig, roleSources: generationRoles,
                 tags: itemTags({ tags: sourceTags }, runtime.knownInstructionTags()),
             };
             if (!await runtime.storeCurrentResult(item)) {
@@ -996,7 +998,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             runtime.retainedResultSource = {
                 html: runtime.lastGeneratedHtml, mode: runtime.currentOutputMode, instruction,
                 ...continuationRun?.historyMetadata,
-                tags: [...sourceTags], sourceConfig: generationSourceConfig,
+                tags: [...sourceTags], sourceConfig: generationSourceConfig, roleSources: generationRoles,
                 continuationRounds: continuationRoundHistory(continuationRun?.source.rounds, [...runtime.currentGenerationJob.segments, liveBodyText].map(prepareContinuationContext)),
             };
             if (continuationRun && runtime.continuationSession === continuationRun) {
@@ -1004,7 +1006,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                     ...continuationRun.historyMetadata,
                     html: runtime.lastGeneratedHtml, text: partialText, mode: runtime.currentOutputMode,
                     continuationRounds: continuationRoundHistory(continuationRun.source.rounds, [...runtime.currentGenerationJob.segments, liveBodyText].map(prepareContinuationContext)),
-                    direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig, complete: false,
+                    direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig, roleSources: generationRoles, complete: false,
                 });
             }
             const partialItem = { ...runtime.retainedResultSource, html: runtime.lastGeneratedHtml, mode: runtime.currentOutputMode,
