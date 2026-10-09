@@ -1,5 +1,5 @@
 // theater-history: receives live state and cross-feature callbacks from index.js.
-import { normalizeRoleSources, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED } from './history-roles.js';
+import { captureHistoryRoles, normalizeRoleSources, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED } from './history-roles.js';
 import { historyRoleDialog } from './history-role-dialog.js';
 import { closeHistoryMenus } from './history-menus.js';
 import { itemTags, matchesTagFilter, mergeTagLists, normalizeTagList } from './tag-system.js';
@@ -57,7 +57,7 @@ function refreshInstUI() {
 
 // @theater-source-begin filterHistoryAll
 function filterHistoryAll(items = runtime.historyCache) {
-    return (Array.isArray(items) ? items : []).filter(item => matchesTagFilter(item, runtime.settings.historyTagFilter, runtime.knownInstructionTags()) && matchesRoleFilter(item, runtime.historyRoleFilter));
+    return (Array.isArray(items) ? items : []).filter(item => matchesTagFilter(item, runtime.settings.historyTagFilter, runtime.knownInstructionTags()) && matchesRoleFilter(item, runtime.historyRoleFilter, runtime.historyRoleFilter === '__current__' ? captureHistoryRoles(SillyTavern.getContext()) : []));
 }
 // @theater-source-end filterHistoryAll
 
@@ -198,13 +198,15 @@ function refreshHistList() {
     const state = currentHistoryPage();
     $('#theater-history-stats').text(`${state.total} 个条目 · ${h.length} 条保存记录`);
     $('#theater-history-role-filter').html(roleOptions);
+    $('#theater-history-current-role').attr('aria-pressed', String(runtime.historyRoleFilter === '__current__'));
+    $('#theater-history-reset-filters').prop('hidden', !runtime.historyQuery.trim() && !runtime.historyRoleFilter && !(runtime.settings.historyTagFilter || []).length);
 }
 // @theater-source-end refreshHistList
 
 // @theater-source-begin currentHistoryPage
 function currentHistoryPage() {
     return collectionPage(historyEntries(runtime.historyCache, runtime.historyCollections, { query: runtime.historyQuery,
-        accepts: item => matchesTagFilter(item, runtime.settings.historyTagFilter, runtime.knownInstructionTags()) && matchesRoleFilter(item, runtime.historyRoleFilter) }), runtime.histPage);
+        accepts: item => matchesTagFilter(item, runtime.settings.historyTagFilter, runtime.knownInstructionTags()) && matchesRoleFilter(item, runtime.historyRoleFilter, runtime.historyRoleFilter === '__current__' ? captureHistoryRoles(SillyTavern.getContext()) : []) }), runtime.histPage);
 }
 // @theater-source-end currentHistoryPage
 
@@ -229,7 +231,7 @@ function renderHistoryList() {
 // @theater-source-begin refreshTagControls
 function refreshTagControls() {
     $('#theater-inst-tag-filter span').text(runtime.tagFilterSummary(runtime.settings.instructionTagFilter));
-    $('#theater-history-tag-filter span:first-child').text(runtime.historyTagFilterLabel());
+    $('#theater-history-tag-filter [data-history-tag-value]').text(runtime.historyTagFilterLabel());
     const randomTags = runtime.tagFilterSummary(runtime.settings.randomTagFilter, '选择');
     $('#theater-random-tag-picker').prop('hidden', runtime.settings.randomScope !== '__tags__').attr('title', runtime.tagFilterSummary(runtime.settings.randomTagFilter)).find('span').text(randomTags);
     const autoTags = runtime.tagFilterSummary(runtime.settings.autoTagFilter, '选择');
@@ -793,7 +795,7 @@ function downloadFile(filename, content, type) {
 // @theater-source-begin historyRoleFilterHTML
 function historyRoleFilterHTML() {
     const e = runtime.esc;
-    const options = [{ id: '', label: '角色：全部' }, { id: ROLE_UNASSIGNED, label: '未指定角色' }, ...historyRoleOptions(runtime.historyCache, SillyTavern.getContext().characters || [])];
+    const options = [{ id: '', label: '全部角色' }, { id: '__current__', label: '当前角色' }, { id: ROLE_UNASSIGNED, label: '未指定角色' }, ...historyRoleOptions(runtime.historyCache, SillyTavern.getContext().characters || [])];
     if (runtime.historyRoleFilter && !options.some(role => role.id === runtime.historyRoleFilter)) {
         runtime.historyRoleFilter = ''; runtime.histPage = 0; runtime.histSelected.clear();
     }

@@ -392,9 +392,9 @@ async function chooseTags({ title = '选择标签', subtitle = '可多选；多�
         rows.push(`<label class="theater-tag-choice"><input type="checkbox" value="${runtime.esc(tag)}" ${current.includes(tag) ? 'checked' : ''}><span><i class="fa-solid fa-tag"></i><b>${runtime.esc(tag)}</b></span></label>`);
     });
     const emptyHint = runtime.knownInstructionTags().length ? '' : '<p class="theater-empty">还没有标签，可以先用“新建标签”添加。</p>';
-    const html = `<div class="theater-popup" data-skin="${runtime.settings.skinMode || 'default'}">
+    const html = `<div class="theater-popup theater-compact-popup theater-filter-tags-popup" data-skin="${runtime.settings.skinMode || 'default'}">
         <div class="theater-popup-header"><p class="theater-title">${runtime.esc(title)}</p><p class="theater-subtitle">${runtime.esc(subtitle)}</p></div>
-        <div class="theater-section"><button type="button" class="theater-tag-clear theater-btn"><i class="fa-solid fa-rotate-left"></i><span>清空选择${allowUncategorized ? '（显示全部）' : ''}</span></button><div class="theater-tag-choice-list">${rows.join('')}${emptyHint}</div></div>
+        <div class="theater-section theater-compact-tag-body"><button type="button" class="theater-tag-clear theater-btn"><i class="fa-solid fa-rotate-left"></i><span>清空选择${allowUncategorized ? '（显示全部）' : ''}</span></button><div class="theater-tag-choice-list">${rows.join('')}${emptyHint}</div></div>
     </div>`;
     const popup = new Popup(html, POPUP_TYPE.CONFIRM, '', { wide: false, okButton: '应用', cancelButton: '取消', allowVerticalScrolling: true });
     const showPromise = popup.show();

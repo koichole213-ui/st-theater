@@ -27,17 +27,20 @@ function historyItemHTML(h) {
         <input type="checkbox" class="theater-hist-checkbox" data-id="${id}" ${checked} aria-label="选择这条历史">
         <div class="theater-history-heading">
             <div class="theater-history-title-row">
-                <button type="button" class="theater-history-title theater-history-view" data-id="${id}" title="${runtime.esc(title)}">${runtime.esc(title)}</button>
+                <div class="theater-history-main"><button type="button" class="theater-history-title theater-history-view" data-id="${id}" title="${runtime.esc(title)}">${runtime.esc(title)}</button><span class="theater-history-date">${runtime.esc(h.date || '')}</span></div>
                 <button type="button" class="theater-history-info-trigger" data-id="${id}" aria-label="查看完整标题、角色与标签">
-                    <span class="theater-history-role${roles.length ? '' : ' is-unassigned'}"><i class="fa-solid fa-user"></i><span>${runtime.esc(roleLabel)}</span></span>
-                    <span class="theater-history-tags">${historyTagBadgesHTML(h)}</span>
+                    <span class="theater-history-class-line"><span class="theater-history-class-label">角色</span><span class="theater-history-role${roles.length ? '' : ' is-unassigned'}"><i class="fa-solid fa-user"></i><span>${runtime.esc(roleLabel)}</span></span></span>
+                    <span class="theater-history-class-line"><span class="theater-history-class-label">标签</span><span class="theater-history-tags">${historyTagBadgesHTML(h)}</span></span>
                 </button>
             </div>
-            <div class="theater-history-bottom-row"><span class="theater-history-date">${runtime.esc(h.date || '')}</span>
+            <div class="theater-history-bottom-row">
                 <div class="theater-history-actions">
+                    ${action('theater-history-view', '查看', 'eye')}
                     ${action('theater-history-continue', '续写', 'forward')}
-                    <button type="button" class="theater-history-menu-trigger" aria-label="${runtime.esc(title)}的更多操作" aria-expanded="false">⋮ 更多</button>
+                    <button type="button" class="theater-history-menu-trigger" aria-label="${runtime.esc(title)}的更多操作" aria-expanded="false">⋯</button>
                     <template data-history-menu-content hidden>
+                        ${action('theater-history-view', '查看', 'eye')}
+                        ${action('theater-history-continue', '续写', 'forward')}
                         ${action('theater-history-rename', '改名', 'pen')}
                         ${action('theater-history-tags-edit', '标签', 'tags')}
                         ${action('theater-history-roles-edit', '角色', 'user')}
@@ -58,8 +61,8 @@ function historyTagBadgesHTML(item) {
     if (!tags.length) {
         return '<span class="theater-tag-badge is-uncategorized"><i class="fa-solid fa-tag"></i><span>未分类</span></span>';
     }
-    const visible = tags.slice(0, 1);
-    const hidden = tags.slice(1);
+    const visible = tags.slice(0, 2);
+    const hidden = tags.slice(2);
     const badges = visible.map(tag => `<span class="theater-tag-badge" title="${runtime.esc(tag)}"><i class="fa-solid fa-tag"></i><span>${runtime.esc(tag)}</span></span>`).join('');
     const more = hidden.length
         ? `<span class="theater-tag-badge theater-history-tag-more" title="${runtime.esc(hidden.join('、'))}"><span>+${hidden.length}</span></span>`

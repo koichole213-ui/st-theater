@@ -19,8 +19,9 @@ export function captureHistoryRoles(ctx = {}) {
     }
     return normalizeRoleSources([characterRole(characters[ctx.characterId])]);
 }
-export function matchesRoleFilter(item, filter = '') {
+export function matchesRoleFilter(item, filter = '', currentRoles = []) {
     const roles = normalizeRoleSources(item?.roleSources);
+    if (filter === '__current__') return roles.some(role => normalizeRoleSources(currentRoles).some(current => current.id === role.id));
     return !filter || (filter === ROLE_UNASSIGNED ? !roles.length : roles.some(role => role.id === filter));
 }
 export function historyRoleOptions(items = [], characters = []) {

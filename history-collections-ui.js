@@ -1,4 +1,3 @@
-import { normalizeRoleSources } from './history-roles.js';
 import { collectionPage, collectionChapters } from './history-collections.js';
 
 export const escapeHistoryText = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -8,14 +7,12 @@ const button = (action, label, id, disabled = false) => `<button type="button" c
 
 export function collectionCardHTML(entry, { expanded, selected, itemHTML, batch = false, searching = false }) {
     const { folder, chapters, count } = entry;
-    const roles = normalizeRoleSources(chapters.flat(2).flatMap(item => normalizeRoleSources(item.roleSources)));
-    const tags = [...new Set(chapters.flat(2).flatMap(item => item.tags || []))];
     return `<section class="theater-collection-card">
         <div class="theater-history-title-row"><button type="button" class="theater-series-head" data-collection-action="toggle" data-collection-id="${e(folder.id)}" aria-expanded="${expanded}" ${searching || batch ? 'aria-disabled="true" title="搜索或批量管理时自动展开"' : ''}>
-            <i class="fa-solid fa-folder theater-folder-icon"></i><span class="theater-history-title">${e(folder.title)}</span><span aria-hidden="true">${expanded ? '⌄' : '›'}</span>
-        </button><button type="button" class="theater-history-info-trigger" data-info-folder="${e(folder.id)}" aria-label="查看系列完整信息"><span class="theater-history-role"><i class="fa-solid fa-user"></i><span>${e(roles[0]?.name || '未指定')}${roles.length > 1 ? ` +${roles.length - 1}` : ''}</span></span><span class="theater-tag-badge"><span>${e(tags[0] || '未分类')}${tags.length > 1 ? ` +${tags.length - 1}` : ''}</span></span></button></div>
-        <div class="theater-history-bottom-row"><span class="theater-series-meta">${count} 篇${chapters.length !== count ? ` · 显示 ${chapters.length} 篇` : ''} · ${expanded ? '已展开' : '已收起'}</span>
-            <div class="theater-history-actions"><button type="button" class="theater-history-menu-trigger" aria-label="系列更多操作" aria-expanded="false">⋮ 更多</button><template data-history-menu-content hidden>${button('add', '加入剧场', folder.id)}${button('rename', '改名', folder.id)}${button('dissolve', '解散文件夹', folder.id)}</template></div>
+            <i class="fa-solid fa-folder theater-folder-icon"></i><span class="theater-history-main"><span class="theater-history-title">${e(folder.title)}</span><span class="theater-series-meta">${count} 篇${chapters.length !== count ? ` · 显示 ${chapters.length} 篇` : ''} · 系列</span></span><span aria-hidden="true">${expanded ? '⌄' : '›'}</span>
+        </button><button type="button" class="theater-history-info-trigger theater-folder-info" data-info-folder="${e(folder.id)}" aria-label="查看系列完整标题、角色与标签"><i class="fa-solid fa-circle-info"></i></button></div>
+        <div class="theater-history-bottom-row">
+            <div class="theater-history-actions"><button type="button" class="theater-history-menu-trigger" aria-label="系列更多操作" aria-expanded="false">⋯</button><template data-history-menu-content hidden>${button('add', '加入剧场', folder.id)}${button('rename', '改名', folder.id)}${button('dissolve', '解散文件夹', folder.id)}</template></div>
         </div>
         ${expanded ? `<div class="theater-chapter-list">${chapters.map((versions, index) => {
             const position = entry.positions?.[index] ?? index;

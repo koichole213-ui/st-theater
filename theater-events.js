@@ -1272,6 +1272,8 @@ function bindEvents() {
     $d.off('click.thbulkmove').on('click.thbulkmove', '#theater-hist-move-selected', () => runtime.moveHistoryToCollection());
     $d.off('click.thinfo').on('click.thinfo', '.theater-history-info-trigger', function () { runtime.showHistoryMetadata($(this).data('id'), this.dataset.infoFolder || null); });
     $d.off('change.throlefilter').on('change.throlefilter', '#theater-history-role-filter', function () { runtime.historyRoleFilter = this.value; runtime.histPage = 0; runtime.histSelected.clear(); runtime.refreshHistList(); });
+    $d.off('click.thcurrentrole').on('click.thcurrentrole', '#theater-history-current-role', () => { runtime.historyRoleFilter = runtime.historyRoleFilter === '__current__' ? '' : '__current__'; runtime.histPage = 0; runtime.histSelected.clear(); runtime.refreshHistList(); });
+    $d.off('click.thresetfilters').on('click.thresetfilters', '#theater-history-reset-filters', () => { runtime.historyRoleFilter = ''; runtime.historyQuery = ''; runtime.settings.historyTagFilter = []; runtime.histPage = 0; runtime.histSelected.clear(); $('#theater-history-search').val(''); runtime.save(); runtime.refreshHistList(); });
     $d.off('input.thsearch').on('input.thsearch', '#theater-history-search', function () { runtime.historyQuery = this.value; runtime.histPage = 0; runtime.histSelected.clear(); runtime.refreshHistList(); });
     $d.off('click.thclearsearch').on('click.thclearsearch', '#theater-history-clear-search', () => { runtime.historyQuery = ''; runtime.histPage = 0; runtime.histSelected.clear(); $('#theater-history-search').val('').trigger('focus'); runtime.refreshHistList(); });
     $d.off('click.thnewfolder').on('click.thnewfolder', '#theater-history-new-folder', () => runtime.organizeHistory('new'));
@@ -1316,6 +1318,7 @@ function bindEvents() {
     $d.off('click.teah').on('click.teah', '#theater-export-all-history', runtime.requestHistoryExport);
     $d.off('click.tih').on('click.tih', '#theater-import-history-btn', runtime.importHistoryBackup);
     $d.off('click.thbe').on('click.thbe', '#theater-hist-batch-enter', function () {
+        if (runtime.histBatchMode) return;
         runtime.histBatchMode = true;
         runtime.histSelected.clear();
         runtime.refreshHistList();

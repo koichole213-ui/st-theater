@@ -643,7 +643,7 @@ test('延迟进入历史会加载一次，批量恢复与刷新不显示全部�
     let renders = 0;
     const list = { hasAttribute: name => pending.has(name) };
     const context = {
-        settings: {}, historyCache: [{ id: '合成历史' }], histBatchMode: true, histPage: 0, listPage, listPaginationHTML,
+        settings: {}, historyCache: [{ id: '合成历史' }], historyRoleFilter: '', historyQuery: '', histBatchMode: true, histPage: 0, listPage, listPaginationHTML,
         normalizeTheaterTab: tab => tab, filterHistoryAll: items => items,
         historyItemHTML: () => { renders++; return '<p>合成历史</p>'; },
         updateHistBulkBar() {}, refreshTagControls() {}, historyRoleFilterHTML: () => '<option>全部</option>', save() {},
@@ -656,7 +656,7 @@ test('延迟进入历史会加载一次，批量恢复与刷新不显示全部�
                 addClass: () => api, removeClass: () => api,
                 html: () => api, text: () => api, removeAttr: name => { pending.delete(name); return api; },
                 hide: () => visible.set(selector, false), show: () => visible.set(selector, true),
-                toggle: value => visible.set(selector, value),
+                toggle: value => visible.set(selector, value), attr: () => api, prop: () => api,
             };
             return api;
         },
@@ -968,7 +968,7 @@ test('历史卡片紧凑呈现标题标签与时间操作，保留即时触控�
     const actions = renderer.indexOf('theater-history-actions');
 
     assert.ok(titleRow >= 0 && tags > titleRow && meta > tags && actions > meta);
-    assert.match(renderer, /function historyTagBadgesHTML[\s\S]*?tags\.slice\(0, 1\)[\s\S]*?hidden\.join\('、'\)/);
+    assert.match(renderer, /function historyTagBadgesHTML[\s\S]*?tags\.slice\(0, 2\)[\s\S]*?hidden\.join\('、'\)/);
     ['view', 'continue', 'export', 'tags-edit', 'delete'].forEach(action => {
         assert.ok(renderer.includes(`theater-history-${action}`));
     });
@@ -3749,13 +3749,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.3 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.4 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.3'/);
-    assert.equal(manifest.version, '4.4.3');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.3/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.4'/);
+    assert.equal(manifest.version, '4.4.4');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.4/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 

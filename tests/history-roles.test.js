@@ -93,3 +93,11 @@ test('最后一个来源消失后筛选回全部，界面选择与真实结果�
     assert.equal(runtime.historyRoleFilter,''); assert.equal(runtime.histPage,0); assert.equal(runtime.histSelected.size,0);
     assert.ok(html.includes('value="" selected')); assert.equal(feature.filterHistoryAll().length,1);
 });
+
+test('当前角色快捷筛选按卡身份匹配群聊成员，空上下文不显示未指定作品', () => {
+    const current = captureHistoryRoles({characters:cards,groupId:7,groups:[{id:7,members:['s.png','w.png','s2.png'],disabled_members:['s2.png']}]});
+    assert.equal(matchesRoleFilter({roleSources:roles}, '__current__', current), true);
+    assert.equal(matchesRoleFilter({roleSources:[{id:'card:s2.png',name:'司洛'}]}, '__current__', current), false);
+    assert.equal(matchesRoleFilter({roleSources:[]}, '__current__', current), false);
+    assert.equal(matchesRoleFilter({roleSources:roles}, '__current__', []), false);
+});

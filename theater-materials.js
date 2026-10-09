@@ -26,7 +26,7 @@ function tagFilterSummary(filter, allLabel = '全部标签') {
 // @theater-source-begin historyTagFilterLabel
 function historyTagFilterLabel() {
     const summary = tagFilterSummary(runtime.settings.historyTagFilter, '');
-    return summary ? `筛选标签：${summary}` : '筛选标签';
+    return summary || '全部标签';
 }
 // @theater-source-end historyTagFilterLabel
 

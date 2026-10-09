@@ -16,7 +16,10 @@ export function toggleHistoryMenu(trigger) {
     if (!template?.matches('[data-history-menu-content]')) return;
     const menu = document.createElement('div');
     menu.innerHTML = template.innerHTML;
-    if (trigger.closest('.is-batch-managing')) menu.querySelector('#theater-export-all-history')?.remove();
+    if (trigger.closest('.is-batch-managing')) {
+        menu.querySelector('#theater-export-all-history')?.remove();
+        menu.querySelector('#theater-hist-batch-enter')?.remove();
+    }
     const controller = new AbortController();
     menu.hidden = false;
     menu.removeAttribute('data-history-menu-content');

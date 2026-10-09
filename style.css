@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.4.3
+/* 千夜浮梦 · 小剧场生成器 v4.4.4
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -7275,7 +7275,7 @@ body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-d
 @media(max-width:420px) { .theater-panel[data-panel="long-dream"] .theater-dream-review-choice { padding:12px; } .theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-review-actions .ui-btn { padding:10px 8px; font-size:13px; } }
 
 
-/* Gemini history direction: compact rows, independent role/tag filters, click menus. */
+/* History layout: source roles, tags, and full existing actions remain independent. */
 .theater-panel[data-panel="history"] .theater-section { min-width:0; }
 .theater-history-top-search { display:flex; align-items:center; gap:4px; padding:4px 8px; background:var(--t-surface-1); border:1px solid var(--t-border); border-radius:8px; min-width:0; }
 .theater-history-top-search input { flex:1; width:0; min-width:0; border:0; outline:0; background:transparent; color:var(--t-fg); font:inherit; font-size:13px; padding:7px 0; }
@@ -7335,3 +7335,84 @@ body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-d
 .theater-panel[data-panel="history"] .theater-history-version :is(select,.theater-select) { max-width:65%; width:auto; min-width:0; font-size:11px; }
 
 .theater-popup .theater-panel[data-panel="history"] .theater-history-filters .theater-select { background:transparent; border:0; border-radius:0; min-height:28px; padding:3px 18px 3px 0; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238A7E72' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right center; }
+
+/* Approved Qianye history v2: grouped management, separated classification and actions. */
+.theater-history-section-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; text-align:left; }
+.theater-history-section-head strong { font-size:14px; }
+.theater-history-manage { display:flex; align-items:center; gap:7px; min-height:36px; padding:6px 12px; border:1px solid var(--t-border); border-radius:10px; background:var(--t-surface-1); color:var(--t-fg-soft); font:inherit; font-size:12px; cursor:pointer; }
+.theater-history-top-search { padding:5px 12px; border-radius:11px; }
+.theater-history-filters { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; margin:10px 0; }
+.theater-history-role-filter-wrap, .theater-history-filters #theater-history-tag-filter { display:flex; align-items:center; gap:5px; width:100%; max-width:none; min-width:0; min-height:42px; padding:7px 9px; border:1px solid var(--t-border-strong); border-radius:10px; background:var(--t-surface-1); color:var(--t-fg); text-align:left; font-size:12px; }
+.theater-history-role-filter-wrap { background:color-mix(in srgb,var(--t-accent) 7%,var(--t-surface-1)); border-color:color-mix(in srgb,var(--t-accent) 45%,var(--t-border)); }
+.theater-history-filters strong { flex-shrink:0; font-size:12px; }
+.theater-popup .theater-panel[data-panel="history"] .theater-history-filters .theater-select { flex:1; width:0; max-width:none; min-height:26px; padding:0 14px 0 0; background-color:transparent; color:var(--t-fg); font-size:12px; }
+#theater-history-tag-filter [data-history-tag-value] { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.theater-history-quick-row { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 8px; }
+.theater-history-quick-row button { min-height:30px; padding:5px 9px; border:1px solid var(--t-border); border-radius:8px; background:var(--t-surface-1); color:var(--t-fg-soft); font:inherit; font-size:11px; cursor:pointer; }
+.theater-history-quick-row button[aria-pressed="true"] { border-color:var(--t-accent); color:var(--t-accent); background:color-mix(in srgb,var(--t-accent) 12%,var(--t-surface-1)); }
+.theater-history-quick-row button[hidden] { display:none; }
+.theater-history-quick-row #theater-history-reset-filters { background:none; border:0; }
+.theater-panel[data-panel="history"] :is(.theater-history-item,.theater-collection-card) { padding:13px 13px 8px; border-radius:12px; }
+.theater-panel[data-panel="history"] .theater-history-item { align-items:flex-start; }
+.theater-panel[data-panel="history"] .theater-history-heading { flex:1; min-width:0; width:100%; }
+.theater-panel[data-panel="history"] .theater-history-title-row { display:flex; align-items:flex-start; gap:9px; }
+.theater-history-main { display:flex; flex:1; flex-direction:column; gap:4px; min-width:0; text-align:left; }
+.theater-panel[data-panel="history"] .theater-history-main .theater-history-title { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; text-overflow:ellipsis; white-space:normal; line-height:1.55; text-align:left; font-size:14px; }
+.theater-history-main .theater-history-date { font-size:10.5px; line-height:1.5; color:var(--t-fg-mute); text-align:left; overflow-wrap:anywhere; }
+.theater-history-info-trigger { display:flex; flex-direction:column; align-items:flex-end; flex:0 1 43%; max-width:43%; min-width:0; gap:5px; padding:0; }
+.theater-history-class-line { display:flex; align-items:center; justify-content:flex-end; gap:4px; width:100%; min-width:0; }
+.theater-history-class-label { flex-shrink:0; font-size:10px; color:var(--t-fg-mute); }
+.theater-history-role { max-width:100%; min-width:0; border:1px solid color-mix(in srgb,var(--t-accent) 35%,var(--t-border)); border-radius:6px; padding:2px 5px; }
+.theater-history-info-trigger .theater-history-tags { flex:1; min-width:0; }
+.theater-history-info-trigger .theater-tag-badges { display:flex; gap:3px; justify-content:flex-end; min-width:0; }
+.theater-history-info-trigger .theater-tag-badge { flex:0 1 auto; max-width:64px; min-width:0; padding:2px 4px; border-radius:6px; }
+.theater-history-info-trigger .theater-tag-badge > span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.theater-history-info-trigger .theater-tag-badge i { display:none; }
+.theater-panel[data-panel="history"] .theater-history-bottom-row { margin-top:12px; padding-top:7px; border-top:1px solid var(--t-border); }
+.theater-panel[data-panel="history"] .theater-history-actions { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 38px; gap:0; width:100%; }
+.theater-panel[data-panel="history"] .theater-history-actions > button { min-height:32px; font-size:12px; padding:5px 0; }
+.theater-panel[data-panel="history"] .theater-history-actions > button + button { border-left:1px solid var(--t-border); border-radius:0; }
+.theater-panel[data-panel="history"] .theater-history-actions .theater-history-menu-trigger { font-size:19px; }
+.theater-panel[data-panel="history"] .theater-collection-card { position:relative; padding:14px; }
+.theater-panel[data-panel="history"] .theater-collection-card > .theater-history-title-row { align-items:center; padding-right:35px; }
+.theater-panel[data-panel="history"] .theater-series-head { gap:8px; }
+.theater-panel[data-panel="history"] .theater-series-head .theater-history-main { flex-direction:row; flex-wrap:wrap; align-items:baseline; gap:4px; }
+.theater-panel[data-panel="history"] .theater-series-head .theater-series-meta { font-size:10px; text-align:left; }
+.theater-panel[data-panel="history"] .theater-folder-info { flex:0 0 24px; width:24px; min-height:32px; justify-content:center; align-items:center; }
+.theater-panel[data-panel="history"] .theater-collection-card > .theater-history-bottom-row { position:absolute; right:12px; top:14px; width:30px; border:0; padding:0; margin:0; }
+.theater-panel[data-panel="history"] .theater-collection-card > .theater-history-bottom-row .theater-history-actions { display:block; }
+.theater-panel[data-panel="history"] .theater-chapter-menu .theater-history-item { padding:10px 0; margin-bottom:0; box-shadow:none; border-radius:0; border-bottom:1px solid var(--t-border); }
+.theater-panel[data-panel="history"] .theater-chapter-menu .theater-history-bottom-row { margin-top:5px; padding-top:0; border:0; }
+.theater-panel[data-panel="history"] .theater-chapter-menu .theater-history-actions { display:flex; justify-content:flex-end; }
+.theater-panel[data-panel="history"] .theater-chapter-menu .theater-history-actions > :is(.theater-history-view,.theater-history-continue) { display:none; }
+.theater-panel[data-panel="history"] .theater-chapter-menu .theater-history-actions .theater-history-menu-trigger { width:32px; border:0; }
+.theater-panel[data-panel="history"].is-batch-managing .theater-history-item .theater-history-bottom-row { display:none; }
+.theater-panel[data-panel="history"] #theater-hist-batch-bar { border:1px solid var(--t-border); padding:10px; border-radius:10px; }
+.theater-history-action-menu { border-radius:12px; }
+@media(max-width:520px) {
+ .theater-panel[data-panel="history"] :is(.theater-history-item,.theater-collection-card) { padding:12px 10px 8px; }
+ .theater-history-info-trigger { max-width:44%; flex-basis:44%; }
+ .theater-history-info-trigger .theater-tag-badge { max-width:50px; }
+ .theater-history-role { max-width:82px; }
+ .theater-history-filters strong { font-size:11px; }
+ .theater-history-role-filter-wrap, .theater-history-filters #theater-history-tag-filter { gap:4px; padding:7px; }
+ .theater-history-action-menu { width:178px; }
+}
+
+.theater-history-role-filter-wrap, .theater-history-filters #theater-history-tag-filter { box-sizing:border-box; margin:0; }
+.theater-history-info-trigger .theater-history-tags { display:flex; justify-content:flex-end; }
+.theater-history-info-trigger .theater-tag-badges { flex-wrap:nowrap; }
+.theater-history-info-trigger .theater-history-tag-more { flex-shrink:0; }
+
+/* Tag selection: only the long list scrolls; clear and host controls stay reachable. */
+.theater-filter-tags-popup .theater-compact-tag-body { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; overflow:hidden; }
+.theater-filter-tags-popup .theater-tag-clear { flex:0 0 auto; }
+.theater-filter-tags-popup .theater-tag-choice-list { display:grid; align-content:start; flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; padding-right:5px; text-align:left; }
+.theater-filter-tags-popup .theater-tag-choice-list::-webkit-scrollbar { width:7px; }
+.theater-filter-tags-popup .theater-tag-choice-list::-webkit-scrollbar-thumb { background:var(--t-border-strong); border-radius:6px; }
+.theater-filter-tags-popup .theater-subtitle { text-align:left; }
+
+body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) { display:flex !important; flex-direction:column !important; box-sizing:border-box; }
+
+.theater-popup.theater-compact-popup.theater-filter-tags-popup { flex:1 1 auto; min-height:0; }
+body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) :is(.popup-content,.popup-body) { overflow:hidden !important; }
