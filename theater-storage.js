@@ -26,6 +26,7 @@ function idbTransactionDone(transaction) {
 
 // @theater-source-begin storageInit
 async function storageInit() {
+    runtime.storageReadErrors = {};
     try {
         runtime.idb = await new Promise((resolve, reject) => {
             const req = indexedDB.open('st-theater', 2);
@@ -42,6 +43,8 @@ async function storageInit() {
         console.warn('[Theater] IndexedDB 不可用，回退到 settings 存储:', e);
         runtime.runtimeLog('warn', '本地存档：IndexedDB 不可用，回退到 settings 内存储');
         runtime.idb = null;
+        runtime.storageReadErrors.database = true;
+        toastr.warning("本地数据库暂时无法打开，当前仅显示旧设置中仍保留的存档；这不代表数据库中的历史已被删除。请先保留站点数据，稍后重新加载。", "小剧场存档读取失败", { timeOut: 0, extendedTimeOut: 0, closeButton: true });
     }
 
     if (!runtime.idb) {
@@ -139,22 +142,38 @@ async function storageInit() {
         toastr.error('小剧场存档迁移失败，旧数据保留在原位：' + (e?.message || e));
     }
 
-    try {
-        runtime.historyCache = orderedHistory((await idbReq(runtime.idb.transaction('history').objectStore('history').getAll())) || []);
-        runtime.historyCollections = normalizeCollections((await idbReq(runtime.idb.transaction('kv').objectStore('kv').get('history-collections'))) || runtime.settings.historyCollections, runtime.historyCache);
-        runtime.recentCache = (await idbReq(runtime.idb.transaction('kv').objectStore('kv').get('recent'))) || [];
-        runtime.currentGenerationResult = (await idbReq(runtime.idb.transaction('kv').objectStore('kv').get('current-result'))) || null;
-        runtime.longDreamCache = ((await idbReq(runtime.idb.transaction('dreams').objectStore('dreams').getAll())) || [])
-            .map(record => normalizeLongDreamRecord(record))
-            .map(record => recoverInterruptedLongDreamMemory(record))
-            .filter(Boolean);
-    } catch (e) {
-        console.error('[Theater] 读取本地仓库失败:', e);
-        runtime.historyCache = [];
-        runtime.recentCache = [];
-        runtime.longDreamCache = [];
-        toastr.error('读取小剧场存档失败：' + (e?.message || e));
+    // Each read owns its failure path: a secondary failure must not erase history.
+    async function readArchive(key, label, load, apply) {
+        try {
+            const value = await load();
+            apply(value);
+        } catch (e) {
+            runtime.storageReadErrors[key] = true;
+            runtime.runtimeLog('error', '本地存档读取失败', { type: key });
+            console.error(`[Theater] 读取${label}失败:`, e);
+            toastr.error(`${label}读取失败，已读成功的其他存档仍保留；这不代表原数据已被删除。请先保留站点数据，稍后重新加载。`, '小剧场存档读取失败', { timeOut: 0, extendedTimeOut: 0, closeButton: true });
+        }
     }
+    await readArchive('history', '普通历史',
+        () => idbReq(runtime.idb.transaction('history').objectStore('history').getAll()),
+        rows => { runtime.historyCache = orderedHistory(rows || []); });
+    await readArchive('collections', '历史文件夹',
+        () => idbReq(runtime.idb.transaction('kv').objectStore('kv').get('history-collections')),
+        folders => { runtime.historyCollections = normalizeCollections(folders || runtime.settings.historyCollections, runtime.storageReadErrors.history ? undefined : runtime.historyCache); });
+    await readArchive('recent', '最近生成结果',
+        () => idbReq(runtime.idb.transaction('kv').objectStore('kv').get('recent')),
+        rows => { runtime.recentCache = rows || []; });
+    await readArchive('current', '当前生成结果',
+        () => idbReq(runtime.idb.transaction('kv').objectStore('kv').get('current-result')),
+        item => { runtime.currentGenerationResult = item || null; });
+    await readArchive('dreams', '长梦',
+        () => idbReq(runtime.idb.transaction('dreams').objectStore('dreams').getAll()),
+        rows => {
+            runtime.longDreamCache = (rows || [])
+                .map(record => normalizeLongDreamRecord(record))
+                .map(record => recoverInterruptedLongDreamMemory(record))
+                .filter(Boolean);
+        });
 }
 // @theater-source-end storageInit
 
@@ -223,6 +242,10 @@ async function histDeleteStorage(ids) {
 
 // @theater-source-begin recentPersist
 async function recentPersist(recent = runtime.recentCache, current = runtime.currentGenerationResult) {
+    if (runtime.storageReadErrors?.recent || runtime.storageReadErrors?.current) {
+        toastr.error('最近或当前结果尚未读取成功，暂时不能覆盖保存；请先重新加载，并复制保留新生成的正文。');
+        return false;
+    }
     if (!runtime.idb) {
         runtime.settings.recentGenerations = recent.slice(0, 3);
         runtime.settings.currentGenerationResult = current;

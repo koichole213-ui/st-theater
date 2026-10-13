@@ -1,3 +1,4 @@
+import { historyFiltersHTML } from './history-ui.js';
 // theater-popup-ui: receives live state and cross-feature callbacks from index.js.
 import { adaptiveRenderProfile } from './adaptive-render.js';
 import { getRuntimeLogEntries } from './runtime-log.js';
@@ -324,11 +325,13 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
             <div class="theater-history-top-bar theater-history-collection-bar">
                 <div class="theater-history-section-head">
                     <strong>保存的小剧场</strong>
-                    <button type="button" class="theater-history-manage theater-history-menu-trigger" aria-label="历史管理" aria-expanded="false"><i class="fa-solid fa-gear"></i><span>管理</span></button>
+                    <button type="button" class="theater-history-manage theater-history-menu-trigger" aria-label="整理与备份" aria-expanded="false"><i class="fa-solid fa-bars"></i><span>整理与备份</span><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
                     <template data-history-menu-content hidden>
+                        <p class="theater-history-menu-label">整理</p>
                         <button type="button" id="theater-hist-batch-enter"><i class="fa-solid fa-list-check"></i><span>批量管理</span></button>
                         <button type="button" id="theater-history-new-folder"><i class="fa-solid fa-folder-plus"></i><span>新建文件夹</span></button>
                         <button type="button" id="theater-history-manage-tags"><i class="fa-solid fa-tags"></i><span>管理全局标签</span></button>
+                        <hr><p class="theater-history-menu-label">备份 · 全部普通历史</p>
                         <button type="button" id="theater-export-all-history"><i class="fa-solid fa-download"></i><span>导出全部历史</span></button>
                         <button type="button" id="theater-import-history-btn"><i class="fa-solid fa-file-import"></i><span>导入备份</span></button>
                     </template>
@@ -338,19 +341,16 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                     <input id="theater-history-search" type="search" value="${runtime.esc(runtime.historyQuery)}" placeholder="搜索标题或文件夹…" aria-label="搜索剧场标题或文件夹名称">
                     <button type="button" id="theater-history-clear-search" class="theater-history-icon" aria-label="清空搜索">×</button>
                 </div>
-                <div class="theater-history-filters">
-                    <label class="theater-history-role-filter-wrap"><i class="fa-solid fa-user" aria-hidden="true"></i><strong>角色</strong><select id="theater-history-role-filter" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}" aria-label="按角色筛选">${runtime.historyRoleFilterHTML()}</select></label>
-                    <button type="button" id="theater-history-tag-filter"><strong># 标签</strong><span data-history-tag-value>${runtime.esc(runtime.historyTagFilterLabel())}</span><span aria-hidden="true">⌄</span></button>
-                </div>
-                <div class="theater-history-quick-row"><button type="button" id="theater-history-current-role" aria-pressed="${runtime.historyRoleFilter === '__current__'}">只看当前角色</button><button type="button" id="theater-history-reset-filters"${!runtime.historyQuery.trim() && !runtime.historyRoleFilter && !(runtime.settings.historyTagFilter || []).length ? ' hidden' : ''}>清除筛选</button></div>
-                <p id="theater-history-stats" class="theater-hint">${hist.length} 条保存记录</p>
+                <div class="theater-history-filter-area">${historyFiltersHTML(runtime, SillyTavern.getContext())}</div>
+                <div class="theater-history-status"><p id="theater-history-stats" class="theater-hint">${hist.length} 条保存记录</p><button type="button" id="theater-history-reset-filters"${!runtime.historyQuery.trim() && !runtime.historyRoleFilter && !(runtime.settings.historyTagFilter || []).length ? ' hidden' : ''}>清空筛选</button></div>
                 <div id="theater-hist-batch-bar" style="display:none;">
-                    <button type="button" id="theater-hist-select-all" class="theater-btn">全选本页</button>
+                    <div class="theater-history-batch-heading"><strong>批量管理</strong><span>已选 <span id="theater-hist-batch-count">0</span> 条</span><button type="button" id="theater-hist-batch-cancel" class="theater-btn">完成</button></div>
+                    <div class="theater-history-batch-actions"><button type="button" id="theater-hist-select-all" class="theater-btn">全选本页</button>
                     <button type="button" id="theater-hist-tag-selected" class="theater-btn">改标签</button>
                     <button type="button" id="theater-hist-role-selected" class="theater-btn">指定角色</button>
                     <button type="button" id="theater-hist-move-selected" class="theater-btn">移到文件夹</button>
                     <button type="button" id="theater-hist-delete-selected" class="theater-btn danger">删除选中 (<span id="theater-hist-sel-count">0</span>)</button>
-                    <button type="button" id="theater-hist-batch-cancel" class="theater-btn">退出批量</button>
+                    </div>
                 </div>
             </div>
             <div id="theater-history-list"${initialTab === 'history' ? '' : ' data-pending-list="true"'}>${initialTab !== 'history' ? '' : runtime.renderHistoryList()}</div>

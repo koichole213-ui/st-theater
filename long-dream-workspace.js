@@ -1,3 +1,4 @@
+import { isHistoryItemExpanded } from './history-ui.js';
 // long-dream-workspace: receives live state and cross-feature callbacks from index.js.
 import { normalizeRoleSources } from './history-roles.js';
 import { itemTags } from './tag-system.js';
@@ -16,42 +17,37 @@ import { renderSafeIframe } from './safe-renderer.js';
 
 export function createLongDreamWorkspace(runtime) {
 // @theater-source-begin historyItemHTML
-function historyItemHTML(h) {
+function historyItemHTML(h, options = {}) {
     const checked = runtime.histSelected.has(h.id) ? 'checked' : '';
     const selClass = runtime.histSelected.has(h.id) ? ' theater-history-item-selected' : '';
     const title = h.title || '未命名小剧场', id = runtime.esc(h.id);
+    const expanded = !runtime.histBatchMode && isHistoryItemExpanded(h.id);
     const roles = normalizeRoleSources(h.roleSources);
-    const roleLabel = roles.length ? `${roles[0].name}${roles.length > 1 ? ` +${roles.length - 1}` : ''}` : '未指定';
-    const action = (cls, label, icon, extra = '') => `<button type="button" class="${cls}" data-id="${id}" ${extra}><i class="fa-solid fa-${icon}"></i><span>${label}</span></button>`;
-    return `<div class="theater-history-item${selClass}" data-id="${id}">
+    const roleLabel = roles.length ? roles.map(role => role.name).join('、') : '未指定';
+    const tags = itemTags(h, runtime.knownInstructionTags());
+    const shownTags = expanded ? tags : tags.slice(0, options.folderId ? 1 : 2);
+    const badges = shownTags.map(tag => `<span class="theater-tag-badge" title="${runtime.esc(tag)}">#${runtime.esc(tag)}</span>`).join('') + (shownTags.length < tags.length ? `<span class="theater-tag-badge theater-history-tag-more">+${tags.length - shownTags.length}</span>` : '') || '<span class="theater-tag-badge is-uncategorized">未分类</span>';
+    const action = (cls, label, icon, extra = '') => `<button type="button" class="${cls}" data-id="${id}" ${extra}><i class="fa-solid fa-${icon}" aria-hidden="true"></i><span>${label}</span></button>`;
+    const versions = options.versions || [];
+    const version = versions.length > 1 ? `<span class="theater-history-version-badge">${expanded ? '第 ' + (versions.indexOf(h) + 1) + ' 版' : versions.length + ' 个版本'}</span>` : '';
+    const versionControls = versions.length > 1 ? `<div class="theater-history-version" role="group" aria-label="本篇版本"><span>本篇版本</span>${versions.map((item, n) => `<button type="button" data-history-version="${runtime.esc(options.versionKey)}" data-version-id="${runtime.esc(item.id)}" aria-pressed="${item.id === h.id}">第 ${n + 1} 版</button>`).join('')}</div>` : '';
+    return `<article class="theater-history-item${selClass}${expanded ? ' is-expanded' : ''}" data-id="${id}">
         <input type="checkbox" class="theater-hist-checkbox" data-id="${id}" ${checked} aria-label="选择这条历史">
         <div class="theater-history-heading">
-            <div class="theater-history-title-row">
-                <div class="theater-history-main"><button type="button" class="theater-history-title theater-history-view" data-id="${id}" title="${runtime.esc(title)}">${runtime.esc(title)}</button><span class="theater-history-date">${runtime.esc(h.date || '')}</span></div>
-                <button type="button" class="theater-history-info-trigger" data-id="${id}" aria-label="查看完整标题、角色与标签">
-                    <span class="theater-history-class-line"><span class="theater-history-class-label">角色</span><span class="theater-history-role${roles.length ? '' : ' is-unassigned'}"><i class="fa-solid fa-user"></i><span>${runtime.esc(roleLabel)}</span></span></span>
-                    <span class="theater-history-class-line"><span class="theater-history-class-label">标签</span><span class="theater-history-tags">${historyTagBadgesHTML(h)}</span></span>
-                </button>
-            </div>
-            <div class="theater-history-bottom-row">
-                <div class="theater-history-actions">
-                    ${action('theater-history-view', '查看', 'eye')}
-                    ${action('theater-history-continue', '续写', 'forward')}
-                    <button type="button" class="theater-history-menu-trigger" aria-label="${runtime.esc(title)}的更多操作" aria-expanded="false">⋯</button>
-                    <template data-history-menu-content hidden>
-                        ${action('theater-history-view', '查看', 'eye')}
-                        ${action('theater-history-continue', '续写', 'forward')}
-                        ${action('theater-history-rename', '改名', 'pen')}
-                        ${action('theater-history-tags-edit', '标签', 'tags')}
-                        ${action('theater-history-roles-edit', '角色', 'user')}
-                        ${action('theater-history-move', '移到文件夹', 'folder-open')}
-                        ${action('theater-history-export', '导出', 'download', 'title="导出 HTML"')}
-                        ${action('theater-history-delete', '删除', 'trash')}
-                    </template>
-                </div>
-            </div>
+            <button type="button" class="theater-history-expand" data-id="${id}"${runtime.histBatchMode ? ` aria-pressed="${!!checked}"` : ` aria-expanded="${expanded}"`}>
+                ${options.position != null ? `<span class="theater-history-chapter-number">${options.position + 1}</span>` : ''}
+                <span class="theater-history-main"><span class="theater-history-title" title="${runtime.esc(title)}">${runtime.esc(title)}${version}</span>
+                    <span class="theater-history-meta-row"><span class="theater-history-date">${runtime.esc(h.date || '')}</span><span class="theater-history-classification"><span class="theater-history-role${roles.length ? '' : ' is-unassigned'}" title="${runtime.esc(roleLabel)}"><i class="fa-solid fa-user" aria-hidden="true"></i><span>${runtime.esc(roleLabel)}</span></span><span class="theater-history-tags">${badges}</span></span></span>
+                </span>
+            </button>
+            ${expanded ? `<div class="theater-history-body">${versionControls}
+                <div class="theater-history-actions">${action('theater-history-view', '查看', 'book-open')}${action('theater-history-continue', '续写', 'pen')}</div>
+                ${options.collectionActions || ''}
+                <div class="theater-history-secondary-actions">${action('theater-history-export', '导出', 'download', 'title="导出 HTML"')}${action('theater-history-rename', '改名', 'pen')}${action('theater-history-tags-edit', '标签', 'tags')}${action('theater-history-roles-edit', '角色', 'user')}${action('theater-history-delete', '删除', 'trash')}</div>
+                ${options.folderId ? '' : `<div class="theater-history-extra-actions">${action('theater-history-move', '移到文件夹', 'folder-open')}</div>`}
+            </div>` : ''}
         </div>
-    </div>`;
+    </article>`;
 }
 // @theater-source-end historyItemHTML
 

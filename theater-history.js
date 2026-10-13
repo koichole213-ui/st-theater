@@ -1,3 +1,4 @@
+import { historyFiltersHTML } from './history-ui.js';
 // theater-history: receives live state and cross-feature callbacks from index.js.
 import { captureHistoryRoles, normalizeRoleSources, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED } from './history-roles.js';
 import { historyRoleDialog } from './history-role-dialog.js';
@@ -24,6 +25,7 @@ function inferHistoryTags(instruction) {
 
 // @theater-source-begin migrateHistoryTags
 async function migrateHistoryTags() {
+    if (['database', 'history', 'recent', 'current'].some(key => runtime.storageReadErrors?.[key])) return;
     if (Number(runtime.settings.historyTagSchemaVersion) >= 1) {
         runtime.historyCache.forEach(item => { item.tags = itemTags(item, runtime.settings.instructionTags); });
         runtime.recentCache.forEach(item => { item.tags = itemTags(item, runtime.settings.instructionTags); });
@@ -68,6 +70,7 @@ function setHistoryItemSelected(id, selected, itemElement = null) {
     const $item = itemElement ? $(itemElement) : $(`.theater-history-item[data-id="${id}"]`);
     $item.toggleClass('theater-history-item-selected', selected)
         .find('.theater-hist-checkbox').prop('checked', selected);
+    if (runtime.histBatchMode) $item.find('.theater-history-expand').attr('aria-pressed', String(selected));
     updateHistBulkBar();
 }
 // @theater-source-end setHistoryItemSelected
@@ -186,18 +189,20 @@ function updateHistorySelectionAutoScroll(clientX, clientY) {
 // @theater-source-begin refreshHistList
 function refreshHistList() {
     closeHistoryMenus();
-    const roleOptions = historyRoleFilterHTML();
+    historyRoleFilterHTML();
     const h = filterHistoryAll(runtime.historyCache);
     $('#theater-history-list').html(renderHistoryList()).removeAttr('data-pending-list');
     $('#theater-export-all-history').toggle(!runtime.histBatchMode);
     $('#theater-hist-select-all').toggle(h.length > 0);
     $('#theater-hist-batch-enter').toggle(!runtime.histBatchMode);
+    $('.theater-history-section-head').toggle(!runtime.histBatchMode);
     updateHistBulkBar();
     $('#theater-hist-batch-bar').toggle(runtime.histBatchMode);
     refreshTagControls();
     const state = currentHistoryPage();
     $('#theater-history-stats').text(`${state.total} 个条目 · ${h.length} 条保存记录`);
-    $('#theater-history-role-filter').html(roleOptions);
+    $('.theater-history-filter-area').html(historyFiltersHTML(runtime, SillyTavern.getContext()));
+    $('#theater-history-clear-search').prop('hidden', !runtime.historyQuery);
     $('#theater-history-current-role').attr('aria-pressed', String(runtime.historyRoleFilter === '__current__'));
     $('#theater-history-reset-filters').prop('hidden', !runtime.historyQuery.trim() && !runtime.historyRoleFilter && !(runtime.settings.historyTagFilter || []).length);
 }
@@ -220,7 +225,13 @@ function visibleHistoryItems() {
 function renderHistoryList() {
     const state = currentHistoryPage();
     runtime.histPage = state.page;
-    if (!state.total) return '<p class="theater-empty">没有找到符合条件的剧场或文件夹</p>';
+    if (!state.total) {
+        if (runtime.storageReadErrors?.database || runtime.storageReadErrors?.history) {
+            return '<section class="theater-history-empty"><b>历史存档读取失败</b><p>当前无法确认原数据库中的作品数量，这不代表历史已被删除。请先保留站点数据，稍后重新加载；不要清理站点数据或重装。</p></section>';
+        }
+        const filtered = runtime.historyQuery.trim() || runtime.historyRoleFilter || runtime.settings.historyTagFilter?.length;
+        return `<section class="theater-history-empty"><b>${filtered ? '没有符合条件的作品' : '暂时没有可显示的小剧场'}</b><p>${filtered ? '角色、标签和搜索会同时生效，可以清空筛选再看看。' : '保存后的作品会出现在这里。如果更新前已有历史，请先核对读取提示、原网址和浏览器；也可以导入已有备份。'}</p>${filtered ? '<button type="button" data-history-reset>清空筛选</button>' : '<button type="button" data-history-import>导入备份…</button>'}</section>`;
+    }
     return state.items.map(entry => entry.item ? runtime.historyItemHTML(entry.item) : collectionCardHTML(entry, {
         expanded: runtime.histBatchMode || !!runtime.historyQuery.trim() || runtime.historyExpanded.has(entry.folder.id),
         selected: runtime.historyVersionSelection, itemHTML: runtime.historyItemHTML, batch: runtime.histBatchMode, searching: !!runtime.historyQuery.trim(),
@@ -292,15 +303,15 @@ async function bulkEditSelectedHistoryTags() {
 // @theater-source-begin updateHistBulkBar
 function updateHistBulkBar() {
     const n = runtime.histSelected.size;
-    $('#theater-hist-delete-selected').toggle(n > 0);
-    $('#theater-hist-tag-selected').toggle(n > 0);
-    $('#theater-hist-role-selected, #theater-hist-move-selected').toggle(n > 0);
+    $('#theater-hist-delete-selected, #theater-hist-tag-selected, #theater-hist-role-selected, #theater-hist-move-selected').prop('disabled', n === 0).show();
+    $('#theater-hist-batch-count').text(n);
     $('#theater-hist-sel-count').text(n);
 }
 // @theater-source-end updateHistBulkBar
 
 // @theater-source-begin enterHistBatchMode
 function enterHistBatchMode() {
+    $('.theater-history-section-head').hide();
     $('#theater-hist-batch-enter').hide();
     $('#theater-export-all-history').hide();
     $('#theater-hist-batch-bar').show();
@@ -317,6 +328,7 @@ function exitHistBatchMode() {
     panel?.querySelectorAll('.theater-hist-checkbox:checked').forEach(input => { input.checked = false; });
     panel?.querySelectorAll('.theater-history-item-selected').forEach(item => item.classList.remove('theater-history-item-selected'));
     const h = filterHistoryAll(runtime.historyCache);
+    $('.theater-history-section-head').show();
     $('#theater-hist-batch-enter').show();
     $('#theater-export-all-history').show();
     updateHistBulkBar();
@@ -326,6 +338,10 @@ function exitHistBatchMode() {
 // @theater-source-begin commitHistoryCollection
 function commitHistoryCollection(change) {
     return runtime.queueHistoryWrite(async () => {
+        if (['history', 'collections'].some(key => runtime.storageReadErrors?.[key])) {
+            toastr.error('历史或文件夹尚未读取成功，暂时不能修改收纳；请先重新加载。');
+            return false;
+        }
         try {
             const next = change(runtime.historyCache, normalizeCollections(runtime.historyCollections, runtime.historyCache));
             const existingIds = new Set(runtime.historyCache.map(item => String(item.id)));

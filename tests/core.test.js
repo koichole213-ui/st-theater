@@ -407,7 +407,7 @@ test('历史分页跳转、跨页全选和删除末页回退不丢其他页的�
     const source = readTheaterImplementation();
     const render = source.match(/function (?:runtime\.)?renderHistoryList\([^]*?^}/m)[0];
     const select = source.match(/'#theater-hist-select-all', function \(\) \{([^]*?)\n    \}\);/)[1];
-    const scope = { historyCache: Array.from({length:23}, (_,id) => ({id})), histPage:0,
+    const scope = { historyQuery:'',historyRoleFilter:'',settings:{historyTagFilter:[]}, historyCache: Array.from({length:23}, (_,id) => ({id})), histPage:0,
         histSelected:new Set(), histBatchMode:true, listPage, listPaginationHTML,
         filterHistoryAll:items=>items, historyItemHTML:item=>`<article data-id="${item.id}"></article>`,
         refreshHistList(){}, enterHistBatchMode(){} };
@@ -425,7 +425,7 @@ test('历史分页跳转、跨页全选和删除末页回退不丢其他页的�
     scope.histPage = requestedListPage('jump', 1, 2, '999'); page(); assert.equal(scope.histPage,1);
     for(const value of ['', 'abc', '-1', '1.5']) assert.equal(requestedListPage('jump',1,2,value),1);
     scope.histPage = requestedListPage('first',1,2); assert.match(page(), /data-id="0"/);
-    scope.historyCache=[]; assert.match(page(),/没有找到/); assert.equal(scope.histPage,0);
+    scope.historyCache=[]; assert.match(page(),/暂时没有可显示/); assert.equal(scope.histPage,0);
     for(const kind of ['hist','inst']) {
         const html=listPaginationHTML(kind,listPage(Array(23),1));
         for(const title of ['首页','上一页','下一页','末页','跳转']) assert.ok(html.includes(title));
@@ -592,7 +592,7 @@ test('历史批量管理只切换父面板，退出清掉选中展示且不逐�
     } };
     const toolbar = { hide() {}, show() {}, toggle() {} };
     runInNewContext(extract('enterHistBatchMode') + extract('exitHistBatchMode') + '\nenterHistBatchMode();', {
-        $: s => { assert.ok(!s.startsWith('.')); return toolbar; },
+        $: s => { assert.ok(!s.startsWith('.') || s === '.theater-history-section-head'); return toolbar; },
         document: { querySelector: s => { assert.equal(s, '.theater-panel[data-panel="history"]'); return panel; } },
         updateHistBulkBar() {}, filterHistoryAll: x => x, historyCache: [],
     });
@@ -644,7 +644,7 @@ test('延迟进入历史会加载一次，批量恢复与刷新不显示全部�
     const list = { hasAttribute: name => pending.has(name) };
     const context = {
         settings: {}, historyCache: [{ id: '合成历史' }], historyRoleFilter: '', historyQuery: '', histBatchMode: true, histPage: 0, listPage, listPaginationHTML,
-        normalizeTheaterTab: tab => tab, filterHistoryAll: items => items,
+        knownInstructionTags:()=>[],historyTagFilterLabel:()=> '全部标签', normalizeTheaterTab: tab => tab, filterHistoryAll: items => items,
         historyItemHTML: () => { renders++; return '<p>合成历史</p>'; },
         updateHistBulkBar() {}, refreshTagControls() {}, historyRoleFilterHTML: () => '<option>全部</option>', save() {},
         document: {
@@ -962,9 +962,9 @@ test('历史卡片紧凑呈现标题标签与时间操作，保留即时触控�
     const bindEnd = source.indexOf('function refreshInstUI', bindStart);
     const bindings = source.slice(bindStart, bindEnd);
     const touchAttachment = source.match(/function (?:runtime\.)?attachHistoryTouchMoveHandler[\s\S]*?function (?:runtime\.)?resetHistorySelectionGesture/)?.[0] || '';
-    const titleRow = renderer.indexOf('theater-history-title-row');
+    const titleRow = renderer.indexOf('theater-history-expand');
     const tags = renderer.indexOf('theater-history-tags');
-    const meta = renderer.indexOf('theater-history-bottom-row');
+    const meta = renderer.indexOf('theater-history-body');
     const actions = renderer.indexOf('theater-history-actions');
 
     assert.ok(titleRow >= 0 && tags > titleRow && meta > tags && actions > meta);
@@ -972,7 +972,7 @@ test('历史卡片紧凑呈现标题标签与时间操作，保留即时触控�
     ['view', 'continue', 'export', 'tags-edit', 'delete'].forEach(action => {
         assert.ok(renderer.includes(`theater-history-${action}`));
     });
-    ['theater-export-all-history', 'theater-import-history-btn', 'theater-history-tag-filter', 'theater-history-manage-tags', 'theater-hist-batch-enter'].forEach(id => {
+    ['theater-export-all-history', 'theater-import-history-btn', 'theater-history-manage-tags', 'theater-hist-batch-enter'].forEach(id => {
         assert.match(source, new RegExp(`<button type="button" id="${id}"`));
     });
     assert.match(bindings, /pointerdown\.thhistgesture/);
@@ -3749,13 +3749,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.4 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.5 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.4'/);
-    assert.equal(manifest.version, '4.4.4');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.4/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.5'/);
+    assert.equal(manifest.version, '4.4.5');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.5/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 
@@ -6792,8 +6792,8 @@ test('标签界面、历史未分类、数字触发间隔和渲染模板删除�
     const source = readTheaterImplementation();
     const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     assert.match(source, /id="theater-inst-tag-filter"/);
-    assert.match(source, /id="theater-history-tag-filter"/);
-    assert.match(source, /class="theater-history-tags">\$\{historyTagBadgesHTML\(h\)\}/);
+    assert.match(readFileSync(new URL('../history-ui.js', import.meta.url), 'utf8'), /id="theater-history-tag-filter"/);
+    assert.match(source, /class="theater-history-tags">\$\{badges\}/);
     assert.match(source, /id="theater-auto-interval" type="number" min="1" max="50"/);
     assert.doesNotMatch(source, /id="theater-auto-interval" type="range"/);
     assert.match(source, /删除这个自定义模板/);
@@ -6813,7 +6813,7 @@ test('标签界面、历史未分类、数字触发间隔和渲染模板删除�
     assert.match(source, /给这 \$\{imported\.length\} 条导入模板统一加标签[\s\S]*?if \(target === null\) return;[\s\S]*?mergeTagLists\(item\.tags, target\.tags/);
     const popupBuilder = source.match(/function (?:runtime\.)?buildPopupHTML[\s\S]*?function (?:runtime\.)?historyItemHTML/)?.[0] || '';
     assert.match(popupBuilder, /const allHistory = (?:runtime\.)?historyCache;\s*const hist = initialTab === 'history' \? (?:runtime\.)?filterHistoryAll\(allHistory\) : \[\]/);
-    assert.match(source, /没有找到符合条件的剧场或文件夹/);
+    assert.match(source, /没有符合条件的作品/);
     assert.match(source, /async function addHistoryItems[\s\S]*?commitHistoryCollection[\s\S]*?(?:runtime\.)?settings\.instructionTags = normalizeTagList[\s\S]*?(?:runtime\.)?save\(\);/);
     assert.match(source, /#theater-hist-batch-enter'\)\.toggle\(!(?:runtime\.)?histBatchMode\)/);
 });

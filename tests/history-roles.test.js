@@ -1,3 +1,4 @@
+import { setExpandedHistoryItem } from '../history-ui.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { captureHistoryRoles, normalizeRoleSources, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED } from '../history-roles.js';
@@ -77,11 +78,19 @@ test('角色批量写入失败不会提前改缓存；并发改标签后再确�
     assert.equal(await feature.commitHistoryCollection((items,folders)=>({items:items.map(item=>({...item,roleSources:roles})),folders})),true);
     assert.equal(runtime.historyCache[0].title,'新名'); assert.deepEqual(runtime.historyCache[0].tags,['新标签']);
 });
-test('真实紧凑卡片仍有阅读、续写、标签、角色、导出、移动和删除入口且转义内容', () => {
+test('真实卡片先收起再展开完整操作，标题转义并保留多角色', () => {
     const runtime={histSelected:new Set(),esc:value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),knownInstructionTags:()=>['司洛'],historyCache:[]};
-    const html=createLongDreamWorkspace(runtime).historyItemHTML({id:'uuid',title:'<危险标题>',date:'日期',tags:['司洛'],roleSources:roles});
+    const work={id:'uuid',title:'<危险标题>',date:'日期',tags:['司洛'],roleSources:roles};
+    const feature=createLongDreamWorkspace(runtime);
+    setExpandedHistoryItem(null);
+    const collapsed=feature.historyItemHTML(work);
+    assert.ok(collapsed.includes('aria-expanded="false"'));
+    assert.ok(!collapsed.includes('theater-history-body'));
+    setExpandedHistoryItem(work.id);
+    const html=feature.historyItemHTML(work);
     for(const name of ['view','continue','tags-edit','roles-edit','export','move','delete']) assert.ok(html.includes(`theater-history-${name}`));
-    assert.ok(html.includes('theater-history-info-trigger')); assert.ok(html.includes('data-history-menu-content hidden'));
+    assert.ok(html.includes('aria-expanded="true"')); assert.ok(html.includes('theater-history-secondary-actions'));
+    setExpandedHistoryItem(null);
     assert.ok(!html.includes('<危险标题>'));
 });
 

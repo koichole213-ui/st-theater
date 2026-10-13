@@ -1,3 +1,4 @@
+import { toggleHistoryItem, setExpandedHistoryItem, historyFiltersHTML, toggleHistoryFilterPanel, setHistoryFilterPanel } from './history-ui.js';
 // theater-events: receives live state and cross-feature callbacks from index.js.
 import { toggleHistoryMenu, closeHistoryMenus } from './history-menus.js';
 import { bookmarkPlacementFromPoint } from './result-bookmark.js';
@@ -1265,15 +1266,31 @@ function bindEvents() {
     });
     $d.off('click.tcvp').on('click.tcvp', '#theater-cont-version-prev', () => runtime.showContinuationVersion(runtime.continuationSession?.selected - 1));
     $d.off('click.tcvn').on('click.tcvn', '#theater-cont-version-next', () => runtime.showContinuationVersion(runtime.continuationSession?.selected + 1));
-    $d.off('click.thmenu').on('click.thmenu', '.theater-history-menu-trigger', function (event) { event.preventDefault(); toggleHistoryMenu(this); });
+    $d.off('click.thmenu').on('click.thmenu', '.theater-history-menu-trigger', function (event) { event.preventDefault(); setHistoryFilterPanel(null); $('.theater-history-filter-area').html(historyFiltersHTML(runtime, SillyTavern.getContext())); toggleHistoryMenu(this); });
     $d.off('click.throles').on('click.throles', '.theater-history-roles-edit', function () { runtime.editHistoryRoles($(this).data('id')); });
     $d.off('click.thbulkroles').on('click.thbulkroles', '#theater-hist-role-selected', () => runtime.editHistoryRoles());
     $d.off('click.thmove').on('click.thmove', '.theater-history-move', function () { runtime.moveHistoryToCollection($(this).data('id')); });
     $d.off('click.thbulkmove').on('click.thbulkmove', '#theater-hist-move-selected', () => runtime.moveHistoryToCollection());
     $d.off('click.thinfo').on('click.thinfo', '.theater-history-info-trigger', function () { runtime.showHistoryMetadata($(this).data('id'), this.dataset.infoFolder || null); });
-    $d.off('change.throlefilter').on('change.throlefilter', '#theater-history-role-filter', function () { runtime.historyRoleFilter = this.value; runtime.histPage = 0; runtime.histSelected.clear(); runtime.refreshHistList(); });
+    $d.off('click.throlepanel').on('click.throlepanel', '#theater-history-role-filter', function () { closeHistoryMenus(); toggleHistoryFilterPanel('role'); $('.theater-history-filter-area').html(historyFiltersHTML(runtime, SillyTavern.getContext())); $('#theater-history-role-filter').trigger('focus'); });
+    $d.off('click.throlefilter').on('click.throlefilter', '[data-history-role]', function () { runtime.historyRoleFilter = this.dataset.historyRole; setHistoryFilterPanel(null); runtime.histPage = 0; runtime.histSelected.clear(); runtime.refreshHistList(); $('#theater-history-role-filter').trigger('focus'); });
+    $d.off('click.thtagsinline').on('click.thtagsinline', '[data-history-tag]', function () {
+        const tag = this.dataset.historyTag, selected = runtime.settings.historyTagFilter || [];
+        runtime.settings.historyTagFilter = tag === TAG_UNCATEGORIZED ? (selected.includes(tag) ? [] : [tag]) : (selected.includes(tag) ? selected.filter(value => value !== tag) : [...selected.filter(value => value !== TAG_UNCATEGORIZED), tag]);
+        runtime.histPage = 0; runtime.histSelected.clear(); runtime.save(); runtime.refreshHistList();
+        [...document.querySelectorAll('[data-history-tag]')].find(button => button.dataset.historyTag === tag)?.focus();
+    });
+    $d.off('click.thtagsclear').on('click.thtagsclear', '[data-history-tags-clear]', () => { runtime.settings.historyTagFilter = []; runtime.histPage = 0; runtime.histSelected.clear(); runtime.save(); runtime.refreshHistList(); $('[data-history-tags-clear]').trigger('focus'); });
+    $d.off('click.thfilterdone').on('click.thfilterdone', '[data-history-filter-done]', () => { setHistoryFilterPanel(null); $('.theater-history-filter-area').html(historyFiltersHTML(runtime, SillyTavern.getContext())); $('#theater-history-tag-filter').trigger('focus'); });
+    $d.off('keydown.thfilterclose').on('keydown.thfilterclose', '.theater-history-filter-area', function (event) { if (event.key === 'Escape') { event.preventDefault(); const role = !!document.querySelector('#theater-history-role-panel'); setHistoryFilterPanel(null); $(this).html(historyFiltersHTML(runtime, SillyTavern.getContext())); $(role ? '#theater-history-role-filter' : '#theater-history-tag-filter').trigger('focus'); } });
+    $d.off('click.thexpand').on('click.thexpand', '.theater-history-expand', function (event) {
+        if (runtime.histBatchMode || Date.now() < runtime.suppressHistoryCardClickUntil) return;
+        event.stopPropagation(); const id = $(this).data('id'); toggleHistoryItem(id); runtime.refreshHistList();
+        [...document.querySelectorAll('.theater-history-expand')].find(button => String($(button).data('id')) === String(id))?.focus({ preventScroll: true });
+    });
+    $d.off('click.thversion').on('click.thversion', '[data-history-version]', function () { runtime.historyVersionSelection.set(this.dataset.historyVersion, this.dataset.versionId); setExpandedHistoryItem(this.dataset.versionId); runtime.refreshHistList(); document.querySelector('[data-history-version][aria-pressed="true"]')?.focus({ preventScroll: true }); });
     $d.off('click.thcurrentrole').on('click.thcurrentrole', '#theater-history-current-role', () => { runtime.historyRoleFilter = runtime.historyRoleFilter === '__current__' ? '' : '__current__'; runtime.histPage = 0; runtime.histSelected.clear(); runtime.refreshHistList(); });
-    $d.off('click.thresetfilters').on('click.thresetfilters', '#theater-history-reset-filters', () => { runtime.historyRoleFilter = ''; runtime.historyQuery = ''; runtime.settings.historyTagFilter = []; runtime.histPage = 0; runtime.histSelected.clear(); $('#theater-history-search').val(''); runtime.save(); runtime.refreshHistList(); });
+    $d.off('click.thresetfilters').on('click.thresetfilters', '#theater-history-reset-filters, [data-history-reset]', () => { setHistoryFilterPanel(null); runtime.historyRoleFilter = ''; runtime.historyQuery = ''; runtime.settings.historyTagFilter = []; runtime.histPage = 0; runtime.histSelected.clear(); $('#theater-history-search').val(''); runtime.save(); runtime.refreshHistList(); });
     $d.off('input.thsearch').on('input.thsearch', '#theater-history-search', function () { runtime.historyQuery = this.value; runtime.histPage = 0; runtime.histSelected.clear(); runtime.refreshHistList(); });
     $d.off('click.thclearsearch').on('click.thclearsearch', '#theater-history-clear-search', () => { runtime.historyQuery = ''; runtime.histPage = 0; runtime.histSelected.clear(); $('#theater-history-search').val('').trigger('focus'); runtime.refreshHistList(); });
     $d.off('click.thnewfolder').on('click.thnewfolder', '#theater-history-new-folder', () => runtime.organizeHistory('new'));
@@ -1306,17 +1323,10 @@ function bindEvents() {
     });
     $d.off('click.threname').on('click.threname', '.theater-history-rename', function () { runtime.renameHistoryItem($(this).data('id'), this); });
     $d.off('click.thetags').on('click.thetags', '.theater-history-tags-edit', function () { runtime.editHistoryTags($(this).data('id')); });
-    $d.off('click.thfilter').on('click.thfilter', '#theater-history-tag-filter', async function () {
-        const chosen = await runtime.chooseTags({ title: '筛选保存的小剧场', selected: runtime.settings.historyTagFilter, allowUncategorized: true });
-        if (chosen === null) return;
-        runtime.settings.historyTagFilter = chosen;
-        runtime.histPage = 0;
-        runtime.histSelected.clear();
-        runtime.save(); runtime.refreshHistList(); runtime.refreshTagControls();
-        if (runtime.histBatchMode) runtime.enterHistBatchMode();
-    });
+    $d.off('click.thfilter').on('click.thfilter', '#theater-history-tag-filter', function () { closeHistoryMenus(); toggleHistoryFilterPanel('tag'); $('.theater-history-filter-area').html(historyFiltersHTML(runtime, SillyTavern.getContext())); $('#theater-history-tag-filter').trigger('focus'); });
     $d.off('click.teah').on('click.teah', '#theater-export-all-history', runtime.requestHistoryExport);
     $d.off('click.tih').on('click.tih', '#theater-import-history-btn', runtime.importHistoryBackup);
+    $d.off('click.thimportempty').on('click.thimportempty', '[data-history-import]', runtime.importHistoryBackup);
     $d.off('click.thbe').on('click.thbe', '#theater-hist-batch-enter', function () {
         if (runtime.histBatchMode) return;
         runtime.histBatchMode = true;
@@ -1346,7 +1356,7 @@ function bindEvents() {
         runtime.setHistoryItemSelected(id, !runtime.histSelected.has(id), this);
     });
     $d.off('pointerdown.thhistgesture').on('pointerdown.thhistgesture', '.theater-history-item', function (event) {
-        if ($(event.target).closest('.theater-history-actions, .theater-hist-checkbox, button, a, input, textarea, select').length) return;
+        if ($(event.target).closest('.theater-history-actions, .theater-hist-checkbox, button:not(.theater-history-expand), a, input, textarea, select').length) return;
         const pointer = event.originalEvent || event;
         // 触屏改走可 preventDefault 的 touchmove，避免浏览器在长按后把纵向拖选抢成页面滚动。
         if (pointer.pointerType === 'touch') return;
@@ -1395,7 +1405,7 @@ function bindEvents() {
         if (runtime.histSelectionGesture?.active || Date.now() < runtime.suppressHistoryCardClickUntil) event.preventDefault();
     });
     $d.off('touchstart.thhistgesture').on('touchstart.thhistgesture', '.theater-history-item', function (event) {
-        if ($(event.target).closest('.theater-history-actions, .theater-hist-checkbox, button, a, input, textarea, select').length) return;
+        if ($(event.target).closest('.theater-history-actions, .theater-hist-checkbox, button:not(.theater-history-expand), a, input, textarea, select').length) return;
         const touch = event.originalEvent?.changedTouches?.[0];
         if (!touch) return;
         runtime.resetHistorySelectionGesture();
