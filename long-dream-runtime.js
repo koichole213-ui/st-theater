@@ -1,3 +1,4 @@
+import { runSeriesMemoryBatches, applySeriesStoryBatch, refreshSeriesStorySummary } from './long-dream-series.js';
 // long-dream-runtime: receives live state and cross-feature callbacks from index.js.
 import { markFirstToken, markCompleted, createRequestMetrics } from './request-metrics.js';
 import { readableCharCount } from './text-counter.js';
@@ -614,13 +615,13 @@ async function confirmLongDreamChapter() {
 // @theater-source-end confirmLongDreamChapter
 
 // @theater-source-begin queueLongDreamMemoryWeave
-function queueLongDreamMemoryWeave(dreamId, { force = false, announce = false } = {}) {
+function queueLongDreamMemoryWeave(dreamId, { force = false, announce = false, resumeSeries = false } = {}) {
     const key = String(dreamId ?? '');
     if (!key || runtime.queuedLongDreamMemoryIds.has(key)) return;
     runtime.queuedLongDreamMemoryIds.add(key);
     runtime.longDreamMemoryQueue = runtime.longDreamMemoryQueue
         .catch(() => {})
-        .then(() => weaveLongDreamMemory(key, { force, announce }))
+        .then(() => weaveLongDreamMemory(key, { force, announce, resumeSeries }))
         .finally(() => runtime.queuedLongDreamMemoryIds.delete(key));
 }
 // @theater-source-end queueLongDreamMemoryWeave
@@ -698,6 +699,8 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
     if (dream.memory?.status === LONG_DREAM_MEMORY_STATUS.WEAVING || dream.memory?.pendingConflicts?.length || dream.memory?.pendingChapterNumbers?.length) {
         toastr.warning('请先完成梦脉织录和冲突确认，再更新概要'); return;
     }
+    const series = dream.source?.kind === 'history-folder' && fillMissing;
+    const renderSeriesStatus = () => { if (series && String(runtime.activeLongDreamId) === key) { runtime.rememberLongDreamComposerDraft(); runtime.renderLongDreamPanel(); } };
     let stage = 'preset';
     try {
         const preset = runtime.selectedLongDreamMemoryApiPreset();
@@ -705,8 +708,10 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
         stage = 'request';
         runtime.refreshingLongDreamSummaries.add(key);
         syncLongDreamSummaryButton(key);
-        toastr.info('正在更新概要，最多等待 3 分钟');
-        const saved = await refreshLongDreamSummary({
+        renderSeriesStatus();
+        toastr.info(series ? '正在分批补齐概要，每批最多等待 3 分钟' : '正在更新概要，最多等待 3 分钟');
+        const saved = await (series ? refreshSeriesStorySummary : refreshLongDreamSummary)({
+            ...(series ? { shouldStop: () => (runtime.settings.longDreamSeriesPausedIds || []).includes(key) } : {}),
             replace: !fillMissing,
             record: dream,
             request: (payload, { signal }) => requestCustomApi({ config: { ...preset, maxOutputTokens: Math.min(8192, normalizeMaxTokens(preset.maxOutputTokens, 4096)) }, ...payload, signal, shouldStream: false, onChunk: () => {}, log: runtime.runtimeLog }),
@@ -720,7 +725,7 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
                 runtime.renderLongDreamPanel();
             }
         }
-        else toastr.info('作品或梦脉刚刚发生变化，本次概要未覆盖，请重新更新');
+        else toastr.info(series && (runtime.settings.longDreamSeriesPausedIds || []).includes(key) ? '后续概要已停止，已完成批次保留' : '作品或梦脉刚刚发生变化，本次概要未覆盖，请重新更新');
     } catch (error) {
         const summaryReasons = {
             LONG_DREAM_SUMMARY_PARSE_FAILED: '接口返回的概要格式无法解析',
@@ -740,14 +745,31 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
     } finally {
         runtime.refreshingLongDreamSummaries.delete(key);
         syncLongDreamSummaryButton(key);
+        renderSeriesStatus();
     }
 }
 // @theater-source-end refreshLongDreamSummaryNow
 
 // @theater-source-begin weaveLongDreamMemory
-async function weaveLongDreamMemory(dreamId, { force = false, announce = false } = {}) {
+async function weaveLongDreamMemory(dreamId, { force = false, announce = false, resumeSeries = false } = {}) {
+    const read = () => runtime.longDreamCache.find(item => String(item.id) === String(dreamId));
+    const dream = read();
+    if (dream?.source?.kind !== 'history-folder') return weaveLongDreamMemoryBatch(dreamId, { force, announce });
+    if (!runtime.selectedLongDreamMemoryApiPreset()) { if (announce) toastr.warning('请先绑定梦脉副 API'); return; }
+    const paused = () => (runtime.settings.longDreamSeriesPausedIds || []).includes(String(dreamId));
+    if (!resumeSeries && (paused() || dream.seriesMemoryAutoWeave !== true)) return;
+    if (resumeSeries && paused()) { runtime.settings.longDreamSeriesPausedIds = runtime.settings.longDreamSeriesPausedIds.filter(id => id !== String(dreamId)); runtime.save(); }
+    if (resumeSeries && dream.memory.status === LONG_DREAM_MEMORY_STATUS.FAILED) {
+        if (!await runtime.longDreamPut(setLongDreamMemoryStatus(dream, LONG_DREAM_MEMORY_STATUS.PENDING))) return;
+    }
+    await runSeriesMemoryBatches({ read, save: record => runtime.longDreamPut(record), force: resumeSeries, shouldStop: paused,
+        weave: chapters => weaveLongDreamMemoryBatch(dreamId, { force: true, announce, chapters }) });
+    const saved = read();
+    if (saved?.seriesMemoryAutoWeave === true && !paused() && !saved.memory.pendingChapterNumbers.length && !saved.memory.pendingConflicts.length && saved.memory.summaryNeedsRefresh) await refreshLongDreamSummaryNow(saved.id, { fillMissing: true });
+}
+async function weaveLongDreamMemoryBatch(dreamId, { force = false, announce = false, chapters = null } = {}) {
     const dream = runtime.longDreamCache.find(item => String(item.id) === String(dreamId));
-    if (!dream || runtime.settings.longDreamMemoryEnabled === false) return;
+    if (!dream || (runtime.settings.longDreamMemoryEnabled === false && !(dream.source?.kind === 'history-folder' && force))) return;
     const preset = runtime.selectedLongDreamMemoryApiPreset();
     if (!preset) {
         if (announce) toastr.warning('请先在【设置 → API 与输出 → 梦脉织录】绑定一个副 API 预设');
@@ -758,12 +780,12 @@ async function weaveLongDreamMemory(dreamId, { force = false, announce = false }
         return;
     }
     const payload = buildLongDreamMemoryPayload({
-        record: dream,
+        record: chapters ? { ...dream, chapters } : dream,
         promptPreset: runtime.settings.longDreamMemoryPrompt || DEFAULT_LONG_DREAM_MEMORY_PRESET,
     });
     let weaving = await runtime.longDreamPut(setLongDreamMemoryStatus(dream, LONG_DREAM_MEMORY_STATUS.WEAVING));
     if (!weaving) return;
-    if (String(runtime.activeLongDreamId) === String(dream.id) && runtime.longDreamView === 'detail') runtime.renderLongDreamPanel();
+    if (String(runtime.activeLongDreamId) === String(dream.id) && runtime.longDreamView === 'detail') { if (chapters) runtime.rememberLongDreamComposerDraft?.(); runtime.renderLongDreamPanel(); }
     runtime.runtimeLog('info', '梦脉织录开始', {
         dream_id: String(dream.id),
         chapters: payload.pendingChapterNumbers,
@@ -783,16 +805,18 @@ async function weaveLongDreamMemory(dreamId, { force = false, announce = false }
             log: runtime.runtimeLog,
         });
         const patch = parseLongDreamMemoryResponse(response?.text || response, {
-            pendingChapterNumbers: payload.pendingChapterNumbers,
+            pendingChapterNumbers: payload.pendingChapterNumbers, requireOperations: !!chapters,
         });
         const latest = runtime.longDreamCache.find(item => String(item.id) === String(dream.id));
         if (!latest) return;
         if (JSON.stringify([latest.chapters, latest.memory, latest.canon, latest.inheritance]) !== JSON.stringify([weaving.chapters, weaving.memory, weaving.canon, weaving.inheritance])) {
             if (latest.memory.status === LONG_DREAM_MEMORY_STATUS.WEAVING) await runtime.longDreamPut(setLongDreamMemoryStatus(latest, LONG_DREAM_MEMORY_STATUS.PENDING));
-            if (String(runtime.activeLongDreamId) === String(dream.id) && runtime.longDreamView === 'detail') runtime.renderLongDreamPanel();
+            if (String(runtime.activeLongDreamId) === String(dream.id) && runtime.longDreamView === 'detail') { if (chapters) runtime.rememberLongDreamComposerDraft?.(); runtime.renderLongDreamPanel(); }
             return;
         }
-        const saved = await runtime.longDreamPut(applyLongDreamMemoryPatch(latest, patch, payload.throughChapter));
+        let updated = applyLongDreamMemoryPatch(latest, patch, payload.throughChapter);
+        if (chapters) updated = applySeriesStoryBatch(updated, patch.storyEntries, chapters);
+        const saved = await runtime.longDreamPut(updated);
         if (!saved) return;
         runtime.runtimeLog('info', '梦脉织录完成', {
             dream_id: String(dream.id),
@@ -802,21 +826,21 @@ async function weaveLongDreamMemory(dreamId, { force = false, announce = false }
             invalid_operations: Number(patch.invalidOperationCount) || 0,
             corrected_chapter_numbers: Number(patch.correctedChapterCount) || 0,
         });
-        if (String(runtime.activeLongDreamId) === String(dream.id) && runtime.longDreamView === 'detail') runtime.renderLongDreamPanel();
+        if (String(runtime.activeLongDreamId) === String(dream.id) && runtime.longDreamView === 'detail') { if (chapters) runtime.rememberLongDreamComposerDraft?.(); runtime.renderLongDreamPanel(); }
         if (announce) toastr.success(`梦脉已织录至第 ${payload.throughChapter} 章`);
-        if (saved.memory.summaryNeedsRefresh && !saved.memory.pendingConflicts.length && !saved.memory.pendingChapterNumbers.length) await refreshLongDreamSummaryNow(saved.id, { fillMissing: true });
+        if (saved.source?.kind !== 'history-folder' && saved.memory.summaryNeedsRefresh && !saved.memory.pendingConflicts.length && !saved.memory.pendingChapterNumbers.length) await refreshLongDreamSummaryNow(saved.id, { fillMissing: true });
     } catch (error) {
         const latest = runtime.longDreamCache.find(item => String(item.id) === String(dream.id));
         if (!latest) return;
         if (JSON.stringify([latest.chapters, latest.memory, latest.canon, latest.inheritance]) !== JSON.stringify([weaving.chapters, weaving.memory, weaving.canon, weaving.inheritance])) {
             if (latest.memory.status === LONG_DREAM_MEMORY_STATUS.WEAVING) await runtime.longDreamPut(setLongDreamMemoryStatus(latest, LONG_DREAM_MEMORY_STATUS.PENDING));
-            if (String(runtime.activeLongDreamId) === String(dream.id) && runtime.longDreamView === 'detail') runtime.renderLongDreamPanel();
+            if (String(runtime.activeLongDreamId) === String(dream.id) && runtime.longDreamView === 'detail') { if (chapters) runtime.rememberLongDreamComposerDraft?.(); runtime.renderLongDreamPanel(); }
             return;
         }
         const signal = error?.diagnosticSignal || REQUEST_DIAGNOSTIC_SIGNAL.INVALID_RESPONSE;
         await runtime.longDreamPut(setLongDreamMemoryStatus(latest, LONG_DREAM_MEMORY_STATUS.FAILED, { errorSignal: signal }));
         runtime.runtimeLog('error', '梦脉织录失败', { dream_id: String(dream.id), signal });
-        if (String(runtime.activeLongDreamId) === String(dream.id) && runtime.longDreamView === 'detail') runtime.renderLongDreamPanel();
+        if (String(runtime.activeLongDreamId) === String(dream.id) && runtime.longDreamView === 'detail') { if (chapters) runtime.rememberLongDreamComposerDraft?.(); runtime.renderLongDreamPanel(); }
         if (announce) runtime.theaterError(`梦脉织录失败：${signal}`);
     }
 }

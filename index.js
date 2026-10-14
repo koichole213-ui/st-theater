@@ -77,7 +77,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.4.5';
+const VERSION = '4.4.1';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -239,6 +239,8 @@ const defaultSettings = Object.freeze({
     longDreamLastId: '',
     longDreamComposerDrafts: {},
     longDreamMemoryEnabled: true,
+    longDreamSeriesAutoWeave: false,
+    longDreamSeriesPausedIds: [],
     longDreamMemoryApiPresetId: '',
     longDreamMemoryBatchSize: 3,
     longDreamMemoryPrompt: DEFAULT_LONG_DREAM_MEMORY_PRESET,

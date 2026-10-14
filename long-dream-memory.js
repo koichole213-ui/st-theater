@@ -233,8 +233,9 @@ function parseLegacyCards(data, pendingChapterNumbers) {
     }).filter(Boolean);
 }
 
-export function parseLongDreamMemoryResponse(value, { pendingChapterNumbers = [] } = {}) {
+export function parseLongDreamMemoryResponse(value, { pendingChapterNumbers = [], requireOperations = false } = {}) {
     const data = parseJsonObject(value);
+    if (requireOperations && !Array.isArray(data.operations)) throw new Error('梦脉没有返回有效操作列表');
     if (!Array.isArray(data.operations) && Array.isArray(data.cards)) {
         return {
             currentState: cleanText(data.currentState, 5000),

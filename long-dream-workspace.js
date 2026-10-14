@@ -1,3 +1,5 @@
+import { longDreamFolderSources } from './long-dream-series.js';
+import { sourcePickerHTML } from './long-dream-source-picker.js';
 import { isHistoryItemExpanded } from './history-ui.js';
 // long-dream-workspace: receives live state and cross-feature callbacks from index.js.
 import { normalizeRoleSources } from './history-roles.js';
@@ -108,6 +110,7 @@ function longDreamSources() {
             kind: 'history',
             refId: item.id,
             title: item.title || '未命名小剧场',
+            date: item.date || '', order: runtime.historyCache.indexOf(item),
             instruction: item.instruction || '',
             sourceConfig: item.sourceConfig || null,
             html: item.html || '',
@@ -115,6 +118,7 @@ function longDreamSources() {
             mode: item.mode || 'html',
         });
     });
+    sources.unshift(...longDreamFolderSources(runtime).reverse());
     return sources.filter(source => source.text.trim() || source.html.trim());
 }
 // @theater-source-end longDreamSources
@@ -773,14 +777,13 @@ function refreshLongDreamCreateWorldBookState(source = resolveLongDreamSource($(
 function longDreamCreateHTML() {
     const sources = longDreamSources();
     const first = sources[0] || null;
-    const options = sources.map(source => `<option value="${runtime.esc(source.key)}">${source.kind === 'history' ? '历史 · ' : ''}${runtime.esc(source.title)}</option>`).join('');
     const selectedBooks = (runtime.settings.selectedWorldBooks || []).filter(Boolean);
     return `<div class="theater-dream-create">
         ${sources.length ? `<div class="theater-dream-form-grid">
             <section class="ui-card theater-dream-form-card">
-                <div class="ui-title"><span><i class="fa-solid fa-book-bookmark"></i> 第一章来源</span></div>
-                <select id="theater-dream-source" class="ui-select theater-select" data-select2-id="${runtime.theaterNativeSelectCompatId()}">${options}</select>
-                <div id="theater-dream-source-preview" class="source-preview-card theater-dream-source-preview">${longDreamSourcePreviewHTML(first)}</div>
+                <div class="ui-title"><span>选择作品</span></div>
+                ${sourcePickerHTML(runtime, sources)}
+                <div id="theater-dream-source-preview" hidden></div>
             </section>
             <section class="ui-card theater-dream-form-card">
                 <div class="ui-title"><span><i class="fa-solid fa-pen-nib"></i> 此梦设定 (Canon)</span></div>
@@ -907,7 +910,11 @@ function refreshLongDreamMemoryPresetControls() {
 function longDreamMemoryStatusText(dream) {
     const memory = dream?.memory || {};
     const pending = Array.isArray(memory.pendingChapterNumbers) ? memory.pendingChapterNumbers.length : 0;
+    if ((runtime.settings.longDreamSeriesPausedIds || []).includes(String(dream.id))) return `已织录 ${memory.processedThroughChapter || 0}/${dream.chapters.length} 章 · ${memory.status === LONG_DREAM_MEMORY_STATUS.WEAVING ? '当前批次完成后停止' : '已停止'}`;
+    if (dream.seriesMemoryAutoWeave === false) return `已织录 ${memory.processedThroughChapter || 0}/${dream.chapters.length} 章 · 暂停自动整理`;
     if (!selectedLongDreamMemoryApiPreset()) return `${pending || dream?.chapters?.length || 0} 章待织录 · 尚未绑定副 API`;
+    if (dream.source?.kind === 'history-folder' && runtime.refreshingLongDreamSummaries.has(String(dream.id))) return `已织录 ${memory.processedThroughChapter || 0}/${dream.chapters.length} 章 · 正在分批补齐概要`;
+    if (dream.source?.kind === 'history-folder' && memory.status === LONG_DREAM_MEMORY_STATUS.WEAVING) return `已织录 ${memory.processedThroughChapter || 0}/${dream.chapters.length} 章 · 正在分批整理`;
     if (memory.status === LONG_DREAM_MEMORY_STATUS.WEAVING) return `正在后台织录${pending ? ` · ${pending} 章` : ''}`;
     if (memory.status === LONG_DREAM_MEMORY_STATUS.FAILED) return `${pending} 章待重试${memory.lastErrorSignal ? ` · ${memory.lastErrorSignal}` : ''}`;
     if (pending) return `${pending} 章待织录 · 累计 ${Math.max(1, Number(runtime.settings.longDreamMemoryBatchSize) || 3)} 章自动开始`;
@@ -1570,7 +1577,7 @@ function longDreamDetailHTML(dream) {
     </section></div>` : '';
     return `<div class="theater-dream-detail theater-dream-continuation" data-id="${runtime.esc(dream.id)}">
         ${writeFlow}${reviewFlow}
-        <section class="theater-dream-memory-workspace" data-dream-continuation-bottom="memory"><div class="theater-dream-memory-workspace-body"><section class="theater-dream-memory-status ${dream.memory?.status === LONG_DREAM_MEMORY_STATUS.FAILED ? 'is-failed' : ''}"><div class="theater-dream-memory-status-copy"><span><i class="fa-solid fa-route"></i> 梦脉织录</span><b>${runtime.esc(longDreamMemoryStatusText(dream))}</b><small>只处理已确认章节；使用独立副 API，不影响正文线路。</small></div><button type="button" id="theater-dream-weave-now" class="ui-btn ui-btn-sm" ${dream.memory?.status === LONG_DREAM_MEMORY_STATUS.WEAVING || !(dream.memory?.pendingChapterNumbers?.length) ? 'disabled' : ''}><i class="fa-solid fa-wand-magic-sparkles"></i><span>立即织录</span></button></section>${longDreamMemoryCardsHTML(dream)}</div></section>
+        <section class="theater-dream-memory-workspace" data-dream-continuation-bottom="memory"><div class="theater-dream-memory-workspace-body"><section class="theater-dream-memory-status ${dream.memory?.status === LONG_DREAM_MEMORY_STATUS.FAILED ? 'is-failed' : ''}"><div class="theater-dream-memory-status-copy"><span><i class="fa-solid fa-route"></i> 梦脉织录</span><b>${runtime.esc(longDreamMemoryStatusText(dream))}</b><small>只处理已确认章节；使用独立副 API，不影响正文线路。</small></div><button type="button" id="theater-dream-weave-now" class="ui-btn ui-btn-sm" ${dream.memory?.status === LONG_DREAM_MEMORY_STATUS.WEAVING || (!(dream.memory?.pendingChapterNumbers?.length) && !(dream.source?.kind === 'history-folder' && dream.memory?.summaryNeedsRefresh)) || runtime.refreshingLongDreamSummaries.has(String(dream.id)) ? 'disabled' : ''}><i class="fa-solid fa-wand-magic-sparkles"></i><span>立即织录</span></button>${dream.source?.kind === 'history-folder' && dream.seriesMemoryAutoWeave === true && (dream.memory?.status === LONG_DREAM_MEMORY_STATUS.WEAVING || runtime.refreshingLongDreamSummaries.has(String(dream.id))) ? '<button type="button" class="ui-btn ui-btn-sm" id="theater-dream-stop-series">停止后续批次</button>' : ''}</section>${longDreamMemoryCardsHTML(dream)}</div></section>
     </div>`;
 }
 // @theater-source-end longDreamDetailHTML

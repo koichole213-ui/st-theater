@@ -202,6 +202,7 @@ export function sanitizeLongDreamBackupRecord(record = {}, { includeReviewDraft 
         createdAt,
         updatedAt,
         canon: String(normalized.canon || '').trim(),
+        ...(normalized.source?.kind === 'history-folder' ? { seriesMemoryAutoWeave: normalized.seriesMemoryAutoWeave === true } : {}),
         inheritance: {
             worldBookPolicy: normalized.inheritance?.worldBookPolicy === 'selected' ? 'selected' : 'branch-only',
             worldLineRelation: cleanText(normalized.inheritance?.worldLineRelation, 40),

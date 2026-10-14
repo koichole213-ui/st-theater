@@ -1,3 +1,5 @@
+import { bindSourcePicker, resetLongDreamSourcePicker, pickerSelectedSource } from './long-dream-source-picker.js';
+import { importLongDreamSeries } from './long-dream-series.js';
 import { toggleHistoryItem, setExpandedHistoryItem, historyFiltersHTML, toggleHistoryFilterPanel, setHistoryFilterPanel } from './history-ui.js';
 // theater-events: receives live state and cross-feature callbacks from index.js.
 import { toggleHistoryMenu, closeHistoryMenus } from './history-menus.js';
@@ -25,6 +27,7 @@ export function createTheaterEvents(runtime) {
 // @theater-source-begin bindEvents
 function bindEvents() {
     const $d = $(document);
+    bindSourcePicker($d, runtime);
     // 恢复入口最先绑定。即使后续某个功能按钮初始化异常，用户仍能拉取修复。
     $d.off('click.tup').on('click.tup', '#theater-update-btn', runtime.updateExtension);
     $d.off('click.treload').on('click.treload', '#theater-reload-after-update-btn', runtime.confirmReloadAfterUpdate);
@@ -157,6 +160,7 @@ function bindEvents() {
         $(this).attr('aria-expanded', String(open));
     });
     $d.off('click.tdnew').on('click.tdnew', '#theater-dream-new,[data-dream-new]', function () {
+        resetLongDreamSourcePicker(runtime);
         runtime.resetLongDreamCanonSuggestions();
         runtime.longDreamWorkspaceSection = 'definition';
         runtime.longDreamView = 'create';
@@ -259,6 +263,9 @@ function bindEvents() {
         runtime.renderLongDreamCanonSuggestions();
     });
     $d.off('click.tdcreate').on('click.tdcreate', '#theater-dream-create-confirm', async function () {
+        if ($(this).prop('disabled')) return;
+        $(this).prop('disabled', true);
+        try {
         if (runtime.longDreamCanonSuggestionState.controller) {
             toastr.warning('请先等待 AI 建议完成，或点击“停止整理”');
             return;
@@ -290,6 +297,12 @@ function bindEvents() {
             $('#theater-dream-canon').val() || '',
             runtime.activeLongDreamCanonSuggestions(source.key),
         );
+        const autoWeave = source.kind === 'history-folder' && $('#theater-source-auto-weave').prop('checked') === true;
+        if (autoWeave && !runtime.selectedLongDreamMemoryApiPreset()) { toastr.warning('请先绑定梦脉副 API，或取消勾选生成梦脉与概要'); return; }
+        const liveSource = runtime.resolveLongDreamSource(source.key);
+        if (!liveSource || $('#theater-dream-source').val() !== source.key || JSON.stringify(liveSource.chapters) !== JSON.stringify(source.chapters)) { toastr.warning('来源已改变，请重新核对后开卷'); return; }
+        const chosenSnapshot = pickerSelectedSource(runtime);
+        if (chosenSnapshot?.key === source.key && JSON.stringify(chosenSnapshot.chapters) !== JSON.stringify(source.chapters)) { toastr.warning('来源内容已改变，请重新打开新建作品核对'); return; }
         const record = createLongDreamRecord({
             title,
             canon,
@@ -300,8 +313,9 @@ function bindEvents() {
             source,
             sourceConfig: source.sourceConfig || {},
         });
-        const created = await runtime.longDreamAdd(record);
+        const created = await runtime.longDreamAdd(importLongDreamSeries(record, source, autoWeave));
         if (!created) return;
+        if (source.kind === 'history-folder') { runtime.settings.longDreamSeriesAutoWeave = autoWeave; runtime.save(); }
         runtime.activeLongDreamId = created.id;
         runtime.longDreamView = 'detail';
         runtime.longDreamWorkspaceSection = 'continue';
@@ -311,7 +325,10 @@ function bindEvents() {
         runtime.renderLongDreamPanel();
         $('.theater-panels-wrapper').scrollTop(0);
         toastr.success(`《${created.title}》已开卷`);
+        if (autoWeave) runtime.queueLongDreamMemoryWeave(created.id, { force: true, announce: true });
         runtime.resetLongDreamCanonSuggestions({ abort: false });
+        } catch (error) { toastr.error('开卷失败，原历史仍保留，请重新加载后核对'); runtime.runtimeLog('error', '系列开卷失败'); }
+        finally { $(this).prop('disabled', false); }
     });
     $d.off('click.tdexportone').on('click.tdexportone', '[data-dream-export-one]', function (event) {
         event.preventDefault();
@@ -484,8 +501,14 @@ function bindEvents() {
     $d.off('click.tdcandidate').on('click.tdcandidate', '[data-dream-candidate-step]', function () {
         runtime.changeLongDreamDraftCandidate(Number($(this).attr('data-dream-candidate-step')) || 0);
     });
+    $d.off('click.tdseriesstop').on('click.tdseriesstop', '#theater-dream-stop-series', async function () {
+        const dream = runtime.longDreamCache.find(item => String(item.id) === String(runtime.activeLongDreamId));
+        if (dream?.source?.kind !== 'history-folder') return;
+        runtime.settings.longDreamSeriesPausedIds = [...new Set([...(runtime.settings.longDreamSeriesPausedIds || []), String(dream.id)])];
+        runtime.save(); runtime.rememberLongDreamComposerDraft(); runtime.renderLongDreamPanel(); toastr.info('当前批次完成后停止，已完成进度会保留');
+    });
     $d.off('click.tdweave').on('click.tdweave', '#theater-dream-weave-now', function () {
-        runtime.queueLongDreamMemoryWeave(runtime.activeLongDreamId, { force: true, announce: true });
+        runtime.queueLongDreamMemoryWeave(runtime.activeLongDreamId, { force: true, announce: true, resumeSeries: true });
     });
     $d.off('click.tdmemoryregenerate').on('click.tdmemoryregenerate', '[data-dream-memory-regenerate]', async function () {
         const dream = runtime.longDreamCache.find(item => String(item.id) === String(runtime.activeLongDreamId));
@@ -500,14 +523,14 @@ function bindEvents() {
         }
         const confirmed = await SillyTavern.getContext().Popup.show.confirm(
             '重新生成整部梦脉？',
-            `将重新读取全部 ${dream.chapters.length} 章已确认正文，清理自动织录结果并从第一章重新生成。你手动保存、隐藏或否定过的内容会保留。`,
+            `将重新读取全部 ${dream.chapters.length} 章已确认正文，清理自动织录结果并从第一章重新生成。你手动保存、隐藏或否定过的内容会保留。此操作会消耗梦脉副 API。`,
         );
         if (!confirmed) return;
         const saved = await runtime.longDreamPut(prepareLongDreamMemoryRegeneration(dream));
         if (!saved) return;
         runtime.renderLongDreamPanel();
         toastr.info('已准备重新生成整部梦脉');
-        runtime.queueLongDreamMemoryWeave(saved.id, { force: true, announce: true });
+        runtime.queueLongDreamMemoryWeave(saved.id, { force: true, announce: true, resumeSeries: true });
     });
     $d.off('click.tdmemoryopen').on('click.tdmemoryopen', '[data-dream-memory-open-editor]', function () {
         const root = $(this).closest('.theater-dream-memory-flow');
