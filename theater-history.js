@@ -773,16 +773,41 @@ function normalizedZipEntryName(value) {
 function importHistoryBackup() {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.zip,.json,application/zip,application/json';
+    input.accept = '.zip,.json,.html,.htm,application/zip,application/json,text/html';
+    input.multiple = true;
     input.onchange = async e => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
         try {
-            const isZip = /\.zip$/i.test(file.name) || /(?:application|multipart)\/zip/i.test(file.type);
-            const data = isZip ? await readHistoryZip(file) : JSON.parse(await file.text());
-            const items = normalizeHistoryBackup(data);
-            const folders = normalizeCollections(data?.folders);
-            if (!items.length && !folders.length) { toastr.warning('这个文件里没有找到可导入的小剧场历史'); return; }
+            const items = [], folders = [];
+            // Prepare every selected file before writing; a failed read must not leave a partial import.
+            for (const file of files) {
+                let data;
+                try {
+                    const isHtml = /\.html?$/i.test(file.name) || /^text\/html(?:;|$)/i.test(file.type);
+                    const isZip = /\.zip$/i.test(file.name) || /(?:application|multipart)\/zip/i.test(file.type);
+                    if (isHtml) {
+                        const html = await file.text();
+                        if (!html.trim()) throw new Error('HTML 文件为空');
+                        data = { items: [{ title: file.name.replace(/\.html?$/i, '') || '导入的小剧场', html, mode: 'html' }] };
+                    } else {
+                        data = isZip ? await readHistoryZip(file) : JSON.parse(await file.text());
+                    }
+                    const normalized = normalizeHistoryBackup(data);
+                    const fileFolders = normalizeCollections(data?.folders);
+                    if (!normalized.length && !fileFolders.length) throw new Error('没有找到可导入的小剧场历史');
+                    // Separate backup files can reuse IDs; isolate their links before combining them.
+                    const imported = remapHistoryImport(normalized, fileFolders);
+                    const itemIds = new Map();
+                    for (const item of imported.items) {
+                        if (item.id != null) itemIds.set(String(item.id), newHistoryKey());
+                    }
+                    items.push(...imported.items.map(item => item.id != null ? { ...item, id: itemIds.get(String(item.id)) } : item));
+                    folders.push(...imported.folders.map(folder => ({ ...folder, itemIds: folder.itemIds.map(id => itemIds.get(String(id))).filter(Boolean) })));
+                } catch (error) {
+                    throw new Error(`「${file.name}」：${error?.message || error}`);
+                }
+            }
             const added = await addHistoryItems(items, folders);
             if (added) toastr.success(`已导入 ${items.length} 条历史、${folders.length} 个文件夹`);
             else toastr.warning('没有导入任何内容');
