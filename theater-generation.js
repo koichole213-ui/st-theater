@@ -356,8 +356,8 @@ async function refreshTokenEstimate() {
             manualTarget: runtime.settings.manualTargetChars,
         });
         const configuredRounds = Math.min(10, Math.max(1, Number(runtime.settings.maxAutoRounds) || 3));
-        const stagedRenderPlan = !runtime.continueContext && isStagedRenderTarget(targetWordCount);
-        const stagedMultiRoundPlan = stagedRenderPlan && runtime.settings.autoContinue && configuredRounds >= 2;
+        const stagedRenderPlan = isStagedRenderTarget(targetWordCount);
+        const stagedMultiRoundPlan = !runtime.continueContext && stagedRenderPlan && runtime.settings.autoContinue && configuredRounds >= 2;
         const payload = await assembleGenerationPayload(instruction, {
             continuationText: runtime.continueContext,
             forcePlainText: stagedRenderPlan,
@@ -674,9 +674,10 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         manualTarget: runtime.settings.manualTargetChars,
     });
     const configuredMaxRounds = Math.min(10, Math.max(1, Number(runtime.settings.maxAutoRounds) || 3));
-    const stagedRenderMode = !contCtx && isStagedRenderTarget(plannedTargetWordCount);
+    const stagedRenderMode = isStagedRenderTarget(plannedTargetWordCount);
     const plannedRenderSelection = resolveRenderSelection(false);
-    const stagedMultiRoundMode = stagedRenderMode && runtime.settings.autoContinue && configuredMaxRounds >= 2;
+    // 续写沿用本次新增篇幅与承接节奏，不套用新稿的前半篇规划。
+    const stagedMultiRoundMode = !contCtx && stagedRenderMode && runtime.settings.autoContinue && configuredMaxRounds >= 2;
     runtime.isPreparingGeneration = true;
     updateContinueHint();
     let payload;

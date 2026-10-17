@@ -4127,10 +4127,11 @@ test('内置、自定义与默认模板的普通、自动、历史续写和长�
     const assembly = runSource.match(/payload = await assembleGenerationPayload\(instruction, \{[^]*?\n        \}\);/)?.[0];
     assert.ok(assembly);
     for (const selection of ['__default__', '0', ...Object.values(ADAPTIVE_RENDER_SELECTIONS)]) {
-        for (const target of [1000, 5000, 12000]) {
+        for (const { target, autoContinue, maxAutoRounds } of [1000, 4999, 5000, 12000, 20000].flatMap(target =>
+            [false, true].flatMap(autoContinue => [1, 3].map(maxAutoRounds => ({ target, autoContinue, maxAutoRounds }))))) {
             for (const isAuto of [false, true]) {
                 for (const continueContext of ['', '已有前情']) {
-                    const settings = { manualTargetEnabled: true, manualTargetChars: target, maxAutoRounds: 3, autoContinue: true };
+                    const settings = { manualTargetEnabled: true, manualTargetChars: target, maxAutoRounds, autoContinue };
                     const evaluate = runInNewContext('(async () => {' + plan + '\nlet payload;\n' + assembly
                         + '\nreturn { stagedRenderMode, stagedMultiRoundMode, payload }; })', {
                         settings, isAuto, continueContext, continuationSession: null, instruction: '合成任务',
@@ -4139,10 +4140,12 @@ test('内置、自定义与默认模板的普通、自动、历史续写和长�
                         assembleGenerationPayload: async (_instruction, options) => options,
                     });
                     const result = await evaluate();
-                    const expectedStaged = (isAuto || !continueContext) && target >= 5000;
+                    const expectedStaged = target >= 5000;
+                    const expectedManuscript = (isAuto || !continueContext) && expectedStaged && autoContinue && maxAutoRounds >= 2;
                     assert.equal(result.stagedRenderMode, expectedStaged);
                     assert.equal(result.payload.forcePlainText, expectedStaged);
-                    assert.equal(result.payload.longFormPlan, expectedStaged);
+                    assert.equal(result.payload.longFormPlan, expectedManuscript);
+                    assert.equal(result.stagedMultiRoundMode, expectedManuscript);
                     assert.equal(result.payload.continuationText, isAuto ? '' : continueContext);
                     assert.equal(result.payload.maxContinuationRounds, settings.maxAutoRounds);
                 }
@@ -4196,6 +4199,8 @@ test('普通、自动和续写连续执行生成启动流程，完成日志和�
                 assert.equal(logs.filter(([, message]) => message === '生成开始').length, 1);
                 assert.equal(assemblies.length, 1);
                 assert.equal(assemblies[0].continuationText, mode === 'continue' ? '合成前情' : '');
+                assert.equal(assemblies[0].forcePlainText, target >= 5000);
+                assert.equal(assemblies[0].longFormPlan, target >= 5000 && autoContinue && mode !== 'continue');
                 assert.equal(job.maxRounds, target >= 5000 && autoContinue ? 3 : 1);
                 assert.equal(job.autoContinue, target >= 5000 && autoContinue);
                 assert.equal(job.minimumRounds, target >= 5000 && autoContinue && mode !== 'continue' ? 2 : 1);
@@ -4212,7 +4217,7 @@ test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在�
     const validate = source.match(/function validateFinalRenderedHtml\([^]*?^}/m)?.[0];
     assert.ok(dispatch && request && validate);
     for (const profile of adaptiveRenderProfiles()) {
-        for (const scenario of ['single', 'multiple', 'staged', 'failure']) {
+        for (const scenario of ['single', 'multiple', 'staged', 'failure', 'staged-failure', 'staged-text']) {
             const calls = [];
             const initialHtml = '<html><body><button>翻开</button><p>第一段。</p><p>第二段。</p></body></html>';
             const harness = runInNewContext('(async () => {'
@@ -4222,9 +4227,9 @@ test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在�
                 + 'Object.defineProperties(runtime, { lastGeneratedHtml: { get: () => lastGeneratedHtml, set: value => { lastGeneratedHtml = value; } }, currentOutputMode: { get: () => currentOutputMode, set: value => { currentOutputMode = value; } }, bgStreamText: { get: () => bgStreamText, set: value => { bgStreamText = value; } }, lastRequestContext: { get: () => lastRequestContext, set: value => { lastRequestContext = value; } } });\n'
                 + validate + '\n' + request + '\n' + dispatch
                 + '\nreturn { html: lastGeneratedHtml, mode: currentOutputMode }; })', {
-                selectedPlainTextRender: false, selectedTextTheme: 'light',
-                stagedRenderMode: scenario === 'staged',
-                currentGenerationJob: { segments: Array(scenario === 'single' || scenario === 'staged' ? 1 : 2).fill({}) },
+                selectedPlainTextRender: scenario === 'staged-text', selectedTextTheme: 'light', textOutputModeForTheme,
+                stagedRenderMode: scenario.startsWith('staged'),
+                currentGenerationJob: { segments: Array(scenario === 'single' || scenario.startsWith('staged') ? 1 : 2).fill({}) },
                 plannedRenderSelection: { rules: profile.rules }, renderTemplate: profile.name,
                 payload: { generationFoundation: { originalInstruction: '按钮必须使用指定的 HTML、CSS 和 JavaScript。' } },
                 newText: '第一段。\n\n第二段。', firstHtml: initialHtml,
@@ -4238,23 +4243,27 @@ test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在�
                 captureRequestIssue: () => ({ signal: 'TEST-FAILED' }), toastr: { warning() {}, info() {} },
                 requestConfiguredGenerationApi: async args => {
                     calls.push(args);
-                    if (scenario === 'failure') return { text: '<html><body>{{THEATER_P0001}}</body></html>' };
+                    if (scenario.endsWith('failure')) return { text: '<html><body>{{THEATER_P0001}}</body></html>' };
                     return { text: '<html><body><button>翻开</button><p>{{THEATER_P0001}}</p><p>{{THEATER_P0002}}</p></body></html>' };
                 },
             });
             const result = await harness();
-            if (scenario === 'single') {
+            if (scenario === 'staged-text') {
+                assert.equal(calls.length, 0, '大目标纯文字模板不额外请求美化');
+                assert.match(result.html, /第一段。/);
+                assert.match(result.html, /第二段。/);
+            } else if (scenario === 'single') {
                 assert.equal(calls.length, 0, '普通单轮直接使用模型 HTML，不新增排版请求');
                 assert.equal(result.html, initialHtml);
             } else {
-                assert.equal(calls.length, scenario === 'failure' ? 2 : 1);
+                assert.equal(calls.length, scenario.endsWith('failure') ? 2 : 1);
                 assert.ok(calls[0].userPrompt.includes(profile.rules));
                 assert.match(calls[0].userPrompt, /原始小剧场指令：仅作为设计意图参考/);
                 assert.match(calls[0].userPrompt, /按钮必须使用指定的 HTML、CSS 和 JavaScript/);
                 assert.match(calls[0].userPrompt, /不能覆盖正文数据，也不能被重新执行、续写或抄进页面/);
                 assert.match(result.html, /第一段。/);
                 assert.match(result.html, /第二段。/);
-                assert.equal(result.mode, scenario === 'failure' ? 'text' : 'html');
+                assert.equal(result.mode, scenario.endsWith('failure') ? 'text' : 'html');
             }
         }
     }
@@ -6109,7 +6118,7 @@ test('普通生成多轮复用首轮资料包而不是退回简化续写请求',
     assert.match(source, /generationFoundation: Object\.freeze/);
     assert.match(source, /originalInstruction: cleanInstruction/);
     assert.match(ordinaryGeneration, /buildGenerationContinuationRoundPayload/);
-    assert.match(ordinaryGeneration, /stagedMultiRoundMode = stagedRenderMode && (?:runtime\.)?settings\.autoContinue && configuredMaxRounds >= 2/);
+    assert.match(ordinaryGeneration, /stagedMultiRoundMode = !contCtx && stagedRenderMode && (?:runtime\.)?settings\.autoContinue && configuredMaxRounds >= 2/);
     assert.match(ordinaryGeneration, /minimumRounds: stagedMultiRoundMode \? 2 : 1/);
     assert.match(ordinaryGeneration, /requireTargetCompletion: stagedMultiRoundMode/);
     assert.match(ordinaryGeneration, /draft: recentGenerationRoundsContext\(continuationRoundHistory\(continuationRun\?\.source.rounds, (?:runtime\.)?currentGenerationJob.segments.map\(prepareContinuationContext\)\)\)/);
@@ -6146,7 +6155,7 @@ test('普通续写真实首轮装配匹配实际轮数，保留完整前情及�
         resolveGenerationIdentity: () => ({ character: {}, role: '虚构角色', persona: '虚构人设', name1: '甲', name2: '乙' }),
         normalizeContextRange, takeRecentMessages, createChatContextReader, wbEntries: [], wbStates: {},
         ensureWorldBooksCurrent: async () => {}, stripTargetWordCountRequirement, resolveTargetWordCount,
-        resolveRenderSelection: () => ({ isPlainTextRender: false, textTheme: 'light', rules: '保留完整美化 HTML 规则' }),
+        resolveRenderSelection: forcePlainText => ({ isPlainTextRender: !!forcePlainText, textTheme: 'light', rules: forcePlainText ? '只输出纯正文，不输出 HTML' : '保留完整美化 HTML 规则' }),
         currentPresetSnapshot: () => snapshot, ensureSelectedPresetLoaded: async () => snapshot,
         DEFAULT_SYSTEM_PROMPT: '默认', prepareContinuationContext: value => value || '', continueContext: '',
         buildProtagonistAnchor: () => '人物锚点', firstRoundGuidance, continuationFirstRoundGuidance, isStagedRenderTarget,
@@ -6157,7 +6166,7 @@ test('普通续写真实首轮装配匹配实际轮数，保留完整前情及�
     const previous = '旧正文开始\n' + '雨停以后，两人继续交谈。'.repeat(1000) + '\n旧正文结尾';
     for (const target of [4000, 20000]) for (const autoContinue of [false, true]) for (const max of [1, 3]) {
         Object.assign(context.settings, { manualTargetChars: target, autoContinue, maxAutoRounds: max });
-        const payload = await assemble('继续展开雨夜重逢，写8000字', { continuationText: previous });
+        const payload = await assemble('继续展开雨夜重逢，写8000字', { continuationText: previous, forcePlainText: isStagedRenderTarget(target) });
         const job = runInNewContext(`${autoLine}\nlet currentGenerationJob; ${config}; currentGenerationJob`, {
             targetWordCount: target, settings: context.settings, isStagedRenderTarget,
             configuredMaxRounds: max, stagedMultiRoundMode: false, createGenerationJob,
@@ -6170,12 +6179,13 @@ test('普通续写真实首轮装配匹配实际轮数，保留完整前情及�
         assert.doesNotMatch(task, /8000/);
         assert.ok(payload.messages.find(message => message.sourceId === 'continuation').content.includes(previous));
         assert.match(payload.tokenParts.continuation, /不计入本次新增字数/);
-        assert.match(payload.tokenParts.rules, /保留完整美化 HTML 规则/);
+        assert.match(payload.tokenParts.rules, target >= 5000 ? /只输出纯正文，不输出 HTML/ : /保留完整美化 HTML 规则/);
+        assert.equal(payload.isPlainTextRender, target >= 5000);
         assert.doesNotMatch(payload.tokenParts.rules, /从开篇开始|本篇小剧场的可读中文正文目标/);
         const fresh = await assemble('继续展开雨夜重逢，写8000字', { continuationText: '' });
         assert.ok(fresh.tokenParts.rules.includes(firstRoundGuidance(target)));
         assert.doesNotMatch(fresh.tokenParts.instruction, /本次续写任务/);
-        assert.equal(fresh.isPlainTextRender, payload.isPlainTextRender);
+        assert.equal(fresh.isPlainTextRender, false);
     }
     for (const [planned, changed] of [[3, 1], [1, 3]]) {
         Object.assign(context.settings, { manualTargetChars: 20000, autoContinue: true, maxAutoRounds: planned });
