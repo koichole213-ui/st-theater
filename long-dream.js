@@ -1,4 +1,4 @@
-import { normalizeStoryFields, mergeStoryResponse, saveStorySummary, composeStorySummary, validateStorySources, invalidateStoryDecisions } from './long-dream-story-summary.js';
+import { normalizeStoryFields, mergeStoryResponse, saveStorySummary, validateStorySources, invalidateStoryDecisions, savedStoryText } from './long-dream-story-summary.js';
 import {
     LONG_DREAM_MEMORY_SCHEMA_VERSION,
     applyLongDreamMemoryOperations,
@@ -666,7 +666,7 @@ export function updateLongDreamChapter(record, chapterId, changes = {}, now = ne
             ...normalized.memory,
             storyEntries: normalized.memory.storyEntries.filter(item => item.chapterNumber < previous.number),
             summaryVersions: normalized.memory.summaryVersions.filter(item => item.chapterNumber < previous.number),
-            currentState: composeStorySummary(normalized.memory.storyEntries.filter(item => item.chapterNumber < previous.number)),
+            currentState: savedStoryText({ chapters, memory: normalized.memory }, normalized.memory.storyEntries.filter(item => item.chapterNumber < previous.number)),
             summaryThroughChapter: replayFrom,
             summaryNeedsRefresh: true,
             summaryHistory: normalized.memory.summaryHistory.filter(item => item.chapterNumber < previous.number),
@@ -792,7 +792,7 @@ export function applyLongDreamMemoryPatch(record, patch = {}, throughChapter, no
         const memory = normalizeMemory({
             ...normalized.memory,
             ...application.memory,
-            currentState: patch.storyRequested || normalized.memory.storyEntries.length || application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0
+            currentState: patch.storyRequested || normalized.memory.storyEntries.length || normalized.memory.manualFullSummary || application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0
                 ? normalized.memory.currentState
                 : cleanText(patch.currentState || normalized.memory.currentState, 5000),
             summaryNeedsRefresh: !!(patch.storyRequested || application.memory.pendingConflicts.length || application.ignoredOperations.length || Number(patch.invalidOperationCount) > 0 || !patch.currentState),
@@ -859,7 +859,7 @@ export function applyLongDreamMemoryPatch(record, patch = {}, throughChapter, no
     const memory = normalizeMemory({
         ...normalized.memory,
         cards,
-        currentState: patch.storyRequested || normalized.memory.storyEntries.length ? normalized.memory.currentState : cleanText(patch.currentState || normalized.memory.currentState, 5000),
+        currentState: patch.storyRequested || normalized.memory.storyEntries.length || normalized.memory.manualFullSummary ? normalized.memory.currentState : cleanText(patch.currentState || normalized.memory.currentState, 5000),
         summaryNeedsRefresh: patch.storyRequested || normalized.memory.summaryNeedsRefresh,
         processedThroughChapter,
         pendingChapterNumbers: normalized.chapters

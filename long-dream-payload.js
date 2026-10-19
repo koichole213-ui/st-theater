@@ -1,4 +1,4 @@
-import { pendingManualStoryEntries } from './long-dream-story-summary.js';
+import { hasPendingManualSummary } from './long-dream-story-summary.js';
 import { LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION } from './long-dream.js';
 import { composePresetMessages } from './request-layout.js';
 import { readableCharCount } from './text-counter.js';
@@ -313,7 +313,7 @@ export function longDreamChapterContext(record = {}, {
         }
         olderOutline = [first, marker, ...tail].filter(Boolean).join('\n');
     }
-    const currentState = pendingManualStoryEntries(record).length ? '' : cleanText(record?.memory?.currentState);
+    const currentState = hasPendingManualSummary(record) ? '' : cleanText(record?.memory?.currentState);
     const selectedItems = selectRelevantLongDreamMemoryItems(record, {
         instruction,
         recentChapterCount: keepRecent,

@@ -1,4 +1,4 @@
-import { chapterSummarySources, validStoryEntries, composeStorySummary, saveStorySummary, pendingManualStoryEntries } from './long-dream-story-summary.js';
+import { chapterSummarySources, validStoryEntries, saveStorySummary, hasPendingManualSummary, coveredStoryChapters, manualFullSummary, savedStoryText } from './long-dream-story-summary.js';
 import { buildLongDreamSummaryPayload, parseLongDreamMemoryResponse } from './long-dream-memory.js';
 import { collectionChapters } from './history-collections.js';
 import { createLongDreamChapter, normalizeLongDreamRecord } from './long-dream.js';
@@ -63,11 +63,13 @@ export async function runSeriesMemoryBatches({ read, save, weave, force = false,
 
 // Validate and save only this batch, using hashes from the complete chapter chain.
 export function applySeriesStoryBatch(record, responseEntries, chapters) {
-    if (pendingManualStoryEntries(record).length) return { ...record, memory: { ...record.memory, summaryNeedsRefresh: true } };
+    if (hasPendingManualSummary(record)) return { ...record, memory: { ...record.memory, summaryNeedsRefresh: true } };
     if (!Array.isArray(responseEntries)) throw new Error('本批故事概要缺失');
     const sources = chapterSummarySources(record.chapters);
     const entries = validStoryEntries(record).filter(entry => entry.editedByUser || !chapters.some(ch => ch.number === entry.chapterNumber));
+    const full = manualFullSummary(record);
     for (const chapter of chapters) {
+        if (full && chapter.number <= full.chapterNumber) continue;
         const matches = responseEntries.filter(entry => Number(entry?.chapterNumber) === chapter.number);
         if (matches.length !== 1 || typeof matches[0].text !== 'string' || !matches[0].text.trim() || matches[0].text.trim().length > 1200) throw new Error('本批故事概要未完整覆盖章节');
         if (entries.some(entry => entry.chapterNumber === chapter.number && entry.editedByUser)) continue;
@@ -75,19 +77,19 @@ export function applySeriesStoryBatch(record, responseEntries, chapters) {
     }
     entries.sort((a, b) => a.chapterNumber - b.chapterNumber);
     if (record.memory.pendingConflicts.length) return { ...record, memory: { ...record.memory, summaryNeedsRefresh: true } };
-    if (entries.length === record.chapters.length) return saveStorySummary(record, entries);
-    let through = 0; while (entries.some(entry => entry.chapterNumber === through + 1)) through++;
-    return { ...record, memory: { ...record.memory, storyEntries: entries, currentState: composeStorySummary(entries), summaryThroughChapter: through, summaryNeedsRefresh: true } };
+    if (new Set([...coveredStoryChapters(record), ...entries.map(entry => entry.chapterNumber)]).size === record.chapters.length) return saveStorySummary(record, entries);
+    let through = 0; while ((full && through < full.chapterNumber) || entries.some(entry => entry.chapterNumber === through + 1)) through++;
+    return { ...record, memory: { ...record.memory, storyEntries: entries, currentState: savedStoryText(record, entries), summaryThroughChapter: through, summaryNeedsRefresh: true } };
 }
 
 export async function refreshSeriesStorySummary({ record, request, readLatest, save, shouldStop = () => false, timeoutMs = 180000 }) {
-    if (pendingManualStoryEntries(record).length) throw Object.assign(new Error('请先核对人工概要'), { code: 'LONG_DREAM_SUMMARY_MANUAL_REVIEW' });
+    if (hasPendingManualSummary(record)) throw Object.assign(new Error('请先核对人工概要'), { code: 'LONG_DREAM_SUMMARY_MANUAL_REVIEW' });
     const initialChapters = JSON.stringify([record.chapters, record.canon, record.inheritance]);
     const initialDecisions = JSON.stringify([record.memory.states, record.memory.transitions, record.memory.threads, record.memory.deviations, record.memory.rejections]);
     let latest = record;
     while (latest) {
         if (shouldStop()) return null;
-        const covered = new Set(validStoryEntries(latest).map(entry => entry.chapterNumber));
+        const covered = coveredStoryChapters(latest);
         const chapters = latest.chapters.filter(chapter => !covered.has(chapter.number)).slice(0, 3);
         if (!chapters.length) return latest;
         const revision = JSON.stringify(latest.memory);

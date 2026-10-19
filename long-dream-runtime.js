@@ -14,7 +14,7 @@ import { buildLongDreamChapterPayload, buildLongDreamChapterMessages, selectRele
 import { applyPromptPostProcessing } from './request-layout.js';
 import { estimateTokenCount, formatTokenCount } from './token-estimator.js';
 import { summaryUnavailableReason } from './long-dream-summary-ui.js';
-import { restoreStorySummary, pendingManualStoryEntries } from './long-dream-story-summary.js';
+import { restoreStorySummary, hasPendingManualSummary } from './long-dream-story-summary.js';
 import { refreshLongDreamSummary } from './long-dream-summary.js';
 import { requestCustomApi } from './api-runtime.js';
 import { diagnosticSignalInfo, REQUEST_DIAGNOSTIC_SIGNAL } from './request-diagnostics.js';
@@ -704,7 +704,7 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
     if (dream.memory?.status === LONG_DREAM_MEMORY_STATUS.WEAVING || dream.memory?.pendingConflicts?.length || dream.memory?.pendingChapterNumbers?.length) {
         toastr.warning('请先完成梦脉织录和冲突确认，再更新概要'); return;
     }
-    if (fillMissing && pendingManualStoryEntries(dream).length) return; // User corrections require review; never auto-replace the saved manual draft.
+    if (fillMissing && hasPendingManualSummary(dream)) return; // User corrections require review; never auto-replace the saved manual draft.
     const series = dream.source?.kind === 'history-folder' && fillMissing;
     const renderSeriesStatus = () => { if (series && String(runtime.activeLongDreamId) === key) { runtime.rememberLongDreamComposerDraft(); runtime.renderLongDreamPanel(); } };
     let stage = 'preset';

@@ -1,4 +1,4 @@
-import { pendingManualStoryEntries } from '../long-dream-story-summary.js';
+import { pendingManualStoryEntries, hasPendingManualSummary } from '../long-dream-story-summary.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -139,6 +139,6 @@ test('系列补概要开始和结束同步状态按钮，渲染前保留续写�
         selectedLongDreamMemoryApiPreset:()=>({maxOutputTokens:4096}),rememberLongDreamComposerDraft:()=>{remembered++;},renderLongDreamPanel:()=>{rendered.push(runtime.refreshingLongDreamSummaries.has('9'));},runtimeLog(){},
         longDreamPut:async x=>{current=normalizeLongDreamRecord(x);runtime.longDreamCache=[current];return current;}};
     const module=readFileSync(new URL('../long-dream-runtime.js',import.meta.url),'utf8'),start=module.indexOf('// @theater-source-begin refreshLongDreamSummaryNow'),end=module.indexOf('// @theater-source-end refreshLongDreamSummaryNow',start);
-    const refresh=runInNewContext(module.slice(start,end)+'\nrefreshLongDreamSummaryNow',{runtime,LONG_DREAM_MEMORY_STATUS,pendingManualStoryEntries,refreshSeriesStorySummary,refreshLongDreamSummary(){throw Error('不得走全篇原子概要路径')},syncLongDreamSummaryButton(){},normalizeMaxTokens,AbortController,setTimeout,clearTimeout,toastr:{info(){},success(){},warning(){}},diagnosticSignalInfo(){return{}},requestCustomApi:async({userPrompt})=>{runtime.settings.longDreamSeriesPausedIds=['9'];const numbers=[...userPrompt.matchAll(/第(\d+)章：/g)].map(x=>Number(x[1]));return{text:JSON.stringify({storyEntries:numbers.map(chapterNumber=>({chapterNumber,text:'概要'+chapterNumber}))})}}});
+    const refresh=runInNewContext(module.slice(start,end)+'\nrefreshLongDreamSummaryNow',{runtime,LONG_DREAM_MEMORY_STATUS,hasPendingManualSummary,pendingManualStoryEntries,refreshSeriesStorySummary,refreshLongDreamSummary(){throw Error('不得走全篇原子概要路径')},syncLongDreamSummaryButton(){},normalizeMaxTokens,AbortController,setTimeout,clearTimeout,toastr:{info(){},success(){},warning(){}},diagnosticSignalInfo(){return{}},requestCustomApi:async({userPrompt})=>{runtime.settings.longDreamSeriesPausedIds=['9'];const numbers=[...userPrompt.matchAll(/第(\d+)章：/g)].map(x=>Number(x[1]));return{text:JSON.stringify({storyEntries:numbers.map(chapterNumber=>({chapterNumber,text:'概要'+chapterNumber}))})}}});
     await refresh(9,{fillMissing:true});assert.deepEqual(rendered,[true,false]);assert.equal(remembered,2);assert.equal(current.memory.storyEntries.length,3);assert.equal(runtime.refreshingLongDreamSummaries.size,0);
 });
