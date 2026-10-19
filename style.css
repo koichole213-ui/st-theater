@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.4.1
+/* 千夜浮梦 · 小剧场生成器 v4.4.2
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -7461,3 +7461,13 @@ body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) :is(.popup-content
     .theater-source-item { padding:11px; border-radius:11px; }
     .theater-source-selected-title { font-size:20px; }
 }
+
+/* Local, in-place story synopsis editing; retain the existing memory controls. */
+.theater-panel[data-panel="long-dream"] .theater-dream-summary-actions { flex-wrap:wrap; gap:8px; }
+.theater-dream-summary-manual-editor { min-width:0; margin-top:12px; padding:12px; border:1px solid var(--t-border); border-radius:10px; background:var(--t-surface-1); text-align:left; }
+.theater-dream-summary-manual-editor > label { display:grid; gap:7px; margin-bottom:12px; color:var(--t-fg-soft); font-size:12px; text-align:left; }
+.theater-dream-summary-manual-editor :is(select,textarea) { width:100%; min-width:0; box-sizing:border-box; }
+.theater-dream-summary-manual-editor textarea { min-height:150px; resize:vertical; line-height:1.7; }
+.theater-dream-summary-manual-editor p { margin:8px 0; text-align:left; font-size:12px; line-height:1.6; }
+.theater-dream-summary-editor-message { color:var(--t-warning); overflow-wrap:anywhere; }
+.theater-dream-summary-editor-message:empty { display:none; }

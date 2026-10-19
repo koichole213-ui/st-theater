@@ -11,16 +11,17 @@ export function buildGenerationPayload(parts = {}) {
     const addons = String(parts.addons || '');
     const instruction = String(parts.instruction || '');
     const fixed = String(parts.fixed || '');
+    const creativeEnhancement = String(parts.creativeEnhancement || '');
 
     const systemPrompt = [preset, addons].filter(Boolean).join('\n\n');
     // 对齐酒馆的 Chat History → Post-History Instructions 顺序：
     // 用户本轮指令属于当前消息，渲染与创作硬规则作为最后约束。
-    const userPrompt = [role, persona, worldBook, context, continuation, instruction, rules, fixed]
+    const userPrompt = [role, persona, worldBook, context, continuation, creativeEnhancement, instruction, rules, fixed]
         .filter(Boolean).join('\n\n---\n\n');
     return {
         systemPrompt,
         userPrompt,
-        tokenParts: { preset, role: role + persona, worldBook, context, continuation, rules: rules + fixed + addons, instruction },
+        tokenParts: { preset, role: role + persona, worldBook, context, continuation, rules: rules + fixed + addons + creativeEnhancement, instruction },
     };
 }
 
@@ -115,14 +116,14 @@ export function buildFinalRenderPayload({ sourceText = '', rules = '', originalI
     };
 }
 
-export function buildContinuationPayload({ instruction = '', manuscriptMode = false } = {}) {
+export function buildContinuationPayload({ instruction = '', manuscriptMode = false, creativeEnhancement = '' } = {}) {
     return {
         systemPrompt: (manuscriptMode
             ? '你正在补完同一份尚未完成的小剧场正文。所有正文轮共同组成一个作品，不是续集或后日谈。已有正文是不可重复的前半稿；只输出紧接其后的缺失正文，保持人物、视角、时态与文风一致。'
             : '你正在续写同一篇小剧场。只负责承接给出的结尾创作新增正文，保持人物、视角、时态与文风一致。')
             + '\n\n【补写对象边界】聊天正文仅作背景参考，不是本轮续写对象，也不代表本篇小剧场的当前叙事位置。只有本轮指令中标为“本篇小剧场正文”的内容是补写对象，必须承接它的末尾；即使它已经收尾，也不得切回聊天主线、回应聊天中的最后一句或把两条剧情拼接起来。人物与背景资料仍按本篇任务及既有继承规则使用。'
             + '\n\n' + STORY_RELATION_CONTINUITY_RULE,
-        userPrompt: String(instruction || '').trim(),
+        userPrompt: [String(creativeEnhancement || '').trim(), String(instruction || '').trim()].filter(Boolean).join('\n\n'),
     };
 }
 

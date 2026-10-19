@@ -1,3 +1,4 @@
+import { creativeEnhancementPrompt } from './creative-enhancement.js';
 // theater-generation: receives live state and cross-feature callbacks from index.js.
 import { adaptiveRenderProfile } from './adaptive-render.js';
 import { isPlainTextSelection, plainTextThemeForSelection, textOutputModeForTheme } from './plain-text-renderer.js';
@@ -55,6 +56,7 @@ function generationPreparationKey(ctx = SillyTavern.getContext()) {
         worldBooks: [...(runtime.settings.selectedWorldBooks || [])],
         worldBookReadMode: String(runtime.settings.worldBookReadMode || 'all'),
         presetName: String(runtime.settings.selectedPresetName || ''),
+        creativeEnhancementEnabled: runtime.settings.creativeEnhancementEnabled === true,
     });
 }
 // @theater-source-end generationPreparationKey
@@ -127,7 +129,7 @@ function freezeGenerationFoundationList(items = []) {
 
 // @theater-source-begin buildGenerationContinuationRoundPayload
 function buildGenerationContinuationRoundPayload({ foundation, instruction, ctx, manuscriptMode = false }) {
-    const continuationPayload = buildContinuationPayload({ instruction, manuscriptMode });
+    const continuationPayload = buildContinuationPayload({ instruction, manuscriptMode, creativeEnhancement: foundation.creativeEnhancement });
     return {
         ...continuationPayload,
         messages: composeGenerationContinuationMessages({
@@ -152,6 +154,7 @@ function buildGenerationContinuationRoundPayload({ foundation, instruction, ctx,
 async function assembleGenerationPayload(instruction, { continuationText = null, forcePlainText = false, longFormPlan = false, loadPreset = true, evaluateWorldBook = true, estimateOnly = false, maxContinuationRounds = null } = {}) {
     const ctx = SillyTavern.getContext();
     const preparationKey = generationPreparationKey(ctx);
+    const creativeEnhancement = creativeEnhancementPrompt(runtime.settings.creativeEnhancementEnabled);
     const { chat = [] } = ctx;
     const identity = resolveGenerationIdentity(ctx);
     const { character, description, personality, scenario, creatorNotes, currentPersona, role, persona, name1, name2 } = identity;
@@ -271,7 +274,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     fixed += `\n${protagonistAnchor}`;
     fixed += `\n【创作节奏】${lengthGuidance}`;
     const payload = buildGenerationPayload({
-        preset, role, persona, worldBook, context, continuation, rules, addons,
+        preset, role, persona, worldBook, context, continuation, rules, addons, creativeEnhancement,
         fixed,
         instruction: taskInstruction,
     });
@@ -292,6 +295,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         continuation
             ? { role: 'user', content: continuation, source: 'theater-continuation', sourceId: 'continuation' }
             : null,
+        creativeEnhancement ? { role: 'user', content: creativeEnhancement, source: 'theater-creative-enhancement', sourceId: 'creative-enhancement' } : null,
         { role: 'user', content: taskInstruction, source: 'theater-instruction', sourceId: 'instruction' },
         { role: 'system', content: [rules, fixed].filter(Boolean).join('\n\n'), source: 'theater-rules', sourceId: 'final-rules' },
     ].filter(Boolean);
@@ -318,6 +322,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         targetWordCount,
         ctx,
         generationFoundation: Object.freeze({
+            creativeEnhancement,
             presetEntries: freezeGenerationFoundationList(presetEntriesForLayout),
             identitySlots: Object.freeze({ ...identitySlots }),
             worldInfoEntries: freezeGenerationFoundationList(activeWorldInfoEntries),

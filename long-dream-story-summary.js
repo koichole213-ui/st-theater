@@ -14,7 +14,7 @@ export function normalizeStoryFields(memory = {}, chapterCount = Infinity) {
     const entries = (Array.isArray(memory.storyEntries) ? memory.storyEntries : [])
         .filter(item => Number.isInteger(item?.chapterNumber) && item.chapterNumber > 0 && item.chapterNumber <= chapterCount
             && typeof item.text === 'string' && item.text.trim() && typeof item.source === 'string')
-        .map(item => ({ chapterNumber: item.chapterNumber, text: item.text.trim().slice(0, 1200), source: item.source }));
+        .map(item => ({ chapterNumber: item.chapterNumber, text: item.text.trim().slice(0, 1200), source: item.source, ...(item.editedByUser === true ? { editedByUser: true } : {}), ...(item.needsReview === true ? { needsReview: true } : {}) }));
     const versions = (Array.isArray(memory.summaryVersions) ? memory.summaryVersions : [])
         .filter(item => typeof item?.id === 'string' && typeof item.text === 'string' && item.text.trim()
             && Number.isInteger(item.chapterNumber) && item.chapterNumber > 0 && item.chapterNumber <= chapterCount
@@ -29,16 +29,23 @@ export function normalizeStoryFields(memory = {}, chapterCount = Infinity) {
 export function validStoryEntries(record) {
     const sources = chapterSummarySources(record.chapters);
     return normalizeStoryFields(record.memory, record.chapters.length).storyEntries
-        .filter(entry => entry.source === sources[entry.chapterNumber - 1]);
+        .filter(entry => !entry.needsReview && entry.source === sources[entry.chapterNumber - 1]);
+}
+
+export function pendingManualStoryEntries(record) {
+    const sources = chapterSummarySources(record.chapters);
+    return normalizeStoryFields(record.memory, record.chapters.length).storyEntries
+        .filter(entry => entry.editedByUser && entry.needsReview && entry.source === sources[entry.chapterNumber - 1]);
 }
 
 export function composeStorySummary(entries) {
-    return entries.slice().sort((a, b) => a.chapterNumber - b.chapterNumber)
+    return entries.filter(entry => !entry.needsReview).sort((a, b) => a.chapterNumber - b.chapterNumber)
         .map(item => `第 ${item.chapterNumber} 章：${item.text}`).join('\n\n');
 }
 
 export function mergeStoryResponse(record, responseEntries, { replace = false } = {}) {
     const fail = (code, message) => { throw Object.assign(new Error(message), { code: `LONG_DREAM_SUMMARY_${code}` }); };
+    if (!replace && pendingManualStoryEntries(record).length) fail('MANUAL_REVIEW', '梦脉事实已改变，请先编辑核对人工概要，或明确重新整理全篇。');
     if (!Array.isArray(responseEntries)) fail('MISSING_ENTRIES', '概要返回为空或缺少分章概要，请重试');
     // Normalize only unambiguous positive decimal chapter numbers; never guess by position.
     const normalized = responseEntries.map(item => ({ ...item, chapterNumber:
@@ -65,7 +72,7 @@ export function saveStorySummary(record, entries, now = new Date()) {
     const memory = record.memory;
     let versions = normalizeStoryFields(memory, record.chapters.length).summaryVersions;
     // Preserve the pre-migration synopsis too; never manufacture chapter paragraphs from it.
-    if (!versions.length && memory.currentState?.trim()) {
+    if (memory.currentState?.trim() && !versions.some(version => version.text === memory.currentState && version.chapterNumber === (memory.summaryThroughChapter || memory.processedThroughChapter || record.chapters.length))) {
         const chapterNumber = memory.summaryThroughChapter || memory.summaryHistory?.at(-1)?.chapterNumber || memory.processedThroughChapter || record.chapters.length;
         versions.push({ id: `legacy-${createdAt}`, text: memory.currentState, chapterNumber,
             createdAt, canRestore: !memory.summaryDecisionsChanged, sources: sources.slice(0, chapterNumber), storyEntries: validStoryEntries(record).filter(item => item.chapterNumber <= chapterNumber) });
@@ -90,7 +97,8 @@ export function restoreStorySummary(record, id, now = new Date()) {
 }
 
 export function invalidateStoryDecisions(memory) {
-    return { storyEntries: [], summaryNeedsRefresh: true, summaryDecisionsChanged: true,
+    const manual = normalizeStoryFields(memory).storyEntries.filter(entry => entry.editedByUser).map(entry => ({ ...entry, needsReview: true }));
+    return { storyEntries: manual, ...(manual.length ? { currentState: '' } : {}), summaryNeedsRefresh: true, summaryDecisionsChanged: true,
         summaryVersions: normalizeStoryFields(memory).summaryVersions.map(version => ({ ...version, canRestore: false })) };
 }
 
@@ -102,5 +110,5 @@ export function validateStorySources(memory, chapters) {
     const originalFields = normalizeStoryFields(memory);
     const changed = entries.length !== originalFields.storyEntries.length || versions.length !== originalFields.summaryVersions.length;
     return { ...memory, ...fields, storyEntries: entries, summaryVersions: versions,
-        ...(changed ? { currentState: composeStorySummary(entries), summaryThroughChapter: entries.at(-1)?.chapterNumber || 0, summaryNeedsRefresh: true } : {}) };
+        ...(changed ? { currentState: composeStorySummary(entries), summaryThroughChapter: entries.filter(entry => !entry.needsReview).at(-1)?.chapterNumber || 0, summaryNeedsRefresh: true } : {}) };
 }

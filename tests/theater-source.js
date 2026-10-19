@@ -1,3 +1,6 @@
+import { creativeEnhancementPrompt } from '../creative-enhancement.js';
+import { pendingManualStoryEntries } from '../long-dream-story-summary.js';
+import { summaryEditorHTML, bindSummaryEditor } from '../long-dream-summary-editor.js';
 import { isHistoryItemExpanded, historyFiltersHTML } from '../history-ui.js';
 import { normalizeRoleSources, captureHistoryRoles, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED } from '../history-roles.js';
 import { closeHistoryMenus } from '../history-menus.js';
@@ -28,7 +31,7 @@ export function readTheaterImplementation() {
 // fixtures. This preserves their assertions about writes, identity and failures.
 export function runInNewContext(code, sandbox = {}, options) {
     // Real imported helpers used by relocated production bodies. Fixtures remain synthetic.
-    Object.assign(sandbox, { isHistoryItemExpanded, historyFiltersHTML, normalizeRoleSources, captureHistoryRoles, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED, closeHistoryMenus, ...sandbox });
+    Object.assign(sandbox, { creativeEnhancementPrompt, pendingManualStoryEntries, summaryEditorHTML, bindSummaryEditor, isHistoryItemExpanded, historyFiltersHTML, normalizeRoleSources, captureHistoryRoles, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED, closeHistoryMenus, ...sandbox });
     if (!sandbox.SillyTavern) sandbox.SillyTavern = { getContext: () => ({}) };
     const context = createContext(sandbox);
     const entry = readFileSync(new URL('../index.js', import.meta.url), 'utf8');

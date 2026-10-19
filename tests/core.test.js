@@ -3749,13 +3749,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.1 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.2 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.1'/);
-    assert.equal(manifest.version, '4.4.1');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.1/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.2'/);
+    assert.equal(manifest.version, '4.4.2');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.2/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 
@@ -6164,14 +6164,23 @@ test('普通续写真实首轮装配匹配实际轮数，保留完整前情及�
     };
     const assemble = runInNewContext(assembly + '\nassembleGenerationPayload;', context);
     const previous = '旧正文开始\n' + '雨停以后，两人继续交谈。'.repeat(1000) + '\n旧正文结尾';
-    for (const target of [4000, 20000]) for (const autoContinue of [false, true]) for (const max of [1, 3]) {
-        Object.assign(context.settings, { manualTargetChars: target, autoContinue, maxAutoRounds: max });
+    for (const creativeEnhancementEnabled of [false,true]) for (const target of [4000, 20000]) for (const autoContinue of [false, true]) for (const max of [1, 3]) {
+        Object.assign(context.settings, { manualTargetChars: target, autoContinue, maxAutoRounds: max, creativeEnhancementEnabled });
         const payload = await assemble('继续展开雨夜重逢，写8000字', { continuationText: previous, forcePlainText: isStagedRenderTarget(target) });
         const job = runInNewContext(`${autoLine}\nlet currentGenerationJob; ${config}; currentGenerationJob`, {
             targetWordCount: target, settings: context.settings, isStagedRenderTarget,
             configuredMaxRounds: max, stagedMultiRoundMode: false, createGenerationJob,
         });
         const expected = continuationFirstRoundGuidance(target, { maxRounds: job.maxRounds });
+        const enhancements = payload.messages.filter(message => message.sourceId === 'creative-enhancement');
+        assert.equal(enhancements.length, Number(creativeEnhancementEnabled));
+        assert.equal(payload.generationFoundation.creativeEnhancement.includes('【虚构叙事执行约定】'), creativeEnhancementEnabled);
+        if (creativeEnhancementEnabled) {
+            const at = payload.messages.indexOf(enhancements[0]);
+            assert.ok(at > payload.messages.findIndex(message => message.sourceId === 'continuation'));
+            assert.ok(at < payload.messages.findIndex(message => message.sourceId === 'instruction'));
+            assert.ok(payload.tokenParts.rules.includes(enhancements[0].content));
+        }
         assert.equal(payload.targetWordCount, target);
         assert.ok(payload.messages.find(message => message.sourceId === 'final-rules').content.includes(expected));
         const task = payload.messages.find(message => message.sourceId === 'instruction').content;
@@ -7781,7 +7790,7 @@ test('长梦慢资料准备期间锁定保留操作，状态变化后不拿旧�
     const confirm=source.match(/async function (?:runtime\.)?confirmLongDreamChapter\([^]*?^}/m)[0];
     const dream={id:1,status:'active',chapters:[{id:'first'}],draft:{status:LONG_DREAM_DRAFT_STATUS.REVIEW,candidates:[{text:'旧版',html:'<p>旧版</p>'}],selectedCandidateIndex:0}};
     let release, saves=0, runs=0;
-    const scope={longDreamCandidateSavePending:false,isPreparingGeneration:false,isGenerating:false,refreshingLongDreamWorldBookId:null,
+    const scope={settings:{},longDreamCandidateSavePending:false,isPreparingGeneration:false,isGenerating:false,refreshingLongDreamWorldBookId:null,
         activeLongDreamId:1,longDreamCache:[dream],longDreamCanonSuggestionState:{},longDreamChapterEditController:null,LONG_DREAM_DRAFT_STATUS,
         longDreamGenerationController:{active:false},getLongDreamGenerationController:()=>({active:false,run(){runs++;throw new Error('不应执行')}}),
         getLongDreamComposerDraft:()=>({}),setLongDreamComposerDraft(){},$:()=>({length:0}),

@@ -1,3 +1,4 @@
+import { pendingManualStoryEntries } from './long-dream-story-summary.js';
 import { LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION } from './long-dream.js';
 import { composePresetMessages } from './request-layout.js';
 import { readableCharCount } from './text-counter.js';
@@ -312,7 +313,7 @@ export function longDreamChapterContext(record = {}, {
         }
         olderOutline = [first, marker, ...tail].filter(Boolean).join('\n');
     }
-    const currentState = cleanText(record?.memory?.currentState);
+    const currentState = pendingManualStoryEntries(record).length ? '' : cleanText(record?.memory?.currentState);
     const selectedItems = selectRelevantLongDreamMemoryItems(record, {
         instruction,
         recentChapterCount: keepRecent,
@@ -368,6 +369,7 @@ export function buildLongDreamChapterPayload({
     continuationRound = false,
     hasIdentityContext = false,
     protagonistAnchor = '',
+    creativeEnhancement = '',
 } = {}) {
     const direction = cleanText(instruction) || '自然承接上一章尚未解决的动作、情绪与伏笔。';
     const context = longDreamChapterContext(record, { instruction: direction });
@@ -439,6 +441,12 @@ export function buildLongDreamChapterPayload({
                 : '本长卷与原世界书隔离，不得读取或自行补入原世界线设定。'}`,
         `【输出协议】\n1. 只输出本章新增的纯正文，不输出标题、HTML、CSS、JavaScript、Markdown 代码块或创作说明；\n2. 不复述、改写或总结已保存章节${current ? '及本章已有正文' : ''}；\n3. 延续既有视角、时态、人物语气、叙事质感与因果；\n4. 用新的动作、对白、心理变化和情节推进承接上一章；\n5. ${finishThisRound ? '本轮可以在本章情节充分展开后自然收束，但不要结束整部长卷。' : '本轮继续充分推进本章，不要为了提前结束而仓促总结或收束；若内容已经充分达到目标，可以自然形成章末，但不要结束整部长卷。'}`,
     ].filter(Boolean);
+    if (creativeEnhancement) {
+        // Retain the disabled layout exactly; enabled guidance follows materials and precedes the current task.
+        const task = sections.shift();
+        const output = sections.pop();
+        sections.push(String(creativeEnhancement), task, output);
+    }
     return {
         systemPrompt,
         userPrompt: sections.join('\n\n---\n\n'),

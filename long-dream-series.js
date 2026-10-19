@@ -1,4 +1,4 @@
-import { chapterSummarySources, validStoryEntries, composeStorySummary, saveStorySummary } from './long-dream-story-summary.js';
+import { chapterSummarySources, validStoryEntries, composeStorySummary, saveStorySummary, pendingManualStoryEntries } from './long-dream-story-summary.js';
 import { buildLongDreamSummaryPayload, parseLongDreamMemoryResponse } from './long-dream-memory.js';
 import { collectionChapters } from './history-collections.js';
 import { createLongDreamChapter, normalizeLongDreamRecord } from './long-dream.js';
@@ -63,12 +63,14 @@ export async function runSeriesMemoryBatches({ read, save, weave, force = false,
 
 // Validate and save only this batch, using hashes from the complete chapter chain.
 export function applySeriesStoryBatch(record, responseEntries, chapters) {
+    if (pendingManualStoryEntries(record).length) return { ...record, memory: { ...record.memory, summaryNeedsRefresh: true } };
     if (!Array.isArray(responseEntries)) throw new Error('本批故事概要缺失');
     const sources = chapterSummarySources(record.chapters);
-    const entries = validStoryEntries(record).filter(entry => !chapters.some(ch => ch.number === entry.chapterNumber));
+    const entries = validStoryEntries(record).filter(entry => entry.editedByUser || !chapters.some(ch => ch.number === entry.chapterNumber));
     for (const chapter of chapters) {
         const matches = responseEntries.filter(entry => Number(entry?.chapterNumber) === chapter.number);
         if (matches.length !== 1 || typeof matches[0].text !== 'string' || !matches[0].text.trim() || matches[0].text.trim().length > 1200) throw new Error('本批故事概要未完整覆盖章节');
+        if (entries.some(entry => entry.chapterNumber === chapter.number && entry.editedByUser)) continue;
         entries.push({ chapterNumber: chapter.number, text: matches[0].text.trim(), source: sources[chapter.number - 1] });
     }
     entries.sort((a, b) => a.chapterNumber - b.chapterNumber);
@@ -79,6 +81,7 @@ export function applySeriesStoryBatch(record, responseEntries, chapters) {
 }
 
 export async function refreshSeriesStorySummary({ record, request, readLatest, save, shouldStop = () => false, timeoutMs = 180000 }) {
+    if (pendingManualStoryEntries(record).length) throw Object.assign(new Error('请先核对人工概要'), { code: 'LONG_DREAM_SUMMARY_MANUAL_REVIEW' });
     const initialChapters = JSON.stringify([record.chapters, record.canon, record.inheritance]);
     const initialDecisions = JSON.stringify([record.memory.states, record.memory.transitions, record.memory.threads, record.memory.deviations, record.memory.rejections]);
     let latest = record;

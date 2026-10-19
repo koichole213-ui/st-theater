@@ -89,6 +89,7 @@ export function createLongDreamGenerationController({
         postProcessing = '',
         squashSystemMessages = false,
         addons = '',
+        creativeEnhancement = '',
         instruction,
         chapterTitle = '',
         targetChars,
@@ -248,6 +249,7 @@ export function createLongDreamGenerationController({
                         continuationRound: round > 1 || !!cleanText(roundBaseText),
                         hasIdentityContext: Object.values(identitySlots || {}).some(value => cleanText(value)),
                         protagonistAnchor,
+                        creativeEnhancement,
                     });
                     const messages = buildLongDreamChapterMessages({
                         payload,

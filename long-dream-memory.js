@@ -1,4 +1,4 @@
-import { validStoryEntries } from './long-dream-story-summary.js';
+import { validStoryEntries, pendingManualStoryEntries } from './long-dream-story-summary.js';
 import { LONG_DREAM_MEMORY_TYPES, LONG_DREAM_WORLD_LINE_RELATION } from './long-dream.js';
 import {
     LONG_DREAM_MEMORY_OPERATION_TYPES,
@@ -69,7 +69,7 @@ function memorySources(item = {}) {
 
 function activeMemoryText(memory = {}) {
     const sections = [];
-    const state = cleanText(memory.currentState);
+    const state = memory.storyEntries?.some(entry => entry.editedByUser && entry.needsReview) ? '' : cleanText(memory.currentState);
     if (state) sections.push(`【故事概要｜过去经历不等于当前状态】\n${state}`);
 
     const states = (Array.isArray(memory.states) ? memory.states : [])
@@ -179,7 +179,7 @@ export function buildLongDreamMemoryPayload({
     const summarizedNumbers = new Set(validStoryEntries(record).map(entry => entry.chapterNumber));
     const missingSummaries = record.chapters.filter(chapter => !summarizedNumbers.has(chapter.number));
     // A large legacy backlog must not exhaust the operation response budget.
-    const summaryChapters = missingSummaries.length <= 5 ? missingSummaries : [];
+    const summaryChapters = !pendingManualStoryEntries(record).length && missingSummaries.length <= 5 ? missingSummaries : [];
     const focus = cleanText(promptPreset) || DEFAULT_LONG_DREAM_MEMORY_PRESET;
     const userPrompt = [
         `【长梦】${cleanText(record.title) || '未命名长梦'}`,

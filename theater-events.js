@@ -1,3 +1,4 @@
+import { bindSummaryEditor } from './long-dream-summary-editor.js';
 import { bindSourcePicker, resetLongDreamSourcePicker, pickerSelectedSource } from './long-dream-source-picker.js';
 import { importLongDreamSeries } from './long-dream-series.js';
 import { toggleHistoryItem, setExpandedHistoryItem, historyFiltersHTML, toggleHistoryFilterPanel, setHistoryFilterPanel } from './history-ui.js';
@@ -28,6 +29,7 @@ export function createTheaterEvents(runtime) {
 function bindEvents() {
     const $d = $(document);
     bindSourcePicker($d, runtime);
+    bindSummaryEditor($d, runtime);
     // 恢复入口最先绑定。即使后续某个功能按钮初始化异常，用户仍能拉取修复。
     $d.off('click.tup').on('click.tup', '#theater-update-btn', runtime.updateExtension);
     $d.off('click.treload').on('click.treload', '#theater-reload-after-update-btn', runtime.confirmReloadAfterUpdate);
@@ -1626,6 +1628,11 @@ function bindEvents() {
     });
     $d.off('change.tstream').on('change.tstream', '#theater-stream-enabled', function () {
         runtime.settings.streamEnabled = this.checked; runtime.save();
+    });
+    $d.off('change.tcreativeenhancement').on('change.tcreativeenhancement', '#theater-creative-enhancement', function () {
+        runtime.settings.creativeEnhancementEnabled = this.checked === true;
+        runtime.save();
+        runtime.refreshTokenEstimate?.(); runtime.scheduleLongDreamTokenEstimate?.();
     });
     $d.off('change.tautocont').on('change.tautocont', '#theater-auto-continue', function () {
         runtime.settings.autoContinue = this.checked; runtime.save();

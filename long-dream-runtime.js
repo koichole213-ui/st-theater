@@ -1,3 +1,4 @@
+import { creativeEnhancementPrompt } from './creative-enhancement.js';
 import { runSeriesMemoryBatches, applySeriesStoryBatch, refreshSeriesStorySummary } from './long-dream-series.js';
 // long-dream-runtime: receives live state and cross-feature callbacks from index.js.
 import { markFirstToken, markCompleted, createRequestMetrics } from './request-metrics.js';
@@ -13,7 +14,7 @@ import { buildLongDreamChapterPayload, buildLongDreamChapterMessages, selectRele
 import { applyPromptPostProcessing } from './request-layout.js';
 import { estimateTokenCount, formatTokenCount } from './token-estimator.js';
 import { summaryUnavailableReason } from './long-dream-summary-ui.js';
-import { restoreStorySummary } from './long-dream-story-summary.js';
+import { restoreStorySummary, pendingManualStoryEntries } from './long-dream-story-summary.js';
 import { refreshLongDreamSummary } from './long-dream-summary.js';
 import { requestCustomApi } from './api-runtime.js';
 import { diagnosticSignalInfo, REQUEST_DIAGNOSTIC_SIGNAL } from './request-diagnostics.js';
@@ -389,6 +390,7 @@ async function refreshLongDreamTokenEstimate() {
             continuationRound: !!currentDraft.trim(),
             hasIdentityContext: Object.values(foundation.identitySlots).some(value => String(value || '').trim()),
             protagonistAnchor: foundation.protagonistAnchor,
+            creativeEnhancement: creativeEnhancementPrompt(runtime.settings.creativeEnhancementEnabled),
         });
         const messages = applyPromptPostProcessing(buildLongDreamChapterMessages({
             payload,
@@ -447,6 +449,7 @@ async function generateNextLongDreamChapter({ appendCandidate = false, candidate
         toastr.warning('请先确认或放弃当前待确认章节');
         return;
     }
+    const creativeEnhancement = creativeEnhancementPrompt(runtime.settings.creativeEnhancementEnabled);
     const composerDraft = runtime.getLongDreamComposerDraft(dream.id);
     const $titleInput = $('#theater-dream-next-title');
     const $instructionInput = $('#theater-dream-next-instruction');
@@ -507,6 +510,7 @@ async function generateNextLongDreamChapter({ appendCandidate = false, candidate
             postProcessing: foundation.postProcessing,
             squashSystemMessages: foundation.squashSystemMessages,
             addons: foundation.addons,
+            creativeEnhancement,
             identitySlots: foundation.identitySlots,
             protagonistAnchor: foundation.protagonistAnchor,
             instruction,
@@ -640,7 +644,7 @@ async function confirmLongDreamSummaryAction(dreamId, versionId = null) {
         ? [`将当前概要切换为这份截至第 ${version.chapterNumber} 章的版本，不调用 API。`,
             `正文和人物关系不回退。${version.chapterNumber < dream.chapters.length ? `第 ${version.chapterNumber + 1}～${dream.chapters.length} 章仍在，但不包含在这版概要里，会标记概要待更新。` : '这版概要已覆盖当前全部已保存章节。'}`]
         : ['将使用梦脉副 API，根据已保存章节和确认后的梦脉重新整理概要，会产生更新用量。',
-            '成功后替换当前概要并保留最近版本；失败时保留原概要。正文和梦脉条目不变。'];
+            '成功后将替换当前概要，包括手动修改的内容，并保留最近版本；失败时保留原概要。正文和梦脉条目不变。'];
     runtime.confirmingLongDreamSummaries.add(key);
     try {
         const { Popup, POPUP_TYPE } = SillyTavern.getContext();
@@ -676,6 +680,7 @@ function syncLongDreamSummaryButton(key) {
     const reason = summaryUnavailableReason(dream, busy);
     const blocked = !!reason;
     $('[data-dream-summary-blocked-reason]').prop('hidden', !reason).text(reason);
+    $('[data-dream-summary-edit]').prop('disabled', blocked);
     $('[data-dream-summary-refresh]')
         .prop('disabled', blocked)
         .attr('aria-busy', String(busy)).text(busy ? '正在更新…' : '更新概要');
@@ -699,6 +704,7 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
     if (dream.memory?.status === LONG_DREAM_MEMORY_STATUS.WEAVING || dream.memory?.pendingConflicts?.length || dream.memory?.pendingChapterNumbers?.length) {
         toastr.warning('请先完成梦脉织录和冲突确认，再更新概要'); return;
     }
+    if (fillMissing && pendingManualStoryEntries(dream).length) return; // User corrections require review; never auto-replace the saved manual draft.
     const series = dream.source?.kind === 'history-folder' && fillMissing;
     const renderSeriesStatus = () => { if (series && String(runtime.activeLongDreamId) === key) { runtime.rememberLongDreamComposerDraft(); runtime.renderLongDreamPanel(); } };
     let stage = 'preset';

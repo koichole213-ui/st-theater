@@ -77,7 +77,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.4.1';
+const VERSION = '4.4.2';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -202,6 +202,7 @@ const defaultSettings = Object.freeze({
     apiPresets: [], selectedApiPresetId: '',
     maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
     maxOutputTokensSchema: 2,
+    creativeEnhancementEnabled: false,
     autoContinue: true,
     autoContinueSchema: AUTO_CONTINUE_SCHEMA,
     maxAutoRounds: 3,

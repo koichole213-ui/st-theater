@@ -992,7 +992,7 @@ export function resolveLongDreamMemoryV2RecordConflict(record, conflictId, actio
     });
     return {
         ...normalized,
-        memory: normalizeMemory({ ...normalized.memory, ...v2, ...invalidateStoryDecisions(normalized.memory), currentState: normalized.memory.currentState, summaryNeedsRefresh: true, summaryHistory: normalized.memory.summaryHistory.filter(item => item.chapterNumber < conflictChapter), updatedAt }, normalized.chapters.length),
+        memory: normalizeMemory({ ...normalized.memory, ...v2, ...invalidateStoryDecisions(normalized.memory), summaryNeedsRefresh: true, summaryHistory: normalized.memory.summaryHistory.filter(item => item.chapterNumber < conflictChapter), updatedAt }, normalized.chapters.length),
         updatedAt,
     };
 }

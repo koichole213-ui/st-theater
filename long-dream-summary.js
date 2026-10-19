@@ -1,5 +1,5 @@
 import { buildLongDreamSummaryPayload, parseLongDreamMemoryResponse } from './long-dream-memory.js';
-import { mergeStoryResponse, saveStorySummary, validStoryEntries } from './long-dream-story-summary.js';
+import { mergeStoryResponse, saveStorySummary, validStoryEntries, pendingManualStoryEntries } from './long-dream-story-summary.js';
 
 // A response must never overwrite a decision or chapter saved while it ran.
 export function summaryRevision(record) {
@@ -7,6 +7,7 @@ export function summaryRevision(record) {
 }
 
 export async function refreshLongDreamSummary({ record, request, readLatest, save, timeoutMs = 180000, replace = true }) {
+    if (!replace && pendingManualStoryEntries(record).length) throw Object.assign(new Error('请先核对人工概要'), { code: 'LONG_DREAM_SUMMARY_MANUAL_REVIEW' });
     buildLongDreamSummaryPayload(record); // Validate before starting any request.
     const revision = summaryRevision(record);
     const existing = new Set(validStoryEntries(record).map(item => item.chapterNumber));

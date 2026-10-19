@@ -552,6 +552,10 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                 <label class="theater-config-switch" aria-label="流式实时显示"><input type="checkbox" id="theater-stream-enabled" ${runtime.settings.streamEnabled !== false ? 'checked' : ''}><span></span></label>
             </div>
             <div class="theater-config-setting-row">
+                <span class="theater-config-setting-copy"><b>创作增强</b><small>为正文加入虚构叙事约定；下一次生成生效，不额外发起请求</small></span>
+                <label class="theater-config-switch" aria-label="创作增强"><input type="checkbox" id="theater-creative-enhancement" ${runtime.settings.creativeEnhancementEnabled === true ? 'checked' : ''}><span></span></label>
+            </div>
+            <div class="theater-config-setting-row">
                 <span class="theater-config-setting-copy"><b>字数不足时自动补写</b><small>达到 Token 限制时继续生成后续</small></span>
                 <label class="theater-config-switch" aria-label="字数不足时自动补写"><input type="checkbox" id="theater-auto-continue" ${runtime.settings.autoContinue ? 'checked' : ''}><span></span></label>
             </div>
