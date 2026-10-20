@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.4.2
+/* 千夜浮梦 · 小剧场生成器 v4.4.3
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -7473,7 +7473,6 @@ body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) :is(.popup-content
 .theater-dream-summary-editor-message:empty { display:none; }
 
 /* Independent layout route and built-in formal release notes. */
-.theater-layout-api { border-top: 1px dashed var(--t-border); margin-top: 12px; padding-top: 3px; }
 .theater-popup .theater-layout-note { text-align: left; color: var(--t-fg-mute); font-size: var(--t-text-xs); line-height: 1.8; margin: 12px 0; }
 .theater-layout-api .theater-config-field small { text-align: left; }
 .theater-popup [hidden]#theater-layout-api-fields, .theater-popup [hidden]#theater-layout-api-off-note,

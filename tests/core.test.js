@@ -3749,13 +3749,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.2 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.3 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.2'/);
-    assert.equal(manifest.version, '4.4.2');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.2/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.3'/);
+    assert.equal(manifest.version, '4.4.3');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.3/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 
@@ -3963,7 +3963,7 @@ test('页边书签位置会限制在可见范围并按拖动落点吸附', () =>
     assert.equal(position.top, 346);
 });
 
-test('设置页按六个清晰模块展示全部功能且字号跟随全局设置', () => {
+test('设置页按七个清晰模块展示全部功能且字号跟随全局设置', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const popupBuilder = source.match(/function (?:runtime\.)?buildPopupHTML\([\s\S]*?\/\/ Rendering helpers/)?.[0] || '';
@@ -3980,12 +3980,12 @@ test('设置页按六个清晰模块展示全部功能且字号跟随全局设�
         'theater-result-bookmark-enabled', 'theater-floating-ball-toggle', 'theater-floating-ball-tuck-toggle',
         'theater-update-btn', 'theater-reload-after-update-btn', 'theater-update-ready-hint',
     ]) assert.match(source, new RegExp(`id="${id}"`));
-    for (const group of ['api', 'generation', 'automation', 'materials', 'access', 'extension']) {
+    for (const group of ['api', 'layout', 'generation', 'automation', 'materials', 'access', 'extension']) {
         assert.match(source, new RegExp(`data-config-group="\\$\\{group.id\\}"|id: '${group}'`));
     }
     const decorator = source.match(/function (?:runtime\.)?decorateConfigLayout\(\)[\s\S]*?\n\}/)?.[0] || '';
     assert.match(popupBuilder, /<div class="theater-config-layout"><div class="theater-config-groups">/);
-    assert.match(popupBuilder, /configGroupOrder = \{ api: 1, generation: 2, automation: 3, materials: 4, access: 5, extension: 6 \}/);
+    assert.match(popupBuilder, /configGroupOrder = \{ api: 1, layout: 2, generation: 3, automation: 4, materials: 5, access: 6, extension: 7 \}/);
     assert.ok(popupBuilder.indexOf('theater-config-layout') < popupBuilder.indexOf('data-config-section="api"'));
     assert.match(decorator, /\$panel\.children\('\.theater-config-layout'\)\.length\) return/);
     assert.doesNotMatch(decorator, /theater-config-index/);
