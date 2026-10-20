@@ -7475,6 +7475,8 @@ body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) :is(.popup-content
 /* Independent layout route and built-in formal release notes. */
 .theater-popup .theater-layout-note { text-align: left; color: var(--t-fg-mute); font-size: var(--t-text-xs); line-height: 1.8; margin: 12px 0; }
 .theater-layout-api .theater-config-field small { text-align: left; }
+.theater-config-card[data-config-group="layout"] #theater-layout-api-fields { padding-top: 12px; }
+.theater-config-card[data-config-group="layout"] label[for="theater-layout-api-preset"] { flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; }
 .theater-popup [hidden]#theater-layout-api-fields, .theater-popup [hidden]#theater-layout-api-off-note,
 .theater-popup [hidden]#theater-release-notes-content, .theater-popup [hidden]#theater-release-notes-dot { display: none !important; }
 .theater-layout-route { display: flex; align-items: center; gap: 9px; margin: 12px 0; padding: 11px 13px; background: var(--t-surface-2); border-radius: 10px; color: var(--t-fg-soft); font-size: var(--t-text-xs); line-height: 1.8; text-align: left; }
