@@ -1,4 +1,5 @@
 // theater-api: receives live state and cross-feature callbacks from index.js.
+import { captureLayoutApiSelection } from './layout-api.js';
 import { createRequestTrace } from './request-trace.js';
 import { resolveMainApiModel, DEFAULT_MAX_OUTPUT_TOKENS, API_PROTOCOLS, normalizeMaxTokens, resolveProtocol, buildApiEndpoint, buildApiRequest } from './api-client.js';
 import { createRequestMetrics, markFallback } from './request-metrics.js';
@@ -17,6 +18,7 @@ function captureActualRequestTrace(details, purpose = 'support') {
 function captureGenerationApiRoute(ctx = SillyTavern.getContext()) {
     const mode = runtime.settings.apiMode === 'main' ? 'main' : 'custom';
     const shouldStream = runtime.settings.streamEnabled !== false;
+    const layoutSelection = captureLayoutApiSelection(runtime.settings);
     if (mode === 'main') {
         const oai = ctx?.oai_settings || globalThis.oai_settings;
         return Object.freeze({
@@ -24,7 +26,7 @@ function captureGenerationApiRoute(ctx = SillyTavern.getContext()) {
             protocol: 'main',
             model: resolveMainApiModel(ctx, oai) || '未识别',
             maxTokens: oai?.openai_max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-            shouldStream,
+            shouldStream, layoutSelection,
         });
     }
     const custom = Object.freeze({
@@ -39,7 +41,7 @@ function captureGenerationApiRoute(ctx = SillyTavern.getContext()) {
         protocol: resolveProtocol(custom.apiProtocol, custom.apiUrl),
         model: custom.apiModel || '未填写',
         maxTokens: custom.maxOutputTokens,
-        shouldStream,
+        shouldStream, layoutSelection,
         custom,
     });
 }

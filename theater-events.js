@@ -1,3 +1,6 @@
+import { bindLayoutRetry } from './layout-retry.js';
+import { bindLayoutApi } from './layout-api-settings.js';
+import { bindReleaseNotes } from './release-notes.js';
 import { bindSummaryEditor } from './long-dream-summary-editor.js';
 import { bindSourcePicker, resetLongDreamSourcePicker, pickerSelectedSource } from './long-dream-source-picker.js';
 import { importLongDreamSeries } from './long-dream-series.js';
@@ -30,6 +33,9 @@ function bindEvents() {
     const $d = $(document);
     bindSourcePicker($d, runtime);
     bindSummaryEditor($d, runtime);
+    bindLayoutApi($d, runtime);
+    bindLayoutRetry($d, runtime);
+    bindReleaseNotes($d, runtime);
     // 恢复入口最先绑定。即使后续某个功能按钮初始化异常，用户仍能拉取修复。
     $d.off('click.tup').on('click.tup', '#theater-update-btn', runtime.updateExtension);
     $d.off('click.treload').on('click.treload', '#theater-reload-after-update-btn', runtime.confirmReloadAfterUpdate);

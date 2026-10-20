@@ -85,6 +85,16 @@ function refreshApiPresetControls(selectedId = runtime.settings.selectedApiPrese
     if (!runtime.settings.apiPresets.some(preset => preset.id === runtime.settings.longDreamMemoryApiPresetId)) {
         runtime.settings.longDreamMemoryApiPresetId = '';
     }
+    const $layoutSelect = $('#theater-layout-api-preset');
+    if ($layoutSelect.length) {
+        const boundId = runtime.settings.layoutApiPresetId || '';
+        $layoutSelect.empty().append('<option value="">尚未绑定（请选择预设）</option>');
+        if (boundId && !runtime.settings.apiPresets.some(p => p.id === boundId)) {
+            $layoutSelect.append($('<option>').val(boundId).text('原排版预设已删除，请重新选择'));
+        }
+        runtime.settings.apiPresets.forEach(preset => $layoutSelect.append($('<option>').val(preset.id).text(apiPresetDisplayLabel(preset))));
+        $layoutSelect.val(boundId);
+    }
     const $memorySelect = $('#theater-dream-memory-api-preset');
     if ($memorySelect.length) {
         $memorySelect.empty().append('<option value="">尚未绑定（暂停自动织录）</option>');

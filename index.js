@@ -200,6 +200,8 @@ const defaultSettings = Object.freeze({
     apiMode: 'custom',  // 'custom' 独立 API | 'main' 酒馆主 API（实验）
     apiUrl: '', apiKey: '', apiModel: '', apiProtocol: 'auto', streamEnabled: true,
     apiPresets: [], selectedApiPresetId: '',
+    layoutApiEnabled: false, layoutApiPresetId: '', layoutMaxOutputTokens: 131072,
+    releaseNotesReadVersion: '',
     maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
     maxOutputTokensSchema: 2,
     creativeEnhancementEnabled: false,

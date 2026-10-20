@@ -1,3 +1,4 @@
+import { resolveLayoutApiRoute } from './layout-api.js';
 import { creativeEnhancementPrompt } from './creative-enhancement.js';
 // theater-generation: receives live state and cross-feature callbacks from index.js.
 import { adaptiveRenderProfile } from './adaptive-render.js';
@@ -534,6 +535,7 @@ async function requestFinalRenderedHtml({
     metricScope = 'final-render',
 } = {}) {
     const finalRenderPayload = buildFinalRenderPayload({ sourceText, rules, originalInstruction });
+    const renderApiRoute = resolveLayoutApiRoute(apiRoute || runtime.captureGenerationApiRoute(ctx));
     runtime.lastRequestContext = {
         kind: '最终 HTML 排版',
         sourceChars: readableCharCount(sourceText),
@@ -556,7 +558,7 @@ async function requestFinalRenderedHtml({
         }
         try {
             const result = await runtime.requestConfiguredGenerationApi({
-                apiRoute,
+                apiRoute: renderApiRoute,
                 ctx,
                 systemPrompt: finalRenderPayload.systemPrompt,
                 userPrompt: finalRenderPayload.userPrompt + retryNote,
@@ -881,6 +883,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             streamRenderer.reset();
         }
 
+        let layoutRetry = null;
         let newText = runtime.currentGenerationJob.segments.join('\n\n').trim();
         runtime.currentGenerationJob.actualChars = readableCharCount(newText);
         if (selectedPlainTextRender) {
@@ -919,10 +922,11 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             } catch (renderError) {
                 if (renderError?.name === 'AbortError') throw renderError;
                 const renderIssue = runtime.captureRequestIssue(renderError, { stage: '最终 HTML 排版' });
+                layoutRetry = { sourceText: newText, rules, originalInstruction: payload.generationFoundation?.originalInstruction || '', renderLabel: renderTemplate };
                 runtime.lastGeneratedHtml = runtime.textFallbackHtml(newText);
                 runtime.currentOutputMode = 'text';
                 runtime.runtimeLog('warn', '最终 HTML 渲染失败', { signal: renderIssue.signal, fallback: '纯文字' });
-                toastr.warning(`最终 HTML 排版失败：${renderIssue.signal}；已保留完整正文。可在【诊断】查看说明。`);
+                toastr.warning(`最终 HTML 排版失败：${renderIssue.signal}；已保留完整正文，可点【重试 HTML 排版】；也可在【诊断】查看说明。`);
             }
         }
         runtime.runtimeLog('info', '渲染路径', { path: runtime.currentOutputMode === 'html' ? '正常 HTML' : '纯文字' });
@@ -951,6 +955,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             const item = {
                 ...continuationRun?.historyMetadata,
                 resultId: newHistoryKey(), html: runtime.lastGeneratedHtml,
+                ...(layoutRetry ? { layoutRetry } : {}),
                 mode: runtime.currentOutputMode, continuationRounds,
                 time: new Date().toLocaleString('zh-CN', { hour12: false }),
                 instruction: instruction || '', sourceConfig: generationSourceConfig, roleSources: generationRoles,

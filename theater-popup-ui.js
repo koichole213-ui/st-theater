@@ -1,3 +1,4 @@
+import { releaseNotesHTML, latestReleaseVersion, hasUnreadRelease } from './release-notes.js';
 import { historyFiltersHTML } from './history-ui.js';
 // theater-popup-ui: receives live state and cross-feature callbacks from index.js.
 import { adaptiveRenderProfile } from './adaptive-render.js';
@@ -147,6 +148,8 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                 </div>
             </div>
             <div id="theater-length-hint" class="theater-hint-inline" style="display:none; margin:-4px 0 8px;"></div>
+            <button type="button" id="theater-retry-layout-btn" class="theater-btn" hidden>重试 HTML 排版</button>
+            <button type="button" id="theater-stop-layout-btn" class="theater-btn" hidden>停止排版</button>
             <div id="theater-result-characters" class="theater-result-character-count"></div>
             <div id="theater-continuation-result" hidden>
                 <div class="theater-continuation-versions">
@@ -534,6 +537,21 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                     </details>
                 </div>
             </details>
+
+            <div class="theater-layout-api">
+                <div class="theater-config-setting-row">
+                    <span class="theater-config-setting-copy"><b>独立 HTML 排版 API</b><small>正文完成后的独立排版，改用另一条线路</small></span>
+                    <label class="theater-config-switch" aria-label="独立 HTML 排版 API"><input type="checkbox" id="theater-layout-api-enabled" aria-controls="theater-layout-api-fields" aria-expanded="${runtime.settings.layoutApiEnabled === true}" ${runtime.settings.layoutApiEnabled === true ? 'checked' : ''}><span></span></label>
+                </div>
+                <p class="theater-layout-note" id="theater-layout-api-off-note" ${runtime.settings.layoutApiEnabled === true ? 'hidden' : ''}>默认关闭，沿用当前排版线路。一次性生成正文与 HTML 的流程不受影响。</p>
+                <div id="theater-layout-api-fields" ${runtime.settings.layoutApiEnabled === true ? '' : 'hidden'}>
+                    <p class="theater-layout-note">正文仍由原线路生成。这里只接管已有的独立 HTML 排版步骤，沿用所选模板与样式要求。</p>
+                    <div class="theater-config-field"><label for="theater-layout-api-preset"><b>排版 API 预设</b><small>使用已保存的 API 预设库</small></label><select id="theater-layout-api-preset" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}"><option value="">尚未绑定（请选择预设）</option>${runtime.settings.layoutApiPresetId && !apiPresets.some(p => p.id === runtime.settings.layoutApiPresetId) ? `<option selected value="${runtime.esc(runtime.settings.layoutApiPresetId)}">原排版预设已删除，请重新选择</option>` : ''}${apiPresets.map(preset => `<option value="${runtime.esc(preset.id)}" ${preset.id === runtime.settings.layoutApiPresetId ? 'selected' : ''}>${runtime.esc(runtime.apiPresetDisplayLabel(preset))}</option>`).join('')}</select></div>
+                    <details class="theater-config-extra-details"><summary><span><i class="fa-solid fa-gear"></i> 高级排版设置</span><i class="fa-solid fa-chevron-down"></i></summary><div class="theater-config-extra-body"><div class="theater-config-field"><label for="theater-layout-max-tokens"><b>单轮输出上限</b><small>默认 131072，仅用于排版</small></label><input id="theater-layout-max-tokens" class="theater-input" type="number" min="256" max="131072" step="256" value="${normalizeMaxTokens(runtime.settings.layoutMaxOutputTokens, 131072)}"></div><p class="theater-layout-note">默认给排版留足输出空间，实际输出仍受模型限制。此值只用于排版，不修改原预设或正文生成的上限。</p></div></details>
+                    <p class="theater-layout-route"><i class="fa-solid fa-route"></i><span>正文生成 → 独立 API 排版 → 查看结果</span></p>
+                    <div class="theater-config-api-actions"><button type="button" id="theater-layout-api-test" class="theater-btn"><i class="fa-solid fa-plug"></i><span>测试连接</span></button><button type="button" id="theater-layout-api-save" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存设置</span></button></div>
+                </div>
+            </div>
         </div>
         ${configGroupEnd}
         ${configGroupStart('generation', 'fa-sliders', '生成控制')}
@@ -698,6 +716,8 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                     <button type="button" id="theater-reload-after-update-btn" class="theater-btn theater-reload-after-update" ${runtime.updateReadyToReload ? '' : 'hidden'}><i class="fa-solid fa-rotate-right"></i><span>刷新酒馆并启用</span></button>
                 </div>
             </div>
+            <button type="button" id="theater-release-notes-toggle" class="theater-release-entry" aria-expanded="false" aria-controls="theater-release-notes-content"><span><i class="fa-solid fa-clock-rotate-left"></i><b>更新日志</b><i id="theater-release-notes-dot" class="theater-release-unread" aria-label="有未读更新" ${hasUnreadRelease(runtime.settings) ? '' : 'hidden'}></i></span><span><small>v${runtime.esc(latestReleaseVersion())}</small><i class="fa-solid fa-chevron-down"></i></span></button>
+            <div id="theater-release-notes-content" hidden><p class="theater-layout-note">看看这一版有哪些变化。记录随插件内置，无需联网。</p>${releaseNotesHTML(runtime.esc)}</div>
             <p id="theater-update-ready-hint" class="theater-update-ready-hint" ${runtime.updateReadyToReload ? '' : 'hidden'}><i class="fa-solid fa-circle-check"></i><span>更新文件已下载；你可以稍后刷新，不会自动打断当前操作。</span></p>
         </div>
         ${configGroupEnd}

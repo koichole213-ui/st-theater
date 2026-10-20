@@ -106,6 +106,7 @@ function showInIframe(html, mode = 'html', allowTextFallback = true) {
     $textFallback.hide().empty().toggleClass('is-dark', textTheme === 'dark');
     $(f).show();
     runtime.currentDisplayHtml = html;
+    $('#theater-retry-layout-btn').prop('hidden', !runtime.currentGenerationResult?.layoutRetry || runtime.currentGenerationResult.html !== html);
     runtime.currentOutputMode = mode;
     runtime.updateContinueHint();
     updateRecentNav();

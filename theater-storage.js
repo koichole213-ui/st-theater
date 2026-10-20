@@ -307,6 +307,8 @@ function updateResultItem(item, html, mode) {
     return queueResultStorage(async () => {
         const text = runtime.htmlToPlainText(html);
         const updated = { ...item, html, mode, continuationRounds: [text] };
+        // An applied body edit invalidates the old layout task; failed writes retain it.
+        if (item.layoutRetry) updated.layoutRetry = null;
         const next = runtime.recentCache.map(entry => entry === item ? updated : entry);
         const current = runtime.currentGenerationResult === item ? updated : runtime.currentGenerationResult;
         if (!await recentPersist(next, current)) return false;

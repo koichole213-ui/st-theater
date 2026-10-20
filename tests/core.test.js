@@ -35,7 +35,7 @@ test('生成完成与中断保留结果在缺少 randomUUID 时仍可保存，�
         const html = '<style>p{color:gold}</style><p>需要保留的正文</p>';
         const context = {
             crypto: supported ? globalThis.crypto : { getRandomValues: bytes => globalThis.crypto.getRandomValues(bytes) },
-            lastGeneratedHtml: html, currentOutputMode: 'html', continuationRun: null,
+            lastGeneratedHtml: html, currentOutputMode: 'html', continuationRun: null, layoutRetry: null,
             continuationRounds: ['旧前情', '本次正文'], instruction: '本轮方向', generationSourceConfig: { presetName: '合成' },
             generationRoles: [], sourceTags: ['标签'], itemTags: ({ tags }) => tags, knownInstructionTags: () => [],
             retainedResultSource: { instruction: '本轮方向', continuationRounds: ['旧前情', '本次正文'] },
@@ -4222,7 +4222,7 @@ test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在�
             const initialHtml = '<html><body><button>翻开</button><p>第一段。</p><p>第二段。</p></body></html>';
             const harness = runInNewContext('(async () => {'
                 + "let lastGeneratedHtml = '', currentOutputMode = 'html';"
-                + 'let activeRound, firstChunkShown, bgStreamText, retainStreamAsBody, currentRoundStreamText, lastRequestContext;\n'
+                + 'let activeRound, firstChunkShown, bgStreamText, retainStreamAsBody, currentRoundStreamText, lastRequestContext, layoutRetry;\n'
                 + 'const runtime = Object.create(globalThis.runtime);\n'
                 + 'Object.defineProperties(runtime, { lastGeneratedHtml: { get: () => lastGeneratedHtml, set: value => { lastGeneratedHtml = value; } }, currentOutputMode: { get: () => currentOutputMode, set: value => { currentOutputMode = value; } }, bgStreamText: { get: () => bgStreamText, set: value => { bgStreamText = value; } }, lastRequestContext: { get: () => lastRequestContext, set: value => { lastRequestContext = value; } } });\n'
                 + validate + '\n' + request + '\n' + dispatch
