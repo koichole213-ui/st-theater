@@ -720,7 +720,7 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
             ...(series ? { shouldStop: () => (runtime.settings.longDreamSeriesPausedIds || []).includes(key) } : {}),
             replace: !fillMissing,
             record: dream,
-            request: (payload, { signal }) => requestCustomApi({ config: { ...preset, maxOutputTokens: Math.min(8192, normalizeMaxTokens(preset.maxOutputTokens, 4096)) }, ...payload, signal, shouldStream: false, onChunk: () => {}, log: runtime.runtimeLog }),
+            request: (payload, { signal }) => requestCustomApi({ config: { ...preset, maxOutputTokens: normalizeMaxTokens(preset.maxOutputTokens) }, ...payload, signal, shouldStream: runtime.settings.streamEnabled !== false, onChunk: () => {}, log: runtime.runtimeLog }),
             readLatest: () => runtime.longDreamCache.find(item => String(item.id) === key),
             save: record => runtime.longDreamPut(record),
         });
@@ -802,11 +802,11 @@ async function weaveLongDreamMemoryBatch(dreamId, { force = false, announce = fa
         const response = await requestCustomApi({
             config: {
                 ...preset,
-                maxOutputTokens: Math.min(8192, normalizeMaxTokens(preset.maxOutputTokens, 4096)),
+                maxOutputTokens: normalizeMaxTokens(preset.maxOutputTokens),
             },
             systemPrompt: payload.systemPrompt,
             userPrompt: payload.userPrompt,
-            shouldStream: false,
+            shouldStream: runtime.settings.streamEnabled !== false,
             onChunk: () => {},
             log: runtime.runtimeLog,
         });

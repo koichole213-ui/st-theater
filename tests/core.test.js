@@ -7182,7 +7182,7 @@ test('概要点击立即反馈、去重、超时解锁和配置异常提示', as
     const button = { each() { return this; }, prop(k,v) { this[k]=v; return this; }, attr(k,v) { this[k]=v; return this; }, text(v) { this.label=v; return this; } };
     const notices = [];
     let handler, calls = 0, saves = 0;
-    const scope = { activeLongDreamId: record.id, longDreamCache: [record], refreshingLongDreamSummaries: new Set(),
+    const scope = { settings: {}, activeLongDreamId: record.id, longDreamCache: [record], refreshingLongDreamSummaries: new Set(),
         LONG_DREAM_MEMORY_STATUS, summaryUnavailableReason, $: () => button, normalizeMaxTokens: v => v, runtimeLog() {},
         selectedLongDreamMemoryApiPreset: () => ({ maxOutputTokens: 4096 }),
         refreshLongDreamSummary: options => refreshLongDreamSummary({ ...options, timeoutMs: 10 }),
