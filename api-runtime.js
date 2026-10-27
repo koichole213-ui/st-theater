@@ -926,9 +926,7 @@ export async function readSSEStream(
         onNonStreamingRead();
         throw htmlResponseError(await readResponseText(response, protocol));
     }
-    if (!response.body?.getReader) {
-        throw streamEmptyError();
-    }
+    if (!response.body?.getReader) throw streamEmptyError();
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let full = '', buffer = '', rawText = '';
@@ -939,128 +937,186 @@ export async function readSSEStream(
     let eventCount = 0;
     let lastJson = null;
     let streamFinished = false;
+    let protocolDetected = false;
+    let parseFailures = 0, unsupportedEvents = 0;
+    let receivedChunks = 0, receivedBytes = 0;
+    let readComplete = false;
+    let plainTextPreamble = false;
 
-    const consumePayload = (payload) => {
+    // Only shape/counters are diagnosed; never retain payloads in summaries.
+    const isApiObject = json => {
+        if (!json || typeof json !== 'object' || Array.isArray(json)) return false;
+        const object = value => !!value && typeof value === 'object' && !Array.isArray(value);
+        const textValue = value => value == null || typeof value === 'string'
+            || (Array.isArray(value) && value.every(textValue))
+            || (object(value) && ['text', 'content', 'value', 'output_text'].some(key => Object.hasOwn(value, key))
+                && ['text', 'content', 'value', 'output_text'].every(key => !Object.hasOwn(value, key) || textValue(value[key])));
+        const textFields = value => ['text', 'content', 'output_text']
+            .every(key => !Object.hasOwn(value, key) || textValue(value[key]));
+        if (!textFields(json)) return false;
+        if (typeof json.type === 'string' && ![
+            'error', 'ping', 'message_start', 'message_delta', 'message_stop',
+            'content_block_start', 'content_block_delta', 'content_block_stop',
+            'response.created', 'response.in_progress', 'response.completed', 'response.failed', 'response.incomplete',
+            'response.output_item.added', 'response.output_item.done', 'response.content_part.added', 'response.content_part.done',
+            'response.output_text.delta', 'response.output_text.done', 'response.refusal.delta', 'response.refusal.done',
+        ].includes(json.type)) return false;
+        if (Object.hasOwn(json, 'choices')) {
+            return Array.isArray(json.choices) && json.choices.every(choice => object(choice) && textFields(choice)
+                && ['delta', 'message'].every(key => choice[key] == null || (object(choice[key]) && textFields(choice[key]))));
+        }
+        if (Object.hasOwn(json, 'candidates')) {
+            return Array.isArray(json.candidates) && json.candidates.every(candidate => object(candidate)
+                && (candidate.content == null || (object(candidate.content)
+                    && (candidate.content.parts == null || (Array.isArray(candidate.content.parts)
+                        && candidate.content.parts.every(part => object(part) && textFields(part)))))));
+        }
+        if (Object.hasOwn(json, 'output')) return Array.isArray(json.output);
+        if (json.type) return true;
+        return ['content', 'delta', 'message', 'response', 'output_text', 'error',
+            'usage', 'usageMetadata', 'promptFeedback', 'prompt_feedback', 'stop_reason']
+            .some(key => Object.hasOwn(json, key) && (json[key] == null
+                || typeof json[key] === 'string' || typeof json[key] === 'object'));
+    };
+    const summary = () => {
+        const bodySeen = !!String(filterTaggedReasoning(full).content || '').trim();
+        const unknownReason = parseFailures ? 'parse_failed'
+            : unsupportedEvents ? 'unsupported_format'
+            : !readComplete && !streamFinished ? 'read_incomplete'
+            : !protocolDetected && !full ? 'unobserved_format' : null;
+        return {
+            ...createResponseSummary({ response, transport: 'stream', protocol, events: eventCount,
+                json: lastJson, meta, hasText: bodySeen, hasReasoning: hadReasoning }),
+            receivedChunks, receivedBytes, protocolDetected, doneSeen: streamFinished,
+            parseFailures, unsupportedEvents, readComplete,
+            contentSeen: bodySeen ? true : unknownReason ? 'unknown' : false,
+            contentObservationReason: bodySeen ? 'body_seen' : unknownReason || 'recognized_empty',
+        };
+    };
+    const consumePayload = (payload, framed = false) => {
         const text = String(payload || '').trim();
         if (!text) return;
         if (text === '[DONE]') {
+            protocolDetected = true;
             streamFinished = true;
             return;
         }
         let json;
-        try { json = JSON.parse(text); } catch { return; }
+        try { json = JSON.parse(text); } catch {
+            // Bare JSON may span lines: defer its classification until the full body is available.
+            if (framed) { protocolDetected = true; parseFailures += 1; }
+            return;
+        }
         eventCount += 1;
         lastJson = json;
+        const recognized = isApiObject(json);
+        protocolDetected ||= framed || recognized;
+        if (!recognized) unsupportedEvents += 1;
         providerError ||= extractApiErrorMessage(json);
         hadReasoning ||= hasReasoningContent(json);
         const nextMeta = extractResponseMeta(json, protocol);
         if (nextMeta.rawStopReason) meta = nextMeta;
         else if (nextMeta.usage) meta.usage = nextMeta.usage;
         const delta = extractStreamText(json, protocol);
-        if (delta) {
-            full += delta;
-            onChunk(full);
-        }
+        if (delta) { full += delta; onChunk(full); }
     };
-
     const dispatchEvent = () => {
         if (!eventData.length) return;
-        consumePayload(eventData.join('\n'));
+        protocolDetected = true;
+        consumePayload(eventData.join('\n'), true);
         eventData = [];
     };
-
-    const consumeLine = (line) => {
-        if (line === '') {
-            dispatchEvent();
+    const consumeLine = line => {
+        if (line === '') { dispatchEvent(); return; }
+        // Once ordinary prose starts, protocol-looking lines belong to that plain reply.
+        if (plainTextPreamble) return;
+        // These are SSE fields at the start of a line, not keywords inside a story.
+        if (line.startsWith(':') || /^(?:event|id|retry):/.test(line)) {
+            protocolDetected = true;
             return;
         }
-        if (line.startsWith(':') || line.startsWith('event:') || line.startsWith('id:') || line.startsWith('retry:')) return;
         if (line.startsWith('data:')) {
+            protocolDetected = true;
             const data = line.slice(5).replace(/^ /, '');
-            if (data.trim() === '[DONE]') {
-                dispatchEvent();
-                consumePayload(data);
-                return;
-            }
+            if (data.trim() === '[DONE]') { dispatchEvent(); consumePayload(data, true); return; }
             eventData.push(data);
             return;
         }
         const text = line.trim();
-        if (text.startsWith('{') || text.startsWith('[')) consumePayload(text);
+        if (text === '[DONE]' || text.startsWith('{') || text.startsWith('[')) consumePayload(text);
+        else if (text && !protocolDetected) plainTextPreamble = true;
     };
 
-    while (true) {
-        const { done, value } = await readStreamChunk(reader, idleTimeoutMs);
-        if (done) break;
-        onReadProgress(value?.byteLength || 0);
-        const chunk = decoder.decode(value, { stream: true });
-        rawText += chunk;
-        buffer += chunk;
-        const lines = buffer.split(/\r?\n/);
-        buffer = lines.pop() || '';
-
-        for (const line of lines) consumeLine(line.replace(/\r$/, ''));
-        if (streamFinished) {
-            await reader.cancel('stream completed').catch(() => {});
-            break;
-        }
-    }
-    const finalChunk = decoder.decode();
-    rawText += finalChunk;
-    buffer += finalChunk;
-    if (buffer) consumeLine(buffer.replace(/\r$/, ''));
-    dispatchEvent();
-
-    if (!full && rawText.trim()) {
-        try {
-            const json = JSON.parse(rawText.trim());
-            const apiError = extractApiErrorMessage(json);
-            if (apiError) throw streamPayloadError(apiError);
-            hadReasoning ||= hasReasoningContent(json);
-            lastJson = json;
-            eventCount = Math.max(1, eventCount);
-            full = extractStreamText(json, protocol);
-            if (full) {
-                onChunk(full);
-                const rawMeta = extractResponseMeta(json, protocol);
-                return {
-                    text: full,
-                    ...rawMeta,
-                    responseSummary: createResponseSummary({
-                        response, transport: 'stream', protocol, events: eventCount, json, meta: rawMeta,
-                        hasText: true, hasReasoning: hadReasoning,
-                    }),
-                };
+    try {
+        while (true) {
+            const { done, value } = await readStreamChunk(reader, idleTimeoutMs);
+            if (done) { readComplete = true; break; }
+            receivedChunks += 1;
+            receivedBytes += value?.byteLength || 0;
+            onReadProgress(value?.byteLength || 0);
+            const chunk = decoder.decode(value, { stream: true });
+            rawText += chunk;
+            buffer += chunk;
+            const lines = buffer.split(/\r?\n/);
+            buffer = lines.pop() || '';
+            for (const line of lines) consumeLine(line.replace(/\r$/, ''));
+            if (streamFinished) {
+                await reader.cancel('stream completed').catch(() => {});
+                break;
             }
-            const rawMeta = extractResponseMeta(json, protocol);
-            if (rawMeta.rawStopReason || rawMeta.blockReason) meta = rawMeta;
-        } catch (error) {
-            if (!(error instanceof SyntaxError)) throw error;
         }
-        const raw = rawText.trim();
-        if (isHtmlErrorResponse(contentType, raw)) throw htmlResponseError(raw);
-        if (raw.length > 20 && !raw.startsWith('{') && !raw.startsWith('data:')) {
-            full = raw;
-            onChunk(full);
-        }
-    }
+        const finalChunk = decoder.decode();
+        rawText += finalChunk;
+        buffer += finalChunk;
+        if (buffer) consumeLine(buffer.replace(/\r$/, ''));
+        dispatchEvent();
 
-    const responseSummary = createResponseSummary({
-        response, transport: 'stream', protocol, events: eventCount, json: lastJson, meta,
-        hasText: !!full, hasReasoning: hadReasoning,
-    });
-    if (!full && providerError) throw attachResponseSummary(streamPayloadError(providerError), responseSummary);
-    if (!full && hadReasoning) {
-        throw attachResponseSummary(reasoningOnlyError({ phase: 'body', transport: 'stream' }), responseSummary);
+        if (!full && rawText.trim()) {
+            const raw = rawText.trim();
+            if (isHtmlErrorResponse(contentType, raw)) throw htmlResponseError(raw);
+            // A complete JSON body remains supported even when stream=true was requested.
+            if (!protocolDetected && /^[{[]/.test(raw)) {
+                try {
+                    const json = JSON.parse(raw);
+                    lastJson = json;
+                    eventCount = Math.max(1, eventCount);
+                    protocolDetected = isApiObject(json);
+                    unsupportedEvents = protocolDetected ? 0 : Math.max(1, unsupportedEvents);
+                    providerError ||= extractApiErrorMessage(json);
+                    hadReasoning ||= hasReasoningContent(json);
+                    meta = extractResponseMeta(json, protocol);
+                    full = extractStreamText(json, protocol);
+                    if (full) onChunk(full);
+                } catch (error) {
+                    if (!(error instanceof SyntaxError)) throw error;
+                    // A bracketed story heading is not JSON protocol evidence.
+                    if (/application\/json/i.test(contentType)
+                        || /^[{[]\s*(?:[{[]|"(?:choices|candidates|output|content|delta|message|response|output_text|error|usage|usageMetadata|promptFeedback|type)"\s*:)/.test(raw)) {
+                        protocolDetected = true;
+                        parseFailures += 1;
+                    }
+                }
+            }
+            if (!full && !protocolDetected && !unsupportedEvents && !parseFailures) {
+                full = raw;
+                onChunk(full);
+            }
+        }
+        const responseSummary = summary();
+        if (!full && providerError) throw streamPayloadError(providerError);
+        if (!full && (parseFailures || unsupportedEvents)) {
+            throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.INVALID_RESPONSE, {
+                code: 'THEATER_RESPONSE_PARSE', phase: 'body', transport: 'stream',
+            });
+        }
+        if (!full && hadReasoning) throw reasoningOnlyError({ phase: 'body', transport: 'stream' });
+        if (!full && (protocolDetected || eventCount > 0)) {
+            // Protocol-only responses must not trigger the empty-transport compatibility retry.
+            throw noTextResponseError(meta, { phase: 'body', transport: 'stream' });
+        }
+        if (!full) throw streamEmptyError();
+        return { text: full, ...meta, responseSummary };
+    } catch (error) {
+        throw attachResponseSummary(error, summary());
     }
-    if (!full && (meta.blockReason || isContentBlockedStopReason(meta.rawStopReason))) {
-        throw attachResponseSummary(noTextResponseError(meta, { phase: 'body', transport: 'stream' }), responseSummary);
-    }
-    // 已收到合法事件（尤其是 finish_reason），说明流式传输本身并不为空；
-    // 此时再次完整生成只会重复消耗上游推理，直接报告无正文。
-    if (!full && eventCount > 0) {
-        throw attachResponseSummary(noTextResponseError(meta, { phase: 'body', transport: 'stream' }), responseSummary);
-    }
-    if (!full) throw attachResponseSummary(streamEmptyError(), responseSummary);
-    return { text: full, ...meta, responseSummary };
 }

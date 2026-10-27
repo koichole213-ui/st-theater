@@ -47,6 +47,9 @@ async function exercise(kind, { tokens, stream, failure = false } = {}) {
         const json = JSON.stringify({ operations: [], storyEntries: [{ chapterNumber: 1, text: '完整的新概要' }] });
         const output = failure ? json.slice(0, -12) : json;
         if (!body.stream) return new Response(JSON.stringify({ choices: [{ message: { content: output }, finish_reason: failure ? 'length' : 'stop' }] }), { headers: { 'content-type': 'application/json' } });
+        if (failure === 'protocol') return new Response(': keep-alive\n\n'.repeat(251)
+            + 'data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":"length"}]}\n\ndata: [DONE]\n\n',
+            { headers: { 'content-type': 'text/event-stream' } });
         const cut = Math.floor(output.length / 2);
         const parts = [output.slice(0, cut), output.slice(cut)];
         const encoder = new TextEncoder();
@@ -86,7 +89,7 @@ async function exercise(kind, { tokens, stream, failure = false } = {}) {
     assert.equal(JSON.stringify(preset), beforePreset);
     assert.equal(JSON.stringify(current.chapters), beforeChapters);
     assert.equal(runtime.refreshingLongDreamSummaries.size, 0);
-    if (stream !== false) assert.equal(chunksObserved, failure === 'interrupted' ? 1 : 2);
+    if (stream !== false) assert.equal(chunksObserved, failure === 'protocol' ? 0 : failure === 'interrupted' ? 1 : 2);
     if (failure) {
         assert.equal(current.memory.currentState, '保留的旧概要');
         assert.equal(JSON.stringify(current.memory.storyEntries), beforeEntries);
@@ -106,6 +109,9 @@ for (const kind of ['weave', 'summary', 'series']) {
                 await exercise(kind, { tokens, stream });
             }
         }
+    });
+    test(`${kind}: 心跳协议空正文不覆盖旧概要或章节`, async () => {
+        await exercise(kind, { stream: true, failure: 'protocol' });
     });
     test(`${kind}: 流式及非流式截断不覆盖旧概要或推进完成进度`, async () => {
         for (const stream of [true, false]) await exercise(kind, { stream, failure: true });

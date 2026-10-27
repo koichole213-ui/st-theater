@@ -27,7 +27,10 @@ function formatApiResponseSummary(summary) {
         usage.reasoningTokens != null ? `思考 ${usage.reasoningTokens}` : '',
         usage.totalTokens != null ? `合计 ${usage.totalTokens}` : '',
     ].filter(Boolean);
-    return `${summary.transport || 'unknown'} · HTTP ${summary.httpStatus || '未知'} · ${summary.contentType || 'unknown'} · 格式 ${summary.format || 'unknown'} · 事件 ${summary.events || 0} · 正文 ${summary.hasText ? '有' : '无'} · 思考 ${summary.hasReasoning ? '有' : '无'} · 结束 ${summary.rawStopReason || '未报告'}${tokenParts.length ? ` · Token ${tokenParts.join('/')}` : ''}`;
+    const bodyLabel = summary.contentSeen === 'unknown' ? '未知' : (summary.hasText ? '有' : '无');
+    const streamDetails = typeof summary.protocolDetected === 'boolean'
+        ? ` · 协议 ${summary.protocolDetected ? '是' : '否'} · DONE ${summary.doneSeen ? '是' : '否'} · 接收 ${summary.receivedChunks}块/${summary.receivedBytes}字节 · 解析失败 ${summary.parseFailures} · 未识别事件 ${summary.unsupportedEvents} · 正文判定 ${summary.contentObservationReason}` : '';
+    return `${summary.transport || 'unknown'} · HTTP ${summary.httpStatus || '未知'} · ${summary.contentType || 'unknown'} · 格式 ${summary.format || 'unknown'} · 事件 ${summary.events || 0} · 正文 ${bodyLabel} · 思考 ${summary.hasReasoning ? '有' : '无'} · 结束 ${summary.rawStopReason || '未报告'}${tokenParts.length ? ` · Token ${tokenParts.join('/')}` : ''}${streamDetails}`;
 }
 // @theater-source-end formatApiResponseSummary
 
