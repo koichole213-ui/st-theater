@@ -1740,7 +1740,7 @@ test('长梦正文、自动补写和最终排版沿用同一份生成线路快�
     const controller = createLongDreamGenerationController({
         requestChapter: async ({ round, apiRoute: received }) => {
             seen.push({ stage: `round-${round}`, route: received });
-            return { text: round === 1 ? '甲'.repeat(200) : '乙'.repeat(260) };
+            return { text: round === 1 ? '甲'.repeat(2500) : '乙'.repeat(2100) };
         },
         renderChapter: async ({ text, originalInstruction, apiRoute: received }) => {
             seen.push({ stage: 'render', route: received, originalInstruction });
@@ -1751,7 +1751,7 @@ test('长梦正文、自动补写和最终排版沿用同一份生成线路快�
     await controller.run({
         record,
         apiRoute,
-        targetChars: 500,
+        targetChars: 5000,
         autoContinue: true,
         maxRounds: 3,
         instruction: '按钮使用指定的 HTML、CSS 和 JavaScript。',
@@ -2118,7 +2118,7 @@ test('长梦正文不足目标时自动追加补写，达到九成后只排版�
         checkpointIntervalMs: 0,
         requestChapter: async ({ userPrompt, round, maxRounds, onChunk }) => {
             requests.push({ userPrompt, round, maxRounds });
-            const text = round === 1 ? '甲'.repeat(200) : '乙'.repeat(260);
+            const text = round === 1 ? '甲'.repeat(2500) : '乙'.repeat(2100);
             onChunk(text);
             return { text, stopReason: 'stop' };
         },
@@ -2130,7 +2130,7 @@ test('长梦正文不足目标时自动追加补写，达到九成后只排版�
 
     const result = await controller.run({
         record,
-        targetChars: 500,
+        targetChars: 5000,
         autoContinue: true,
         maxRounds: 3,
     });
@@ -2140,13 +2140,13 @@ test('长梦正文不足目标时自动追加补写，达到九成后只排版�
     assert.doesNotMatch(requests[0].userPrompt, /本章可恢复草稿/);
     assert.match(requests[0].userPrompt, /不要为了提前结束而仓促总结或收束/);
     assert.match(requests[1].userPrompt, /本章可恢复草稿/);
-    assert.match(requests[1].userPrompt, /本章已有约 200 字/);
+    assert.match(requests[1].userPrompt, /本章已有约 2500 字/);
     assert.equal(renderCount, 1);
     assert.equal(result.rounds, 2);
-    assert.equal(result.actualChars, 460);
-    assert.equal(result.targetCompletionChars, 450);
+    assert.equal(result.actualChars, 4600);
+    assert.equal(result.targetCompletionChars, 4500);
     assert.equal(result.completedBelowTarget, false);
-    assert.equal(result.record.draft.text, `${'甲'.repeat(200)}\n\n${'乙'.repeat(260)}`);
+    assert.equal(result.record.draft.text, `${'甲'.repeat(2500)}\n\n${'乙'.repeat(2100)}`);
 });
 
 test('长梦自动补写达到最大轮数后停止，并明确记录仍低于目标', async () => {
@@ -2161,7 +2161,7 @@ test('长梦自动补写达到最大轮数后停止，并明确记录仍低于�
 
     const result = await controller.run({
         record,
-        targetChars: 500,
+        targetChars: 5000,
         autoContinue: true,
         maxRounds: 2,
     });
@@ -2191,7 +2191,7 @@ test('长梦在第二轮补写中停止时保留首轮和当前流式草稿', as
         renderChapter: async () => assert.fail('停止后不应进入最终排版'),
     });
 
-    const running = controller.run({ record, targetChars: 500, autoContinue: true, maxRounds: 3 });
+    const running = controller.run({ record, targetChars: 5000, autoContinue: true, maxRounds: 3 });
     await started;
     assert.deepEqual(controller.active, {
         stage: LONG_DREAM_GENERATION_STAGE.WRITING,
@@ -2201,7 +2201,7 @@ test('长梦在第二轮补写中停止时保留首轮和当前流式草稿', as
         startedAt: controller.active.startedAt,
         firstChunkAt: controller.active.firstChunkAt,
         currentChars: 250,
-        targetChars: 500,
+        targetChars: 5000,
         candidateNumber: 1,
         retainedCandidateCount: 0,
     });
@@ -2557,7 +2557,7 @@ test('长梦同章第二轮保留首轮完整基础包，并附带当前章草�
     });
     await controller.run({
         record,
-        targetChars: 500,
+        targetChars: 5000,
         autoContinue: true,
         maxRounds: 2,
         identitySlots: {
@@ -3749,13 +3749,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.3 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.4 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.3'/);
-    assert.equal(manifest.version, '4.4.3');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.3/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.4'/);
+    assert.equal(manifest.version, '4.4.4');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.4/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 

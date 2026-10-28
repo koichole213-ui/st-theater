@@ -1,5 +1,11 @@
-// Formal releases only. Fold preview iterations into the next formal entry at release time.
+// Published releases. Fold preview iterations into the next published entry.
 export const RELEASE_NOTES = Object.freeze([
+    { version: '4.4.4', date: '2026.10.28', label: '测试版', changes: [
+        ['测试', '按需更新，欢迎反馈', '本次为测试版本，建议此前反馈过相关问题的用户更新测试；目前使用正常的用户可以暂不更新。'],
+        ['调整', '长梦分轮与收束安排', '目标达到 5000 字、开启自动补写且允许至少两轮时，新章先写前半部分，再接续收束；已有同章草稿直接承接。可能增加等待和用量，仍不能保证字数达标或结尾绝不截断。'],
+        ['兼容', '主 API 慢回复多等一会儿', '主 API 兼容路径最长等待从 5 分钟延长至 15 分钟，停止按钮仍可随时结束插件等待，不增加自动重试。'],
+        ['修复', '辅助请求、正文识别与预设适配', '辅助请求跟随所选预设额度和流式开关；修正部分空响应被误当正文的情况，并改善普通生成与续写的预设变量、思考及附加输出处理。失败时保留已有内容。'],
+    ] },
     { version: '4.4.3', date: '2026.10.20', changes: [
         ['新增', '独立 HTML 排版 API', '在设置中的独立卡片开启并选择已保存的 API 预设，将原有的独立排版交给所选线路。默认关闭；正文生成和一次性正文加 HTML 的流程保持不变。'],
         ['保护', '排版失败保留正文，可以单独重试', '普通结果可重试或停止 HTML 排版，无需重新生成正文；手改正文并成功保存后，旧排版任务会失效，避免覆盖修改。'],
@@ -25,7 +31,7 @@ export const RELEASE_NOTES = Object.freeze([
 export function releaseNotesHTML(esc) {
     return RELEASE_NOTES.map((release, index) => {
         const content = `<ul>${release.changes.map(([kind, title, text]) => `<li><span class="theater-change-kind">${esc(kind)}</span><div><b>${esc(title)}</b><p>${esc(text)}</p></div></li>`).join('')}</ul>`;
-        if (!index) return `<article class="theater-release"><header><h3>v${esc(release.version)} <span>最新正式版</span></h3><time>${esc(release.date)}</time></header>${content}</article>`;
+        if (!index) return `<article class="theater-release"><header><h3>v${esc(release.version)} <span>${esc(release.label || '最新正式版')}</span></h3><time>${esc(release.date)}</time></header>${content}</article>`;
         return `<details class="theater-release theater-release-previous"><summary><b>v${esc(release.version)}</b><small>${esc(release.date)}</small><i class="fa-solid fa-chevron-down"></i></summary>${content}</details>`;
     }).join('');
 }

@@ -24,6 +24,7 @@ export const CUSTOM_STREAM_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 export const MAIN_FIRST_TOKEN_TIMEOUT_MS = 180000;
 export const MAIN_STREAM_IDLE_TIMEOUT_MS = 120000;
 export const MAIN_RESPONSE_TIMEOUT_MS = 300000;
+export const MAIN_HELPER_RESPONSE_TIMEOUT_MS = 15 * 60 * 1000;
 
 const noop = () => {};
 
@@ -518,7 +519,7 @@ export async function callViaGenerateRaw({
     presetName = '',
     postProcessing = '',
 } = {}) {
-    const timeoutMs = 5 * 60 * 1000;
+    const timeoutMs = MAIN_HELPER_RESPONSE_TIMEOUT_MS;
     let abortHandler = null;
     let timeoutId = null;
     const abortPromise = signal

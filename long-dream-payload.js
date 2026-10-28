@@ -1,3 +1,4 @@
+import { longFormFirstRoundTarget } from './length-policy.js';
 import { hasPendingManualSummary } from './long-dream-story-summary.js';
 import { LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION } from './long-dream.js';
 import { composePresetMessages } from './request-layout.js';
@@ -364,6 +365,7 @@ export function buildLongDreamChapterPayload({
     targetChars = 3000,
     currentDraft = '',
     finishThisRound = true,
+    writingPlan = null,
     maxOptionalContextChars = Infinity,
     structuredPreset = false,
     continuationRound = false,
@@ -419,6 +421,13 @@ export function buildLongDreamChapterPayload({
         cleanText(protagonistAnchor),
         style ? `【写作风格｜只控制表达，不得改写事实】\n${style}` : '',
     ].filter(Boolean).join('\n\n');
+    const plannedRound = Math.max(1, Number(writingPlan?.round) || 1);
+    const plannedRounds = Math.max(1, Number(writingPlan?.maxRounds) || 1);
+    const roundGuidance = writingPlan
+        ? (writingPlan.splitFirstRound && plannedRound === 1 && !draft
+            ? `本章总目标约 ${target} 字，将由同章多轮正文共同完成。本轮只写本章前半部分，目标约 ${longFormFirstRoundTarget(target)} 字；自然承接上一章，不重写已保存章节，不要把前半章压缩成独立成品，不要提前总结或形成章末。`
+            : `本章正文总目标约 ${target} 字，当前第 ${plannedRound}/${plannedRounds} 轮，本章已有约 ${draftChars} 字，仍需新增约 ${remainingChars} 字。${plannedRounds === 1 ? '本次只生成这一轮，请充分展开剩余正文后自然停笔，不把篇幅留给假定的下一轮。' : '轮数是上限；收尾许可不等于字数达标，不得复述凑字或为了继续补写撤销已经发生的剧情。'}`)
+        : '';
     const sections = [
         `【本章方向｜用户本次明确要求】\n章名：${title}\n创作方向：${direction}\n${draft
             ? `目标是本章完整正文约 ${target} 字；本章已有约 ${draftChars} 字，本轮只补写为接近总目标仍需新增的内容（约 ${remainingChars} 字，可随情节自然浮动），不要报告或标注字数。`
@@ -439,7 +448,10 @@ export function buildLongDreamChapterPayload({
             : `【世界书继承】\n${record?.inheritance?.worldBookPolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED
                 ? '这部长卷没有可用的冻结快照，本次不得读取或补入当前酒馆世界书。'
                 : '本长卷与原世界书隔离，不得读取或自行补入原世界线设定。'}`,
-        `【输出协议】\n1. 只输出本章新增的纯正文，不输出标题、HTML、CSS、JavaScript、Markdown 代码块或创作说明；\n2. 不复述、改写或总结已保存章节${current ? '及本章已有正文' : ''}；\n3. 延续既有视角、时态、人物语气、叙事质感与因果；\n4. 用新的动作、对白、心理变化和情节推进承接上一章；\n5. ${finishThisRound ? '本轮可以在本章情节充分展开后自然收束，但不要结束整部长卷。' : '本轮继续充分推进本章，不要为了提前结束而仓促总结或收束；若内容已经充分达到目标，可以自然形成章末，但不要结束整部长卷。'}`,
+        roundGuidance ? `【本章分轮安排】\n${roundGuidance}` : '',
+        `【输出协议】\n1. 只输出本章新增的纯正文，不输出标题、HTML、CSS、JavaScript、Markdown 代码块或创作说明；\n2. 不复述、改写或总结已保存章节${current ? '及本章已有正文' : ''}；\n3. 延续既有视角、时态、人物语气、叙事质感与因果；\n4. 用新的动作、对白、心理变化和情节推进承接上一章；\n5. ${finishThisRound ? '本轮可以在本章情节充分展开后自然收束，但不要结束整部长卷。' : (writingPlan?.splitFirstRound && plannedRound === 1 && !draft
+            ? '本轮继续充分推进本章，不要为了提前结束而仓促总结或收束；本轮不形成章末，后续正文轮再自然收束，不结束整部长卷。'
+            : '本轮继续充分推进本章，不要为了提前结束而仓促总结或收束；若内容已经充分达到目标，可以自然形成章末，但不要结束整部长卷。')}`,
     ].filter(Boolean);
     if (creativeEnhancement) {
         // Retain the disabled layout exactly; enabled guidance follows materials and precedes the current task.

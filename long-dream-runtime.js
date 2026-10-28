@@ -6,7 +6,7 @@ import { readableCharCount } from './text-counter.js';
 import { buildLongDreamCanonSuggestionPayload, parseLongDreamCanonSuggestions } from './long-dream-canon-suggestions.js';
 import { resolveProtocol, normalizeMaxTokens } from './api-client.js';
 import { textOutputModeForTheme } from './plain-text-renderer.js';
-import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController } from './long-dream-generation.js';
+import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController, longDreamWritingPlan } from './long-dream-generation.js';
 import { LONG_DREAM_WORLD_LINE_RELATION, LONG_DREAM_DRAFT_STATUS, retainLongDreamDraftCandidate, LONG_DREAM_MEMORY_STATUS, setLongDreamMemoryStatus, applyLongDreamMemoryPatch, discardLongDreamWritingAttempt, clearLongDreamDraft, LONG_DREAM_MAX_CANDIDATES, selectLongDreamDraftCandidate } from './long-dream.js';
 import { buildProtagonistAnchor } from './protagonist-anchor.js';
 import { DEFAULT_SYSTEM_PROMPT } from './theater-defaults.js';
@@ -376,6 +376,8 @@ async function refreshLongDreamTokenEstimate() {
         const targetChars = Math.max(500, Math.min(8000, Math.round(Number($('#theater-dream-next-target').val()) || 3000)));
         const foundation = await resolveLongDreamRequestFoundation(dream);
         const currentDraft = dream.draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING ? String(dream.draft.text || '') : '';
+        const writingPlan = longDreamWritingPlan({ targetChars, autoContinue: runtime.settings.autoContinue !== false,
+            maxRounds: runtime.settings.maxAutoRounds || 3, existingDraftText: currentDraft });
         const payload = buildLongDreamChapterPayload({
             record: dream,
             preset: foundation.selectedPresetPrompt || DEFAULT_SYSTEM_PROMPT,
@@ -384,7 +386,8 @@ async function refreshLongDreamTokenEstimate() {
             chapterTitle,
             targetChars,
             currentDraft,
-            finishThisRound: false,
+            finishThisRound: !writingPlan.stagedMultiRound,
+            writingPlan: { round: 1, maxRounds: writingPlan.allowedRounds, splitFirstRound: writingPlan.stagedMultiRound },
             maxOptionalContextChars: runtime.LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET,
             structuredPreset: true,
             continuationRound: !!currentDraft.trim(),

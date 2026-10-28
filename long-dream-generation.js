@@ -7,7 +7,8 @@ import {
     saveLongDreamDraft,
 } from './long-dream.js';
 import { buildLongDreamChapterMessages, buildLongDreamChapterPayload } from './long-dream-payload.js';
-import { targetCompletionChars } from './generation-job.js';
+import { targetCompletionChars, createGenerationJob, addGenerationSegment, shouldContinueJob, shouldAuthorizeFinishRound, authorizeFinish } from './generation-job.js';
+import { isStagedRenderTarget } from './length-policy.js';
 import { readableCharCount } from './text-counter.js';
 
 export const LONG_DREAM_GENERATION_STAGE = Object.freeze({
@@ -35,6 +36,15 @@ function composeDraftText(existingText, generatedText) {
 
 function normalizeMaxRounds(value) {
     return Math.min(10, Math.max(1, Math.floor(Number(value) || 1)));
+}
+
+export function longDreamWritingPlan({ targetChars, autoContinue = false, maxRounds = 3, existingDraftText = '' } = {}) {
+    const shouldAutoContinue = autoContinue !== false && isStagedRenderTarget(targetChars);
+    const allowedRounds = shouldAutoContinue ? normalizeMaxRounds(maxRounds) : 1;
+    return {
+        shouldAutoContinue, allowedRounds,
+        stagedMultiRound: shouldAutoContinue && allowedRounds >= 2 && !cleanText(existingDraftText),
+    };
 }
 
 function normalizeRenderedChapter(rendered, fallbackMode = 'html') {
@@ -132,8 +142,14 @@ export function createLongDreamGenerationController({
             ? (currentRecord.draft?.targetChars || 3000)
             : targetChars;
         const target = Math.max(500, Math.min(8000, Math.round(Number(normalizedTargetChars) || 3000)));
-        const shouldAutoContinue = autoContinue !== false;
-        const allowedRounds = shouldAutoContinue ? normalizeMaxRounds(maxRounds) : 1;
+        const writingPlan = longDreamWritingPlan({ targetChars: target, autoContinue, maxRounds, existingDraftText });
+        const { shouldAutoContinue, allowedRounds, stagedMultiRound } = writingPlan;
+        const job = createGenerationJob({
+            targetChars: target, maxRounds: allowedRounds, autoContinue: shouldAutoContinue,
+            minimumRounds: stagedMultiRound ? 2 : 1, requireTargetCompletion: stagedMultiRound,
+        });
+        if (cleanText(existingDraftText)) job.segments.push(cleanText(existingDraftText));
+        authorizeFinish(job, !stagedMultiRound);
         const completionChars = targetCompletionChars(target);
         let accumulatedText = existingDraftText;
         let roundBaseText = accumulatedText;
@@ -230,6 +246,7 @@ export function createLongDreamGenerationController({
                 });
 
                 for (let round = 1; round <= allowedRounds; round++) {
+                    job.round = round;
                     roundBaseText = accumulatedText;
                     streamedText = '';
                     hasStreamCheckpoint = false;
@@ -243,7 +260,8 @@ export function createLongDreamGenerationController({
                         chapterTitle: normalizedTitle,
                         targetChars: target,
                         currentDraft: roundBaseText,
-                        finishThisRound: !shouldAutoContinue || round === allowedRounds,
+                        finishThisRound: job.finishAuthorized || round === allowedRounds,
+                        writingPlan: { round, maxRounds: allowedRounds, splitFirstRound: stagedMultiRound },
                         maxOptionalContextChars,
                         structuredPreset: true,
                         continuationRound: round > 1 || !!cleanText(roundBaseText),
@@ -288,6 +306,9 @@ export function createLongDreamGenerationController({
                     streamedText = String(requestResult?.text ?? requestResult ?? streamedText);
                     if (!cleanText(streamedText)) throw new Error('长梦正文请求没有返回有效内容');
                     accumulatedText = composeDraftText(roundBaseText, streamedText);
+                    const addedText = accumulatedText.startsWith(roundBaseText)
+                        ? accumulatedText.slice(roundBaseText.length).trim() : streamedText;
+                    addGenerationSegment(job, addedText, requestResult?.stopReason || 'stop', requestResult?.rawStopReason || null);
                     if (active) {
                         if (!active.firstChunkAt) active.firstChunkAt = Number(clock());
                         active.currentChars = readableCharCount(accumulatedText);
@@ -296,7 +317,8 @@ export function createLongDreamGenerationController({
                     await checkpointWritingDraft(true);
                     currentRecord = await persistence;
 
-                    if (!shouldAutoContinue || readableCharCount(accumulatedText) >= completionChars) break;
+                    if (!shouldContinueJob(job, readableCharCount)) break;
+                    authorizeFinish(job, shouldAuthorizeFinishRound(job, readableCharCount));
                 }
             }
 
