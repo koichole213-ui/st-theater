@@ -1,10 +1,12 @@
-const REASONING_TAG_NAMES = new Set(['think', 'thinking', 'electric']);
-const COMPLETE_TAG_PATTERN = /<\s*(\/?)\s*(think|thinking|electric)\b[^>]*>/gi;
+const REASONING_TAG_NAMES = new Set(['think', 'thinking', 'electric', 'ecot']);
+const COMPLETE_TAG_PATTERN = /<\s*(\/?)\s*(think|thinking|electric|ecot)\b[^>]*>/gi;
 const TAG_PREFIXES = Object.freeze([
     '<think>',
     '</think>',
     '<thinking>',
     '</thinking>',
+    '<ecot>',
+    '</ecot>',
     '<electric>',
     '</electric>',
 ]);
@@ -15,7 +17,9 @@ function trailingPartialTagLength(value) {
     if (start < 0) return 0;
     const suffix = text.slice(start).toLocaleLowerCase();
     if (suffix.includes('>')) return 0;
-    return TAG_PREFIXES.some(tag => tag.startsWith(suffix)) ? text.length - start : 0;
+    return TAG_PREFIXES.some(tag => tag.startsWith(suffix))
+        || /^<\s*\/?\s*(?:think|thinking|electric|ecot)\b[^>]*$/i.test(suffix)
+        ? text.length - start : 0;
 }
 
 /**

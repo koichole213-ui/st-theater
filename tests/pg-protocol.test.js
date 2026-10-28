@@ -1,3 +1,4 @@
+import { filterStoryOutput } from '../story-output.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -169,7 +170,7 @@ test('真实普通生成/续写入口：协议失败不排版不存新作品，�
             theaterError: message => errors.push(message), showInIframe: (...args) => shown.push(args),
         };
         const run = runInNewContext(`${source.slice(start, end)}; runGeneration`, {
-            runtime, $: () => ui, AbortController, console: { error() {} },
+            runtime, filterStoryOutput, $: () => ui, AbortController, console: { error() {} },
             normalizeRoleSources: () => [], captureHistoryRoles: () => [], SillyTavern: { getContext: () => ({}) },
             resolveTargetWordCount: () => 6000, isStagedRenderTarget: () => true,
             resolveRenderSelection: () => ({ label: '合成模板', isPlainTextRender: false }), updateContinueHint() {},

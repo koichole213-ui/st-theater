@@ -1,3 +1,5 @@
+import { resolveTheaterPreset } from '../preset-compat.js';
+import { filterStoryOutput, STORY_OUTPUT_RULE } from '../story-output.js';
 import { bindLayoutRetry } from '../layout-retry.js';
 import { captureLayoutApiSelection, resolveLayoutApiRoute } from '../layout-api.js';
 import { bindLayoutApi } from '../layout-api-settings.js';
@@ -35,7 +37,7 @@ export function readTheaterImplementation() {
 // fixtures. This preserves their assertions about writes, identity and failures.
 export function runInNewContext(code, sandbox = {}, options) {
     // Real imported helpers used by relocated production bodies. Fixtures remain synthetic.
-    Object.assign(sandbox, { captureLayoutApiSelection, resolveLayoutApiRoute, bindLayoutApi, bindLayoutRetry, bindReleaseNotes, releaseNotesHTML, latestReleaseVersion, hasUnreadRelease, creativeEnhancementPrompt, hasPendingManualSummary, pendingManualStoryEntries, summaryEditorHTML, bindSummaryEditor, isHistoryItemExpanded, historyFiltersHTML, normalizeRoleSources, captureHistoryRoles, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED, closeHistoryMenus, ...sandbox });
+    Object.assign(sandbox, { resolveTheaterPreset, filterStoryOutput, STORY_OUTPUT_RULE, captureLayoutApiSelection, resolveLayoutApiRoute, bindLayoutApi, bindLayoutRetry, bindReleaseNotes, releaseNotesHTML, latestReleaseVersion, hasUnreadRelease, creativeEnhancementPrompt, hasPendingManualSummary, pendingManualStoryEntries, summaryEditorHTML, bindSummaryEditor, isHistoryItemExpanded, historyFiltersHTML, normalizeRoleSources, captureHistoryRoles, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED, closeHistoryMenus, ...sandbox });
     if (!sandbox.SillyTavern) sandbox.SillyTavern = { getContext: () => ({}) };
     const context = createContext(sandbox);
     const entry = readFileSync(new URL('../index.js', import.meta.url), 'utf8');

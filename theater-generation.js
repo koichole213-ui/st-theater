@@ -1,3 +1,5 @@
+import { resolveTheaterPreset } from './preset-compat.js';
+import { filterStoryOutput, STORY_OUTPUT_RULE } from './story-output.js';
 import { resolveLayoutApiRoute } from './layout-api.js';
 import { creativeEnhancementPrompt } from './creative-enhancement.js';
 // theater-generation: receives live state and cross-feature callbacks from index.js.
@@ -242,7 +244,16 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     }
 
     const presetSnapshot = loadPreset ? await runtime.ensureSelectedPresetLoaded() : runtime.currentPresetSnapshot();
-    const selectedPresetPrompt = presetSnapshot.prompt;
+    const targetWordCount = resolveTargetWordCount(instruction, {
+        manualEnabled: runtime.settings.manualTargetEnabled,
+        manualTarget: runtime.settings.manualTargetChars,
+    });
+    const cleanInstruction = stripTargetWordCountRequirement(instruction) || '请根据现有角色设定与剧情创作小剧场。';
+    const presetCompatibility = resolveTheaterPreset(presetSnapshot.selectedEntries?.length ? presetSnapshot.selectedEntries
+        : (presetSnapshot.prompt ? [{ id: 'main', role: 'system', content: presetSnapshot.prompt }] : []), {
+        user: name1 || 'User', char: name2 || character?.name || 'Char', lastUserMessage: cleanInstruction,
+    }, { targetChars: targetWordCount, ...(estimateOnly ? { random: () => 0 } : {}) });
+    const selectedPresetPrompt = presetCompatibility.entries.map(entry => entry.content).join('\n\n');
     const preset = selectedPresetPrompt || DEFAULT_SYSTEM_PROMPT;
     const addons = [
         runtime.settings.customStyleAddon?.trim() ? `【文风补充】\n${runtime.settings.customStyleAddon.trim()}` : '',
@@ -250,11 +261,6 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     ].filter(Boolean).join('\n\n');
     // 双重保险：续写前情只允许纯正文进入请求，绝不携带上一页的 HTML/CSS/脚本。
     const contCtx = prepareContinuationContext(continuationText === null ? runtime.continueContext : continuationText);
-    const targetWordCount = resolveTargetWordCount(instruction, {
-        manualEnabled: runtime.settings.manualTargetEnabled,
-        manualTarget: runtime.settings.manualTargetChars,
-    });
-    const cleanInstruction = stripTargetWordCountRequirement(instruction) || '请根据现有角色设定与剧情创作小剧场。';
     const continuation = contCtx ? `【续写前情｜仅供承接，不计入本次新增字数】\n${contCtx}\n【前情结束｜从上述结尾继续，不重复输出】` : '';
     const continuationMaxRounds = isStagedRenderTarget(targetWordCount) && runtime.settings.autoContinue
         ? Math.min(10, Math.max(1, Number(maxContinuationRounds ?? runtime.settings.maxAutoRounds) || 3))
@@ -274,6 +280,8 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         : '请根据以上所有信息生成小剧场，严格遵守渲染规则。';
     fixed += `\n${protagonistAnchor}`;
     fixed += `\n【创作节奏】${lengthGuidance}`;
+    fixed += `\n${STORY_OUTPUT_RULE}`;
+    if (isPlainTextRender) fixed += '\n本轮故事正文请只用一对<content>...</content>包裹；若有ECoT思考须在content之外完整闭合，此外不附加其他部件。程序会隐藏思考并移除正文包装标签，再计字与排版。';
     const payload = buildGenerationPayload({
         preset, role, persona, worldBook, context, continuation, rules, addons, creativeEnhancement,
         fixed,
@@ -281,7 +289,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     });
     // 预估仅使用同一份 tokenParts，不需要编排请求或复制冻结续写资料。
     if (estimateOnly) return { tokenParts: payload.tokenParts };
-    const selectedPresetEntries = presetSnapshot.selectedEntries;
+    const selectedPresetEntries = presetCompatibility.entries;
     const presetEntriesForLayout = selectedPresetEntries.length
         ? selectedPresetEntries
         : [{ id: 'main', role: 'system', content: DEFAULT_SYSTEM_PROMPT }];
@@ -321,6 +329,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         isPlainTextRender,
         textTheme,
         targetWordCount,
+        presetCompatibilitySummary: Object.freeze({ ...presetCompatibility.stats }),
         ctx,
         generationFoundation: Object.freeze({
             creativeEnhancement,
@@ -704,6 +713,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         kind: isAuto ? '自动小剧场' : (contCtx ? '普通续写' : '普通小剧场'),
     };
     runtime.clearRequestIssue();
+    if (payload.presetCompatibilitySummary) runtime.runtimeLog('info', '预设兼容处理', payload.presetCompatibilitySummary);
     if (isAuto) runtime.lastAutoIssue = null;
     const targetWordCount = payload.targetWordCount;
     const autoTargetContinue = isStagedRenderTarget(targetWordCount) && runtime.settings.autoContinue;
@@ -768,7 +778,9 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     let nextProgressAt = 1000;
     let retainStreamAsBody = true;
     let currentRoundStreamText = '';
-    const onChunk = (text) => {
+    const onChunk = (value) => {
+        const text = retainStreamAsBody
+            ? filterStoryOutput(value, { plainText: activeRound !== 1 || isPlainTextRender }) : value;
         runtime.bgStreamText = text;
         if (retainStreamAsBody) currentRoundStreamText = String(text || '');
         const cumulativeChars = String(text || '').length;
@@ -832,7 +844,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 signal: runtime.abortController?.signal,
                 requestOptions,
             });
-            const responseText = typeof result === 'string' ? result : result?.text;
+            const responseText = filterStoryOutput(typeof result === 'string' ? result : result?.text, { plainText: round !== 1 || isPlainTextRender });
             if (!responseText) throw new Error('API未返回内容');
             markCompleted(runtime.lastRequestMetrics);
             runtime.recordRequestMetrics(runtime.lastRequestMetrics);
