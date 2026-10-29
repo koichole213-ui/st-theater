@@ -98,22 +98,27 @@ export function classifyLengthTier(targetChars) {
     return LENGTH_TIERS.LONG;
 }
 
+export function singleRoundCompletionGuidance({ chapter = false } = {}) {
+    const scope = chapter ? '本章' : '本次作品';
+    return `【单轮停笔要求】在本轮充分展开目标篇幅，并完成用户为${scope}指定的关键情节及其必要的人物反应后，在符合用户要求的场景落点自然停笔。不得用预告或概述代替尚未展开的必写情节，不把应写内容留给假定的下一轮。最后一句须表达完整，对白与动作不得停在半途；停笔后不另开新事件，不追加无关后日谈。允许符合用户要求的开放结局，不必封死悬念${chapter ? '，只完成本章，不结束整部长卷' : ''}。不输出规划、检查清单、字数报告或完成声明。${chapter ? '' : '若本轮同时输出HTML，保留所选模板的丰富排版，并完整闭合页面结构。'}`;
+}
+
 export function firstRoundGuidance(targetChars) {
     const target = Math.round(Number(targetChars));
-    if (!Number.isFinite(target) || target <= 0) return '充分展开剧情，不急于收尾。';
-    return `本篇小剧场的可读中文正文目标约为 ${target} 字（不含 HTML、CSS、JavaScript 和排版代码）。请从开篇开始按照这一完整篇幅规划剧情，在接近目标前不要过早收束；用有效情节、动作、对白和心理变化充分展开，不要复述、注水，也不要在正文中报告或标注字数。`;
+    if (!Number.isFinite(target) || target <= 0) return `充分展开剧情，不急于收尾。${singleRoundCompletionGuidance()}`;
+    return `本篇小剧场的可读中文正文目标约为 ${target} 字（不含 HTML、CSS、JavaScript 和排版代码）。请从开篇开始按照这一完整篇幅规划剧情，在接近目标前不要过早收束；用有效情节、动作、对白和心理变化充分展开，不要复述、注水，也不要在正文中报告或标注字数。${singleRoundCompletionGuidance()}`;
 }
 
 export function continuationFirstRoundGuidance(targetChars, { maxRounds = 1 } = {}) {
     const target = Math.round(Number(targetChars));
     const rounds = Math.max(1, Math.floor(Number(maxRounds) || 1));
     const continuity = '从提供的前情最后位置继续，围绕用户本段续写方向充分展开新的动作、对白、心理变化和有效情节；不重写开头，不复述旧正文，不用总结、空话或重复情节凑字，也不要在正文中报告或标注字数。';
-    if (!Number.isFinite(target) || target <= 0) return `本次任务是继续创作充分展开的新正文，不是概括前情或只补一句结尾。${continuity}`;
+    if (!Number.isFinite(target) || target <= 0) return `本次任务是继续创作充分展开的新正文，不是概括前情或只补一句结尾。${continuity}${rounds === 1 ? singleRoundCompletionGuidance() : ''}`;
     const scope = `本次续写新增的可读中文正文目标约为 ${target} 字（不含 HTML、CSS、JavaScript 和排版代码）。目标只计算本次续写新生成的正文；提供的旧正文、聊天前文和其他参考资料均不计入，不是把旧正文与新增内容合计凑到 ${target} 字。`;
     const plan = rounds === 1
         ? `本次只生成这一轮，请在本轮一次性充分展开约 ${target} 字的新正文后再自然停笔；不要只写一小段收尾，也不要把应写内容留给假定的下一轮。`
         : `本次续写最多允许 ${rounds} 轮，约 ${target} 字是这些轮次新增正文的合计目标。轮数是上限，不是必须拆分；本轮应尽量充分展开，不要因为允许后续补写就只输出短段或提前停笔。`;
-    return `${scope}${plan}${continuity}`;
+    return `${scope}${plan}${continuity}${rounds === 1 ? singleRoundCompletionGuidance() : ''}`;
 }
 
 export function isLongFormTarget(targetChars) {

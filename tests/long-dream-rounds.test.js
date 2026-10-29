@@ -38,6 +38,11 @@ for (const target of [3000, 4999]) {
         assert.equal(result.completedBelowTarget, true);
         assert.doesNotMatch(requests[0].userPrompt, /本轮只写本章前半部分/);
         assert.match(requests[0].userPrompt, /本次只生成这一轮/);
+        assert.match(requests[0].userPrompt, /【单轮停笔要求】/);
+        assert.match(requests[0].userPrompt, /用户为本章指定的关键情节/);
+        assert.match(requests[0].userPrompt, /最后一句须表达完整/);
+        assert.match(requests[0].userPrompt, /只完成本章，不结束整部长卷/);
+        assert.doesNotMatch(requests[0].userPrompt, /若本轮同时输出HTML/);
     });
 }
 test('5000边界大目标新章至少两轮，首轮半章后统一排版', async () => {
@@ -53,6 +58,7 @@ test('首轮已达到九成仍保留第二轮收尾，不能直接进入排版',
     const { result, requests } = await exercise({ target: 6000, pieces: ['甲'.repeat(5700), '乙'.repeat(100)] });
     assert.equal(result.rounds, 2); assert.equal(result.actualChars, 5800);
     assert.match(requests[0].userPrompt, /本轮不形成章末/);
+    assert.ok(requests.every(request => !request.userPrompt.includes('【单轮停笔要求】')));
     assert.match(requests[1].userPrompt, /本轮可以在本章情节充分展开后自然收束/);
 });
 for (const config of [{ auto: false, max: 3 }, { auto: true, max: 1 }]) {
@@ -61,6 +67,11 @@ for (const config of [{ auto: false, max: 3 }, { auto: true, max: 1 }]) {
         assert.equal(result.rounds, 1); assert.equal(requests[0].maxRounds, 1);
         assert.doesNotMatch(requests[0].userPrompt, /本轮只写本章前半部分/);
         assert.match(requests[0].userPrompt, /本次只生成这一轮/);
+        assert.match(requests[0].userPrompt, /【单轮停笔要求】/);
+        assert.match(requests[0].userPrompt, /用户为本章指定的关键情节/);
+        assert.match(requests[0].userPrompt, /最后一句须表达完整/);
+        assert.match(requests[0].userPrompt, /只完成本章，不结束整部长卷/);
+        assert.doesNotMatch(requests[0].userPrompt, /若本轮同时输出HTML/);
     });
 }
 test('恢复同章草稿按普通续写承接，不重启半章或强制第二轮', async () => {

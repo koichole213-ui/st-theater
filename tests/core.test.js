@@ -6158,7 +6158,7 @@ test('普通续写真实首轮装配匹配实际轮数，保留完整前情及�
         resolveRenderSelection: forcePlainText => ({ isPlainTextRender: !!forcePlainText, textTheme: 'light', rules: forcePlainText ? '只输出纯正文，不输出 HTML' : '保留完整美化 HTML 规则' }),
         currentPresetSnapshot: () => snapshot, ensureSelectedPresetLoaded: async () => snapshot,
         DEFAULT_SYSTEM_PROMPT: '默认', prepareContinuationContext: value => value || '', continueContext: '',
-        buildProtagonistAnchor: () => '人物锚点', firstRoundGuidance, continuationFirstRoundGuidance, isStagedRenderTarget,
+        buildProtagonistAnchor: () => '人物锚点', firstRoundGuidance, continuationFirstRoundGuidance, longFormFirstRoundGuidance, isStagedRenderTarget,
         STORY_RELATION_CONTINUITY_RULE, buildGenerationPayload, generationIdentitySlots: () => ({}),
         composePresetMessages, freezeGenerationFoundationList: items => Object.freeze(items.map(item => Object.freeze({ ...item }))),
     };
@@ -6183,6 +6183,11 @@ test('普通续写真实首轮装配匹配实际轮数，保留完整前情及�
         }
         assert.equal(payload.targetWordCount, target);
         assert.ok(payload.messages.find(message => message.sourceId === 'final-rules').content.includes(expected));
+        assert.equal(payload.messages.some(message => message.content.includes('【单轮停笔要求】')), job.maxRounds === 1);
+        if (job.maxRounds === 1) {
+            assert.match(payload.userPrompt, /最后一句须表达完整/);
+            assert.match(payload.userPrompt, /允许符合用户要求的开放结局/);
+        }
         const task = payload.messages.find(message => message.sourceId === 'instruction').content;
         assert.match(task, new RegExp(`新增约 ${target} 字`));
         assert.doesNotMatch(task, /8000/);
@@ -6193,6 +6198,10 @@ test('普通续写真实首轮装配匹配实际轮数，保留完整前情及�
         assert.doesNotMatch(payload.tokenParts.rules, /从开篇开始|本篇小剧场的可读中文正文目标/);
         const fresh = await assemble('继续展开雨夜重逢，写8000字', { continuationText: '' });
         assert.ok(fresh.tokenParts.rules.includes(firstRoundGuidance(target)));
+        assert.match(fresh.messages.find(message => message.sourceId === 'final-rules').content, /【单轮停笔要求】/);
+        const split = await assemble('同一篇分轮写完，写8000字', { continuationText: '', longFormPlan: true, forcePlainText: true });
+        assert.match(split.userPrompt, /本轮只创作前半部分/);
+        assert.doesNotMatch(split.userPrompt, /【单轮停笔要求】/);
         assert.doesNotMatch(fresh.tokenParts.instruction, /本次续写任务/);
         assert.equal(fresh.isPlainTextRender, false);
     }
