@@ -1,3 +1,4 @@
+import { normalizeManualTarget } from './length-policy.js';
 // long-dream-navigation: receives live state and cross-feature callbacks from index.js.
 
 
@@ -24,7 +25,7 @@ function getLongDreamComposerDraft(dreamId) {
     return {
         instruction: String(draft.instruction || ''),
         title: String(draft.title || ''),
-        targetChars: Math.max(500, Math.min(8000, Math.round(Number(draft.targetChars) || 3000))),
+        targetChars: normalizeManualTarget(draft.targetChars),
     };
 }
 // @theater-source-end getLongDreamComposerDraft
@@ -35,7 +36,7 @@ function rememberLongDreamComposerDraft(dreamId = runtime.activeLongDreamId) {
     longDreamComposerDrafts()[String(dreamId)] = {
         instruction: String($('#theater-dream-next-instruction').val() || ''),
         title: String($('#theater-dream-next-title').val() || ''),
-        targetChars: Math.max(500, Math.min(8000, Math.round(Number($('#theater-dream-next-target').val()) || 3000))),
+        targetChars: normalizeManualTarget($('#theater-dream-next-target').val()),
     };
     runtime.save();
 }
@@ -47,7 +48,7 @@ function setLongDreamComposerDraft(dreamId, draft = {}) {
     longDreamComposerDrafts()[String(dreamId)] = {
         instruction: String(draft.instruction || ''),
         title: String(draft.title || ''),
-        targetChars: Math.max(500, Math.min(8000, Math.round(Number(draft.targetChars) || 3000))),
+        targetChars: normalizeManualTarget(draft.targetChars),
     };
     runtime.save();
 }

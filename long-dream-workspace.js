@@ -1,3 +1,4 @@
+import { normalizeManualTarget } from './length-policy.js';
 import { summaryEditorHTML } from './long-dream-summary-editor.js';
 import { longDreamFolderSources } from './long-dream-series.js';
 import { sourcePickerHTML } from './long-dream-source-picker.js';
@@ -859,7 +860,7 @@ function longDreamProgressKickerText(progress) {
 // @theater-source-begin longDreamProgressMetaHTML
 function longDreamProgressMetaHTML(progress, fallbackChars = 0, fallbackTarget = 3000) {
     const currentChars = Math.max(0, Number(progress?.currentChars) || readableCharCount(fallbackChars));
-    const targetChars = Math.max(500, Number(progress?.targetChars) || Number(fallbackTarget) || 3000);
+    const targetChars = normalizeManualTarget(progress?.targetChars, normalizeManualTarget(fallbackTarget));
     const round = Math.max(0, Number(progress?.round) || 0);
     const maxRounds = Math.max(1, Number(progress?.maxRounds) || 1);
     return `<div class="theater-dream-progress-meta" aria-live="polite">
@@ -1400,7 +1401,7 @@ function longDreamDetailState(dream) {
     const composerDraft = runtime.getLongDreamComposerDraft(dream.id);
     const nextTitle = draft?.title || composerDraft.title || '';
     const nextInstruction = draft ? draft.instruction : composerDraft.instruction;
-    const nextTarget = Math.max(500, Math.min(8000, Math.round(Number(draft?.targetChars || composerDraft.targetChars) || 3000)));
+    const nextTarget = normalizeManualTarget(draft?.targetChars || composerDraft.targetChars);
     const generationHint = hasReviewDraft
         ? `当前有 ${draftCandidates.length} 版候选，可继续生成；未保留候选仅留最新三版，已保留版本不被替换。`
         : (hasWritingDraft
@@ -1527,8 +1528,8 @@ function longDreamDetailHTML(dream) {
             <div id="theater-dream-token-details" class="theater-hint-inline theater-dream-token-details" style="display:none;"></div>
             ${state.isGeneratingThisDream ? '' : `<div class="theater-dream-next-actions ia-action-row">
                 <button type="button" id="theater-dream-clear-next-instruction" class="ui-btn ui-btn-sm" ${state.controlsDisabled || state.hasWritingDraft || !state.nextInstruction.trim() ? 'disabled' : ''} title="只清空本章续写指令，不影响已有章节"><i class="fa-solid fa-eraser"></i><span>清空指令</span></button>
-                ${state.hasWritingDraft ? `<button type="button" id="theater-dream-discard-draft" class="ui-btn ui-btn-sm"><i class="fa-solid fa-xmark"></i><span>${state.draftCandidates.length ? '放弃本轮生成' : '放弃草稿'}</span></button>` : ''}
-                <button type="button" id="theater-dream-generate-next" class="ui-btn ui-btn-primary theater-dream-primary" ${state.controlsDisabled ? 'disabled' : ''}><i class="fa-solid fa-feather-pointed"></i><span>${state.hasRenderPendingDraft ? '重新生成最终排版' : (state.hasWritingDraft ? '继续完整草稿' : '续写下一章')}</span></button>
+                ${state.hasWritingDraft ? `<button type="button" id="theater-dream-discard-draft" class="ui-btn ui-btn-sm"><i class="fa-solid fa-xmark"></i><span>${state.draftCandidates.length ? (state.draft.text.trim() ? '放弃本轮生成' : '返回已保留候选') : '放弃草稿'}</span></button>` : ''}
+                <button type="button" id="theater-dream-generate-next" class="ui-btn ui-btn-primary theater-dream-primary" ${state.controlsDisabled ? 'disabled' : ''}><i class="fa-solid fa-feather-pointed"></i><span>${state.hasRenderPendingDraft ? '重新生成最终排版' : (state.hasWritingDraft ? (state.draftCandidates.length && !state.draft.text.trim() ? '按当前设定生成新版本' : '继续完整草稿') : '续写下一章')}</span></button>
             </div>`}
             ${state.generationHint ? `<p class="theater-dream-generation-hint">${runtime.esc(state.generationHint)}</p>` : ''}
         </section>
@@ -1536,7 +1537,7 @@ function longDreamDetailHTML(dream) {
             <div class="ui-title"><span><i class="fa-solid fa-pen"></i> 本章选项与上下文</span></div>
             <div class="ia-grid-2 theater-dream-next-grid">
                 <label class="ia-field"><span>可选章名</span><input id="theater-dream-next-title" class="ui-input theater-input theater-default-name" maxlength="80" value="${runtime.esc(state.nextTitle)}" placeholder="第 ${state.nextNumber} 章" ${state.controlsDisabled ? 'disabled' : ''}></label>
-                <label class="ia-field"><span>目标字数</span><input id="theater-dream-next-target" class="ui-input theater-input" type="number" min="500" max="8000" step="500" value="${state.nextTarget}" ${state.controlsDisabled ? 'disabled' : ''}></label>
+                <label class="ia-field"><span>目标字数</span><input id="theater-dream-next-target" class="ui-input theater-input" type="number" min="1" step="1" value="${state.nextTarget}" ${state.controlsDisabled ? 'disabled' : ''}></label>
             </div>
             <div class="theater-dream-context-window">${dream.chapters.slice(-LONG_DREAM_RECENT_CHAPTER_COUNT).reverse().map(chapter => `<div class="ia-context-row"><div class="ia-context-copy"><div class="ia-line-title">第 ${chapter.number} 章 · ${runtime.esc(chapter.title)}</div><div class="ia-line-sub">最近完整章节 · ${readableCharCount(chapter.text || runtime.htmlToPlainText(chapter.html || ''))} 字 · 已注入全文</div></div><span class="memory-v2-tag">近期</span></div>`).join('')}${dream.chapters.length > LONG_DREAM_RECENT_CHAPTER_COUNT ? `<div class="ia-context-row"><div class="ia-context-copy"><div class="ia-line-title">更早章节索引</div><div class="ia-line-sub">第 1–${dream.chapters.length - LONG_DREAM_RECENT_CHAPTER_COUNT} 章旧章索引继续参与检索</div></div><span class="memory-v2-tag">索引</span></div>` : ''}</div>
         </section>
@@ -1573,6 +1574,7 @@ function longDreamDetailHTML(dream) {
         <p class="theater-dream-retention-note">其他已保留版本也会收入本章，可随时回看。</p>
         ${longDreamKeptVersionsHTML(dream)}</div>
         <div class="theater-dream-candidate-actions">
+        <button type="button" id="theater-dream-exit-review" class="ui-btn ui-btn-sm">保留候选并退出</button>
         <button type="button" id="theater-dream-regenerate-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="按原要求再生成一版；成功后未保留候选仅留最新三版，已保留版本不被替换"><i class="fa-solid fa-plus"></i><span>再来一版</span></button>
         <button type="button" id="theater-dream-revise-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="修改要求再生成；成功后未保留候选仅留最新三版，已保留版本不被替换"><i class="fa-solid fa-pen-to-square"></i><span>改要求重写</span></button>
         </div>
@@ -1788,7 +1790,7 @@ function syncLongDreamProgressDisplay() {
     $('#theater-dream-generation-kicker').text(longDreamProgressKickerText(progress));
     $('#theater-dream-generation-label').text(longDreamProgressLabelText(progress));
     $('#theater-dream-progress-elapsed').text(`已等待 ${formatLongDreamElapsed(progress.startedAt)}`);
-    $('#theater-dream-progress-chars').text(`约 ${Math.max(0, Number(progress.currentChars) || readableCharCount(runtime.longDreamLiveDraftText)).toLocaleString()} / ${Math.max(500, Number(progress.targetChars) || 3000).toLocaleString()} 字`);
+    $('#theater-dream-progress-chars').text(`约 ${Math.max(0, Number(progress.currentChars) || readableCharCount(runtime.longDreamLiveDraftText)).toLocaleString()} / ${normalizeManualTarget(progress.targetChars).toLocaleString()} 字`);
     $('#theater-dream-progress-round').text(progress.stage === LONG_DREAM_GENERATION_STAGE.RENDERING
         ? '最终排版'
         : (Number(progress.maxRounds) > 1 ? `第 ${Math.max(1, Number(progress.round) || 1)} / ${progress.maxRounds} 轮` : '正文生成'));

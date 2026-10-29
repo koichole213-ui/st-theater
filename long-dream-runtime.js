@@ -1,3 +1,4 @@
+import { normalizeManualTarget } from './length-policy.js';
 import { creativeEnhancementPrompt } from './creative-enhancement.js';
 import { runSeriesMemoryBatches, applySeriesStoryBatch, refreshSeriesStorySummary } from './long-dream-series.js';
 // long-dream-runtime: receives live state and cross-feature callbacks from index.js.
@@ -7,7 +8,7 @@ import { buildLongDreamCanonSuggestionPayload, parseLongDreamCanonSuggestions } 
 import { resolveProtocol, normalizeMaxTokens } from './api-client.js';
 import { textOutputModeForTheme } from './plain-text-renderer.js';
 import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController, longDreamWritingPlan } from './long-dream-generation.js';
-import { LONG_DREAM_WORLD_LINE_RELATION, LONG_DREAM_DRAFT_STATUS, retainLongDreamDraftCandidate, LONG_DREAM_MEMORY_STATUS, setLongDreamMemoryStatus, applyLongDreamMemoryPatch, discardLongDreamWritingAttempt, clearLongDreamDraft, LONG_DREAM_MAX_CANDIDATES, selectLongDreamDraftCandidate } from './long-dream.js';
+import { LONG_DREAM_WORLD_LINE_RELATION, LONG_DREAM_DRAFT_STATUS, retainLongDreamDraftCandidate, LONG_DREAM_MEMORY_STATUS, setLongDreamMemoryStatus, applyLongDreamMemoryPatch, discardLongDreamWritingAttempt, pauseLongDreamReview, clearLongDreamDraft, LONG_DREAM_MAX_CANDIDATES, selectLongDreamDraftCandidate } from './long-dream.js';
 import { buildProtagonistAnchor } from './protagonist-anchor.js';
 import { DEFAULT_SYSTEM_PROMPT } from './theater-defaults.js';
 import { buildLongDreamChapterPayload, buildLongDreamChapterMessages, selectRelevantLongDreamMemoryItems } from './long-dream-payload.js';
@@ -373,7 +374,7 @@ async function refreshLongDreamTokenEstimate() {
         if (!dream) return;
         const instruction = String($('#theater-dream-next-instruction').val() || '');
         const chapterTitle = String($('#theater-dream-next-title').val() || `第 ${dream.chapters.length + 1} 章`);
-        const targetChars = Math.max(500, Math.min(8000, Math.round(Number($('#theater-dream-next-target').val()) || 3000)));
+        const targetChars = normalizeManualTarget($('#theater-dream-next-target').val());
         const foundation = await resolveLongDreamRequestFoundation(dream);
         const currentDraft = dream.draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING ? String(dream.draft.text || '') : '';
         const writingPlan = longDreamWritingPlan({ targetChars, autoContinue: runtime.settings.autoContinue !== false,
@@ -460,7 +461,7 @@ async function generateNextLongDreamChapter({ appendCandidate = false, candidate
     const chapterTitle = String((candidateConfig?.title ?? ($titleInput.length ? $titleInput.val() : composerDraft.title))
         || `第 ${dream.chapters.length + 1} 章`).trim();
     const instruction = String(candidateConfig?.instruction ?? ($instructionInput.length ? ($instructionInput.val() || '') : (composerDraft.instruction || '')));
-    const targetChars = Math.max(500, Math.min(8000, Math.round(Number(candidateConfig?.targetChars ?? ($targetInput.length ? $targetInput.val() : composerDraft.targetChars)) || 3000)));
+    const targetChars = normalizeManualTarget(candidateConfig?.targetChars ?? ($targetInput.length ? $targetInput.val() : composerDraft.targetChars));
     runtime.setLongDreamComposerDraft(dream.id, { chapterTitle, title: chapterTitle, instruction, targetChars });
     let foundation;
     runtime.isPreparingGeneration = true;
@@ -857,7 +858,7 @@ async function weaveLongDreamMemoryBatch(dreamId, { force = false, announce = fa
 
 // @theater-source-begin discardLongDreamDraft
 async function discardLongDreamDraft() {
-    if (runtime.longDreamCandidateSavePending || runtime.isPreparingGeneration) return;
+    if (runtime.longDreamCandidateSavePending || runtime.isPreparingGeneration || runtime.isGenerating || runtime.longDreamGenerationController?.active || runtime.longDreamChapterEditController) return;
     const dream = runtime.longDreamCache.find(item => String(item.id) === String(runtime.activeLongDreamId));
     if (dream?.draft?.status !== LONG_DREAM_DRAFT_STATUS.WRITING) return;
     const composerDraft = runtime.getLongDreamComposerDraft(dream.id);
@@ -878,24 +879,58 @@ async function discardLongDreamDraft() {
     const detail = isWritingCandidate
         ? `本轮尚未完成的内容会被清除，已经完成的 ${candidateCount} 版候选仍会保留。本章指令也会保留。`
         : '未完成草稿会被清除，已有章节不会受影响。本章指令会保留。';
-    const ok = await SillyTavern.getContext().Popup.show.confirm(`放弃${label}？`, detail);
-    if (!ok) return;
-    const saved = await runtime.longDreamPut(isWritingCandidate
-        ? discardLongDreamWritingAttempt(dream)
-        : clearLongDreamDraft(dream));
-    if (!saved) return;
-    runtime.setLongDreamComposerDraft(dream.id, retainedComposer);
-    runtime.renderLongDreamPanel();
-    toastr.info(isWritingCandidate ? `本轮生成已清除，已回到 ${candidateCount} 版候选；指令已保留` : `${label}已清除，指令已保留`);
+    runtime.longDreamCandidateSavePending = true;
+    try {
+        const ok = await SillyTavern.getContext().Popup.show.confirm(`放弃${label}？`, detail);
+        if (!ok) return;
+        const current = runtime.longDreamCache.find(item => String(item.id) === String(dream.id));
+        if (String(runtime.activeLongDreamId) !== String(dream.id) || current !== dream
+            || runtime.isPreparingGeneration || runtime.isGenerating || runtime.longDreamGenerationController?.active || runtime.longDreamChapterEditController) {
+            toastr.info('长梦状态已变化，本次未返回或清除草稿'); return;
+        }
+        const saved = await runtime.longDreamPut(isWritingCandidate
+            ? discardLongDreamWritingAttempt(current)
+            : clearLongDreamDraft(current));
+        if (!saved) return;
+        runtime.setLongDreamComposerDraft(dream.id, retainedComposer);
+        if (String(runtime.activeLongDreamId) !== String(dream.id)) return;
+        runtime.renderLongDreamPanel();
+        toastr.info(isWritingCandidate ? `本轮生成已清除，已回到 ${candidateCount} 版候选；指令已保留` : `${label}已清除，指令已保留`);
+    } catch { toastr.warning('草稿保存失败，请重试'); }
+    finally { runtime.longDreamCandidateSavePending = false; }
 }
 // @theater-source-end discardLongDreamDraft
 
 // @theater-source-begin regenerateLongDreamDraft
-async function regenerateLongDreamDraft({ edit = false } = {}) {
+async function regenerateLongDreamDraft({ edit = false, exitReview = false } = {}) {
     if (runtime.longDreamCandidateSavePending || runtime.isPreparingGeneration) return;
     const dream = runtime.longDreamCache.find(item => String(item.id) === String(runtime.activeLongDreamId));
     const draft = dream?.draft;
     if (draft?.status !== LONG_DREAM_DRAFT_STATUS.REVIEW) return;
+    if (exitReview) {
+        if (runtime.isGenerating || runtime.longDreamGenerationController?.active || runtime.longDreamChapterEditController) return;
+        runtime.longDreamCandidateSavePending = true;
+        try {
+            const ok = await SillyTavern.getContext().Popup.show.confirm('保留候选并退出待确认？',
+                '本轮全部候选会标记为保留，已有正式章节不变。退出后可修改定梦，不会自动生成。旧候选仍按旧设定生成；修改设定后建议生成新版本。');
+            if (!ok) return;
+            const current = runtime.longDreamCache.find(item => String(item.id) === String(dream.id));
+            if (String(runtime.activeLongDreamId) !== String(dream.id) || current !== dream
+                || runtime.isGenerating || runtime.isPreparingGeneration || runtime.longDreamGenerationController?.active || runtime.longDreamChapterEditController) {
+                toastr.info('长梦状态已变化，本次未退出'); return;
+            }
+            const saved = await runtime.longDreamPut(pauseLongDreamReview(current));
+            if (!saved) { toastr.warning('候选未能保存，本次未退出'); return; }
+            if (String(runtime.activeLongDreamId) !== String(dream.id)) return;
+            runtime.setLongDreamComposerDraft(dream.id, { instruction: saved.draft.instruction, title: saved.draft.title, targetChars: saved.draft.targetChars });
+            runtime.longDreamWorkspaceSection = 'definition';
+            runtime.longDreamView = 'detail';
+            runtime.renderLongDreamPanel();
+            toastr.info('全部候选已保留，现在可以修改定梦');
+        } catch { toastr.warning('退出失败，原候选未清除，请重试'); }
+        finally { runtime.longDreamCandidateSavePending = false; }
+        return;
+    }
     const candidateCount = Array.isArray(draft.candidates) ? draft.candidates.length : 0;
     let instruction = edit ? (draft.lastRevisionInstruction ?? draft.instruction) : draft.instruction;
     if (edit) {

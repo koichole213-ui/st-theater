@@ -489,6 +489,7 @@ function bindEvents() {
     });
     $d.off('click.tdconfirm').on('click.tdconfirm', '#theater-dream-confirm-chapter', runtime.confirmLongDreamChapter);
     $d.off('click.tddiscard').on('click.tddiscard', '#theater-dream-discard-draft', runtime.discardLongDreamDraft);
+    $d.off('click.tdexitreview').on('click.tdexitreview', '#theater-dream-exit-review', () => runtime.regenerateLongDreamDraft({ exitReview: true }));
     $d.off('click.tdclearinstruction').on('click.tdclearinstruction', '#theater-dream-clear-next-instruction', async function () {
         const input = $('#theater-dream-next-instruction');
         if (!input.length || !String(input.val() || '').trim()) return;
@@ -705,6 +706,7 @@ function bindEvents() {
     $d.off('click.tdreloadwb');
     $d.off('click.tdrefreshwb').on('click.tdrefreshwb', '#theater-dream-refresh-world-book', runtime.refreshLongDreamWorldBookSources);
     $d.off('click.tdsave').on('click.tdsave', '#theater-dream-save-definition', async function () {
+        if (runtime.longDreamCandidateSavePending) { toastr.info('请等待当前候选或设置保存完成'); return; }
         if (String(runtime.refreshingLongDreamWorldBookId) === String(runtime.activeLongDreamId)) {
             toastr.info('请等世界书更新完成后再保存定梦设置');
             return;
@@ -719,40 +721,44 @@ function bindEvents() {
             toastr.warning('请先确认或放弃待确认章节，再修改长梦设置');
             return;
         }
-        const worldLineRelation = $('input[name="theater-dream-edit-relation"]:checked').val() || LONG_DREAM_WORLD_LINE_RELATION.ISOLATED;
-        const worldBookPolicy = worldLineRelation === LONG_DREAM_WORLD_LINE_RELATION.ISOLATED
-            ? LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY
-            : LONG_DREAM_WORLD_BOOK_POLICY.SELECTED;
-        const inheritedBookNames = dream.inheritance?.worldBookNames?.length
-            ? dream.inheritance.worldBookNames
-            : (runtime.settings.selectedWorldBooks || []);
-        if (worldBookPolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED && !inheritedBookNames.filter(Boolean).length) {
-            toastr.warning('当前没有可沿用的世界书，请先在【素材】中选择');
-            return;
-        }
-        let worldBookSnapshot = dream.inheritance?.snapshot || null;
-        if (worldBookPolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED && !worldBookSnapshot) {
-            if (!runtime.wbEntries.some(entry => inheritedBookNames.includes(entry.book))) {
-                await runtime.reloadWorldBooks({ silent: true });
-            }
-            worldBookSnapshot = runtime.captureCurrentLongDreamWorldBooks(inheritedBookNames);
-            if (!runtime.longDreamSnapshotEntryCount(worldBookSnapshot)) {
-                toastr.warning('这些世界书还没有可冻结的已勾选内容，请先在【素材】中检查条目');
+        runtime.longDreamCandidateSavePending = true;
+        try {
+            const worldLineRelation = $('input[name="theater-dream-edit-relation"]:checked').val() || LONG_DREAM_WORLD_LINE_RELATION.ISOLATED;
+            const worldBookPolicy = worldLineRelation === LONG_DREAM_WORLD_LINE_RELATION.ISOLATED
+                ? LONG_DREAM_WORLD_BOOK_POLICY.BRANCH_ONLY
+                : LONG_DREAM_WORLD_BOOK_POLICY.SELECTED;
+            const inheritedBookNames = dream.inheritance?.worldBookNames?.length
+                ? dream.inheritance.worldBookNames
+                : (runtime.settings.selectedWorldBooks || []);
+            if (worldBookPolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED && !inheritedBookNames.filter(Boolean).length) {
+                toastr.warning('当前没有可沿用的世界书，请先在【素材】中选择');
                 return;
             }
-        }
-        const updated = updateLongDreamDefinition(dream, {
-            title: $('#theater-dream-edit-title').val(),
-            canon: $('#theater-dream-edit-canon').val(),
-            worldBookPolicy,
-            worldLineRelation,
-            worldBookNames: inheritedBookNames,
-            worldBookSnapshot,
-        });
-        const saved = await runtime.longDreamPut(updated);
-        if (!saved) return;
-        runtime.renderLongDreamPanel();
-        toastr.success('此梦设定已保存');
+            let worldBookSnapshot = dream.inheritance?.snapshot || null;
+            if (worldBookPolicy === LONG_DREAM_WORLD_BOOK_POLICY.SELECTED && !worldBookSnapshot) {
+                if (!runtime.wbEntries.some(entry => inheritedBookNames.includes(entry.book))) {
+                    await runtime.reloadWorldBooks({ silent: true });
+                }
+                worldBookSnapshot = runtime.captureCurrentLongDreamWorldBooks(inheritedBookNames);
+                if (!runtime.longDreamSnapshotEntryCount(worldBookSnapshot)) {
+                    toastr.warning('这些世界书还没有可冻结的已勾选内容，请先在【素材】中检查条目');
+                    return;
+                }
+            }
+            const updated = updateLongDreamDefinition(dream, {
+                title: $('#theater-dream-edit-title').val(),
+                canon: $('#theater-dream-edit-canon').val(),
+                worldBookPolicy,
+                worldLineRelation,
+                worldBookNames: inheritedBookNames,
+                worldBookSnapshot,
+            });
+            const saved = await runtime.longDreamPut(updated);
+            if (!saved) return;
+            runtime.renderLongDreamPanel();
+            toastr.success('此梦设定已保存');
+        } catch { toastr.warning('定梦设置保存失败，请重试'); }
+        finally { runtime.longDreamCandidateSavePending = false; }
     });
     $d.off('click.tddelete').on('click.tddelete', '#theater-dream-delete', async function () {
         if (String(runtime.activeLongDreamGenerationId) === String(runtime.activeLongDreamId) && runtime.longDreamGenerationController?.active) {

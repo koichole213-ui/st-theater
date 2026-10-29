@@ -56,7 +56,7 @@ function findTargetMatch(instruction) {
     for (const pattern of TARGET_PATTERNS) {
         const match = text.match(pattern);
         const value = parseChineseNumber(match?.[1]);
-        if (match && value && value >= 100) return { match, value, text };
+        if (match && Number.isSafeInteger(value) && value >= 1) return { match, value, text };
     }
     return null;
 }
@@ -67,8 +67,9 @@ export function parseTargetWordCount(instruction) {
 
 export function normalizeManualTarget(value, fallback = 3000) {
     const parsed = Math.round(Number(value));
-    if (!Number.isFinite(parsed)) return fallback;
-    return Math.min(100000, Math.max(100, parsed));
+    if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
+    const defaultTarget = Math.round(Number(fallback));
+    return Number.isSafeInteger(defaultTarget) && defaultTarget > 0 ? defaultTarget : 3000;
 }
 
 export function resolveTargetWordCount(instruction, { manualEnabled = false, manualTarget = 3000 } = {}) {

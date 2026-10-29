@@ -8,7 +8,7 @@ import {
 } from './long-dream.js';
 import { buildLongDreamChapterMessages, buildLongDreamChapterPayload } from './long-dream-payload.js';
 import { targetCompletionChars, createGenerationJob, addGenerationSegment, shouldContinueJob, shouldAuthorizeFinishRound, authorizeFinish } from './generation-job.js';
-import { isStagedRenderTarget } from './length-policy.js';
+import { isStagedRenderTarget, normalizeManualTarget } from './length-policy.js';
 import { readableCharCount } from './text-counter.js';
 
 export const LONG_DREAM_GENERATION_STAGE = Object.freeze({
@@ -141,7 +141,7 @@ export function createLongDreamGenerationController({
         const normalizedTargetChars = targetChars === undefined
             ? (currentRecord.draft?.targetChars || 3000)
             : targetChars;
-        const target = Math.max(500, Math.min(8000, Math.round(Number(normalizedTargetChars) || 3000)));
+        const target = normalizeManualTarget(normalizedTargetChars);
         const writingPlan = longDreamWritingPlan({ targetChars: target, autoContinue, maxRounds, existingDraftText });
         const { shouldAutoContinue, allowedRounds, stagedMultiRound } = writingPlan;
         const job = createGenerationJob({

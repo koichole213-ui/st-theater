@@ -1,3 +1,4 @@
+import { normalizeManualTarget } from './length-policy.js';
 import { normalizeStoryFields } from './long-dream-story-summary.js';
 import { LONG_DREAM_SCHEMA_VERSION, normalizeLongDreamRecord, normalizeLongDreamVersions } from './long-dream.js';
 import { normalizeLongDreamMemoryV2 } from './long-dream-memory-model.js';
@@ -95,7 +96,7 @@ function safeChapter(chapter = {}, fallbackDate, index = 0) {
         retainedVersions: normalizeLongDreamVersions(chapter.retainedVersions, fallbackDate),
         title: cleanText(chapter?.title, 80) || `第 ${index + 1} 章`,
         instruction: String(chapter?.instruction || ''),
-        targetChars: Math.max(500, Math.min(8000, Math.round(Number(chapter?.targetChars) || 3000))),
+        targetChars: normalizeManualTarget(chapter?.targetChars),
         text,
         html,
         mode: cleanText(chapter?.mode, 40) || (html.trim() ? 'html' : 'text'),
@@ -110,7 +111,7 @@ function safeDraft(draft = null, fallbackDate, nextNumber, { includeReviewDraft 
     const text = String(draft.text || '');
     const html = String(draft.html || '');
     const instruction = String(draft.instruction || '');
-    if (!text.trim() && !html.trim() && !instruction.trim()) return null;
+    if (!text.trim() && !html.trim() && !instruction.trim() && !hasCandidates) return null;
     const status = draft.status === 'review' && text.trim() && html.trim() ? 'review' : 'writing';
     return {
         status,
@@ -123,7 +124,7 @@ function safeDraft(draft = null, fallbackDate, nextNumber, { includeReviewDraft 
         ...(typeof draft.lastRevisionInstruction === 'string' ? { lastRevisionInstruction: draft.lastRevisionInstruction } : {}),
         title: cleanText(draft.title, 80) || `第 ${nextNumber} 章`,
         instruction,
-        targetChars: Math.max(500, Math.min(8000, Math.round(Number(draft.targetChars) || 3000))),
+        targetChars: normalizeManualTarget(draft.targetChars),
         text,
         html,
         mode: cleanText(draft.mode, 40) || (html.trim() ? 'html' : 'text'),

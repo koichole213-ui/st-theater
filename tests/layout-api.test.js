@@ -93,7 +93,7 @@ test('普通排版重试失败/停止/保存失败保留原文，成功只替换
     }
 });
 test('更新日志最多五个可靠正式版本，未发布功能不混入，已读版本保存后不重复提示',()=>{
-    assert.ok(RELEASE_NOTES.length<=5);assert.equal(RELEASE_NOTES[0].version,'4.4.3');
+    assert.ok(RELEASE_NOTES.length<=5);assert.equal(RELEASE_NOTES[0].version,'4.4.5');
     const html=releaseNotesHTML(v=>String(v));assert.match(html,/长梦概要/);assert.match(html,/<details/);assert.match(html,/独立 HTML 排版 API/);assert.equal(hasUnreadRelease({releaseNotesReadVersion:'4.4.2'}),true);
     assert.equal(hasUnreadRelease({}),true);assert.equal(hasUnreadRelease({releaseNotesReadVersion:latestReleaseVersion()}),false);
 });

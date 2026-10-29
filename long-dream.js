@@ -1,3 +1,4 @@
+import { normalizeManualTarget } from './length-policy.js';
 import { normalizeStoryFields, mergeStoryResponse, saveStorySummary, validateStorySources, invalidateStoryDecisions, savedStoryText } from './long-dream-story-summary.js';
 import {
     LONG_DREAM_MEMORY_SCHEMA_VERSION,
@@ -302,7 +303,7 @@ function normalizeDraftCandidate(candidate, fallbackDate) {
         versionNumber: Math.max(1, Math.floor(Number(candidate.versionNumber) || 1)),
         instruction: String(candidate.instruction ?? ''),
         title: cleanText(candidate.title, 80),
-        targetChars: Math.max(500, Math.min(8000, Math.round(Number(candidate.targetChars) || 3000))),
+        targetChars: normalizeManualTarget(candidate.targetChars),
         mode: cleanText(candidate.mode, 40) || 'html',
         createdAt: normalizeIsoDate(candidate.createdAt || candidate.updatedAt, fallbackDate),
     };
@@ -367,7 +368,7 @@ function normalizeDraft(draft, chapterNumber, fallbackDate) {
         title: selectedCandidate?.title || cleanText(draft.title, 80) || `第 ${chapterNumber} 章`,
         instruction: selectedCandidate?.instruction ?? instruction,
         ...(typeof draft.lastRevisionInstruction === 'string' ? { lastRevisionInstruction: draft.lastRevisionInstruction } : {}),
-        targetChars: selectedCandidate?.targetChars ?? Math.max(500, Math.min(8000, Math.round(Number(draft.targetChars) || 3000))),
+        targetChars: selectedCandidate?.targetChars ?? normalizeManualTarget(draft.targetChars),
         text: selectedCandidate?.text ?? draftText,
         html: selectedCandidate?.html ?? draftHtml,
         mode: selectedCandidate?.mode || cleanText(draft.mode, 40) || (draftHtml.trim() ? 'html' : 'text'),
@@ -1048,6 +1049,17 @@ export function selectLongDreamDraftCandidate(record, candidateIndex, now = new 
     }, now);
 }
 
+export function pauseLongDreamReview(record, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (normalized?.draft?.status !== LONG_DREAM_DRAFT_STATUS.REVIEW) throw new Error('当前没有待确认章节');
+    return saveLongDreamDraft(normalized, {
+        ...normalized.draft,
+        status: LONG_DREAM_DRAFT_STATUS.WRITING,
+        resumeStage: LONG_DREAM_DRAFT_RESUME_STAGE.WRITING,
+        text: '', html: '',
+        candidates: normalized.draft.candidates.map(item => ({ ...item, retained: true })),
+    }, now);
+}
 export function discardLongDreamWritingAttempt(record, now = new Date()) {
     const normalized = normalizeLongDreamRecord(record);
     if (!normalized?.draft) throw new Error('没有可放弃的长梦草稿');

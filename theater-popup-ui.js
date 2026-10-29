@@ -94,7 +94,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                         <span>启用独立目标</span>
                     </label>
                     <div class="theater-target-input-wrap">
-                        <input id="theater-manual-target-chars" class="theater-input theater-number-input" type="number" min="100" max="100000" step="100" value="${normalizeManualTarget(runtime.settings.manualTargetChars)}" ${runtime.settings.manualTargetEnabled ? '' : 'disabled'}>
+                        <input id="theater-manual-target-chars" class="theater-input theater-number-input" type="number" min="1" step="1" value="${normalizeManualTarget(runtime.settings.manualTargetChars)}" ${runtime.settings.manualTargetEnabled ? '' : 'disabled'}>
                         <span>字</span>
                     </div>
                     <span class="theater-hint-inline">开启后覆盖指令里的字数；关闭时仍识别指令中的明确字数</span>
