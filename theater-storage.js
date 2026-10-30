@@ -26,6 +26,12 @@ function idbTransactionDone(transaction) {
 
 // @theater-source-begin storageInit
 async function storageInit() {
+    if (runtime.historyMigrationPreview) {
+        const previous = runtime.historyMigrationPreview;
+        runtime.historyCache = runtime.historyCache.filter(item => !previous.items.includes(item));
+        runtime.historyCollections = runtime.historyCollections.filter(folder => !previous.folders.includes(folder));
+        runtime.historyMigrationPreview = null;
+    }
     runtime.storageReadErrors = {};
     try {
         runtime.idb = await new Promise((resolve, reject) => {
@@ -93,9 +99,15 @@ async function storageInit() {
             const transaction = runtime.idb.transaction(['history', 'kv'], 'readwrite');
             const completed = idbTransactionDone(transaction);
             const store = transaction.objectStore('history');
-            for (const h of migrated) store.add(h);
-            transaction.objectStore('kv').put([...existingFolders, ...migratedFolders], 'history-collections');
-            if (fallbackCurrentResult) transaction.objectStore('kv').put(remapHistorySource(fallbackCurrentResult, imported.chapterMapping, mapping), 'current-result');
+            try {
+                for (const h of migrated) store.add(h);
+                transaction.objectStore('kv').put([...existingFolders, ...migratedFolders], 'history-collections');
+                if (fallbackCurrentResult) transaction.objectStore('kv').put(remapHistorySource(fallbackCurrentResult, imported.chapterMapping, mapping), 'current-result');
+            } catch (error) {
+                try { transaction.abort(); } catch { /* already aborted */ }
+                await completed.catch(() => {});
+                throw error;
+            }
             await completed;
             if (Array.isArray(runtime.settings.recentGenerations)) runtime.settings.recentGenerations = runtime.settings.recentGenerations.map(item => remapHistorySource(item, imported.chapterMapping, mapping));
             runtime.settings.historyCollections = [];
@@ -142,6 +154,8 @@ async function storageInit() {
         toastr.error('小剧场存档迁移失败，旧数据保留在原位：' + (e?.message || e));
     }
 
+    const pendingHistory = Array.isArray(runtime.settings.history) ? runtime.settings.history : [];
+
     // Each read owns its failure path: a secondary failure must not erase history.
     async function readArchive(key, label, load, apply) {
         try {
@@ -159,7 +173,7 @@ async function storageInit() {
         rows => { runtime.historyCache = orderedHistory(rows || []); });
     await readArchive('collections', '历史文件夹',
         () => idbReq(runtime.idb.transaction('kv').objectStore('kv').get('history-collections')),
-        folders => { runtime.historyCollections = normalizeCollections(folders || runtime.settings.historyCollections, runtime.storageReadErrors.history ? undefined : runtime.historyCache); });
+        folders => { runtime.historyCollections = normalizeCollections(folders || (pendingHistory.length ? [] : runtime.settings.historyCollections), runtime.storageReadErrors.history ? undefined : runtime.historyCache); });
     await readArchive('recent', '最近生成结果',
         () => idbReq(runtime.idb.transaction('kv').objectStore('kv').get('recent')),
         rows => { runtime.recentCache = rows || []; });
@@ -174,6 +188,38 @@ async function storageInit() {
                 .map(record => recoverInterruptedLongDreamMemory(record))
                 .filter(Boolean);
         });
+
+    // Display unmigrated legacy copies without giving them database identities.
+    // All history writes stay blocked until a later initialization migrates them.
+    if (pendingHistory.length) {
+        const reserved = new Set([
+            ...runtime.historyCache.flatMap(item => [String(item.id), historyKey(item)]),
+            ...runtime.historyCollections.map(folder => String(folder.id)),
+        ]);
+        let sequence = 0;
+        const temporaryKey = () => {
+            let key;
+            do { key = `legacy-pending:${++sequence}`; } while (reserved.has(key));
+            reserved.add(key);
+            return key;
+        };
+        const legacy = remapHistoryImport(pendingHistory, runtime.settings.historyCollections, temporaryKey);
+        const ids = new Map();
+        const items = legacy.items.map((item, index) => {
+            const id = temporaryKey();
+            ids.set(String(pendingHistory[index].id), id);
+            return { ...item, id };
+        });
+        const folders = legacy.folders.map(folder => ({ ...folder, itemIds: folder.itemIds.map(id => ids.get(id)).filter(Boolean) }));
+        runtime.historyMigrationPreview = { items, folders };
+        runtime.historyCache = [...runtime.historyCache, ...items];
+        runtime.historyCollections = [...runtime.historyCollections, ...folders];
+        runtime.storageReadErrors.history = true;
+        runtime.storageReadErrors.collections = true;
+        runtime.storageReadErrors.historyMigration = true;
+        toastr.warning('旧历史尚未迁移完成，已临时显示保留的旧副本。可查看或导出备份；暂停历史修改和删除，请保留站点数据并稍后重新加载。', '小剧场存档迁移未完成', { timeOut: 0, extendedTimeOut: 0, closeButton: true });
+    }
+
 }
 // @theater-source-end storageInit
 
@@ -183,6 +229,10 @@ function histAdd(item) { return queueHistoryWrite(() => histAddStorage(item)); }
 
 // @theater-source-begin histAddStorage
 async function histAddStorage(item) {
+    if (runtime.storageReadErrors?.historyMigration) {
+        toastr.error('旧历史迁移尚未完成，暂时不能修改历史；请先导出备份并重新加载。');
+        return false;
+    }
     if (!runtime.idb) {
         item.id = runtime.historyCache.reduce((m, h) => Math.max(m, Number(h.id) || 0), 0) + 1;
         runtime.historyCache.push(item);
@@ -210,6 +260,10 @@ function histDelete(ids) { return queueHistoryWrite(() => histDeleteStorage(ids)
 
 // @theater-source-begin histDeleteStorage
 async function histDeleteStorage(ids) {
+    if (runtime.storageReadErrors?.historyMigration) {
+        toastr.error('旧历史迁移尚未完成，暂时不能修改历史；请先导出备份并重新加载。');
+        return false;
+    }
     const removeFromCache = () => {
         for (const id of ids) {
             const i = runtime.historyCache.findIndex(h => h.id === id);
@@ -396,6 +450,10 @@ function histPut(item) { return queueHistoryWrite(() => histPutStorage(item)); }
 
 // @theater-source-begin histPutStorage
 async function histPutStorage(item) {
+    if (runtime.storageReadErrors?.historyMigration) {
+        toastr.error('旧历史迁移尚未完成，暂时不能修改历史；请先导出备份并重新加载。');
+        return false;
+    }
     if (!item?.id) return false;
     const normalized = { ...item, tags: itemTags(item, runtime.settings.instructionTags) };
     const index = runtime.historyCache.findIndex(history => history.id === item.id);

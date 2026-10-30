@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { createTheaterStorage } from '../theater-storage.js';
-import { normalizeCollections, historyOrder } from '../history-collections.js';
+import { createHistoryJsonBackup, createHistoryArchive } from '../history-backup.js';
+import { normalizeCollections, historyOrder, historyKey } from '../history-collections.js';
 
 function historyFunction(name, runtime, extras = {}) {
     const source = readFileSync(new URL('../theater-history.js', import.meta.url), 'utf8');
@@ -26,7 +27,7 @@ function fixture(t, failure = '', sync = false) {
         const req = {};
         queueMicrotask(() => {
             if (key === activeFailure) { req.error = new Error('synthetic read failure'); req.onerror(); }
-            else { req.result = structuredClone(value); req.onsuccess(); }
+            else { req.result = value === db ? db : structuredClone(value); req.onsuccess(); }
         });
         return req;
     };
@@ -163,5 +164,117 @@ test('数据库不可用但settings回退成功时仍允许保存历史与文件
     assert.equal(await commit(() => ({ items: [{ id: 'new', title: 'New legacy work' }], folders: [{ id: 'folder', itemIds: ['new'] }] })), true);
     assert.equal(f.runtime.settings.history[0].title, 'New legacy work');
     assert.deepEqual(f.runtime.settings.historyCollections[0].itemIds, ['new']);
+    assert.equal(f.saves(), 1);
+});
+
+
+function migrationFixture(t, { rows = [], failure = 'open-write' } = {}) {
+    const f = fixture(t);
+    let activeFailure = failure, writes = 0, aborts = 0;
+    const stored = structuredClone(rows), kv = new Map();
+    const legacy = [{ id: 7, title: 'legacy', html: '<p>legacy body</p>', chapterId: 'old-chapter' }];
+    const folders = [{ id: 'old-folder', title: 'legacy folder', itemIds: ['7'] }];
+    f.runtime.settings.history = structuredClone(legacy);
+    f.runtime.settings.historyCollections = structuredClone(folders);
+    const request = value => {
+        const req = {};
+        queueMicrotask(() => { req.result = value === db ? db : structuredClone(value); req.onsuccess(); });
+        return req;
+    };
+    const db = { transaction(names, mode) {
+        if (mode !== 'readwrite') {
+            if (activeFailure === 'read') throw new Error('synthetic read failure');
+            return { objectStore: () => ({ getAll: () => request(names === 'history' ? stored : []), get: key => request(kv.get(key)) }) };
+        }
+        writes++;
+        if (activeFailure === 'open-write') throw new Error('synthetic write open failure');
+        const staged = [], stagedKV = new Map();
+        let aborted = false;
+        const tx = { objectStore(name) { return {
+            add(item) {
+                staged.push(structuredClone(item));
+                if (activeFailure === 'add') throw new Error('synthetic synchronous add failure');
+            },
+            put(value, key) { stagedKV.set(key, structuredClone(value)); },
+        }; }, abort() { aborted = true; aborts++; } };
+        queueMicrotask(() => {
+            if (aborted || activeFailure === 'abort') { tx.error = new Error('synthetic transaction abort'); tx.onabort(); }
+            else { stored.push(...staged); for (const [key, value] of stagedKV) kv.set(key, value); tx.oncomplete(); }
+        });
+        return tx;
+    } };
+    Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: { open: () => request(db) } });
+    return { ...f, stored, legacy, folders, writes: () => writes, aborts: () => aborts, setMigrationFailure(value) { activeFailure = value; } };
+}
+
+for (const failure of ['open-write', 'add', 'abort', 'read']) {
+    test(`legacy migration ${failure}: old copies remain visible and protected`, async t => {
+        const f = migrationFixture(t, { failure });
+        await f.storage.storageInit();
+        assert.deepEqual(f.runtime.settings.history, f.legacy);
+        assert.deepEqual(f.runtime.settings.historyCollections, f.folders);
+        assert.equal(f.runtime.historyCache.length, 1);
+        assert.equal(f.runtime.historyCache[0].html, f.legacy[0].html);
+        assert.equal(f.runtime.historyCollections[0].itemIds[0], f.runtime.historyCache[0].id);
+        const backup = createHistoryJsonBackup(f.runtime.historyCache, f.runtime.historyCollections);
+        assert.equal(backup.items[0].html, f.legacy[0].html);
+        assert.deepEqual(backup.folders[0].itemIds, [backup.items[0].id]);
+        const archive = createHistoryArchive(f.runtime.historyCache, f.runtime.historyCollections);
+        assert.equal(archive.files[0].html, f.legacy[0].html);
+        assert.deepEqual(archive.manifest.folders[0].itemIds, [archive.manifest.items[0].id]);
+        assert.equal(f.runtime.storageReadErrors.historyMigration, true);
+        assert.equal(f.runtime.storageReadErrors.history, true);
+        assert.equal(f.runtime.storageReadErrors.collections, true);
+        assert.equal(f.saves(), 0);
+        assert.equal(f.stored.length, 0);
+        if (failure === 'add') assert.equal(f.aborts(), 1);
+        const before = f.writes();
+        assert.equal(await f.storage.histAddStorage({ title: 'new' }), false);
+        assert.equal(await f.storage.histPutStorage({ ...f.runtime.historyCache[0], title: 'changed' }), false);
+        assert.equal(await f.storage.histDeleteStorage([f.runtime.historyCache[0].id]), false);
+        assert.equal(f.writes(), before);
+        f.runtime.queueHistoryWrite = operation => operation();
+        assert.equal(await historyFunction('commitHistoryCollection', f.runtime)(() => { assert.fail('protected'); }), false);
+        await historyFunction('migrateHistoryTags', f.runtime)();
+        assert.equal(f.saves(), 0);
+        assert.ok(f.notices.some(args => args[2]?.timeOut === 0));
+        await f.storage.storageInit();
+        assert.equal(f.runtime.historyCache.length, 1, 'reinitialization must not duplicate preview copies');
+        assert.deepEqual(f.runtime.settings.history, f.legacy);
+    });
+}
+
+test('legacy and database identities stay separate; reload migrates once and unlocks', async t => {
+    const rows = [{ id: 7, title: 'database', html: '<p>database body</p>', chapterId: 'old-chapter' }, { id: 'legacy-pending:1', title: 'reserved' }];
+    const f = migrationFixture(t, { rows });
+    await f.storage.storageInit();
+    assert.equal(f.runtime.historyCache.length, 3);
+    assert.equal(new Set(f.runtime.historyCache.map(item => String(item.id))).size, 3);
+    assert.equal(new Set(f.runtime.historyCache.map(historyKey)).size, 3);
+    assert.deepEqual(f.stored, rows);
+    f.setMigrationFailure('');
+    await f.storage.storageInit();
+    assert.equal(f.runtime.historyCache.length, 3);
+    assert.equal(f.runtime.settings.history.length, 0);
+    assert.equal(f.runtime.settings.historyCollections.length, 0);
+    assert.equal(f.stored.length, 3);
+    assert.deepEqual(f.runtime.storageReadErrors, {});
+    assert.equal(f.runtime.historyMigrationPreview, null);
+    assert.equal(f.runtime.historyCache.filter(item => item.html === '<p>legacy body</p>').length, 1);
+    const migrated = f.runtime.historyCache.find(item => item.html === '<p>legacy body</p>');
+    assert.deepEqual(f.runtime.historyCollections[0].itemIds, [migrated.id]);
+    const saves = f.saves();
+    await f.storage.storageInit();
+    assert.equal(f.stored.length, 3);
+    assert.equal(f.saves(), saves);
+});
+
+test('successful legacy migration clears old copies only after commit', async t => {
+    const f = migrationFixture(t, { failure: '' });
+    await f.storage.storageInit();
+    assert.equal(f.stored.length, 1);
+    assert.equal(f.runtime.settings.history.length, 0);
+    assert.equal(f.runtime.historyCache[0].html, f.legacy[0].html);
+    assert.deepEqual(f.runtime.storageReadErrors, {});
     assert.equal(f.saves(), 1);
 });
