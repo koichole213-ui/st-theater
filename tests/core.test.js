@@ -6877,7 +6877,8 @@ test('运行日志统一脱敏密钥、Authorization 与 URL 路径', () => {
     assert.match(output, /\[REDACTED\]/);
 });
 
-test('运行日志只保留最近 200 条且不写入外部设置', () => {
+test('运行日志只保留最近 500 条且不写入外部设置', () => {
+    assert.equal(MAX_RUNTIME_LOGS, 500);
     clearRuntimeLogs();
     setRuntimeLogSecretProvider(() => []);
     for (let index = 0; index < MAX_RUNTIME_LOGS + 5; index++) writeRuntimeLog('info', `entry-${index}`);
@@ -7355,7 +7356,7 @@ test('排查 TXT 点击时汇总最新报告和日志，并再次脱敏', () => 
     assert.equal(downloads.length, 2);
     assert.match(downloads[0].content, /报告 1\r\n/);
     assert.match(downloads[1].content, /报告 2\r\n/);
-    assert.match(downloads[1].content, /脱敏运行日志（最近 1\/200 条）/);
+    assert.match(downloads[1].content, /脱敏运行日志（最近 1\/500 条）/);
     assert.match(downloads[1].content, /T-NET-FAILED/);
     assert.doesNotMatch(downloads[1].content, /private|key=secret/);
     assert.match(downloads[1].name, /^千夜浮梦-排查报告-\d{4}-\d{2}-\d{2}\.txt$/);

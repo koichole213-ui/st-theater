@@ -1,4 +1,4 @@
-const MAX_RUNTIME_LOGS = 200;
+const MAX_RUNTIME_LOGS = 500;
 const LEVELS = new Set(['info', 'warn', 'error']);
 const entries = [];
 let secretProvider = () => [];
@@ -52,6 +52,9 @@ export function sanitizeLogText(value) {
     text = text.replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]');
     return redactKnownSecrets(text);
 }
+
+// Prompt inspection retains URLs and literal formatting; redact known credentials only.
+export function redactRuntimeSecrets(value) { return redactKnownSecrets(String(value ?? '')); }
 
 export function setRuntimeLogSecretProvider(provider) {
     secretProvider = typeof provider === 'function' ? provider : () => [];

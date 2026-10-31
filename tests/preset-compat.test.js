@@ -114,7 +114,7 @@ test('一轮真实生成循环只计过滤后的正文，未达目标也不额�
         payload: { systemPrompt: '系统', userPrompt: '任务' }, isPlainTextRender: true,
         popupAlive: () => false, apiRoute: {}, targetWordCount: 10000, onChunk: value => { chunkBody = value; },
         filterStoryOutput, htmlToPlainText: value => value, markCompleted() {}, addGenerationSegment, readableCharCount,
-        shouldContinueJob, currentRoundStreamText: '', stagedMultiRoundMode: false,
+        shouldContinueJob, currentRoundStreamText: '', stagedMultiRoundMode: false, contCtx: '',
     });
     await run();
     assert.equal(requests, 1); assert.deepEqual(job.segments, ['合成正文']);

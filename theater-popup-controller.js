@@ -1,3 +1,4 @@
+import { refreshPromptInspector } from './prompt-inspector-ui.js';
 // theater-popup-controller: receives live state and cross-feature callbacks from index.js.
 import { closeHistoryMenus } from './history-menus.js';
 import { waitForPopupElements } from './popup-lifecycle.js';
@@ -20,7 +21,7 @@ function activateTheaterTab(tabName, { persist = true, resetScroll = true } = {}
         const panels = document.querySelector('.theater-panels-wrapper');
         if (panels) panels.scrollTop = 0;
     }
-    if (tab === 'diagnostics') runtime.renderRuntimeLog();
+    if (tab === 'diagnostics') { runtime.renderRuntimeLog(); refreshPromptInspector(document); }
     if (tab === 'long-dream') runtime.renderLongDreamPanel();
 }
 // @theater-source-end activateTheaterTab

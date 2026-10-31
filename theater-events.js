@@ -1,3 +1,4 @@
+import { bindPromptInspector } from './prompt-inspector-ui.js';
 import { bindLayoutRetry } from './layout-retry.js';
 import { bindLayoutApi } from './layout-api-settings.js';
 import { bindReleaseNotes } from './release-notes.js';
@@ -36,6 +37,7 @@ function bindEvents() {
     bindLayoutApi($d, runtime);
     bindLayoutRetry($d, runtime);
     bindReleaseNotes($d, runtime);
+    bindPromptInspector({ document, copyToClipboard: runtime.copyToClipboard, downloadTextContent: runtime.downloadTextContent });
     // 恢复入口最先绑定。即使后续某个功能按钮初始化异常，用户仍能拉取修复。
     $d.off('click.tup').on('click.tup', '#theater-update-btn', runtime.updateExtension);
     $d.off('click.treload').on('click.treload', '#theater-reload-after-update-btn', runtime.confirmReloadAfterUpdate);

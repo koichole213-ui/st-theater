@@ -1,3 +1,4 @@
+import { beginPromptInspection, recordSentInspection } from './prompt-inspector.js';
 // theater-api: receives live state and cross-feature callbacks from index.js.
 import { captureLayoutApiSelection } from './layout-api.js';
 import { createRequestTrace } from './request-trace.js';
@@ -92,6 +93,10 @@ async function requestConfiguredGenerationApi({
 async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStream = true, signal = runtime.abortController?.signal, requestOptions = {}) {
     runtime.lastApiResponseSummary = null;
     runtime.lastApiConnectionSummary = null;
+    const inspectionId = beginPromptInspection({ purpose: requestOptions.tracePurpose,
+        label: requestOptions.inspectionLabel,
+        round: requestOptions.inspectionRound || 1, presetName: requestOptions.presetName || runtime.settings.selectedPresetName,
+        route: 'main', messages: requestOptions.messages, systemPrompt, userPrompt: prompt });
     return requestMainApi({
         ctx,
         systemPrompt,
@@ -100,7 +105,7 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
         postProcessing: requestOptions.postProcessing || '',
         presetName: requestOptions.presetName || runtime.settings.selectedPresetName || '未指定',
         onChunk,
-        onRequest: details => captureActualRequestTrace(details, requestOptions.tracePurpose),
+        onRequest: details => { captureActualRequestTrace(details, requestOptions.tracePurpose); recordSentInspection(inspectionId, details); },
         shouldStream,
         signal,
         log: runtime.runtimeLog,
@@ -124,6 +129,10 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
         apiModel: runtime.settings.apiModel,
         maxOutputTokens: runtime.settings.maxOutputTokens,
     };
+    const inspectionId = beginPromptInspection({ purpose: requestOptions.tracePurpose,
+        label: requestOptions.inspectionLabel,
+        round: requestOptions.inspectionRound || 1, presetName: requestOptions.presetName || runtime.settings.selectedPresetName,
+        route: 'custom', messages: requestOptions.messages, systemPrompt, userPrompt });
     return requestCustomApi({
         config: apiConfig,
         systemPrompt,
@@ -132,7 +141,7 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
         postProcessing: requestOptions.postProcessing || '',
         presetName: requestOptions.presetName || runtime.settings.selectedPresetName || '未指定',
         onChunk,
-        onRequest: details => captureActualRequestTrace(details, requestOptions.tracePurpose),
+        onRequest: details => { captureActualRequestTrace(details, requestOptions.tracePurpose); recordSentInspection(inspectionId, details); },
         shouldStream,
         signal,
         log: runtime.runtimeLog,

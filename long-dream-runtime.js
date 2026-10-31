@@ -32,6 +32,7 @@ async function requestLongDreamChapter({
     signal,
     onChunk,
     apiRoute,
+    round = 1,
 }) {
     const ctx = SillyTavern.getContext();
     try {
@@ -49,6 +50,8 @@ async function requestLongDreamChapter({
             postProcessing,
             presetName: presetName || runtime.settings.selectedPresetName || '内置默认预设',
             tracePurpose: 'creative',
+            inspectionRound: round,
+            inspectionLabel: round === 1 ? '长梦续章' : '长梦同章补写',
         };
         const result = await runtime.requestConfiguredGenerationApi({
             apiRoute,

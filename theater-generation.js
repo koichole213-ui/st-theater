@@ -579,6 +579,8 @@ async function requestFinalRenderedHtml({
                 onChunk,
                 signal,
                 metricScope,
+                requestOptions: { tracePurpose: 'layout', inspectionRound: renderAttempt,
+                    inspectionLabel: metricScope.startsWith('long-dream') ? '长梦最终排版' : '最终排版', presetName: renderLabel },
             });
             const renderText = typeof result === 'string' ? result : result?.text;
             if (!renderText) throw new Error('最终渲染未返回内容');
@@ -839,6 +841,8 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 postProcessing: roundPayload.postProcessing || '',
                 presetName: roundPayload.presetName || runtime.settings.selectedPresetName || '内置默认预设',
                 tracePurpose: round === 1 ? 'creative' : 'continuation',
+                inspectionRound: round,
+                inspectionLabel: round === 1 ? (contCtx ? '普通续写' : '普通生成') : '自动补写',
             };
             const result = await runtime.requestConfiguredGenerationApi({
                 apiRoute,
