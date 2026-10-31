@@ -575,10 +575,6 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                 <label class="theater-config-switch" aria-label="流式实时显示"><input type="checkbox" id="theater-stream-enabled" ${runtime.settings.streamEnabled !== false ? 'checked' : ''}><span></span></label>
             </div>
             <div class="theater-config-setting-row">
-                <span class="theater-config-setting-copy" style="text-align:left"><b>防路由（试用）</b><small style="text-align:left">下一次生成生效；加入随机注释和少量空格，增加少量输入，可能影响缓存复用。适用于小剧场正文、排版与辅助请求。</small></span>
-                <label class="theater-config-switch" aria-label="防路由（试用）"><input type="checkbox" id="theater-anti-route-enabled" ${runtime.settings.antiRouteEnabled === true ? 'checked' : ''}><span></span></label>
-            </div>
-            <div class="theater-config-setting-row">
                 <span class="theater-config-setting-copy"><b>创作增强</b><small>为正文加入虚构叙事约定；下一次生成生效，不额外发起请求</small></span>
                 <label class="theater-config-switch" aria-label="创作增强"><input type="checkbox" id="theater-creative-enhancement" ${runtime.settings.creativeEnhancementEnabled === true ? 'checked' : ''}><span></span></label>
             </div>

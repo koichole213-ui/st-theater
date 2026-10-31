@@ -730,7 +730,7 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
             ...(series ? { shouldStop: () => (runtime.settings.longDreamSeriesPausedIds || []).includes(key) } : {}),
             replace: !fillMissing,
             record: dream,
-            request: (payload, { signal }) => requestCustomApi({ config: { ...preset, maxOutputTokens: normalizeMaxTokens(preset.maxOutputTokens) }, ...payload, signal, antiRouteEnabled: runtime.settings.antiRouteEnabled === true, shouldStream: runtime.settings.streamEnabled !== false, onChunk: () => {}, log: runtime.runtimeLog }),
+            request: (payload, { signal }) => requestCustomApi({ config: { ...preset, maxOutputTokens: normalizeMaxTokens(preset.maxOutputTokens) }, ...payload, signal, shouldStream: runtime.settings.streamEnabled !== false, onChunk: () => {}, log: runtime.runtimeLog }),
             readLatest: () => runtime.longDreamCache.find(item => String(item.id) === key),
             save: record => runtime.longDreamPut(record),
         });
@@ -814,7 +814,6 @@ async function weaveLongDreamMemoryBatch(dreamId, { force = false, announce = fa
                 ...preset,
                 maxOutputTokens: normalizeMaxTokens(preset.maxOutputTokens),
             },
-            antiRouteEnabled: runtime.settings.antiRouteEnabled === true,
             systemPrompt: payload.systemPrompt,
             userPrompt: payload.userPrompt,
             shouldStream: runtime.settings.streamEnabled !== false,
