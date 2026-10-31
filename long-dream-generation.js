@@ -109,6 +109,7 @@ export function createLongDreamGenerationController({
         appendCandidate = false,
         apiRoute,
         identitySlots = {},
+        layoutContext = {},
         protagonistAnchor = '',
     } = {}) {
         if (active) throw new Error('已有长梦章节正在生成');
@@ -273,6 +274,7 @@ export function createLongDreamGenerationController({
                         payload,
                         presetEntries,
                         slots: identitySlots,
+                        layoutContext,
                         squashSystemMessages,
                     });
 

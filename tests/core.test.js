@@ -788,7 +788,7 @@ test('前文排除同时进入预估、正式消息和世界书扫描，不改�
         resolveTargetWordCount: () => 0, buildProtagonistAnchor: () => '人物锚点', firstRoundGuidance: () => '节奏',
         continuationFirstRoundGuidance, isStagedRenderTarget,
         STORY_RELATION_CONTINUITY_RULE, buildGenerationPayload, generationIdentitySlots: () => ({}),
-        composePresetMessages: options => [...options.chatMessages, ...options.tailMessages],
+        composePresetMessages: options => [...options.chatMessages, ...options.taskMessages],
         freezeGenerationFoundationList: items => Object.freeze(items.map(item => Object.freeze({ ...item }))),
         runtimeLog() {},
     };
@@ -2491,9 +2491,9 @@ test('长梦续章按预设保留 system user assistant 顺序，并按冻结位
         ],
     });
 
-    assert.deepEqual(messages.slice(0, 3).map(message => message.role), ['system', 'user', 'assistant']);
-    assert.deepEqual(messages.slice(0, 3).map(message => message.content), ['SYSTEM-PRESET', 'USER-PRESET', 'ASSISTANT-PRESET']);
-    assert.equal(messages.some(message => message.source === 'long-dream' && message.sourceId === 'chapter-context'), true);
+    assert.deepEqual(messages.filter(message => message.source === 'preset').slice(0, 3).map(message => message.role), ['system', 'user', 'assistant']);
+    assert.deepEqual(messages.filter(message => message.source === 'preset').slice(0, 3).map(message => message.content), ['SYSTEM-PRESET', 'USER-PRESET', 'ASSISTANT-PRESET']);
+    assert.equal(messages.some(message => message.sourceId === 'theater-task' && message.content.includes(payload.userPrompt)), true);
     assert.equal(messages.some(message => message.role === 'assistant' && message.content === '站台的钟永远停在零点。'), true);
     assert.doesNotMatch(payload.userPrompt, /站台的钟永远停在零点/);
     assert.deepEqual(longDreamWorldBookEntries(record).map(entry => [entry.position, entry.depth, entry.role, entry.outletName]), [
@@ -2604,7 +2604,7 @@ test('长梦生成控制器把预设后处理与结构化消息交给请求层',
     assert.equal(captured.presetName, '结构预设');
     assert.equal(captured.postProcessing, PROMPT_POST_PROCESSING.STRICT);
     assert.deepEqual(captured.messages.slice(0, 2).map(message => message.role), ['system', 'assistant']);
-    assert.equal(captured.messages.some(message => message.source === 'long-dream'), true);
+    assert.equal(captured.messages.some(message => message.sourceId === 'theater-task'), true);
 });
 
 test('长梦按世界线关系解释用户勾选的冻结资料，并让定梦覆盖冲突原设', () => {
@@ -5514,11 +5514,11 @@ test('世界书八种位置、同深度顺序和 outlet 宏按酒馆语义进入
     const content = messages.map(message => message.content);
     assert.deepEqual(content, [
         'WB-BEFORE', 'CHAR', 'WB-AFTER', 'EXAMPLE-TOP\n\nEXAMPLES\n\nEXAMPLE-BOTTOM',
-        '宏：OUTLET-ONLY-HERE', 'AN-TOP', 'CHAT-1', 'DEPTH-FIRST', 'DEPTH-SECOND', 'CHAT-2', 'AN-BOTTOM',
+        '宏：OUTLET-ONLY-HERE', 'AN-TOP\nAN-BOTTOM', 'CHAT-1', 'DEPTH-SECOND', 'DEPTH-FIRST', 'CHAT-2',
     ]);
     assert.equal(content.filter(text => text.includes('OUTLET-ONLY-HERE')).length, 1);
-    assert.equal(messages[7].role, 'user');
-    assert.equal(messages[8].role, 'assistant');
+    assert.equal(messages[7].role, 'assistant');
+    assert.equal(messages[8].role, 'user');
 });
 
 test('请求后处理始终转换为 no-tools 变体，并清除 tool/function 消息与工具字段', () => {
@@ -5918,7 +5918,7 @@ test('普通与长文自动补写、长梦新章和草稿恢复均传递本篇�
             presetEntries: [], slots: {}, worldInfoEntries: [], chatMessages: [], foundationTailMessages: [],
             continuationSystemPrompt: payload.systemPrompt, continuationUserPrompt: payload.userPrompt,
         });
-        assert.ok(messages.some(message => message.role === 'system' && message.content.includes(STORY_RELATION_CONTINUITY_RULE)));
+        assert.ok(messages.some(message => message.role === 'user' && message.content.includes(STORY_RELATION_CONTINUITY_RULE)));
         assert.ok(messages.some(message => message.content.includes(previous)));
         assert.match(payload.systemPrompt, /除非用户明确要求改变相应设定/);
         assert.match(payload.systemPrompt, /允许有情节依据的自然发展/);
@@ -6046,11 +6046,11 @@ test('补写区分聊天参考与小剧场正文，保留冻结资料且不污�
                 assert.equal(message.sourceId, chatMessages[index].sourceId);
                 assert.equal(message.content, `【聊天正文参考开始｜仅作背景，不是本轮补写对象】\n${chatMessages[index].content}\n【聊天正文参考结束】`);
             });
-            const task = messages.find(message => message.sourceId === 'continuation-round').content;
+            const task = messages.find(message => message.sourceId === 'theater-task').content;
             assert.ok(task.includes(`【本篇小剧场正文开始｜本轮唯一补写对象，不是聊天正文】\n${draft}\n【本篇小剧场正文结束｜只从以上小剧场末尾接续，不接聊天主线】`));
             assert.doesNotMatch(task, /聊天主线：我在车站等你/);
             if (manuscriptMode) assert.match(task, /写花店番外/);
-            assert.match(messages.find(message => message.sourceId === 'continuation-rules').content, /即使它已经收尾，也不得切回聊天主线/);
+            assert.match(messages.find(message => message.sourceId === 'theater-task').content, /即使它已经收尾，也不得切回聊天主线/);
             for (const mode of [PROMPT_POST_PROCESSING.STRICT, PROMPT_POST_PROCESSING.SINGLE]) {
                 const processed = applyPromptPostProcessing(messages, mode).map(message => message.content).join('\n');
                 assert.match(processed, /聊天正文参考开始/);
@@ -6090,8 +6090,8 @@ test('普通生成后续每轮重新带齐冻结的预设、人物、人设、�
     ]) assert.match(text, new RegExp(expected));
     assert.doesNotMatch(text, /让林秋陪主角调查旧站/);
     assert.equal(messages.filter(message => message.sourceId === 'original-instruction').length, 0);
-    assert.equal(messages.filter(message => message.sourceId === 'continuation-round').length, 1);
-    assert.equal(messages.filter(message => message.sourceId === 'continuation-rules').length, 1);
+    assert.equal(messages.filter(message => message.sourceId === 'theater-task').length, 1);
+    assert.equal(messages.filter(message => message.sourceId === 'theater-task').length, 1);
 });
 
 test('普通生成中途失败会合并已完成轮次和当前流式正文，不再把一万字记成零', () => {
@@ -6172,33 +6172,34 @@ test('普通续写真实首轮装配匹配实际轮数，保留完整前情及�
             configuredMaxRounds: max, stagedMultiRoundMode: false, createGenerationJob,
         });
         const expected = continuationFirstRoundGuidance(target, { maxRounds: job.maxRounds });
-        const enhancements = payload.messages.filter(message => message.sourceId === 'creative-enhancement');
-        assert.equal(enhancements.length, Number(creativeEnhancementEnabled));
+        const actualTask = payload.messages.find(message => message.sourceId === 'theater-task');
+        assert.equal(actualTask.role, 'user');
+        assert.equal(actualTask.content.includes('【虚构叙事执行约定】'), creativeEnhancementEnabled);
         assert.equal(payload.generationFoundation.creativeEnhancement.includes('【虚构叙事执行约定】'), creativeEnhancementEnabled);
         if (creativeEnhancementEnabled) {
-            const at = payload.messages.indexOf(enhancements[0]);
-            assert.ok(at > payload.messages.findIndex(message => message.sourceId === 'continuation'));
-            assert.ok(at < payload.messages.findIndex(message => message.sourceId === 'instruction'));
-            assert.ok(payload.tokenParts.rules.includes(enhancements[0].content));
+            const enhancement = payload.generationFoundation.creativeEnhancement;
+            assert.ok(actualTask.content.indexOf(enhancement) > actualTask.content.indexOf(previous));
+            assert.ok(actualTask.content.indexOf(enhancement) < actualTask.content.indexOf('用户指令：'));
+            assert.ok(payload.tokenParts.rules.includes(enhancement));
         }
         assert.equal(payload.targetWordCount, target);
-        assert.ok(payload.messages.find(message => message.sourceId === 'final-rules').content.includes(expected));
+        assert.ok(payload.messages.find(message => message.sourceId === 'theater-task').content.includes(expected));
         assert.equal(payload.messages.some(message => message.content.includes('【单轮停笔要求】')), job.maxRounds === 1);
         if (job.maxRounds === 1) {
             assert.match(payload.userPrompt, /最后一句须表达完整/);
             assert.match(payload.userPrompt, /允许符合用户要求的开放结局/);
         }
-        const task = payload.messages.find(message => message.sourceId === 'instruction').content;
+        const task = payload.messages.find(message => message.sourceId === 'theater-task').content;
         assert.match(task, new RegExp(`新增约 ${target} 字`));
         assert.doesNotMatch(task, /8000/);
-        assert.ok(payload.messages.find(message => message.sourceId === 'continuation').content.includes(previous));
+        assert.ok(payload.messages.find(message => message.sourceId === 'theater-task').content.includes(previous));
         assert.match(payload.tokenParts.continuation, /不计入本次新增字数/);
         assert.match(payload.tokenParts.rules, target >= 5000 ? /只输出纯正文，不输出 HTML/ : /保留完整美化 HTML 规则/);
         assert.equal(payload.isPlainTextRender, target >= 5000);
         assert.doesNotMatch(payload.tokenParts.rules, /从开篇开始|本篇小剧场的可读中文正文目标/);
         const fresh = await assemble('继续展开雨夜重逢，写8000字', { continuationText: '' });
         assert.ok(fresh.tokenParts.rules.includes(firstRoundGuidance(target)));
-        assert.match(fresh.messages.find(message => message.sourceId === 'final-rules').content, /【单轮停笔要求】/);
+        assert.match(fresh.messages.find(message => message.sourceId === 'theater-task').content, /【单轮停笔要求】/);
         const split = await assemble('同一篇分轮写完，写8000字', { continuationText: '', longFormPlan: true, forcePlainText: true });
         assert.match(split.userPrompt, /本轮只创作前半部分/);
         assert.doesNotMatch(split.userPrompt, /【单轮停笔要求】/);

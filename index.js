@@ -33,7 +33,7 @@ import { refreshLongDreamSummary } from './long-dream-summary.js';
 import { theaterError as notifyTheaterError } from './notify.js';
 import { listPage, listPaginationHTML, requestedListPage } from './pagination.js';
 import { playSoundFile } from './notification-sound.js';
-import { bindPersonaFollowRefresh, syncPersonaToSettings } from './persona-follow.js';
+import { bindPersonaFollowRefresh, syncPersonaToSettings, readPromptPlacement } from './persona-follow.js';
 import { compareVersion, fetchInstalledExtensionStatus, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
@@ -1574,6 +1574,7 @@ const runtime = {
     set latestRemoteVersion(value) { latestRemoteVersion = value; },
     get loadJSZip() { return loadJSZip; },
     get loadPersona() { return loadPersona; },
+    get readPromptPlacement() { return typeof readPromptPlacement === 'function' ? readPromptPlacement : undefined; },
     get loadPresetEntries() { return loadPresetEntries; },
     get loadPresetNameList() { return loadPresetNameList; },
     get loadWorldBookList() { return loadWorldBookList; },

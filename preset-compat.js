@@ -1,3 +1,8 @@
+export function activePresetEntries(entries = [], generationType = 'normal') {
+    return entries.filter(entry => !Array.isArray(entry.injectionTrigger) || !entry.injectionTrigger.length
+        || entry.injectionTrigger.includes(generationType));
+}
+
 // Request-local subset of prompt macros. Never calls host macros, eval, or shared variables.
 export function resolveTheaterPreset(entries = [], context = {}, { targetChars = null, random = Math.random } = {}) {
     const variables = new Map();
@@ -48,7 +53,13 @@ export function resolveTheaterPreset(entries = [], context = {}, { targetChars =
                 const key = name === 'lastusermessage' ? 'lastUserMessage' : name;
                 replacement = context[key] == null ? undefined : String(context[key]);
             }
-            if (replacement === undefined) { stats.unsupportedMacros++; output += original; }
+            if (replacement === undefined) {
+                stats.unsupportedMacros++;
+                // Unknown template placeholders stay literal; known name macros
+                // inside them are still data substitutions, never side effects.
+                output += original.replace(/\{\{(user|char|lastusermessage)\}\}/gi, (macro, key) =>
+                    context[key.toLowerCase() === 'lastusermessage' ? 'lastUserMessage' : key.toLowerCase()] ?? macro);
+            }
             else { stats.resolvedMacros++; output += replacement; }
             cursor = end + 2;
         }
@@ -56,8 +67,10 @@ export function resolveTheaterPreset(entries = [], context = {}, { targetChars =
         return output.replace(/\s*\u0000THEATER_TRIM\u0000\s*/g, '');
     };
     const target = Math.round(Number(targetChars));
-    const resolved = entries.map(entry => {
-        let content = expand(entry.content);
+    const active = activePresetEntries(entries, context.generationType || 'normal');
+    const resolved = active.map(entry => {
+        const override = entry.id === 'main' ? context.systemPromptOverride : entry.id === 'jailbreak' ? context.jailbreakPromptOverride : '';
+        let content = expand(override && !entry.forbidOverrides ? override : entry.content);
         if (target > 0 && Number.isFinite(target)) {
             let lengthSection = false;
             content = content.split('\n').map(line => {
@@ -82,5 +95,5 @@ export function resolveTheaterPreset(entries = [], context = {}, { targetChars =
         }
         return { ...entry, content };
     });
-    return { entries: resolved, stats };
+    return { entries: resolved, stats, inactiveIds: entries.filter(entry => !active.includes(entry)).map(entry => entry.id) };
 }

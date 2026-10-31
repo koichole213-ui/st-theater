@@ -11,7 +11,7 @@ import { LONG_DREAM_GENERATION_STAGE, createLongDreamGenerationController, longD
 import { LONG_DREAM_WORLD_LINE_RELATION, LONG_DREAM_DRAFT_STATUS, retainLongDreamDraftCandidate, LONG_DREAM_MEMORY_STATUS, setLongDreamMemoryStatus, applyLongDreamMemoryPatch, discardLongDreamWritingAttempt, pauseLongDreamReview, clearLongDreamDraft, LONG_DREAM_MAX_CANDIDATES, selectLongDreamDraftCandidate } from './long-dream.js';
 import { buildProtagonistAnchor } from './protagonist-anchor.js';
 import { DEFAULT_SYSTEM_PROMPT } from './theater-defaults.js';
-import { buildLongDreamChapterPayload, buildLongDreamChapterMessages, selectRelevantLongDreamMemoryItems } from './long-dream-payload.js';
+import { buildLongDreamChapterPayload, buildLongDreamChapterMessages, selectRelevantLongDreamMemoryItems, longDreamPromptPlacement } from './long-dream-payload.js';
 import { applyPromptPostProcessing } from './request-layout.js';
 import { estimateTokenCount, formatTokenCount } from './token-estimator.js';
 import { summaryUnavailableReason } from './long-dream-summary-ui.js';
@@ -344,6 +344,7 @@ async function resolveLongDreamRequestFoundation(dream) {
     return {
         ctx,
         identitySlots,
+        layoutContext: { ...longDreamPromptPlacement(identity.layoutContext), disabledSlotIds: presetSnapshot.disabledSlotIds || [] },
         protagonistAnchor: buildProtagonistAnchor({
             userName: identity.name1,
             charName: identity.name2 || identity.character?.name || identity.character?.data?.name,
@@ -353,7 +354,7 @@ async function resolveLongDreamRequestFoundation(dream) {
             runtime.settings.customNsfwAddon?.trim() ? `【NSFW补充】\n${runtime.settings.customNsfwAddon.trim()}` : '',
         ].filter(Boolean).join('\n\n'),
         selectedPresetPrompt,
-        presetEntries: selectedPresetEntries.length
+        presetEntries: selectedPresetEntries.length || presetSnapshot.name
             ? selectedPresetEntries
             : [{ id: 'main', role: 'system', content: DEFAULT_SYSTEM_PROMPT }],
         presetName: presetSnapshot.name || '内置默认预设',
@@ -400,6 +401,7 @@ async function refreshLongDreamTokenEstimate() {
             payload,
             presetEntries: foundation.presetEntries,
             slots: foundation.identitySlots,
+            layoutContext: foundation.layoutContext,
             squashSystemMessages: foundation.squashSystemMessages,
         }), foundation.postProcessing);
         const total = messages.reduce((sum, message) => sum + estimateTokenCount(message.content), 0);
@@ -516,6 +518,7 @@ async function generateNextLongDreamChapter({ appendCandidate = false, candidate
             addons: foundation.addons,
             creativeEnhancement,
             identitySlots: foundation.identitySlots,
+            layoutContext: foundation.layoutContext,
             protagonistAnchor: foundation.protagonistAnchor,
             instruction,
             chapterTitle,

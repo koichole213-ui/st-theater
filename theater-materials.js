@@ -1,3 +1,4 @@
+import { extractPresetEntries } from './preset-layout.js';
 // theater-materials: receives live state and cross-feature callbacks from index.js.
 import { normalizeTagList, normalizeTagFilter, TAG_UNCATEGORIZED } from './tag-system.js';
 import { normalizeContextExclusionRules, MAX_CONTEXT_EXCLUSION_LENGTH, validateContextExclusionRule, MAX_CONTEXT_EXCLUSION_RULES, previewChatContext } from './context-exclusions.js';
@@ -508,59 +509,7 @@ async function fetchPresetByName(name) {
 
 // @theater-source-begin extractPromptsFromData
 function extractPromptsFromData(data) {
-    if (!data?.prompts || !Array.isArray(data.prompts)) return [];
-
-    // SillyTavern 把"哪些 prompt 启用、按什么顺序"放在 prompt_order 里，
-    // prompts 池里的 enabled 字段不可靠（很多预设默认 false 或缺失）。
-    // 优先用 prompt_order；找不到再回退到 prompt.enabled。
-    let orderEnabled = null;  // Map<identifier, boolean>
-    let orderIndex = null;    // Map<identifier, number>
-    if (Array.isArray(data.prompt_order) && data.prompt_order.length) {
-        const orderEntry =
-            data.prompt_order.find(o => o.character_id === 100001) ||
-            data.prompt_order.find(o => o.character_id === 100000) ||
-            data.prompt_order[0];
-        if (orderEntry?.order && Array.isArray(orderEntry.order)) {
-            orderEnabled = new Map(orderEntry.order.map(o => [o.identifier, o.enabled !== false]));
-            orderIndex   = new Map(orderEntry.order.map((o, i) => [o.identifier, i]));
-            const onCount  = orderEntry.order.filter(o => o.enabled !== false).length;
-            const offCount = orderEntry.order.length - onCount;
-            console.log(`[Theater] prompt_order found: ${onCount} enabled / ${offCount} disabled`);
-        }
-    } else {
-        console.log('[Theater] prompt_order missing, falling back to prompts[].enabled');
-    }
-
-    const entries = data.prompts
-        .filter(p => !p.forbid)
-        .map((p, i) => {
-            const id = p.identifier || `prompt_${i}`;
-            const enabledInST = orderEnabled
-                ? (orderEnabled.has(id) ? orderEnabled.get(id) : false)  // prompt_order 缺该项视为禁用（与 ST 行为一致）
-                : (p.enabled !== false);
-            return {
-                id,
-                name: p.name || p.identifier || `条目 ${i + 1}`,
-                role: normalizePromptRole(p.role),
-                content: String(p.content || ''),
-                enabledInST,
-                injectionPosition: p.injection_position ?? null,
-                injectionDepth: p.injection_depth ?? null,
-                injectionOrder: p.injection_order ?? null,
-                systemPrompt: p.system_prompt !== false,
-                marker: !!p.marker,
-                forbidOverrides: !!p.forbid_overrides,
-                _orderIdx: orderIndex?.has(id) ? orderIndex.get(id) : 10000 + i,
-            };
-        })
-        .filter(entry => entry.content.trim() || [
-            'worldInfoBefore', 'charDescription', 'charPersonality', 'scenario',
-            'personaDescription', 'worldInfoAfter', 'dialogueExamples', 'chatHistory',
-        ].includes(entry.id));
-
-    entries.sort((a, b) => a._orderIdx - b._orderIdx);
-    entries.forEach(e => delete e._orderIdx);
-    return entries;
+    return extractPresetEntries(data);
 }
 // @theater-source-end extractPromptsFromData
 
@@ -583,6 +532,7 @@ function currentPresetSnapshot() {
         name,
         entries: Object.freeze(entries),
         selectedEntries: Object.freeze(selectedEntries),
+        disabledSlotIds: Object.freeze(entries.filter(entry => states[entry.id] === false).map(entry => entry.id)),
         prompt: selectedEntries.map(entry => entry.content).join('\n\n'),
         postProcessing: runtime.cachedPresetPostProcessing,
         squashSystemMessages: runtime.cachedPresetSquashSystemMessages,

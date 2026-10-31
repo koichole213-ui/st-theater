@@ -103,6 +103,8 @@ function resolveGenerationIdentity(ctx = SillyTavern.getContext()) {
         personality,
         scenario,
         creatorNotes,
+        examples: character?.data?.mes_example || character?.mes_example || '',
+        layoutContext: runtime.readPromptPlacement?.(ctx, { followPersona: !!runtime.settings.followUserPersona }) || {},
         currentPersona,
         role,
         persona: currentPersona?.trim() ? `User人设：\n${currentPersona.trim()}` : '',
@@ -115,11 +117,11 @@ function resolveGenerationIdentity(ctx = SillyTavern.getContext()) {
 // @theater-source-begin generationIdentitySlots
 function generationIdentitySlots(identity = {}, { includeScenario = true } = {}) {
     return {
-        charDescription: identity.description ? `角色设定：\n${identity.description}` : '',
-        charPersonality: identity.personality ? `角色性格：\n${identity.personality}` : '',
-        scenario: includeScenario && identity.scenario ? `场景设定：\n${identity.scenario}` : '',
-        personaDescription: identity.persona || '',
-        dialogueExamples: '',
+        charDescription: identity.description || '',
+        charPersonality: identity.personality || '',
+        scenario: includeScenario ? identity.scenario || '' : '',
+        personaDescription: identity.currentPersona || identity.persona || '',
+        dialogueExamples: identity.examples || '',
     };
 }
 // @theater-source-end generationIdentitySlots
@@ -144,6 +146,7 @@ function buildGenerationContinuationRoundPayload({ foundation, instruction, ctx,
             continuationSystemPrompt: continuationPayload.systemPrompt,
             continuationUserPrompt: continuationPayload.userPrompt,
             squashSystemMessages: foundation.squashSystemMessages,
+            layoutContext: foundation.layoutContext,
         }),
         postProcessing: foundation.postProcessing,
         presetName: foundation.presetName,
@@ -251,7 +254,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     const cleanInstruction = stripTargetWordCountRequirement(instruction) || '请根据现有角色设定与剧情创作小剧场。';
     const presetCompatibility = resolveTheaterPreset(presetSnapshot.selectedEntries?.length ? presetSnapshot.selectedEntries
         : (presetSnapshot.prompt ? [{ id: 'main', role: 'system', content: presetSnapshot.prompt }] : []), {
-        user: name1 || 'User', char: name2 || character?.name || 'Char', lastUserMessage: cleanInstruction,
+        ...identity.layoutContext, user: name1 || 'User', char: name2 || character?.name || 'Char', lastUserMessage: cleanInstruction,
     }, { targetChars: targetWordCount, ...(estimateOnly ? { random: () => 0 } : {}) });
     const selectedPresetPrompt = presetCompatibility.entries.map(entry => entry.content).join('\n\n');
     const preset = selectedPresetPrompt || DEFAULT_SYSTEM_PROMPT;
@@ -290,13 +293,13 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     // 预估仅使用同一份 tokenParts，不需要编排请求或复制冻结续写资料。
     if (estimateOnly) return { tokenParts: payload.tokenParts };
     const selectedPresetEntries = presetCompatibility.entries;
-    const presetEntriesForLayout = selectedPresetEntries.length
+    const presetEntriesForLayout = selectedPresetEntries.length || presetSnapshot.name
         ? selectedPresetEntries
         : [{ id: 'main', role: 'system', content: DEFAULT_SYSTEM_PROMPT }];
     const foundationTailMessages = [
-        addons ? { role: 'system', content: addons, source: 'theater-addon', sourceId: 'addons' } : null,
+        addons ? { role: 'user', content: addons, source: 'theater-addon', sourceId: 'addons' } : null,
         (!structuredChatMessages.length && context)
-            ? { role: 'system', content: context, source: 'theater-context', sourceId: 'context-policy' }
+            ? { role: 'user', content: context, source: 'theater-context', sourceId: 'context-policy' }
             : null,
     ].filter(Boolean);
     const tailMessages = [
@@ -306,7 +309,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
             : null,
         creativeEnhancement ? { role: 'user', content: creativeEnhancement, source: 'theater-creative-enhancement', sourceId: 'creative-enhancement' } : null,
         { role: 'user', content: taskInstruction, source: 'theater-instruction', sourceId: 'instruction' },
-        { role: 'system', content: [rules, fixed].filter(Boolean).join('\n\n'), source: 'theater-rules', sourceId: 'final-rules' },
+        { role: 'user', content: ['【本次输出与篇幅要求｜同类要求以本次选择为准】', rules, fixed].filter(Boolean).join('\n\n'), source: 'theater-rules', sourceId: 'final-rules' },
     ].filter(Boolean);
     const identitySlots = generationIdentitySlots(identity);
     const presetName = presetSnapshot.name || '内置默认预设';
@@ -315,7 +318,8 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         slots: identitySlots,
         worldInfoEntries: activeWorldInfoEntries,
         chatMessages: structuredChatMessages,
-        tailMessages,
+        taskMessages: tailMessages,
+        layoutContext: { ...identity.layoutContext, disabledSlotIds: [...(presetSnapshot.disabledSlotIds || []), ...(presetCompatibility.inactiveIds || [])] },
         squashSystemMessages: presetSnapshot.squashSystemMessages,
     });
     if (preparationKey !== generationPreparationKey()) {
@@ -335,6 +339,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
             creativeEnhancement,
             presetEntries: freezeGenerationFoundationList(presetEntriesForLayout),
             identitySlots: Object.freeze({ ...identitySlots }),
+            layoutContext: Object.freeze({ ...identity.layoutContext, disabledSlotIds: [...(presetSnapshot.disabledSlotIds || []), ...(presetCompatibility.inactiveIds || [])] }),
             worldInfoEntries: freezeGenerationFoundationList(activeWorldInfoEntries),
             chatMessages: freezeGenerationFoundationList(structuredChatMessages),
             tailMessages: freezeGenerationFoundationList(foundationTailMessages),

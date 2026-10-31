@@ -127,3 +127,39 @@ export function bindPersonaFollowRefresh({ eventSource, event_types, settings, s
         scheduleFollowedPersonaRefresh,
     );
 }
+
+// Read only the host's placement settings; never inherit sampling parameters.
+export function readPromptPlacement(ctx = {}, { followPersona = true } = {}) {
+    const user = ctx.powerUserSettings || power_user || {};
+    const metadata = ctx.chatMetadata || {};
+    const activeNote = ctx.extensionPrompts?.['2_floating_prompt'];
+    const noteSettings = ctx.extensionSettings?.note || {};
+    const interval = Number(metadata.note_interval ?? noteSettings.defaultInterval ?? 1);
+    const userMessages = interval === 1 ? 1 : (ctx.chat || []).filter(message => message.is_user).length;
+    const noteEnabled = interval > 0 && userMessages > 0 && userMessages % interval === 0;
+    const character = ctx.characters?.[ctx.characterId];
+    let noteContent = String(metadata.note_prompt ?? noteSettings.default ?? '');
+    const filename = String(character?.avatar || '').replace(/\.[^.]+$/, '');
+    const charNote = !ctx.groupId && (noteSettings.chara || []).find(note => note.name === filename && filename);
+    if (charNote?.useChara) {
+        noteContent = Number(charNote.position) === 1 ? `${charNote.prompt}\n${noteContent}`
+            : Number(charNote.position) === 2 ? `${noteContent}\n${charNote.prompt}` : String(charNote.prompt || '');
+    }
+    const depth = character?.data?.extensions?.depth_prompt || character?.depth_prompt;
+    return {
+        names: { user: ctx.name1 || 'User', char: ctx.name2 || character?.name || 'Char' },
+        personaPosition: followPersona ? (user.persona_description_position ?? 0) : 0,
+        personaDepth: user.persona_description_depth ?? 2,
+        personaRole: user.persona_description_role ?? 0,
+        authorNote: {
+            content: noteContent,
+            position: metadata.note_position ?? noteSettings.defaultPosition ?? activeNote?.position ?? 1,
+            depth: metadata.note_depth ?? noteSettings.defaultDepth ?? activeNote?.depth ?? 4,
+            role: metadata.note_role ?? noteSettings.defaultRole ?? activeNote?.role ?? 0,
+            enabled: noteEnabled,
+        },
+        systemPromptOverride: user.prefer_character_prompt !== false ? character?.data?.system_prompt || '' : '',
+        jailbreakPromptOverride: user.prefer_character_jailbreak !== false ? character?.data?.post_history_instructions || '' : '',
+        characterDepth: depth?.prompt ? { content: String(depth.prompt), depth: depth.depth ?? 4, role: depth.role ?? 0, order: 100 } : null,
+    };
+}

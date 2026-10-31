@@ -1,3 +1,4 @@
+import { resolveTheaterPreset } from './preset-compat.js';
 import { longFormFirstRoundTarget, singleRoundCompletionGuidance, normalizeManualTarget } from './length-policy.js';
 import { hasPendingManualSummary } from './long-dream-story-summary.js';
 import { LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION } from './long-dream.js';
@@ -479,17 +480,30 @@ export function buildLongDreamChapterPayload({
     };
 }
 
+export function longDreamPromptPlacement(layoutContext = {}) {
+    // Host chat notes are not part of this dream's frozen, explicitly allowed
+    // sources. Retain note placement solely for the dream's frozen WI entries.
+    return { ...layoutContext, characterDepth: null,
+        authorNote: { ...layoutContext.authorNote, content: '' } };
+}
+
 export function buildLongDreamChapterMessages({
     payload,
     presetEntries = [],
     slots = {},
     squashSystemMessages = false,
+    layoutContext = {},
 } = {}) {
     if (!payload?.systemPrompt || !payload?.userPrompt) {
         throw new Error('长梦结构化消息缺少请求载荷');
     }
+    const resolved = resolveTheaterPreset(presetEntries, {
+        ...layoutContext,
+        user: layoutContext.names?.user || 'User', char: layoutContext.names?.char || 'Char',
+        lastUserMessage: payload.userPrompt,
+    }, { targetChars: payload.targetChars });
     return composePresetMessages({
-        presetEntries,
+        presetEntries: resolved.entries,
         slots: {
             charDescription: String(slots.charDescription || ''),
             charPersonality: String(slots.charPersonality || ''),
@@ -498,18 +512,13 @@ export function buildLongDreamChapterMessages({
             dialogueExamples: String(slots.dialogueExamples || ''),
         },
         worldInfoEntries: payload.worldInfoEntries || [],
-        chatMessages: [{
+        taskMessages: [{
             role: 'user',
-            content: payload.userPrompt,
+            content: `${payload.userPrompt}\n\n【本章连续性与输出要求】\n${payload.systemPrompt}`,
             source: 'long-dream',
             sourceId: 'chapter-context',
         }],
-        tailMessages: [{
-            role: 'system',
-            content: payload.systemPrompt,
-            source: 'long-dream',
-            sourceId: 'continuity-rules',
-        }],
+        layoutContext: { ...longDreamPromptPlacement(layoutContext), disabledSlotIds: [...(layoutContext.disabledSlotIds || []), ...resolved.inactiveIds] },
         squashSystemMessages,
     });
 }

@@ -1,3 +1,5 @@
+import { activePresetEntries } from './preset-compat.js';
+
 export const PROMPT_POST_PROCESSING = Object.freeze({
     NONE: '',
     MERGE: 'merge',
@@ -157,7 +159,7 @@ export function classifyWorldInfoEntries(entries = []) {
     const normalized = (Array.isArray(entries) ? entries : [])
         .map(normalizeWorldInfoEntry)
         .filter(entry => entry.content)
-        .sort((a, b) => a.order - b.order || a._index - b._index);
+        .sort((a, b) => a.order - b.order || b._index - a._index);
     for (const entry of normalized) {
         if (entry.position === WORLD_INFO_POSITION.AFTER_CHARACTER) result.after.push(entry);
         else if (entry.position === WORLD_INFO_POSITION.AUTHOR_NOTE_TOP) result.authorNoteTop.push(entry);
@@ -171,6 +173,7 @@ export function classifyWorldInfoEntries(entries = []) {
             result.outlets.get(entry.outletName).push(entry);
         } else result.before.push(entry);
     }
+    for (const entries of result.outlets.values()) entries.sort((a, b) => b.order - a.order || a._index - b._index);
     return result;
 }
 
@@ -187,30 +190,31 @@ export function expandWorldInfoOutlets(content = '', outlets = new Map()) {
 }
 
 export function insertMessagesAtDepth(chatMessages = [], entries = []) {
-    const result = normalizeRequestMessages(chatMessages);
-    const ordered = (Array.isArray(entries) ? entries : [])
-        .map((entry, index) => ({
-            content: String(entry?.content || '').trim(),
-            depth: Math.max(0, Math.floor(numeric(entry?.depth, 4))),
-            order: numeric(entry?.order, 100),
-            role: normalizePromptRole(entry?.role),
-            source: String(entry?.source || 'depth-injection'),
-            sourceId: String(entry?.sourceId || `depth-${index + 1}`),
-            _index: index,
-        }))
-        .filter(entry => entry.content)
-        .sort((a, b) => b.depth - a.depth
-            || a.order - b.order
-            || ['system', 'user', 'assistant'].indexOf(a.role) - ['system', 'user', 'assistant'].indexOf(b.role)
-            || a._index - b._index);
-    for (const entry of ordered) {
-        const index = Math.max(0, result.length - Math.min(entry.depth, result.length));
-        result.splice(index, 0, {
-            role: entry.role,
-            content: entry.content,
-            source: entry.source,
-            sourceId: entry.sourceId,
-        });
+    // Match ST populationInjectionPrompts: depth counts original chat messages,
+    // not earlier injections. Same depth/order/role is one message; the host
+    // builds newest-first and reverses, so the final role order is A, U, S.
+    const chat = normalizeRequestMessages(chatMessages);
+    const groups = new Map();
+    for (const [index, entry] of entries.entries()) {
+        const content = String(entry?.content || '').trim();
+        if (!content) continue;
+        const depth = Math.max(0, Math.floor(numeric(entry.depth, 4)));
+        const order = numeric(entry.order, 100);
+        const role = normalizePromptRole(entry.role);
+        const key = `${depth}:${order}:${role}`;
+        if (!groups.has(key)) groups.set(key, { depth, order, role, items: [] });
+        groups.get(key).items.push({ content, source: entry.source || 'depth-injection', sourceId: String(entry.sourceId || `depth-${index + 1}`) });
+    }
+    const ordered = [...groups.values()].sort((a, b) => b.depth - a.depth || a.order - b.order
+        || ['assistant', 'user', 'system'].indexOf(a.role) - ['assistant', 'user', 'system'].indexOf(b.role));
+    const result = [];
+    for (let boundary = 0; boundary <= chat.length; boundary++) {
+        for (const group of ordered.filter(group => Math.max(0, chat.length - group.depth) === boundary)) {
+            result.push({ role: group.role, content: group.items.map(item => item.content).join('\n'),
+                source: group.items.every(item => item.source === group.items[0].source) ? group.items[0].source : 'depth-injection',
+                sourceId: group.items.map(item => item.sourceId).join('+') });
+        }
+        if (boundary < chat.length) result.push(chat[boundary]);
     }
     return result;
 }
@@ -238,114 +242,124 @@ function addMessage(target, role, content, source, sourceId) {
     target.push({ role: normalizePromptRole(role), content: String(content), source, sourceId });
 }
 
+export const THEATER_TASK_PREAMBLE = '【小剧场任务说明】本次创作独立小剧场；聊天记录是背景资料，本篇已有正文及当前创作要求见本次用户任务。保留所选预设的人物塑造与文风；本次明确选择的正文目标和输出格式以本次任务为准。';
+
+function identityNames(text, context) {
+    return String(text || '').replace(/\{\{(user|char)\}\}/gi, (macro, key) => context?.[key.toLowerCase()] ?? macro);
+}
+
+export function dialogueExampleMessages(text = '', names = {}) {
+    const result = [];
+    for (const block of String(text).split(/<START>/gi).filter(block => block.trim())) {
+        const messages = [];
+        for (const line of block.split('\n')) {
+            const user = [names.user, '{{user}}'].filter(Boolean).find(name => line.startsWith(`${name}:`));
+            const char = [names.char, '{{char}}'].filter(Boolean).find(name => line.startsWith(`${name}:`));
+            if (user || char) messages.push({ role: 'system', name: user ? 'example_user' : 'example_assistant', content: line.slice((user || char).length + 1).trim(), source: 'preset-slot', sourceId: 'dialogueExamples' });
+            else if (messages.length) messages[messages.length - 1].content += `\n${line}`;
+        }
+        if (messages.length) result.push({ role: 'system', content: '[Example Chat]', source: 'preset-slot', sourceId: 'dialogueExamples' }, ...messages);
+        else if (block.trim()) result.push({ role: 'system', content: block.trim(), source: 'preset-slot', sourceId: 'dialogueExamples' });
+    }
+    return result;
+}
+
 export function composePresetMessages({
-    presetEntries = [],
-    slots = {},
-    worldInfoEntries = [],
-    chatMessages = [],
-    tailMessages = [],
-    postProcessing = '',
-    squashSystemMessages = false,
+    presetEntries = [], slots = {}, worldInfoEntries = [], chatMessages = [],
+    tailMessages = [], taskMessages = [], layoutContext = {},
+    postProcessing = '', squashSystemMessages = false,
 } = {}) {
     const world = classifyWorldInfoEntries(worldInfoEntries);
-    const messages = [];
-    const entries = Array.isArray(presetEntries) ? presetEntries : [];
-    const relativeEntries = entries.filter(entry => Number(entry?.injectionPosition) !== 1);
-    const absoluteEntries = entries.filter(entry => Number(entry?.injectionPosition) === 1);
+    const names = layoutContext.names || {};
+    const selected = Array.isArray(presetEntries) ? presetEntries : [];
+    const entries = activePresetEntries(selected, layoutContext.generationType || 'normal');
+    const disabled = new Set([...(layoutContext.disabledSlotIds || []), ...selected.filter(entry => !entries.includes(entry)).map(entry => entry.id)]);
+    const taskParts = normalizeRequestMessages(taskMessages);
+    const task = taskParts.length ? [{ role: 'user', content: taskParts.map(message => message.content).join('\n\n'), source: 'theater-task', sourceId: 'theater-task' }] : [];
+    const messages = task.length ? [{ role: 'system', content: THEATER_TASK_PREAMBLE, source: 'theater-task', sourceId: 'task-preamble' }] : [];
+    const structural = entry => ['chatHistory', 'dialogueExamples'].includes(entry.id);
+    const relativeEntries = entries.filter(entry => structural(entry) || Number(entry?.injectionPosition) !== 1);
+    const absoluteEntries = entries.filter(entry => !structural(entry) && Number(entry?.injectionPosition) === 1);
     const hasSlot = new Set(entries.map(entry => SLOT_IDENTIFIERS[entry.id]).filter(Boolean));
+    const personaPosition = numeric(layoutContext.personaPosition, 0);
     const slotText = {
-        worldInfoBefore: entriesText(world.before),
-        charDescription: String(slots.charDescription || ''),
-        charPersonality: String(slots.charPersonality || ''),
+        worldInfoBefore: entriesText(world.before), worldInfoAfter: entriesText(world.after),
+        charDescription: String(slots.charDescription || ''), charPersonality: String(slots.charPersonality || ''),
         scenario: String(slots.scenario || ''),
-        personaDescription: String(slots.personaDescription || ''),
-        worldInfoAfter: entriesText(world.after),
+        personaDescription: [0, 1].includes(personaPosition) ? String(slots.personaDescription || '') : '',
         dialogueExamples: [entriesText(world.examplesTop), slots.dialogueExamples, entriesText(world.examplesBottom)].filter(Boolean).join('\n\n'),
     };
+    const contentFor = entry => identityNames(expandWorldInfoOutlets(
+        SLOT_IDENTIFIERS[entry.id] && entry.id !== 'chatHistory' ? slotText[entry.id] : entry.content || '', world.outlets), names);
     const depthEntries = [
-        ...world.atDepth.map(entry => ({ ...entry, source: 'world-info-depth' })),
-        ...absoluteEntries.map((entry, index) => ({
-            content: expandWorldInfoOutlets(entry.content || '', world.outlets),
-            depth: entry.injectionDepth ?? 4,
-            order: entry.injectionOrder ?? 100,
-            role: entry.role,
-            source: 'preset-depth',
-            sourceId: String(entry.id || `preset-depth-${index + 1}`),
+        ...absoluteEntries.filter(entry => !disabled.has(entry.id)).map((entry, index) => ({
+            content: contentFor(entry), depth: entry.injectionDepth ?? 4, order: entry.injectionOrder ?? 100,
+            role: entry.role, source: 'preset-depth', sourceId: String(entry.id || `preset-depth-${index + 1}`),
         })),
     ];
-    const history = insertMessagesAtDepth(chatMessages, depthEntries);
-    const authorNoteTop = entriesText(world.authorNoteTop);
-    const authorNoteBottom = entriesText(world.authorNoteBottom);
-
+    // ST first collects ordered preset injections, then its extension prompt
+    // bucket at priority 100. WI order only sorts inside its depth/role bucket.
+    const extensions = [];
+    const worldDepth = new Map();
+    for (const entry of world.atDepth) {
+        const key = `${entry.depth}:${entry.role}`;
+        if (!worldDepth.has(key)) worldDepth.set(key, { ...entry, content: [], ids: [] });
+        worldDepth.get(key).content.push(entry.content);
+        worldDepth.get(key).ids.push(entry.sourceId);
+    }
+    for (const entry of worldDepth.values()) extensions.push({ ...entry, content: entry.content.join('\n'),
+        order: 100, source: 'world-info-depth', sourceId: entry.ids.join('+'), extensionKey: `customWI${entry.depth}-${entry.role}` });
+    if (personaPosition === 4 && slots.personaDescription) extensions.push({ content: slots.personaDescription,
+        depth: layoutContext.personaDepth ?? 2, role: layoutContext.personaRole, order: 100, source: 'persona-depth', sourceId: 'personaDescription', extensionKey: 'PERSONA_DESCRIPTION' });
+    if (layoutContext.characterDepth?.content) extensions.push({ ...layoutContext.characterDepth,
+        order: 100, source: 'character-depth', sourceId: 'characterDepth', extensionKey: 'DEPTH_PROMPT' });
+    const note = layoutContext.authorNote || {};
+    const noteParts = [personaPosition === 2 ? slots.personaDescription : '', entriesText(world.authorNoteTop), note.content,
+        entriesText(world.authorNoteBottom), personaPosition === 3 ? slots.personaDescription : ''].filter(Boolean);
+    const noteContent = note.enabled === false ? '' : identityNames(noteParts.join('\n'), names);
+    let beforeMain = '', afterMain = '';
+    if (noteContent) {
+        if (Number(note.position ?? 1) === 1) extensions.push({ content: noteContent, depth: note.depth ?? 4, role: note.role, order: 100, source: 'world-info-author-note', sourceId: 'authorsNote', extensionKey: '2_floating_prompt' });
+        else if (Number(note.position) === 2) beforeMain = noteContent;
+        else afterMain = noteContent;
+    }
+    extensions.sort((a, b) => a.extensionKey < b.extensionKey ? -1 : a.extensionKey > b.extensionKey ? 1 : 0);
+    depthEntries.push(...extensions);
+    const depthMain = depthEntries.find(entry => entry.sourceId === 'main');
+    if (depthMain) depthMain.content = [beforeMain, depthMain.content, afterMain].filter(Boolean).join('\n');
+    const baseChat = disabled.has('chatHistory') ? [] : normalizeRequestMessages(chatMessages);
+    const history = insertMessagesAtDepth([...baseChat, ...task], depthEntries.map(entry => ({ ...entry, content: identityNames(entry.content, names) })));
+    const addSlot = (entry, source = 'preset-slot') => {
+        if (disabled.has(entry.id)) return;
+        if (entry.id === 'chatHistory') { messages.push(...history); return; }
+        if (entry.id === 'dialogueExamples') { messages.push(...dialogueExampleMessages(contentFor(entry), names)); return; }
+        addMessage(messages, entry.role, contentFor(entry), source, entry.id || entry.sourceId);
+    };
     for (const entry of relativeEntries) {
-        const id = String(entry.id || '');
-        const role = normalizePromptRole(entry.role);
-        if (id === 'chatHistory') {
-            addMessage(messages, 'system', authorNoteTop, 'world-info-author-note', 'author-note-top');
-            messages.push(...history);
-            addMessage(messages, 'system', authorNoteBottom, 'world-info-author-note', 'author-note-bottom');
-            continue;
-        }
-        const dynamic = SLOT_IDENTIFIERS[id] ? slotText[SLOT_IDENTIFIERS[id]] : '';
-        const content = expandWorldInfoOutlets(dynamic || entry.content || '', world.outlets);
-        addMessage(messages, role, content, SLOT_IDENTIFIERS[id] ? 'preset-slot' : 'preset', id || entry.sourceId);
+        if (entry.id === 'main') { addMessage(messages, note.role, beforeMain, 'world-info-author-note', 'authorsNote'); }
+        addSlot(entry, SLOT_IDENTIFIERS[entry.id] ? 'preset-slot' : 'preset');
+        if (entry.id === 'main') addMessage(messages, note.role, afterMain, 'world-info-author-note', 'authorsNote');
     }
-
-    const fallbackSlots = [
-        ['worldInfoBefore', 'system'], ['charDescription', 'system'], ['charPersonality', 'system'],
-        ['scenario', 'system'], ['personaDescription', 'system'], ['worldInfoAfter', 'system'],
-        ['dialogueExamples', 'system'],
-    ];
-    for (const [slot, role] of fallbackSlots) {
-        if (!hasSlot.has(slot)) addMessage(messages, role, slotText[slot], 'fallback-slot', slot);
+    // ST appends dynamic prompts missing from the preset, but an explicitly
+    // disabled marker must stay disabled. Preserve that distinction.
+    for (const slot of ['worldInfoBefore', 'worldInfoAfter', 'charDescription', 'charPersonality', 'scenario', 'personaDescription']) {
+        if (!hasSlot.has(slot) && !disabled.has(slot)) addSlot({ id: slot, role: 'system' }, 'fallback-slot');
     }
-    if (!hasSlot.has('chatHistory')) {
-        addMessage(messages, 'system', authorNoteTop, 'world-info-author-note', 'author-note-top');
-        messages.push(...history);
-        addMessage(messages, 'system', authorNoteBottom, 'world-info-author-note', 'author-note-bottom');
-    }
+    if (!hasSlot.has('chatHistory')) messages.push(...history);
     messages.push(...normalizeRequestMessages(tailMessages));
-    const presetProcessed = squashSystemMessages ? squashAdjacentSystemMessages(messages) : messages;
-    return applyPromptPostProcessing(presetProcessed, postProcessing);
+    const processed = squashSystemMessages ? squashAdjacentSystemMessages(messages) : messages;
+    return applyPromptPostProcessing(processed, postProcessing);
 }
 
 export function composeGenerationContinuationMessages({
-    presetEntries = [],
-    slots = {},
-    worldInfoEntries = [],
-    chatMessages = [],
-    foundationTailMessages = [],
-    continuationSystemPrompt = '',
-    continuationUserPrompt = '',
-    squashSystemMessages = false,
+    presetEntries = [], slots = {}, worldInfoEntries = [], chatMessages = [], foundationTailMessages = [],
+    continuationSystemPrompt = '', continuationUserPrompt = '', squashSystemMessages = false, layoutContext = {},
 } = {}) {
-    // Label the frozen background only for continuation rounds; keep its roles,
-    // order and full contents without changing the first-round request.
-    const referenceChatMessages = normalizeRequestMessages(chatMessages).map(message => ({
-        ...message,
-        content: `【聊天正文参考开始｜仅作背景，不是本轮补写对象】\n${message.content}\n【聊天正文参考结束】`,
-    }));
-    const tailMessages = [
-        ...normalizeRequestMessages(foundationTailMessages),
-        String(continuationUserPrompt || '').trim() ? {
-            role: 'user',
-            content: String(continuationUserPrompt).trim(),
-            source: 'theater-continuation',
-            sourceId: 'continuation-round',
-        } : null,
-        String(continuationSystemPrompt || '').trim() ? {
-            role: 'system',
-            content: String(continuationSystemPrompt).trim(),
-            source: 'theater-rules',
-            sourceId: 'continuation-rules',
-        } : null,
-    ].filter(Boolean);
-    return composePresetMessages({
-        presetEntries,
-        slots,
-        worldInfoEntries,
-        chatMessages: referenceChatMessages,
-        tailMessages,
-        squashSystemMessages,
-    });
+    const referenceChatMessages = normalizeRequestMessages(chatMessages).map(message => ({ ...message,
+        content: `【聊天正文参考开始｜仅作背景，不是本轮补写对象】\n${message.content}\n【聊天正文参考结束】` }));
+    return composePresetMessages({ presetEntries, slots, worldInfoEntries, chatMessages: referenceChatMessages,
+        taskMessages: [...normalizeRequestMessages(foundationTailMessages),
+            { role: 'user', content: continuationUserPrompt, sourceId: 'continuation-round' },
+            { role: 'user', content: continuationSystemPrompt, sourceId: 'continuation-rules' }],
+        squashSystemMessages, layoutContext });
 }
