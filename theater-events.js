@@ -1643,6 +1643,10 @@ function bindEvents() {
     $d.off('change.tstream').on('change.tstream', '#theater-stream-enabled', function () {
         runtime.settings.streamEnabled = this.checked; runtime.save();
     });
+    $d.off('change.tantiroute').on('change.tantiroute', '#theater-anti-route-enabled', function () {
+        runtime.settings.antiRouteEnabled = this.checked === true;
+        runtime.save();
+    });
     $d.off('change.tcreativeenhancement').on('change.tcreativeenhancement', '#theater-creative-enhancement', function () {
         runtime.settings.creativeEnhancementEnabled = this.checked === true;
         runtime.save();

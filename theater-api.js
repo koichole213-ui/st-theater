@@ -19,6 +19,7 @@ function captureActualRequestTrace(details, purpose = 'support') {
 function captureGenerationApiRoute(ctx = SillyTavern.getContext()) {
     const mode = runtime.settings.apiMode === 'main' ? 'main' : 'custom';
     const shouldStream = runtime.settings.streamEnabled !== false;
+    const antiRouteEnabled = runtime.settings.antiRouteEnabled === true;
     const layoutSelection = captureLayoutApiSelection(runtime.settings);
     if (mode === 'main') {
         const oai = ctx?.oai_settings || globalThis.oai_settings;
@@ -27,7 +28,7 @@ function captureGenerationApiRoute(ctx = SillyTavern.getContext()) {
             protocol: 'main',
             model: resolveMainApiModel(ctx, oai) || '未识别',
             maxTokens: oai?.openai_max_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-            shouldStream, layoutSelection,
+            shouldStream, antiRouteEnabled, layoutSelection,
         });
     }
     const custom = Object.freeze({
@@ -42,7 +43,7 @@ function captureGenerationApiRoute(ctx = SillyTavern.getContext()) {
         protocol: resolveProtocol(custom.apiProtocol, custom.apiUrl),
         model: custom.apiModel || '未填写',
         maxTokens: custom.maxOutputTokens,
-        shouldStream, layoutSelection,
+        shouldStream, antiRouteEnabled, layoutSelection,
         custom,
     });
 }
@@ -62,6 +63,7 @@ async function requestConfiguredGenerationApi({
     runtime.lastApiResponseSummary = null;
     runtime.lastApiConnectionSummary = null;
     const scope = metricScope ? `:${metricScope}` : '';
+    requestOptions = { ...requestOptions, antiRouteEnabled: apiRoute.antiRouteEnabled ?? (runtime.settings.antiRouteEnabled === true) };
     if (apiRoute.mode === 'main') {
         runtime.lastRequestMetrics = createRequestMetrics(`main:ChatCompletionService${scope}`);
         return generateWithMainAPI(
@@ -102,6 +104,7 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
         systemPrompt,
         userPrompt: prompt,
         messages: requestOptions.messages,
+        antiRouteEnabled: requestOptions.antiRouteEnabled ?? (runtime.settings.antiRouteEnabled === true),
         postProcessing: requestOptions.postProcessing || '',
         presetName: requestOptions.presetName || runtime.settings.selectedPresetName || '未指定',
         onChunk,
@@ -138,6 +141,7 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
         systemPrompt,
         userPrompt,
         messages: requestOptions.messages,
+        antiRouteEnabled: requestOptions.antiRouteEnabled ?? (runtime.settings.antiRouteEnabled === true),
         postProcessing: requestOptions.postProcessing || '',
         presetName: requestOptions.presetName || runtime.settings.selectedPresetName || '未指定',
         onChunk,

@@ -15,6 +15,7 @@ export function captureLayoutApiSelection(settings = {}) {
             maxOutputTokens: normalizeMaxTokens(settings.layoutMaxOutputTokens, DEFAULT_LAYOUT_MAX_TOKENS),
         }) : null,
         shouldStream: settings.streamEnabled !== false,
+        antiRouteEnabled: settings.antiRouteEnabled === true,
     });
 }
 
@@ -29,5 +30,5 @@ export function resolveLayoutApiRoute(bodyRoute, settings = {}) {
     return Object.freeze({ mode: 'custom', custom: selection.custom,
         protocol: resolveProtocol(selection.custom.apiProtocol, selection.custom.apiUrl),
         model: selection.custom.apiModel, maxTokens: selection.custom.maxOutputTokens,
-        shouldStream: selection.shouldStream });
+        shouldStream: selection.shouldStream, antiRouteEnabled: selection.antiRouteEnabled });
 }

@@ -17,6 +17,7 @@ import {
 import { REQUEST_DIAGNOSTIC_SIGNAL, createDiagnosticError } from './request-diagnostics.js';
 import { filterTaggedReasoning } from './reasoning-filter.js';
 import { applyPromptPostProcessing } from './request-layout.js';
+import { applyAntiRoute } from './anti-route.js';
 
 export const RATE_LIMIT_DEFAULT_WAIT_MS = 3000;
 export const RATE_LIMIT_MAX_AUTO_WAIT_MS = 15000;
@@ -214,6 +215,7 @@ export async function requestMainApi({
     userPrompt,
     messages,
     postProcessing = '',
+    antiRouteEnabled = false,
     presetName = '',
     onChunk = noop,
     onRequest = noop,
@@ -227,13 +229,13 @@ export async function requestMainApi({
     getContext = () => globalThis.SillyTavern?.getContext?.(),
     chatCompletionService,
 } = {}) {
-    const finalMessages = applyPromptPostProcessing(
+    const finalMessages = applyAntiRoute(applyPromptPostProcessing(
         Array.isArray(messages) ? messages : [
             { role: 'system', content: systemPrompt, source: 'request', sourceId: 'system' },
             { role: 'user', content: userPrompt, source: 'request', sourceId: 'user' },
         ],
         postProcessing,
-    );
+    ), antiRouteEnabled);
     const oai = ctx?.oai_settings || globalThis.oai_settings;
     const configuredMaxTokens = Number(oai?.openai_max_tokens);
     // 0 在酒馆设置里表示交给当前预设/线路决定，不能把 max_tokens: 0 强行覆盖到请求中。
@@ -624,6 +626,7 @@ export async function requestCustomApi({
     userPrompt,
     messages,
     postProcessing = '',
+    antiRouteEnabled = false,
     presetName = '',
     onChunk = noop,
     onRequest = noop,
@@ -675,6 +678,7 @@ export async function requestCustomApi({
             userPrompt,
             messages,
             postProcessing,
+            antiRouteEnabled,
             maxTokens,
             stream: shouldStream,
         });

@@ -2,6 +2,7 @@ export const API_PROTOCOLS = Object.freeze({ AUTO: 'auto', OPENAI: 'openai', ANT
 export const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 
 import { applyPromptPostProcessing } from './request-layout.js';
+import { applyAntiRoute } from './anti-route.js';
 
 export function resolveMainApiModel(ctx, oai = ctx?.oai_settings) {
     let fromContext = '';
@@ -105,17 +106,17 @@ export function applyIndependentOpenAICompatibility(messages = []) {
 
 export function buildApiRequest({
     url, protocol, key, model, systemPrompt, userPrompt, messages,
-    postProcessing = '', maxTokens = DEFAULT_MAX_OUTPUT_TOKENS, stream = true,
+    postProcessing = '', maxTokens = DEFAULT_MAX_OUTPUT_TOKENS, stream = true, antiRouteEnabled = false,
 }) {
     const resolved = resolveProtocol(protocol, url);
     const endpoint = buildApiEndpoint(url, resolved);
-    const finalMessages = applyPromptPostProcessing(
+    const finalMessages = applyAntiRoute(applyPromptPostProcessing(
         Array.isArray(messages) ? messages : [
             { role: 'system', content: systemPrompt, source: 'request', sourceId: 'system' },
             { role: 'user', content: userPrompt, source: 'request', sourceId: 'user' },
         ],
         postProcessing,
-    );
+    ), antiRouteEnabled);
     if (resolved === API_PROTOCOLS.ANTHROPIC) {
         const systemMessages = finalMessages.filter(message => message.role === 'system');
         const system = systemMessages.map(message => message.content).filter(Boolean).join('\n\n');
