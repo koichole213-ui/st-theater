@@ -13,7 +13,12 @@ export function compareVersion(a, b) {
         if (x > y) return 1;
         if (x < y) return -1;
     }
-    return 0;
+    // Preview letters are revisions after the same numeric release: a..z, aa..
+    const suffix = value => String(value ?? '').trim().match(/^\d+(?:\.\d+)*([a-z]+)$/i)?.[1].toLowerCase() || '';
+    const sa = suffix(a), sb = suffix(b);
+    if (sa === sb) return 0;
+    if (sa.length !== sb.length) return sa.length > sb.length ? 1 : -1;
+    return sa > sb ? 1 : -1;
 }
 
 async function fetchManifest(url) {

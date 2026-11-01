@@ -37,6 +37,7 @@ test('生成完成与中断保留结果在缺少 randomUUID 时仍可保存，�
             crypto: supported ? globalThis.crypto : { getRandomValues: bytes => globalThis.crypto.getRandomValues(bytes) },
             lastGeneratedHtml: html, currentOutputMode: 'html', continuationRun: null, layoutRetry: null,
             continuationRounds: ['旧前情', '本次正文'], instruction: '本轮方向', generationSourceConfig: { presetName: '合成' },
+            ownsGeneration: () => true,
             generationRoles: [], sourceTags: ['标签'], itemTags: ({ tags }) => tags, knownInstructionTags: () => [],
             retainedResultSource: { instruction: '本轮方向', continuationRounds: ['旧前情', '本次正文'] },
             currentGenerationResult: null, storeCurrentResult: async item => { saved.push(item); return stored; },
@@ -3749,13 +3750,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.5 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.5a 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.5'/);
-    assert.equal(manifest.version, '4.4.5');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.5/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.5a'/);
+    assert.equal(manifest.version, '4.4.5a');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.5a/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 
@@ -4233,6 +4234,7 @@ test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在�
                 plannedRenderSelection: { rules: profile.rules }, renderTemplate: profile.name,
                 payload: { generationFoundation: { originalInstruction: '按钮必须使用指定的 HTML、CSS 和 JavaScript。' } },
                 newText: '第一段。\n\n第二段。', firstHtml: initialHtml,
+                generationAbortController: new AbortController(), ownsGeneration: () => true,
                 ctx: {}, apiRoute: {}, abortController: null, onChunk() {},
                 popupAlive: () => false, runtimeLog() {}, markCompleted() {}, recordRequestMetrics() {},
                 lastRequestMetrics: {}, streamRenderer: { reset() {} },
@@ -6362,6 +6364,7 @@ test('真实生成循环的普通续写不在两万目标的一万一千字处�
         const job = createGenerationJob({ targetChars: 20000, maxRounds: scenario.enabled ? scenario.max : 1,
             autoContinue: scenario.enabled, requireTargetCompletion: false });
         const run = runInNewContext('(async () => {' + loop + '\n})', {
+            generationJob: job, generationAbortController: new AbortController(), ownsGeneration: () => true,
             currentGenerationJob: job, payload: { systemPrompt: '系统', userPrompt: '续写要求', ctx: {}, generationFoundation: {} },
             isPlainTextRender: true, stagedMultiRoundMode: false,
             targetWordCount: 20000, popupAlive: () => false,

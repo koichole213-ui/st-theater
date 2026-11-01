@@ -5,6 +5,7 @@ import { writeRuntimeLog, getRuntimeLogEntries } from './runtime-log.js';
 import { theaterError as notifyTheaterError } from './notify.js';
 
 export function createTheaterAppearance(runtime) {
+let runtimeLogRefreshPending = false;
 // @theater-source-begin scopeSelector
 function scopeSelector(selectorText, scope) {
     return selectorText.split(',').map(raw => {
@@ -133,10 +134,19 @@ function playNotificationSound({ force = false } = {}) {
 
 // @theater-source-begin runtimeLog
 function runtimeLog(level, message, details) {
-    const entry = writeRuntimeLog(level, message, details);
-    renderRuntimeLog();
+    let entry;
+    try { entry = writeRuntimeLog(level, message, details); } catch { return null; }
+    if (!runtimeLogRefreshPending) {
+        runtimeLogRefreshPending = true;
+        try {
+            setTimeout(() => {
+                runtimeLogRefreshPending = false;
+                try { renderRuntimeLog(); } catch { /* Log display must never affect generation. */ }
+            }, 0);
+        } catch { runtimeLogRefreshPending = false; }
+    }
     const method = level === 'error' ? 'error' : (level === 'warn' ? 'warn' : 'info');
-    console[method]('[Theater]', entry.message);
+    try { console[method]('[Theater]', entry.message); } catch { /* Console observers are optional. */ }
     return entry;
 }
 // @theater-source-end runtimeLog

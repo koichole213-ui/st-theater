@@ -227,6 +227,7 @@ export async function requestMainApi({
     getContext = () => globalThis.SillyTavern?.getContext?.(),
     chatCompletionService,
 } = {}) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const finalMessages = applyPromptPostProcessing(
         Array.isArray(messages) ? messages : [
             { role: 'system', content: systemPrompt, source: 'request', sourceId: 'system' },
@@ -252,11 +253,18 @@ export async function requestMainApi({
 
     if (CCS && typeof CCS.processRequest === 'function') {
         const firstPathController = new AbortController();
+        let firstPathActive = true;
+        let rejectAbort;
+        const abortPromise = new Promise((_, reject) => { rejectAbort = reject; });
         let forwardAbort = null;
         if (signal) {
             if (signal.aborted) firstPathController.abort();
             else {
-                forwardAbort = () => firstPathController.abort();
+                forwardAbort = () => {
+                    firstPathActive = false;
+                    firstPathController.abort();
+                    rejectAbort(new DOMException('Aborted', 'AbortError'));
+                };
                 signal.addEventListener('abort', forwardAbort, { once: true });
             }
         }
@@ -264,11 +272,16 @@ export async function requestMainApi({
         let rejectTimeout;
         const armTimeout = (milliseconds, code) => {
             clearTimeout(timeoutId);
-            timeoutId = setTimeout(() => rejectTimeout?.(createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TIMEOUT, {
-                code, phase: 'main', transport: 'ChatCompletionService',
-            })), milliseconds);
+            timeoutId = setTimeout(() => {
+                firstPathActive = false;
+                rejectTimeout?.(createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TIMEOUT, {
+                    code, phase: 'main', transport: 'ChatCompletionService',
+                }));
+                firstPathController.abort();
+            }, milliseconds);
         };
         const firstAwareChunk = text => {
+            if (!firstPathActive || firstPathController.signal.aborted) return;
             if (String(text || '').trim() && shouldStream) {
                 armTimeout(MAIN_STREAM_IDLE_TIMEOUT_MS, 'MAIN_STREAM_IDLE_TIMEOUT');
             }
@@ -297,7 +310,9 @@ export async function requestMainApi({
                     postProcessing,
                 }),
                 timeout,
+                abortPromise,
             ]);
+            if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
             const finalized = reasoningSafeResult(result, { phase: 'main', transport: 'ChatCompletionService' });
             onResponse({
                 transport: 'ChatCompletionService', protocol: API_PROTOCOLS.OPENAI,
@@ -308,11 +323,12 @@ export async function requestMainApi({
             });
             return finalized;
         } catch (error) {
+            firstPathActive = false;
             clearTimeout(timeoutId);
+            firstPathController.abort();
             if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
             const safeError = normalizeMainApiFallbackError(error);
             if (shouldNotFallbackMainApi(safeError)) throw safeError;
-            firstPathController.abort();
             onFallback('main:ChatCompletionService');
             log('warn', '主 API 请求路径降级', { from: 'ChatCompletionService', to: 'TavernHelper' });
             console.warn('[Theater] ChatCompletionService failed, fallback to TavernHelper:', safeError?.code || safeError?.name || 'unknown');
@@ -339,7 +355,9 @@ export async function requestMainApi({
             }
             throwFriendlyMainApi(safeError, onChunk);
         } finally {
+            firstPathActive = false;
             clearTimeout(timeoutId);
+            firstPathController.abort();
             if (forwardAbort) signal?.removeEventListener('abort', forwardAbort);
         }
     }

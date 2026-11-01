@@ -647,8 +647,8 @@ function startContinue(html, tags = [], { sourceLabel = '当前小剧场', segme
 function stopGeneration() {
     runtime.runtimeLog('warn', '用户请求停止生成');
     if (runtime.currentGenerationJob) abortGenerationJob(runtime.currentGenerationJob);
-    if (runtime.abortController) { runtime.abortController.abort(); runtime.abortController = null; }
-    runtime.isGenerating = false;
+    if (runtime.abortController) runtime.abortController.abort();
+    // Keep the task busy until partial-result persistence and cleanup finish.
     runtime.bgStreamText = '';
 }
 // @theater-source-end stopGeneration
@@ -775,7 +775,9 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     $('#theater-stop-btn').show();
     $('#theater-quick-render-toggle').prop('disabled', true);
     updateContinueHint();
-    runtime.abortController = new AbortController();
+    const generationAbortController = new AbortController();
+    runtime.abortController = generationAbortController;
+    let generationFinished = false;
     let firstChunkShown = false;
     const streamRenderer = runtime.createCumulativeStreamRenderer(
         () => document.getElementById('theater-stream-text'),
@@ -786,6 +788,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     let retainStreamAsBody = true;
     let currentRoundStreamText = '';
     const onChunk = (value) => {
+        if (generationFinished || generationAbortController.signal.aborted || !ownsGeneration()) return;
         const text = retainStreamAsBody
             ? filterStoryOutput(value, { plainText: activeRound !== 1 || isPlainTextRender }) : value;
         runtime.bgStreamText = text;
@@ -812,12 +815,15 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         autoContinue: autoTargetContinue,
         requireTargetCompletion: stagedMultiRoundMode,
     });
+    const generationJob = runtime.currentGenerationJob;
+    const ownsGeneration = () => runtime.currentGenerationJob === generationJob
+        && runtime.abortController === generationAbortController;
 
     try {
         let firstHtml = '';
         let roundPayload = payload;
         while (true) {
-            if (runtime.currentGenerationJob.aborted) throw new DOMException('Aborted', 'AbortError');
+            if (generationJob.aborted || !ownsGeneration()) throw new DOMException('Aborted', 'AbortError');
             const round = runtime.currentGenerationJob.round;
             activeRound = round;
             progressLogged = false;
@@ -850,9 +856,10 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 systemPrompt,
                 userPrompt: prompt,
                 onChunk,
-                signal: runtime.abortController?.signal,
+                signal: generationAbortController.signal,
                 requestOptions,
             });
+            if (generationAbortController.signal.aborted || !ownsGeneration()) throw new DOMException('Aborted', 'AbortError');
             const responseText = filterStoryOutput(typeof result === 'string' ? result : result?.text, { plainText: round !== 1 || isPlainTextRender });
             if (!responseText) throw new Error('API未返回内容');
             markCompleted(runtime.lastRequestMetrics);
@@ -926,18 +933,20 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                     rules,
                     originalInstruction: payload.generationFoundation?.originalInstruction || '',
                     ctx,
-                    signal: runtime.abortController?.signal,
+                    signal: generationAbortController.signal,
                     apiRoute,
                     onChunk,
                     renderLabel: renderTemplate,
                     metricScope: 'final-render',
                     onRetry: () => {
+                        if (generationAbortController.signal.aborted || !ownsGeneration()) return;
                         if (popupAlive()) $('#theater-stream-text').text('排版完整性校验未通过，正在修复 HTML……');
                         firstChunkShown = false;
                         runtime.bgStreamText = '';
                         streamRenderer.reset();
                     },
                 });
+                if (generationAbortController.signal.aborted || !ownsGeneration()) throw new DOMException('Aborted', 'AbortError');
                 runtime.lastGeneratedHtml = rendered.html;
                 runtime.currentOutputMode = rendered.mode;
             } catch (renderError) {
@@ -982,7 +991,9 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 instruction: instruction || '', sourceConfig: generationSourceConfig, roleSources: generationRoles,
                 tags: itemTags({ tags: sourceTags }, runtime.knownInstructionTags()),
             };
-            if (!await runtime.storeCurrentResult(item)) {
+            const stored = await runtime.storeCurrentResult(item);
+            if (!ownsGeneration()) return;
+            if (!stored) {
                 // Still keep the completed result in this session even if the browser's store is full.
                 runtime.currentGenerationResult = item;
             }
@@ -1017,6 +1028,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         runtime.playNotificationSound();
         if (isAuto) runtime.setBallDot(true);
     } catch (err) {
+        if (!ownsGeneration()) return;
         runtime.recordRequestMetrics(runtime.lastRequestMetrics);
         const liveBodyText = retainStreamAsBody
             ? (htmlToPlainText(currentRoundStreamText) || String(currentRoundStreamText || '').trim())
@@ -1043,7 +1055,9 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             }
             const partialItem = { ...runtime.retainedResultSource, html: runtime.lastGeneratedHtml, mode: runtime.currentOutputMode,
                 resultId: newHistoryKey(), complete: false, time: new Date().toLocaleString('zh-CN', { hour12: false }) };
-            if (!await runtime.storeCurrentResult(partialItem)) runtime.currentGenerationResult = partialItem;
+            const stored = await runtime.storeCurrentResult(partialItem);
+            if (!ownsGeneration()) return;
+            if (!stored) runtime.currentGenerationResult = partialItem;
             if (popupAlive()) {
                 runtime.showInIframe(runtime.lastGeneratedHtml, 'text');
                 $('#theater-stream-section').hide();
@@ -1067,36 +1081,39 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         });
         runtime.theaterError(runtime.requestFailureMessage('生成失败', issue, { retained: !!partialText }));
     } finally {
-        runtime.isGenerating = false;
-        streamRenderer.reset({ flushPending: true });
-        if (!generationSucceeded && !runtime.lastGeneratedHtml && continuationRun && runtime.continuationSession === continuationRun) {
-            const previous = continuationRun.versions[continuationRun.selected];
-            if (previous) {
-                runtime.lastGeneratedHtml = previous.html;
-                runtime.lastGeneratedText = previous.text;
-                runtime.currentOutputMode = previous.mode;
-                if (popupAlive()) {
-                    runtime.showInIframe(previous.html, previous.mode);
-                    $('#theater-output-section').show();
+        generationFinished = true;
+        streamRenderer.reset({ flushPending: ownsGeneration() });
+        if (ownsGeneration()) {
+            runtime.isGenerating = false;
+            if (!generationSucceeded && !runtime.lastGeneratedHtml && continuationRun && runtime.continuationSession === continuationRun) {
+                const previous = continuationRun.versions[continuationRun.selected];
+                if (previous) {
+                    runtime.lastGeneratedHtml = previous.html;
+                    runtime.lastGeneratedText = previous.text;
+                    runtime.currentOutputMode = previous.mode;
+                    if (popupAlive()) {
+                        runtime.showInIframe(previous.html, previous.mode);
+                        $('#theater-output-section').show();
+                    }
                 }
             }
-        }
-        if (!isAuto && !contCtx && !runtime.continuationSession) {
-            runtime.continueContext = '';
-            $('#theater-continue-hint').remove();
-            $('#theater-instruction').attr('placeholder', '输入指令…');
-        } else if (!isAuto && contCtx && generationSucceeded) {
-            $('#theater-instruction').attr('placeholder', '可留空直接自然续写，也可填写本次方向…');
+            if (!isAuto && !contCtx && !runtime.continuationSession) {
+                runtime.continueContext = '';
+                $('#theater-continue-hint').remove();
+                $('#theater-instruction').attr('placeholder', '输入指令…');
+            } else if (!isAuto && contCtx && generationSucceeded) {
+                $('#theater-instruction').attr('placeholder', '可留空直接自然续写，也可填写本次方向…');
+                updateContinueHint();
+            }
+            if (popupAlive()) {
+                $('#theater-generate-btn').show();
+                $('#theater-stop-btn').hide();
+                $('#theater-quick-render-toggle').prop('disabled', false);
+            }
             updateContinueHint();
+            runtime.abortController = null;
+            runtime.currentGenerationJob = null;
         }
-        if (popupAlive()) {
-            $('#theater-generate-btn').show();
-            $('#theater-stop-btn').hide();
-            $('#theater-quick-render-toggle').prop('disabled', false);
-        }
-        updateContinueHint();
-        runtime.abortController = null;
-        runtime.currentGenerationJob = null;
     }
     return true;
 }
