@@ -442,13 +442,13 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
             </div>
             <div id="theater-diagnostics-output" class="theater-diagnostic-report" style="display:none;"></div>
         </div>
-        ${promptInspectorHTML()}
         <div class="theater-section theater-diagnostic-library-section">
             <details class="theater-diagnostic-catalog theater-diagnostic-library">
                 <summary><span><i class="fa-solid fa-book-medical"></i> 常见问题汇总</span><small>按弹窗里的错误信号查原因</small></summary>
                 <div class="theater-diagnostic-catalog-list">${runtime.diagnosticCatalogHTML()}</div>
             </details>
         </div>
+        ${promptInspectorHTML()}
     </div>
 
     <!-- ===== 7. 设置 ===== -->

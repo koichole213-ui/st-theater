@@ -1,8 +1,10 @@
 import { promptInspectorStore, promptMessageSource, inspectionBoundary, inspectionExport, inspectionText, MAX_PROMPT_INSPECTIONS } from './prompt-inspector.js';
 
+const chevronIcon = '<svg class="theater-pi-chevron" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="m7.5 5 5 5-5 5"/></svg>';
+
 export function promptInspectorHTML() {
     return `<details class="theater-section theater-prompt-inspector" data-theater-prompt-inspector open>
-        <summary><span>完整提示词查看器</span></summary><div class="theater-pi-body">
+        <summary><span>完整提示词查看器</span>${chevronIcon}</summary><div class="theater-pi-body">
         <div class="theater-pi-selects"><div class="theater-pi-field"><label for="theater-pi-request">选择请求</label><select id="theater-pi-request" class="theater-input" data-pi-request><option value="">暂无请求记录</option></select></div>
         <div class="theater-pi-field"><label>查看阶段</label><div class="theater-pi-segmented" role="group" aria-label="查看阶段"><button type="button" class="active" data-pi-stage="assembled" aria-pressed="true">组装消息</button><button type="button" data-pi-stage="sent" aria-pressed="false">发送前</button></div></div></div>
         <div class="theater-pi-meta" data-pi-meta></div><div class="theater-pi-tools"><button type="button" data-pi-action="toggle">全部展开</button><button type="button" class="theater-pi-export" data-pi-action="export" aria-label="导出 JSON" title="导出 JSON">⇩</button></div>
@@ -43,6 +45,7 @@ export function bindPromptInspector({ document: doc = globalThis.document, copyT
             const d = make('details', 'theater-pi-message'); d.dataset.piMessage = String(message.index); d.open = opened.has(message.index);
             const summary = make('summary');
             for (const [cls, value] of [['theater-pi-number', String(message.index).padStart(2, '0')], [`theater-pi-role ${message.role}`, message.role], ['theater-pi-source', promptMessageSource(message)], ['theater-pi-size', `${message.content.length} 字符`]]) summary.append(make('span', cls, value));
+            summary.insertAdjacentHTML('beforeend', chevronIcon);
             summary.title = [message.source, message.sourceId, message.name].filter(Boolean).join(' · ');
             d.append(summary); if (d.open) fillBody(d, message); list.append(d);
         }

@@ -1,8 +1,8 @@
 // Published releases. Fold preview iterations into the next published entry.
 export const RELEASE_NOTES = Object.freeze([
     { version: '4.4.6', date: '2026.11.01', changes: [
-        ['新增', '完整提示词查看器', '在诊断页查看本次请求，支持搜索、复制和导出。'],
-        ['优化', '生成与诊断体验', '改善长梦续写、停止后的正文保留及主 API 设置跟随，运行日志可保留最近 500 条。'],
+        ['新增', '完整提示词查看器', '在诊断页底部查看本次请求，支持搜索、复制和导出。'],
+        ['优化', '生成与诊断体验', '改善长梦续写、停止后的正文保留及主 API 设置跟随，运行日志可保留最近 500 条，并恢复原有显示高度。'],
         ['修复', '历史记录显示', '改善部分旧历史记录的读取与显示。'],
     ] },
     { version: '4.4.5', date: '2026.10.30', label: '测试版', changes: [

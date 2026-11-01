@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.4.6a
+/* 千夜浮梦 · 小剧场生成器 v4.4.6
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -7513,8 +7513,9 @@ body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) :is(.popup-content
 .theater-popup .theater-prompt-inspector{padding:0;overflow:hidden;border:1px solid var(--t-border-strong);border-color:color-mix(in srgb,var(--t-card-blue) 70%,var(--t-border-strong));border-radius:var(--t-radius-md);background:var(--t-surface-1);box-shadow:0 6px 20px rgba(68,103,126,.06);min-width:0}
 .theater-popup .theater-prompt-inspector>summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 16px;background:var(--t-card-blue);font-weight:600;font-size:var(--t-text-base);cursor:pointer;list-style:none;text-align:left}
 .theater-popup .theater-prompt-inspector>summary::-webkit-details-marker,.theater-popup .theater-pi-message>summary::-webkit-details-marker{display:none}
-.theater-popup .theater-prompt-inspector>summary::after{content:'⌄';color:var(--t-accent-deep)}
-.theater-popup .theater-prompt-inspector:not([open])>summary::after{content:'›'}
+.theater-popup .theater-pi-chevron{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;transition:transform .16s ease;pointer-events:none}
+.theater-popup .theater-prompt-inspector>summary>.theater-pi-chevron{color:var(--t-accent-deep)}
+.theater-popup .theater-prompt-inspector[open]>summary>.theater-pi-chevron{transform:rotate(90deg)}
 .theater-popup .theater-pi-body{padding:14px 16px 16px;border-top:1px solid var(--t-border);min-width:0}
 .theater-popup .theater-pi-selects{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(220px,.85fr);gap:12px;align-items:end}
 .theater-popup .theater-pi-field{min-width:0}
@@ -7543,8 +7544,9 @@ body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) :is(.popup-content
 .theater-popup .theater-pi-messages{display:grid;gap:8px;min-width:0}
 .theater-popup .theater-pi-message{min-width:0;border:1px solid var(--t-border);border-radius:9px;background:var(--t-surface-1);overflow:hidden}
 .theater-popup .theater-pi-message>summary{position:relative;display:flex;align-items:center;gap:9px;min-width:0;padding:11px 38px 11px 12px;list-style:none;cursor:pointer;text-align:left}
-.theater-popup .theater-pi-message>summary::after{content:'›';position:absolute;right:13px;color:var(--t-fg-mute)}
-.theater-popup .theater-pi-message[open]>summary::after{transform:rotate(90deg)}
+.theater-popup .theater-pi-message>summary>.theater-pi-chevron{position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--t-fg-mute)}
+.theater-popup .theater-pi-message[open]>summary>.theater-pi-chevron{transform:translateY(-50%) rotate(90deg)}
+@media(prefers-reduced-motion:reduce){.theater-popup .theater-pi-chevron{transition:none}}
 .theater-popup .theater-pi-message[open]>summary{border-bottom:1px solid var(--t-border);background:var(--t-bg)}
 .theater-popup .theater-pi-number{font:11px Consolas,monospace;color:var(--t-fg-mute);min-width:19px;flex:none}
 .theater-popup .theater-pi-role{font:11px Consolas,monospace;padding:3px 5px;background:var(--t-surface-2);color:var(--t-accent-deep);border-radius:4px;flex:none}
@@ -7574,5 +7576,4 @@ body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) :is(.popup-content
 .theater-popup .theater-pi-diagnostic-row>.theater-btn-row{margin:0}
 @media(max-width:540px){.theater-popup .theater-pi-diagnostic-row>.theater-btn-row{width:100%;display:flex;flex-wrap:wrap}.theater-popup .theater-pi-diagnostic-row>.theater-btn-row>.theater-btn{flex:1 1 calc(50% - 8px)}}
 
-.theater-popup .theater-panel[data-panel="diagnostics"] #theater-runtime-log-list{min-height:72px;height:110px;max-height:180px}
 @media(max-width:540px){.theater-popup .theater-pi-diagnostic-row>.theater-btn-row{flex-direction:row}.theater-popup .theater-pi-diagnostic-row>.theater-btn-row>.theater-btn{width:auto;min-width:0}}
