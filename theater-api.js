@@ -3,9 +3,10 @@ import { beginPromptInspection, recordSentInspection } from './prompt-inspector.
 import { captureLayoutApiSelection } from './layout-api.js';
 import { createRequestTrace } from './request-trace.js';
 import { resolveMainApiModel, DEFAULT_MAX_OUTPUT_TOKENS, API_PROTOCOLS, normalizeMaxTokens, resolveProtocol, buildApiEndpoint, buildApiRequest } from './api-client.js';
-import { createRequestMetrics, markFallback } from './request-metrics.js';
+import { createRequestMetrics, markFallback, markCompleted, markFailed } from './request-metrics.js';
 import { requestMainApi, requestCustomApi } from './api-runtime.js';
 import { classifyRequestFailure } from './request-diagnostics.js';
+import { beginRequestDiagnostics } from './request-ownership.js';
 
 export function createTheaterApi(runtime) {
 // @theater-source-begin captureActualRequestTrace
@@ -91,13 +92,12 @@ async function requestConfiguredGenerationApi({
 
 // @theater-source-begin generateWithMainAPI
 async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStream = true, signal = runtime.abortController?.signal, requestOptions = {}) {
-    runtime.lastApiResponseSummary = null;
-    runtime.lastApiConnectionSummary = null;
+    const diagnostics = beginRequestDiagnostics(runtime);
     const inspectionId = beginPromptInspection({ purpose: requestOptions.tracePurpose,
         label: requestOptions.inspectionLabel,
         round: requestOptions.inspectionRound || 1, presetName: requestOptions.presetName || runtime.settings.selectedPresetName,
         route: 'main', messages: requestOptions.messages, systemPrompt, userPrompt: prompt });
-    return requestMainApi({
+    try { return await requestMainApi({
         ctx,
         systemPrompt,
         userPrompt: prompt,
@@ -105,23 +105,22 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
         postProcessing: requestOptions.postProcessing || '',
         presetName: requestOptions.presetName || runtime.settings.selectedPresetName || '未指定',
         onChunk,
-        onRequest: details => { captureActualRequestTrace(details, requestOptions.tracePurpose); recordSentInspection(inspectionId, details); },
+        onRequest: details => { if (diagnostics.current()) captureActualRequestTrace(details, requestOptions.tracePurpose); recordSentInspection(inspectionId, details); },
         shouldStream,
         signal,
         log: runtime.runtimeLog,
-        onFallback: path => markFallback(runtime.lastRequestMetrics, path),
-        onPath: path => { if (runtime.lastRequestMetrics) runtime.lastRequestMetrics.path = path; },
-        onResponse: summary => { runtime.lastApiResponseSummary = summary; },
+        onFallback: path => markFallback(diagnostics.metrics, path),
+        onPath: path => { if (diagnostics.metrics) diagnostics.metrics.path = path; },
+        onResponse: summary => { diagnostics.publish({ lastApiResponseSummary: summary }); },
         tavernHelper: window.TavernHelper,
         getContext: () => SillyTavern.getContext(),
-    });
+    }); } finally { diagnostics.finish(); }
 }
 // @theater-source-end generateWithMainAPI
 
 // @theater-source-begin callCustomAPIStream
 async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStream = true, signal = runtime.abortController?.signal, requestOptions = {}) {
-    runtime.lastApiResponseSummary = null;
-    runtime.lastApiConnectionSummary = null;
+    const diagnostics = beginRequestDiagnostics(runtime);
     const apiConfig = requestOptions.apiConfig || {
         apiUrl: runtime.settings.apiUrl,
         apiProtocol: runtime.settings.apiProtocol,
@@ -133,7 +132,7 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
         label: requestOptions.inspectionLabel,
         round: requestOptions.inspectionRound || 1, presetName: requestOptions.presetName || runtime.settings.selectedPresetName,
         route: 'custom', messages: requestOptions.messages, systemPrompt, userPrompt });
-    return requestCustomApi({
+    try { return await requestCustomApi({
         config: apiConfig,
         systemPrompt,
         userPrompt,
@@ -141,14 +140,14 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
         postProcessing: requestOptions.postProcessing || '',
         presetName: requestOptions.presetName || runtime.settings.selectedPresetName || '未指定',
         onChunk,
-        onRequest: details => { captureActualRequestTrace(details, requestOptions.tracePurpose); recordSentInspection(inspectionId, details); },
+        onRequest: details => { if (diagnostics.current()) captureActualRequestTrace(details, requestOptions.tracePurpose); recordSentInspection(inspectionId, details); },
         shouldStream,
         signal,
         log: runtime.runtimeLog,
-        onFallback: path => markFallback(runtime.lastRequestMetrics, path),
-        onResponse: summary => { runtime.lastApiResponseSummary = summary; },
-        onConnection: summary => { runtime.lastApiConnectionSummary = summary; },
-    });
+        onFallback: path => markFallback(diagnostics.metrics, path),
+        onResponse: summary => { diagnostics.publish({ lastApiResponseSummary: summary }); },
+        onConnection: summary => { diagnostics.publish({ lastApiConnectionSummary: summary }); },
+    }); } finally { diagnostics.finish(); }
 }
 // @theater-source-end callCustomAPIStream
 
@@ -161,7 +160,8 @@ async function fetchModelList() {
     const $btn = $('#theater-fetch-models-btn');
     $btn.addClass('disabled');
     $btn.find('span').text('获取中…');
-    runtime.clearRequestIssue();
+    const diagnostics = beginRequestDiagnostics(runtime, { auxiliary: true,
+        context: { kind: '模型列表' }, metrics: createRequestMetrics('support:models') });
 
     try {
         const protocol = resolveProtocol($('#theater-api-protocol').val() || runtime.settings.apiProtocol, url);
@@ -171,7 +171,6 @@ async function fetchModelList() {
         const headers = protocol === API_PROTOCOLS.ANTHROPIC
             ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
             : (key ? { 'Authorization': `Bearer ${key}` } : {});
-        runtime.lastRequestContext = { kind: '模型列表' };
         const res = await fetch(modelsEndpoint, { method: 'GET', headers });
         if (!res.ok) {
             throw { code: 'THEATER_HTTP_STATUS', theaterFailure: { status: res.status } };
@@ -208,10 +207,14 @@ async function fetchModelList() {
         toastr.success(`找到 ${models.length} 个模型`);
     } catch (e) {
         const issue = classifyRequestFailure(e, { stage: '模型列表' });
-        runtime.lastRequestIssue = issue;
+        markFailed(diagnostics.metrics, issue.signal);
+        diagnostics.publish({ lastRequestIssue: issue });
         console.error('[Theater] 获取模型列表失败:', issue.signal);
         runtime.theaterError(runtime.requestFailureMessage('获取模型失败', issue));
     } finally {
+        if (!diagnostics.metrics.failedAt) markCompleted(diagnostics.metrics);
+        runtime.recordRequestMetrics(diagnostics.metrics);
+        diagnostics.finish();
         $btn.removeClass('disabled');
         $btn.find('span').text('获取模型列表');
     }
@@ -229,10 +232,10 @@ async function testAPIConnection() {
     const $btn = $('#theater-test-api-btn');
     $btn.addClass('disabled');
     $btn.find('span').text('测试中…');
-    runtime.clearRequestIssue();
+    const diagnostics = beginRequestDiagnostics(runtime, { auxiliary: true,
+        context: { kind: '连接测试' }, metrics: createRequestMetrics('support:connection-test') });
 
     try {
-        runtime.lastRequestContext = { kind: '连接测试' };
         const request = buildApiRequest({
             url,
             protocol: $('#theater-api-protocol').val() || runtime.settings.apiProtocol,
@@ -255,14 +258,19 @@ async function testAPIConnection() {
                 code: 'THEATER_HTTP_STATUS',
                 theaterFailure: { status: res.status },
             }, { stage: '连接测试' });
-            runtime.lastRequestIssue = issue;
+            markFailed(diagnostics.metrics, issue.signal);
+            diagnostics.publish({ lastRequestIssue: issue });
             runtime.theaterError(runtime.requestFailureMessage('连接失败', issue));
         }
     } catch (e) {
         const issue = classifyRequestFailure(e, { stage: '连接测试' });
-        runtime.lastRequestIssue = issue;
+        markFailed(diagnostics.metrics, issue.signal);
+        diagnostics.publish({ lastRequestIssue: issue });
         runtime.theaterError(runtime.requestFailureMessage('连接失败', issue));
     } finally {
+        if (!diagnostics.metrics.failedAt) markCompleted(diagnostics.metrics);
+        runtime.recordRequestMetrics(diagnostics.metrics);
+        diagnostics.finish();
         $btn.removeClass('disabled');
         $btn.find('span').text('测试连接');
     }

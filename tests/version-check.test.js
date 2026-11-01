@@ -18,7 +18,7 @@ test('numeric releases and successive preview letters have a stable total order'
 test('preview version is identical in manifest and the actual runtime entry', () => {
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
     const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    assert.equal(manifest.version, '4.4.5a');
+    assert.equal(manifest.version, '4.4.5b');
     assert.equal(source.match(/const VERSION = '([^']+)';/)[1], manifest.version);
 });
 

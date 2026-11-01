@@ -234,6 +234,8 @@ export function createLongDreamGenerationController({
             retainedCandidateCount: retainedCandidates.length,
         };
 
+        const ownsRun = () => active?.controller === controller;
+
         try {
             if (!resumeRendering) {
                 await checkpointWritingDraft(true);
@@ -247,6 +249,7 @@ export function createLongDreamGenerationController({
                 });
 
                 for (let round = 1; round <= allowedRounds; round++) {
+                    if (controller.signal.aborted || !ownsRun()) throw new DOMException('Aborted', 'AbortError');
                     job.round = round;
                     roundBaseText = accumulatedText;
                     streamedText = '';
@@ -278,7 +281,8 @@ export function createLongDreamGenerationController({
                         squashSystemMessages,
                     });
 
-                    requestResult = await requestChapter({
+                    let roundRequestActive = true;
+                    try { requestResult = await requestChapter({
                         systemPrompt: payload.systemPrompt,
                         userPrompt: payload.userPrompt,
                         messages,
@@ -290,6 +294,7 @@ export function createLongDreamGenerationController({
                         maxRounds: allowedRounds,
                         apiRoute,
                         onChunk: cumulativeText => {
+                            if (!roundRequestActive || controller.signal.aborted || !ownsRun()) return;
                             streamedText = String(cumulativeText || '');
                             const draftText = composeDraftText(roundBaseText, streamedText);
                             if (active && cleanText(streamedText)) {
@@ -304,7 +309,8 @@ export function createLongDreamGenerationController({
                             });
                             checkpointWritingDraft(false);
                         },
-                    });
+                    }); } finally { roundRequestActive = false; }
+                    if (controller.signal.aborted || !ownsRun()) throw new DOMException('Aborted', 'AbortError');
                     streamedText = String(requestResult?.text ?? requestResult ?? streamedText);
                     if (!cleanText(streamedText)) throw new Error('长梦正文请求没有返回有效内容');
                     accumulatedText = composeDraftText(roundBaseText, streamedText);
@@ -324,6 +330,7 @@ export function createLongDreamGenerationController({
                 }
             }
 
+            if (controller.signal.aborted || !ownsRun()) throw new DOMException('Aborted', 'AbortError');
             const finalText = accumulatedText;
             if (!finalText.trim()) throw new Error('长梦正文请求没有返回有效内容');
 
@@ -332,6 +339,7 @@ export function createLongDreamGenerationController({
                 resumeStage: LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING,
                 text: finalText,
             });
+            if (controller.signal.aborted || !ownsRun()) throw new DOMException('Aborted', 'AbortError');
             if (active) active.currentChars = readableCharCount(finalText);
 
             emitState(LONG_DREAM_GENERATION_STAGE.RENDERING, {
@@ -403,7 +411,7 @@ export function createLongDreamGenerationController({
             });
             throw attachRecord(error, currentRecord);
         } finally {
-            active = null;
+            if (ownsRun()) active = null;
         }
     }
 

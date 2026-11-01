@@ -77,7 +77,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.4.5a';
+const VERSION = '4.4.5b';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -104,38 +104,13 @@ let longDreamLiveDraftText = '';
 let longDreamRenderReceivedChars = 0;
 let longDreamRenderRepairing = false;
 installSafeResizeListener();
-
-// @theater-source theater-request-state.js recordRequestMetrics
-
-// @theater-source theater-request-state.js captureRequestIssue
-
-// @theater-source theater-request-state.js clearRequestIssue
-
-// @theater-source theater-request-state.js requestFailureMessage
-
-// @theater-source theater-request-state.js countSnapshotEntries
-
-// @theater-source theater-request-state.js formatRequestContextSummary
+// @theater-source-group 1
 const cloneDefaultSettings = () => {
     if (typeof structuredClone === 'function') return structuredClone(defaultSettings);
     return JSON.parse(JSON.stringify(defaultSettings));
 };
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
-// @theater-source theater-defaults.js SOUND_PRESETS
-
-// @theater-source theater-defaults.js LAMP_SVG_HTML
-
-// ============================================================
-// Default system prompt — 月见轻量 by 染染, adapted for theater
-// ============================================================
-// @theater-source theater-defaults.js DEFAULT_SYSTEM_PROMPT
-
-// @theater-source theater-defaults.js DEFAULT_RENDER_TEMPLATE
-
-// @theater-source theater-defaults.js DEFAULT_RENDER_TEMPLATE_PC
-
-// @theater-source theater-defaults.js DEFAULT_RENDER_TEMPLATE_TEXT
-
+// @theater-source-group 2
 const HTML_RENDER_FINAL_GUARDRAILS = `【HTML格式】用户要求Markdown或Markdown代码块时，仅把标题、编号、列表、强调层级转为语义化HTML，直接输出完整HTML；其HTML/CSS/JavaScript、视觉、交互、内容要求照常实现。
 【配色】各场景/状态同步设置背景、正文、小字、边框、控件；浅底深字、深底浅字，逐状态检查，禁止文字与背景明度相近。`;
 
@@ -146,24 +121,7 @@ const BUILTIN_RENDER_SELECTIONS = new Set([
     PLAIN_TEXT_DARK_SELECTION,
     ...Object.values(ADAPTIVE_RENDER_SELECTIONS),
 ]);
-
-// @theater-source theater-render-selection.js isBuiltinRenderSelection
-
-// @theater-source theater-render-selection.js renderTemplateContentForSelection
-
-// @theater-source theater-render-selection.js normalizeRenderSelection
-
-// @theater-source theater-render-selection.js renderSelectionMeta
-
-// @theater-source theater-render-selection.js renderTemplateOptions
-
-// @theater-source theater-render-selection.js renderSelectionHint
-
-// @theater-source theater-render-selection.js quickRenderState
-
-// @theater-source theater-render-selection.js quickRenderButtonContent
-
-// ============================================================
+// @theater-source-group 3
 let settings = {};
 const defaultSettings = Object.freeze({
     contextRange: 10,
@@ -250,15 +208,7 @@ const defaultSettings = Object.freeze({
     longDreamMemoryPresetId: LONG_DREAM_MEMORY_BUILTIN_PRESET_ID,
     longDreamMemoryPresets: [],
 });
-
-// @theater-source theater-defaults.js SKIN_LABELS
-
-// ============================================================
-// 本地仓库（IndexedDB）
-// settings.json 是整体重写式保存，把大量 HTML 存进去会让保存请求越来越大，
-// 大到失败时整晚的改动都写不进盘（删掉的回来、新存的消失）。
-// 所以历史和最近生成从 v2.7.1 起放进 IndexedDB，按条独立读写。
-// ============================================================
+// @theater-source-group 4
 let idb = null;            // 打不开时为 null，回退到 settings 存储
 let historyCollections = [];
 let historyQuery = '';
@@ -295,54 +245,7 @@ const longDreamCanonSuggestionState = {
 };
 
 const THEATER_TAB_NAMES = new Set(['generate', 'long-dream', 'setting', 'dialogue', 'rules', 'history', 'theme', 'diagnostics', 'config']);
-
-// @theater-source long-dream-navigation.js normalizeTheaterTab
-
-// @theater-source long-dream-navigation.js longDreamComposerDrafts
-
-// @theater-source long-dream-navigation.js getLongDreamComposerDraft
-
-// @theater-source long-dream-navigation.js rememberLongDreamComposerDraft
-
-// @theater-source long-dream-navigation.js setLongDreamComposerDraft
-
-// @theater-source long-dream-navigation.js clearLongDreamComposerDraft
-
-// @theater-source long-dream-navigation.js rememberLongDreamNavigation
-
-// @theater-source long-dream-navigation.js restoreLongDreamNavigation
-
-// @theater-source theater-storage.js idbReq
-
-// @theater-source theater-storage.js idbTransactionDone
-
-// @theater-source theater-storage.js storageInit
-
-// @theater-source theater-storage.js histAdd
-// @theater-source theater-storage.js histAddStorage
-
-// @theater-source theater-storage.js histDelete
-// @theater-source theater-storage.js histDeleteStorage
-
-// @theater-source theater-storage.js recentPersist
-
-// @theater-source theater-storage.js queueResultStorage
-
-// @theater-source theater-storage.js archiveCurrentResult
-
-// @theater-source theater-storage.js storeCurrentResult
-
-// @theater-source theater-storage.js updateResultItem
-
-// @theater-source theater-storage.js longDreamAdd
-
-// @theater-source theater-storage.js longDreamPut
-
-// @theater-source theater-storage.js longDreamDelete
-
-// ============================================================
-// Init
-// ============================================================
+// @theater-source-group 5
 async function init() {
     const ctx = SillyTavern.getContext();
     const { extensionSettings, renderExtensionTemplateAsync, eventSource, event_types } = ctx;
@@ -512,129 +415,16 @@ async function init() {
     console.log(`[Theater] 🐾 禾禾的千夜浮梦，麓克永远在山脚下等你。`);
     runtimeLog('info', '插件加载完成', { version: VERSION });
 }
-
-// @theater-source theater-update.js checkRemoteVersion
-
-// @theater-source theater-update.js hasRemoteUpdate
-
-// @theater-source theater-update.js remoteUpdateLabel
-
-// @theater-source theater-update.js updateBadgeHTML
-
-// @theater-source theater-update.js refreshUpdateBadges
-
-// 把用户 CSS 限定在 .theater-popup 容器内，避免污染酒馆主界面。
-// 用浏览器原生 CSSOM 解析，遍历每条规则改写选择器；解析失败则不注入。
+// @theater-source-group 6
 const THEATER_SCOPE = '.theater-popup';
-
-// @theater-source theater-appearance.js scopeSelector
-
-// @theater-source theater-appearance.js scopeRules
-
-// @theater-source theater-appearance.js scopeCSS
-
-// @theater-source theater-appearance.js applyCustomCSS
-
-// @theater-source theater-appearance.js normalizeUIFontSize
-
-// @theater-source theater-appearance.js fontSizeVars
-
-// @theater-source theater-appearance.js applyUIFontSize
-
-// @theater-source theater-appearance.js getSoundPreset
-
-// @theater-source theater-appearance.js playNotificationSound
-
-// @theater-source theater-appearance.js runtimeLog
-
-// @theater-source theater-appearance.js theaterError
-
-// @theater-source theater-appearance.js renderRuntimeLog
-
+// @theater-source-group 7
 const FLOATING_BALL_OPEN_GUARD_MS = 700;
 const FLOATING_BALL_OPEN_GUARD_RADIUS = 36;
 let floatingBallCleanup = null;
-
-// @theater-source theater-appearance.js openTheaterPopupFromFloatingBall
-
-// @theater-source theater-appearance.js createFloatingBall
-
-// ============================================================
-// Popup HTML
-// ============================================================
-// 小剧场的原生 select 使用 data-select2-id 作为“下拉选项框美化”脚本现有的排除标记；
-// 每个值保持唯一，以免后续 Select2 初始化时共享缓存。小剧场的搜索和 change 事件保持原样。
+// @theater-source-group 8
 const theaterNativeSelectCompatPrefix = `theater-native-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 let theaterNativeSelectCompatCounter = 0;
-// @theater-source theater-popup-ui.js theaterNativeSelectCompatId
-// 全局下拉美化脚本在 document 捕获阶段接管 mousedown/touchend。
-// 在更早的 window 捕获阶段只隔离小剧场的原生选择框，不取消浏览器默认选择行为。
-// @theater-source theater-popup-ui.js guardTheaterNativeSelectEvent
-// @theater-source theater-popup-ui.js buildPopupHTML
-
-// ============================================================
-// Rendering helpers
-// ============================================================
-// @theater-source long-dream-workspace.js historyItemHTML
-
-// @theater-source long-dream-workspace.js historyTagBadgesHTML
-
-// @theater-source long-dream-workspace.js longDreamSources
-
-// @theater-source long-dream-workspace.js resolveLongDreamSource
-
-// @theater-source long-dream-workspace.js longDreamDate
-
-// @theater-source long-dream-workspace.js longDreamExcerpt
-
-// @theater-source long-dream-workspace.js longDreamSourceInstructionState
-
-// @theater-source long-dream-workspace.js longDreamSourcePreviewHTML
-
-// @theater-source long-dream-workspace.js resetLongDreamCanonSuggestions
-
-// @theater-source long-dream-workspace.js activeLongDreamCanonSuggestions
-
-// @theater-source long-dream-workspace.js longDreamCanonSuggestionCardsHTML
-
-// @theater-source long-dream-workspace.js longDreamCanonSuggestionHTML
-
-// @theater-source long-dream-workspace.js renderLongDreamCanonSuggestions
-
-// @theater-source long-dream-workspace.js findLongDreamCanonSuggestion
-
-// @theater-source long-dream-workspace.js captureCurrentLongDreamWorldBooks
-
-// @theater-source long-dream-workspace.js longDreamSnapshotEntryCount
-
-// @theater-source long-dream-workspace.js longDreamBackupFileName
-
-// @theater-source long-dream-workspace.js exportLongDreamZip
-
-// @theater-source long-dream-workspace.js chooseExportFormat
-
-// @theater-source long-dream-workspace.js exportLongDreamBackup
-
-// @theater-source long-dream-workspace.js requestLongDreamExport
-
-// @theater-source long-dream-workspace.js readLongDreamZip
-
-// @theater-source long-dream-workspace.js importedLongDreamTitle
-
-// @theater-source long-dream-workspace.js importLongDreamBackup
-
-// @theater-source long-dream-workspace.js readLongDreamChapter
-
-// @theater-source long-dream-workspace.js longDreamChapterFileName
-
-// @theater-source long-dream-workspace.js exportLongDreamChapter
-
-// @theater-source long-dream-workspace.js saveLongDreamChapterEdits
-
-// @theater-source long-dream-workspace.js setCurrentLongDreamStatus
-
-// @theater-source long-dream-workspace.js longDreamListHTML
-
+// @theater-source-group 9
 const LONG_DREAM_RELATION_OPTIONS = [
     { value: LONG_DREAM_WORLD_LINE_RELATION.ISOLATED, label: '完全隔离', description: '不读取原世界书或原作场景；仍以当前 Char 与 User 人设保持人物性格。' },
     { value: LONG_DREAM_WORLD_LINE_RELATION.PARALLEL, label: '平行支线 / AU', description: '沿用世界背景与人物素材；原剧情、关系和现状只作参考。' },
@@ -642,135 +432,10 @@ const LONG_DREAM_RELATION_OPTIONS = [
     { value: LONG_DREAM_WORLD_LINE_RELATION.CANON_CONCURRENT, label: '原线同期补完', description: '在原时间线中补写支线，原重大事件与关系默认成立。' },
     { value: LONG_DREAM_WORLD_LINE_RELATION.SEQUEL, label: '正史后续', description: '原世界书视为已经发生的历史，从它之后继续。' },
 ];
-
-// @theater-source long-dream-workspace.js longDreamRelationLabel
-
-// @theater-source long-dream-workspace.js longDreamRelationChoicesHTML
-
-// @theater-source long-dream-workspace.js longDreamSourceWorldBooks
-
-// @theater-source long-dream-workspace.js sameWorldBookSelection
-
-// @theater-source long-dream-workspace.js longDreamCreateWorldBookStateHTML
-
-// @theater-source long-dream-workspace.js refreshLongDreamCreateWorldBookState
-
-// @theater-source long-dream-workspace.js longDreamCreateHTML
-
-// @theater-source long-dream-workspace.js longDreamGenerationStageText
-
-// @theater-source long-dream-workspace.js formatLongDreamElapsed
-
-// @theater-source long-dream-workspace.js longDreamProgressStageText
-
-// @theater-source long-dream-workspace.js longDreamProgressLabelText
-
-// @theater-source long-dream-workspace.js longDreamProgressKickerText
-
-// @theater-source long-dream-workspace.js longDreamProgressMetaHTML
-
-// @theater-source long-dream-workspace.js selectedLongDreamMemoryApiPreset
-
-// @theater-source long-dream-workspace.js longDreamMemoryAnalysisPresets
-
-// @theater-source long-dream-workspace.js selectedLongDreamMemoryAnalysisPreset
-
-// @theater-source long-dream-workspace.js refreshLongDreamMemoryPresetControls
-
-// @theater-source long-dream-workspace.js longDreamMemoryStatusText
-
-// @theater-source long-dream-workspace.js longDreamActiveMemoryCount
-
-// @theater-source long-dream-workspace.js longDreamSummaryHistoryHTML
-
-// @theater-source long-dream-workspace.js toggleLongDreamSummaryPreview
-
-// @theater-source long-dream-workspace.js longDreamMemoryConflictTarget
-
-// @theater-source long-dream-workspace.js longDreamMemoryConflictSubjects
-
-// @theater-source long-dream-workspace.js longDreamMemoryConflictItemText
-
-// @theater-source long-dream-workspace.js longDreamMemoryConflictOperationText
-
-// @theater-source long-dream-workspace.js longDreamMemoryConflictDetails
-
-// @theater-source long-dream-workspace.js longDreamMemoryCardsHTML
-
-// @theater-source long-dream-workspace.js longDreamMemorySelectionHTML
-
-// @theater-source long-dream-workspace.js refreshLongDreamMemorySelection
-
-// @theater-source long-dream-workspace.js longDreamMemoryTags
-
-// @theater-source long-dream-workspace.js longDreamMemoryV2Fields
-
-// @theater-source long-dream-workspace.js uniqueLongDreamBranchTitle
-
-// @theater-source long-dream-workspace.js handleLongDreamChapterAction
-
-// @theater-source long-dream-workspace.js longDreamWorkspaceHTML
-
-// @theater-source long-dream-workspace.js longDreamDetailState
-
-// @theater-source long-dream-workspace.js longDreamDetailHeaderHTML
-
+// @theater-source-group 10
 let refreshingLongDreamWorldBooks = false;
 let refreshingLongDreamWorldBookId = null;
-// @theater-source long-dream-workspace.js refreshLongDreamWorldBookSources
-
-// @theater-source long-dream-workspace.js longDreamDefinitionHTML
-
-// @theater-source long-dream-workspace.js longDreamDetailHTML
-
-// @theater-source long-dream-workspace.js longDreamKeptVersionsHTML
-
-// @theater-source long-dream-workspace.js longDreamChapterDirectoryHTML
-
-// @theater-source long-dream-workspace.js longDreamWorkDetailHTML
-
-// @theater-source long-dream-workspace.js longDreamChapterDetailHTML
-
-// @theater-source long-dream-workspace.js longDreamUnavailableHTML
-
-// @theater-source long-dream-workspace.js longDreamPanelHTML
-
-// @theater-source long-dream-workspace.js syncLongDreamPanel
-
-// @theater-source long-dream-workspace.js renderLongDreamPanel
-
-// @theater-source long-dream-workspace.js renderLongDreamProgressCandidate
-
-// @theater-source long-dream-workspace.js stopLongDreamProgressTicker
-
-// @theater-source long-dream-workspace.js syncLongDreamProgressDisplay
-
-// @theater-source long-dream-workspace.js renderLongDreamReviewDraft
-
-
-// @theater-source theater-materials.js knownInstructionTags
-
-// @theater-source theater-materials.js tagFilterSummary
-
-// @theater-source theater-materials.js historyTagFilterLabel
-
-// @theater-source theater-materials.js contextExclusionSettingsHTML
-
-// @theater-source theater-materials.js contextExclusionRulesHTML
-
-// @theater-source theater-materials.js refreshContextExclusionRules
-
-// @theater-source theater-materials.js addContextExclusionRule
-
-// @theater-source theater-materials.js previewContextExclusions
-
-// @theater-source theater-instructions.js itemTagBadgesHTML
-
-// @theater-source theater-instructions.js tagUsageCounts
-
-// @theater-source theater-instructions.js rollRandomInstruction
-
-// 临时状态：当前选中索引 + 搜索关键词，仅本次会话有效
+// @theater-source-group 11
 let instSelected = new Set();
 let histSelected = new Set();
 let historyRoleFilter = '';
@@ -792,26 +457,7 @@ const INSTRUCTION_SWEEP_HOLD_MS = 420;
 const INSTRUCTION_SWEEP_MOVE_TOLERANCE = 10;
 const INSTRUCTION_SWEEP_SCROLL_EDGE = 56;
 const INSTRUCTION_SWEEP_SCROLL_MAX_SPEED = 14;
-
-// @theater-source theater-instructions.js setActiveInstructionTags
-
-// @theater-source theater-instructions.js filterInstAll
-
-// @theater-source theater-instructions.js renderInstList
-
-// @theater-source theater-instructions.js updateBulkBar
-
-// @theater-source theater-instructions.js setInstructionItemSelected
-
-// @theater-source theater-instructions.js closeInstructionActionMenus
-
-// @theater-source theater-instructions.js positionInstructionActionMenu
-
-// @theater-source theater-instructions.js bindInstructionSweepSelection
-
-// ---- World Book 运行时状态 ----
-// 条目内容不再持久化到 settings（避免撑大 settings.json），弹窗打开时现从酒馆读。
-// 持久化的只有：选了哪些书（selectedWorldBooks）、每本书条目的开关（worldBookStatesByBook）、手动条目（manualWBEntries）。
+// @theater-source-group 12
 let wbEntries = [];    // [{ book, uid, name, content } | { manual: true, mIdx, name, content }]
 let wbStates = [];     // 与 wbEntries 平行的开关数组
 let wbBookNames = [];  // 可选世界书名列表
@@ -820,141 +466,9 @@ let wbLoadedCacheKey = '';
 let wbLoadedReadMode = '';
 let wbReloadSequence = 0;
 let wbReloadInFlight = null;
-
-// @theater-source theater-materials.js worldBookCacheKey
-
-// @theater-source theater-materials.js isWorldBookCacheCurrent
-
-// 每本书一个节点：勾选框选书，点行展开条目，条目直接挂在书底下（树形）
+// @theater-source-group 13
 let wbGroupCollapsed = {};  // { 书名或 __manual__: false 表示展开 }，缺省收起
-
-// @theater-source theater-materials.js wbEntryHTML
-
-// @theater-source theater-materials.js wbBookBodyHTML
-
-// @theater-source theater-materials.js renderWBTree
-
-// @theater-source theater-materials.js updateWBGroupCounts
-
-// @theater-source theater-materials.js hasManualEntries
-
-// @theater-source theater-materials.js updateWBCount
-
-// @theater-source theater-materials.js refreshWBUI
-
-// 改某个条目的开关，并把状态写回对应的持久化位置
-// @theater-source theater-materials.js setWBStateByIndex
-
-// 把 settings.manualWBEntries 重新同步到 wbEntries 尾部
-// @theater-source theater-materials.js syncManualIntoWB
-
-// ============================================================
-// Open popup
-// ============================================================
-// @theater-source theater-popup-controller.js activateTheaterTab
-
-// @theater-source theater-popup-controller.js openTheaterPopup
-
-// ============================================================
-// Events
-// ============================================================
-// @theater-source theater-api-settings.js readApiFormConfig
-
-// @theater-source theater-api-settings.js writeApiFormConfig
-
-// @theater-source theater-api-settings.js apiPresetDefaultName
-
-// @theater-source theater-api-settings.js apiPresetDisplayLabel
-
-// @theater-source theater-api-settings.js validateApiPresetConfig
-
-// @theater-source theater-api-settings.js persistCurrentApiConfig
-
-// @theater-source theater-api-settings.js refreshApiPresetControls
-
-// @theater-source theater-api-settings.js refreshConfigSummaries
-
-// @theater-source theater-api-settings.js findApiPreset
-
-// @theater-source theater-result-workspace.js closeResultActions
-
-// @theater-source theater-result-workspace.js resultBookmarkRect
-
-// @theater-source theater-result-workspace.js positionResultToolbox
-
-// @theater-source theater-result-workspace.js applyResultToolboxMode
-
-// @theater-source theater-storage.js histPut
-// @theater-source theater-storage.js histPutStorage
-
-// @theater-source theater-history.js historyRoleFilterHTML
-// @theater-source theater-history.js editHistoryRoles
-// @theater-source theater-history.js moveHistoryToCollection
-// @theater-source theater-history.js showHistoryMetadata
-// @theater-source theater-history.js inferHistoryTags
-
-// @theater-source theater-history.js migrateHistoryTags
-
-// @theater-source theater-render-selection.js refreshRenderSelectionControls
-
-// @theater-source theater-render-selection.js switchQuickRenderSelection
-
-// @theater-source theater-render-selection.js updateQuickRenderSetting
-
-// @theater-source theater-render-selection.js renderSelectionAfterCustomDelete
-
-// @theater-source theater-popup-ui.js decorateConfigLayout
-
-// @theater-source theater-events.js bindEvents
-
-// @theater-source theater-history.js refreshInstUI
-
-// @theater-source theater-history.js filterHistoryAll
-
-// @theater-source theater-history.js setHistoryItemSelected
-
-// @theater-source theater-history.js detachHistoryTouchMoveHandler
-
-// @theater-source theater-history.js attachHistoryTouchMoveHandler
-
-// @theater-source theater-history.js resetHistorySelectionGesture
-
-// @theater-source theater-history.js activateHistorySelectionGesture
-
-// @theater-source theater-history.js applyHistorySelectionGestureAt
-
-// @theater-source theater-history.js runHistorySelectionAutoScroll
-
-// @theater-source theater-history.js updateHistorySelectionAutoScroll
-
-// @theater-source theater-history.js refreshHistList
-
-// @theater-source theater-history.js currentHistoryPage
-// @theater-source theater-history.js visibleHistoryItems
-// @theater-source theater-history.js renderHistoryList
-
-// @theater-source theater-history.js refreshTagControls
-
-// @theater-source theater-history.js renameHistoryItem
-
-// @theater-source theater-history.js editHistoryTags
-
-// @theater-source theater-history.js bulkEditSelectedHistoryTags
-
-// @theater-source theater-history.js updateHistBulkBar
-
-// @theater-source theater-history.js enterHistBatchMode
-
-// @theater-source theater-history.js exitHistBatchMode
-
-// ============================================================
-// Persona
-// ============================================================
-// @theater-source theater-materials.js loadPersona
-
-// ============================================================
-// Preset Entries
-// ============================================================
+// @theater-source-group 14
 let cachedPresetEntries = [];
 let cachedPresetPostProcessing = '';
 let cachedPresetSquashSystemMessages = false;
@@ -964,142 +478,7 @@ let presetLoadSequence = 0;
 let presetLoadInFlight = null;
 let presetNamesCache = [];
 let presetSearch = '';
-
-// @theater-source theater-materials.js currentPresetEntryStates
-
-// @theater-source theater-materials.js renderPresetOptions
-
-// @theater-source theater-materials.js loadPresetNameList
-
-// @theater-source theater-materials.js parsePromptToEntries
-
-// @theater-source theater-materials.js fetchPresetByName
-
-// @theater-source theater-materials.js extractPromptsFromData
-
-// @theater-source theater-materials.js setPresetEntryControlsEnabled
-
-// @theater-source theater-materials.js currentPresetSnapshot
-
-// @theater-source theater-materials.js loadPresetEntries
-
-// @theater-source theater-materials.js ensureSelectedPresetLoaded
-
-// @theater-source theater-materials.js renderPresetEntries
-
-// @theater-source theater-materials.js getSelectedPresetPrompt
-
-// @theater-source theater-materials.js getSelectedPresetEntries
-
-// ============================================================
-// World Book
-// ============================================================
-// @theater-source theater-materials.js loadWorldBookList
-
-// @theater-source theater-materials.js entryKey
-
-// 重新加载所有勾选的世界书条目（多本合并，手动条目排最后）
-// @theater-source theater-materials.js reloadWorldBooks
-
-// @theater-source theater-materials.js ensureWorldBooksCurrent
-
-// ---- 跟随角色卡 ----
-// @theater-source theater-materials.js getCharBoundBooks
-
-// 跟随角色卡只替换上一次自动带入的书，不覆盖用户另外手选的书。
-// @theater-source theater-materials.js applyCharBoundBooks
-
-// ============================================================
-// Templates
-// ============================================================
-// @theater-source theater-instructions.js chooseTags
-
-// @theater-source theater-instructions.js askNewItemName
-
-// @theater-source theater-instructions.js chooseTagsWithNew
-
-// @theater-source theater-instructions.js newInstructionTag
-
-// @theater-source theater-instructions.js updateAllHistoryTags
-
-// @theater-source theater-instructions.js manageInstructionTags
-
-// @theater-source theater-instructions.js editTemplateTags
-
-// @theater-source theater-instructions.js chooseBulkTagOperation
-
-// @theater-source theater-instructions.js applyBulkTagOperation
-
-// @theater-source theater-instructions.js saveInstructionTpl
-
-
-// @theater-source theater-instructions.js bulkEditSelectedTemplateTags
-
-// @theater-source theater-instructions.js bulkDeleteSelected
-
-// @theater-source theater-instructions.js selectAllVisible
-
-// @theater-source theater-instructions.js clearInstSelection
-
-// @theater-source theater-instructions.js saveRenderTpl
-
-// @theater-source theater-instructions.js deleteRenderTpl
-
-// ============================================================
-// Instruction Template Import / Export
-// ============================================================
-// @theater-source theater-instructions.js splitImportedTemplate
-
-// @theater-source theater-instructions.js importInstructionTemplates
-
-// @theater-source theater-instructions.js exportInstructionTemplates
-
-// ============================================================
-// History
-// ============================================================
-// @theater-source theater-storage.js queueHistoryWrite
-
-// @theater-source theater-history.js commitHistoryCollection
-
-// @theater-source theater-history.js organizeHistory
-
-// @theater-source theater-history.js openHistoryReading
-// @theater-source theater-history.js historyReadingVersions
-// @theater-source theater-history.js chooseHistoryReadingVersion
-
-// @theater-source theater-history.js saveToHistory
-
-// @theater-source theater-history.js copyHtml
-
-// @theater-source theater-history.js readClipboardMatch
-
-// @theater-source theater-history.js copyToClipboard
-
-// @theater-source theater-history.js fallbackCopy
-
-// @theater-source theater-history.js showManualCopyPanel
-
-// @theater-source theater-history.js downloadTextContent
-
-// @theater-source theater-history.js exportAllHistory
-
-// @theater-source theater-history.js requestHistoryExport
-
-// @theater-source theater-history.js addHistoryItems
-
-// @theater-source theater-history.js loadJSZip
-
-// @theater-source theater-history.js readHistoryZip
-
-// @theater-source theater-history.js normalizedZipEntryName
-
-// @theater-source theater-history.js importHistoryBackup
-
-// @theater-source theater-history.js downloadFile
-
-// ============================================================
-// Generation
-// ============================================================
+// @theater-source-group 15
 let lastGeneratedHtml = '';
 let lastGeneratedText = '';
 let retainedResultSource = null; // 中断结果的轮次元数据，不改变最近生成列表。
@@ -1112,219 +491,23 @@ let bgError = '';              // 后台生成时的错误信息
 let continueContext = '';      // 续写时的前情内容
 let continuationSession = null;
 let resultEditSnapshot = null; // 退出编辑时用于无损恢复原结果与排版
-
-// 从HTML中提取纯文本（去掉标签，只留故事内容）
-// @theater-source theater-generation.js htmlToPlainText
-
-// @theater-source theater-generation.js prepareContinuationContext
-
-// @theater-source theater-generation.js generationPreparationKey
-
-// @theater-source theater-generation.js resolveRenderSelection
-
-// @theater-source theater-generation.js resolveGenerationIdentity
-
-// @theater-source theater-generation.js generationIdentitySlots
-
-// @theater-source theater-generation.js freezeGenerationFoundationList
-
-// @theater-source theater-generation.js buildGenerationContinuationRoundPayload
-
-// @theater-source theater-generation.js assembleGenerationPayload
-
+// @theater-source-group 16
 const estimateInputTokens = createTokenBreakdownEstimator();
-
-// @theater-source theater-generation.js refreshTokenEstimate
-
-
-// @theater-source theater-generation.js updateLengthHint
-
-// @theater-source theater-generation.js continuationSessionHTML
-
-// @theater-source theater-generation.js updateContinueHint
-
-// @theater-source theater-generation.js showContinuationVersion
-
-// @theater-source theater-generation.js clearContinueMode
-
-// @theater-source theater-generation.js revealContinuationInput
-
-// @theater-source theater-generation.js validateFinalRenderedHtml
-
-// @theater-source theater-generation.js requestFinalRenderedHtml
-
-// @theater-source theater-generation.js normalizeLongDreamResponseText
-
-// @theater-source long-dream-runtime.js requestLongDreamChapter
-
-// @theater-source long-dream-runtime.js generateLongDreamCanonSuggestions
-
-// @theater-source long-dream-runtime.js renderLongDreamChapter
-
-// @theater-source long-dream-runtime.js createCumulativeStreamRenderer
-
+// @theater-source-group 17
 let longDreamStreamRenderer = null;
 let longDreamStreamFirstChunk = true;
-
-// @theater-source long-dream-runtime.js getLongDreamStreamRenderer
-
-// @theater-source long-dream-runtime.js resetLongDreamStreamRenderer
-
-// @theater-source long-dream-runtime.js updateLongDreamStream
-
-// @theater-source long-dream-runtime.js resetLongDreamRenderProgress
-
-// @theater-source long-dream-runtime.js updateLongDreamRenderProgress
-
-// @theater-source long-dream-runtime.js handleLongDreamGenerationState
-
-// @theater-source long-dream-runtime.js getLongDreamGenerationController
-
-// @theater-source long-dream-runtime.js resolveLongDreamRequestFoundation
-
+// @theater-source-group 18
 let longDreamTokenEstimateRequestId = 0;
-
-// @theater-source long-dream-runtime.js refreshLongDreamTokenEstimate
-
-
-// @theater-source long-dream-runtime.js generateNextLongDreamChapter
-
+// @theater-source-group 19
 let longDreamCandidateSavePending = false;
-// @theater-source long-dream-runtime.js keepLongDreamCandidate
-
-// @theater-source long-dream-runtime.js confirmLongDreamChapter
-
-// @theater-source long-dream-runtime.js queueLongDreamMemoryWeave
-
+// @theater-source-group 20
 const refreshingLongDreamSummaries = new Set();
 const confirmingLongDreamSummaries = new Set();
-// @theater-source long-dream-runtime.js confirmLongDreamSummaryAction
-// @theater-source long-dream-runtime.js syncLongDreamSummaryButton
-// @theater-source long-dream-runtime.js refreshLongDreamSummaryNow
-
-// @theater-source long-dream-runtime.js weaveLongDreamMemory
-
-// @theater-source long-dream-runtime.js discardLongDreamDraft
-
-// @theater-source long-dream-runtime.js regenerateLongDreamDraft
-
-// @theater-source long-dream-runtime.js changeLongDreamDraftCandidate
-
-// 设置续写上下文并跳转到生成面板
-// @theater-source theater-generation.js startContinue
-
-// @theater-source theater-generation.js stopGeneration
-
-// @theater-source theater-generation.js generateTheater
-
-// 生成核心。isAuto = 自动模式触发（弹窗可能根本没开，所有 UI 操作都已有 popupAlive 保护）
-// @theater-source theater-generation.js runGeneration
-
-// ============================================================
-// Auto mode
-// ============================================================
-// @theater-source theater-auto-mode.js currentAutoInstruction
-
-// @theater-source theater-auto-mode.js autoSourceKind
-
-// @theater-source theater-auto-mode.js pickAutoInstruction
-
-// 计数逻辑：只看"当前 AI 楼数"和锚点的差值，不数事件。
-// 删楼把楼数删到锚点以下时，锚点自动下移到当前楼数——
-// 既不会"永远凑不够"，也不会"一删楼就连环触发"。swipe 不加楼数，天然不计。
-// @theater-source theater-auto-mode.js autoTick
-
-// 悬浮球小红点：自动生成完成后亮起，打开面板就熄灭
-// @theater-source theater-auto-mode.js setBallDot
-
-// ============================================================
-// API runtime adapters
-// ============================================================
-// @theater-source theater-api.js captureActualRequestTrace
-
-// @theater-source theater-api.js captureGenerationApiRoute
-
-// @theater-source theater-api.js requestConfiguredGenerationApi
-
-// @theater-source theater-api.js generateWithMainAPI
-
-// @theater-source theater-api.js callCustomAPIStream
-// ============================================================
-// Diagnostics
-// ============================================================
-// @theater-source theater-diagnostics.js diagnosticLine
-
-// @theater-source theater-diagnostics.js formatApiResponseSummary
-
-// @theater-source theater-diagnostics.js buildAutoModeDiagnostic
-
-// @theater-source theater-diagnostics.js diagnosticCatalogHTML
-
-// @theater-source theater-diagnostics.js buildDiagnostics
-
-// @theater-source theater-diagnostics.js exportDiagnosticsText
-
-// @theater-source theater-diagnostics.js runDiagnostics
-
-// @theater-source theater-diagnostics.js toggleDiagnosticsReport
-
-// ============================================================
-// HTML extraction & iframe
-// ============================================================
-// @theater-source theater-result-workspace.js extractHtml
-
-// @theater-source theater-result-workspace.js textFallbackHtml
-
+// @theater-source-group 21
 let currentDisplayHtml = '';   // 当前iframe中显示的内容
-
-// @theater-source theater-result-workspace.js showInIframe
-
-// @theater-source theater-result-workspace.js closeFullscreenReader
-
-// @theater-source theater-result-workspace.js currentReaderPayload
-
-// @theater-source theater-result-workspace.js openFullscreenReader
-
+// @theater-source-group 22
 let resultSwipeCleanup = null;
-
-// @theater-source theater-result-workspace.js switchResultWorkspace
-
-// @theater-source theater-result-workspace.js initializeResultWorkspace
-
-// @theater-source theater-result-workspace.js updateRecentNav
-
-// @theater-source theater-result-workspace.js displayedRecentIndex
-
-// @theater-source theater-result-workspace.js showRecentResult
-
-// @theater-source theater-result-workspace.js setResultEditControls
-
-// @theater-source theater-result-workspace.js cancelResultEdit
-
-// @theater-source theater-result-workspace.js clearDisplayedResult
-
-// ============================================================
-// Fetch model list from API
-// ============================================================
-// @theater-source theater-api.js fetchModelList
-
-// ============================================================
-// Test API connection
-// ============================================================
-// @theater-source theater-api.js testAPIConnection
-
-// ============================================================
-// Update
-// ============================================================
-// @theater-source theater-update.js showReloadAfterUpdateAction
-
-// @theater-source theater-update.js confirmReloadAfterUpdate
-
-// @theater-source theater-update.js updateExtension
-
-// ============================================================
-// Helpers
-// ============================================================
+// @theater-source-group 23
 function esc(s) {
     if (s === null || s === undefined) return '';
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

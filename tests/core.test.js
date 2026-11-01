@@ -3750,13 +3750,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.5a 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.5b 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.5a'/);
-    assert.equal(manifest.version, '4.4.5a');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.5a/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.5b'/);
+    assert.equal(manifest.version, '4.4.5b');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.5b/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 
@@ -7693,7 +7693,7 @@ test('真实独立API适配器保留失败阶段，切换主API发起请求时�
     const source = readTheaterImplementation();
     const dispatcher = source.match(/async function (?:runtime\.)?requestConfiguredGenerationApi\([^]*?^}$/m)[0];
     const custom = source.match(/async function (?:runtime\.)?callCustomAPIStream\([^]*?^}/m)[0];
-    const scope = { settings: {}, lastApiResponseSummary: null, lastApiConnectionSummary: null, lastRequestMetrics: null,
+    const scope = { settings: {}, lastRequestContext: null, lastRequestIssue: null, lastApiResponseSummary: null, lastApiConnectionSummary: null, lastRequestMetrics: null,
         createRequestMetrics: path => ({ path }), captureActualRequestTrace() {}, runtimeLog() {}, markFallback() {},
         requestCustomApi: options => requestCustomApi({ ...options, fetchImpl: async () => { throw new TypeError('Failed to fetch PRIVATE'); } }),
         generateWithMainAPI: async () => 'main-result',
@@ -7731,7 +7731,7 @@ test('流式请求收到HTML后按实际文本读取阶段诊断，完整HTML仍
 test('主API定梦建议直达入口也清除独立API旧失败报告', async () => {
     const source = readTheaterImplementation();
     const main = source.match(/async function (?:runtime\.)?generateWithMainAPI\([^]*?^}$/m)[0];
-    const scope = { lastApiConnectionSummary: { state: 'failed' }, lastApiResponseSummary: { httpStatus: 500 }, settings: {},
+    const scope = { lastRequestContext: null, lastRequestIssue: null, lastRequestMetrics: null, lastApiConnectionSummary: { state: 'failed' }, lastApiResponseSummary: { httpStatus: 500 }, settings: {},
         window: { TavernHelper: {} }, SillyTavern: { getContext: () => ({}) },
         captureActualRequestTrace() {}, runtimeLog() {}, markFallback() {},
         requestMainApi: async options => { assert.equal(scope.lastApiConnectionSummary, null); assert.equal(scope.lastApiResponseSummary, null); options.onResponse({ transport: 'ChatCompletionService', hasText: true }); return '合成主API正文'; },

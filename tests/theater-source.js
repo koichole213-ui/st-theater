@@ -1,4 +1,5 @@
 import { promptInspectorHTML, bindPromptInspector, refreshPromptInspector } from '../prompt-inspector-ui.js';
+import { beginRequestDiagnostics } from '../request-ownership.js';
 import { beginPromptInspection, recordSentInspection } from '../prompt-inspector.js';
 import { longDreamPromptPlacement } from '../long-dream-payload.js';
 import { normalizeManualTarget } from '../length-policy.js';
@@ -26,14 +27,24 @@ let implementation;
 export function readTheaterImplementation() {
     if (implementation) return implementation;
     const entry = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-    implementation = entry.replace(/^\/\/ @theater-source (\S+) (\w+)$/gm, (_, file, name) => {
+    const sourceGroups = JSON.parse(readFileSync(new URL('./production-source-map.json', import.meta.url), 'utf8'));
+    const expanded = entry.replace(/^\/\/ @theater-source-group (\d+)\n/gm, (_, key) => sourceGroups[key]);
+    implementation = expanded.replace(/^\/\/ @theater-source (\S+) (\w+)$/gm, (_, file, name) => {
         const module = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
         const begin = `// @theater-source-begin ${name}\n`;
         const end = `// @theater-source-end ${name}`;
         const start = module.indexOf(begin);
         const finish = module.indexOf(end, start);
         if (start < 0 || finish < 0) throw new Error(`Missing production function: ${file}:${name}`);
-        return module.slice(start + begin.length, finish).replace(/^export /gm, '').trimEnd();
+        let code = module.slice(start + begin.length, finish).replace(/^export /gm, '').trimEnd();
+        code = code.replace(/^    \/\/ @theater-event-source (\S+) (\w+)\n    \2\(runtime, \$d\);$/gm, (_, partFile, partName) => {
+            const part = readFileSync(new URL(`../${partFile}`, import.meta.url), 'utf8');
+            const open = `export function ${partName}(runtime, $d) {\n`;
+            const at = part.indexOf(open);
+            if (at < 0) throw new Error(`Missing event binder: ${partFile}:${partName}`);
+            return part.slice(at + open.length, part.lastIndexOf('\n}')).trimEnd();
+        });
+        return code;
     });
     return implementation;
 }
@@ -42,7 +53,7 @@ export function readTheaterImplementation() {
 // fixtures. This preserves their assertions about writes, identity and failures.
 export function runInNewContext(code, sandbox = {}, options) {
     // Real imported helpers used by relocated production bodies. Fixtures remain synthetic.
-    Object.assign(sandbox, { promptInspectorHTML, bindPromptInspector, refreshPromptInspector, beginPromptInspection, recordSentInspection, longDreamPromptPlacement, normalizeManualTarget, longDreamWritingPlan, resolveTheaterPreset, filterStoryOutput, STORY_OUTPUT_RULE, captureLayoutApiSelection, resolveLayoutApiRoute, bindLayoutApi, bindLayoutRetry, bindReleaseNotes, releaseNotesHTML, latestReleaseVersion, hasUnreadRelease, creativeEnhancementPrompt, hasPendingManualSummary, pendingManualStoryEntries, summaryEditorHTML, bindSummaryEditor, isHistoryItemExpanded, historyFiltersHTML, normalizeRoleSources, captureHistoryRoles, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED, closeHistoryMenus, ...sandbox });
+    Object.assign(sandbox, { beginRequestDiagnostics, promptInspectorHTML, bindPromptInspector, refreshPromptInspector, beginPromptInspection, recordSentInspection, longDreamPromptPlacement, normalizeManualTarget, longDreamWritingPlan, resolveTheaterPreset, filterStoryOutput, STORY_OUTPUT_RULE, captureLayoutApiSelection, resolveLayoutApiRoute, bindLayoutApi, bindLayoutRetry, bindReleaseNotes, releaseNotesHTML, latestReleaseVersion, hasUnreadRelease, creativeEnhancementPrompt, hasPendingManualSummary, pendingManualStoryEntries, summaryEditorHTML, bindSummaryEditor, isHistoryItemExpanded, historyFiltersHTML, normalizeRoleSources, captureHistoryRoles, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED, closeHistoryMenus, ...sandbox });
     if (!sandbox.SillyTavern) sandbox.SillyTavern = { getContext: () => ({}) };
     const context = createContext(sandbox);
     const entry = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
