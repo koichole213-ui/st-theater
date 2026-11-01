@@ -255,7 +255,7 @@ export function dialogueExampleMessages(text = '', names = {}) {
         for (const line of block.split('\n')) {
             const user = [names.user, '{{user}}'].filter(Boolean).find(name => line.startsWith(`${name}:`));
             const char = [names.char, '{{char}}'].filter(Boolean).find(name => line.startsWith(`${name}:`));
-            if (user || char) messages.push({ role: 'system', name: user ? 'example_user' : 'example_assistant', content: line.slice((user || char).length + 1).trim(), source: 'preset-slot', sourceId: 'dialogueExamples' });
+            if (user || char) messages.push({ role: 'system', name: user ? 'example_user' : 'example_assistant', content: line.trim(), source: 'preset-slot', sourceId: 'dialogueExamples' });
             else if (messages.length) messages[messages.length - 1].content += `\n${line}`;
         }
         if (messages.length) result.push({ role: 'system', content: '[Example Chat]', source: 'preset-slot', sourceId: 'dialogueExamples' }, ...messages);

@@ -128,7 +128,7 @@ test('world order ties reverse as host does, while outlet order is descending', 
 test('example conversations retain separate named user/assistant example messages', () => {
     const examples = dialogueExampleMessages('<START>\n{{user}}: QUESTION\n{{char}}: ANSWER\nNEXT-LINE');
     assert.deepEqual(examples.map(message => message.name || ''), ['', 'example_user', 'example_assistant']);
-    assert.equal(examples.at(-1).content, 'ANSWER\nNEXT-LINE');
+    assert.equal(examples.at(-1).content, '{{char}}: ANSWER\nNEXT-LINE');
 });
 
 test('variable, plain and mixed entries retain order; placeholders are not treated as variables', () => {
