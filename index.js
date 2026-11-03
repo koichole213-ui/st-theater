@@ -157,6 +157,7 @@ const defaultSettings = Object.freeze({
     uiFontSize: 13.5,
     apiMode: 'custom',  // 'custom' 独立 API | 'main' 酒馆主 API（实验）
     apiUrl: '', apiKey: '', apiModel: '', apiProtocol: 'auto', streamEnabled: true,
+    apiChannel: 'custom', apiPlan: 'standard', vertexCredentialId: '', vertexProjectId: '', vertexLocation: 'global',
     apiPresets: [], selectedApiPresetId: '',
     layoutApiEnabled: false, layoutApiPresetId: '', layoutMaxOutputTokens: 131072,
     releaseNotesReadVersion: '',

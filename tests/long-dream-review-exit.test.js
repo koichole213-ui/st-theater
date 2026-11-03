@@ -108,7 +108,7 @@ for (const mode of ['pending', 'save', 'failure']) {
         let handler, writes = 0, finish;
         const record = pauseLongDreamReview(review()); record.id = 7;
         const scope = { activeLongDreamId: 7, longDreamCache: [record], longDreamCandidateSavePending: mode === 'pending',
-            refreshingLongDreamWorldBookId: null, activeLongDreamGenerationId: null,
+            refreshingLongDreamWorldBookId: null, activeLongDreamGenerationId: null, isPreparingGeneration: false, longDreamGenerationController: null, longDreamChapterEditController: null,
             LONG_DREAM_DRAFT_STATUS, LONG_DREAM_WORLD_LINE_RELATION, LONG_DREAM_WORLD_BOOK_POLICY, updateLongDreamDefinition,
             settings: {}, renderLongDreamPanel() {},
             longDreamPut: async value => { writes++; await new Promise(resolve => {finish=resolve;}); if(mode === 'failure') return false; scope.longDreamCache=[value]; return value; },

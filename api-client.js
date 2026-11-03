@@ -43,7 +43,7 @@ export function buildApiEndpoint(url, protocol) {
     const base = String(url || '').replace(/\/+$/, '');
     const path = protocol === API_PROTOCOLS.ANTHROPIC ? '/messages' : '/chat/completions';
     if (base.endsWith(path)) return base;
-    if (base.endsWith('/v1')) return base + path;
+    if (/\/v\d+(?:beta\d*)?$/.test(base) || /\/endpoints\/[^/]+$/.test(base)) return base + path;
     return base + '/v1' + path;
 }
 

@@ -1,3 +1,4 @@
+import { captureIndependentConfig } from './api-channels.js';
 import { normalizeMaxTokens, resolveProtocol } from './api-client.js';
 import { normalizeApiPresetList } from './api-presets.js';
 
@@ -10,8 +11,7 @@ export function captureLayoutApiSelection(settings = {}) {
     return Object.freeze({
         enabled: true,
         custom: preset ? Object.freeze({
-            apiUrl: preset.apiUrl, apiKey: preset.apiKey, apiModel: preset.apiModel,
-            apiProtocol: preset.apiProtocol,
+            ...captureIndependentConfig(preset),
             maxOutputTokens: normalizeMaxTokens(settings.layoutMaxOutputTokens, DEFAULT_LAYOUT_MAX_TOKENS),
         }) : null,
         shouldStream: settings.streamEnabled !== false,

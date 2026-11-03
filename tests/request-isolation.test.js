@@ -18,7 +18,7 @@ function apiHarness(t) {
     globalThis.$ = ui; globalThis.toastr = { success() {}, warning() {} };
     t.after(() => { globalThis.$ = old$; globalThis.toastr = oldToast; });
     const metrics = createRequestMetrics('creative'), context = { kind: '普通小剧场' }, issue = { signal: 'creative-error' };
-    const runtime = { settings: {}, isGenerating: true, lastRequestContext: context, lastRequestMetrics: metrics, lastRequestIssue: issue,
+    const runtime = { readApiFormConfig: () => ({ apiUrl: values['#theater-api-url'], apiKey: '', apiModel: values['#theater-api-model'], apiProtocol: values['#theater-api-protocol'] }), settings: {}, isGenerating: true, lastRequestContext: context, lastRequestMetrics: metrics, lastRequestIssue: issue,
         lastApiResponseSummary: { hasText: true }, lastApiConnectionSummary: { state: 'reading-stream' }, lastRequestTrace: { purpose: 'creative' },
         esc: x => x, runtimeLog() {}, requestFailureMessage: (_prefix, i) => i.signal, theaterError() {}, recorded: [],
         recordRequestMetrics(m) { this.recorded.push(m); } };

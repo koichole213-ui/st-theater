@@ -1,3 +1,8 @@
+import { showModelPicker } from './model-picker.js';
+import { beginApiFormRequest } from './api-channel-settings.js';
+import { beginVertexRequest } from './vertex-credentials.js';
+import { createIndependentRequest, checkVertexCredential } from './independent-request.js';
+import { captureIndependentConfig, apiChannel, channelConfigError, API_CHANNELS } from './api-channels.js';
 import { beginPromptInspection, recordSentInspection } from './prompt-inspector.js';
 // theater-api: receives live state and cross-feature callbacks from index.js.
 import { captureLayoutApiSelection } from './layout-api.js';
@@ -8,7 +13,7 @@ import { requestMainApi, requestCustomApi } from './api-runtime.js';
 import { classifyRequestFailure } from './request-diagnostics.js';
 import { beginRequestDiagnostics } from './request-ownership.js';
 
-export function createTheaterApi(runtime) {
+export function createTheaterApi(runtime, { presentModelPicker = showModelPicker } = {}) {
 // @theater-source-begin captureActualRequestTrace
 function captureActualRequestTrace(details, purpose = 'support') {
     if (purpose !== 'creative') return;
@@ -31,13 +36,9 @@ function captureGenerationApiRoute(ctx = SillyTavern.getContext()) {
             shouldStream, layoutSelection,
         });
     }
-    const custom = Object.freeze({
-        apiUrl: String(runtime.settings.apiUrl || '').replace(/\/+$/, ''),
-        apiProtocol: runtime.settings.apiProtocol || API_PROTOCOLS.AUTO,
-        apiKey: runtime.settings.apiKey || '',
-        apiModel: runtime.settings.apiModel || '',
+    const custom = Object.freeze(captureIndependentConfig({ ...runtime.settings,
         maxOutputTokens: normalizeMaxTokens(runtime.settings.maxOutputTokens),
-    });
+    }));
     return Object.freeze({
         mode,
         protocol: resolveProtocol(custom.apiProtocol, custom.apiUrl),
@@ -122,6 +123,7 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
 async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStream = true, signal = runtime.abortController?.signal, requestOptions = {}) {
     const diagnostics = beginRequestDiagnostics(runtime);
     const apiConfig = requestOptions.apiConfig || {
+        ...captureIndependentConfig(runtime.settings),
         apiUrl: runtime.settings.apiUrl,
         apiProtocol: runtime.settings.apiProtocol,
         apiKey: runtime.settings.apiKey,
@@ -153,10 +155,13 @@ async function callCustomAPIStream(systemPrompt, userPrompt, onChunk, shouldStre
 
 // @theater-source-begin fetchModelList
 async function fetchModelList() {
-    const url = ($('#theater-api-url').val() || runtime.settings.apiUrl || '').trim().replace(/\/+$/, '');
-    const key = ($('#theater-api-key').val() || runtime.settings.apiKey || '').trim();
-    if (!url) { toastr.warning('请先填写 API URL'); return; }
+    const config = runtime.readApiFormConfig();
+    const url = config.apiUrl, key = config.apiKey;
+    const error = channelConfigError(config, { requireModel: false });
+    if (error) { toastr.warning(error); return; }
+    if (!API_CHANNELS[apiChannel(config)].models) { toastr.info('此渠道请在控制台查看可用模型，并手动填写模型名称或接入点 ID'); return; }
 
+    const formRequest = beginApiFormRequest(runtime, 'models', config);
     const $btn = $('#theater-fetch-models-btn');
     $btn.addClass('disabled');
     $btn.find('span').text('获取中…');
@@ -164,7 +169,7 @@ async function fetchModelList() {
         context: { kind: '模型列表' }, metrics: createRequestMetrics('support:models') });
 
     try {
-        const protocol = resolveProtocol($('#theater-api-protocol').val() || runtime.settings.apiProtocol, url);
+        const protocol = resolveProtocol(config.apiProtocol, url);
         if (protocol === API_PROTOCOLS.ANTHROPIC && !key) throw new Error('Anthropic 接口需要 API Key');
         const apiEndpoint = buildApiEndpoint(url, protocol);
         const modelsEndpoint = apiEndpoint.replace(/\/(chat\/completions|messages)$/, '/models');
@@ -176,14 +181,15 @@ async function fetchModelList() {
             throw { code: 'THEATER_HTTP_STATUS', theaterFailure: { status: res.status } };
         }
         const data = await res.json();
+        if (!formRequest.current()) return;
 
         if (!data) throw new Error('无法获取模型列表');
 
         // 解析模型列表：兼容 { data: [...] } 和直接数组两种格式
         const rawList = data.data || data;
         const models = (Array.isArray(rawList) ? rawList : [])
-            .map(m => typeof m === 'string' ? m : m.id)
-            .filter(Boolean)
+            .map(m => typeof m === 'string' ? m : m?.id)
+            .filter(m => typeof m === 'string' && m.trim())
             .sort();
 
         if (!models.length) {
@@ -191,18 +197,20 @@ async function fetchModelList() {
             return;
         }
 
-        // 渲染下拉菜单
-        const $select = $('#theater-api-model-select');
-        $select.empty();
-        $select.append('<option value="">-- 选择模型 --</option>');
-        models.forEach(m => {
-            $select.append(`<option value="${runtime.esc(m)}" ${m === runtime.settings.apiModel ? 'selected' : ''}>${runtime.esc(m)}</option>`);
+        presentModelPicker(models, {
+            selected: config.apiModel || '', isCurrent: formRequest.current,
+            onSelect: model => {
+                if (!formRequest.current()) return;
+                $('#theater-api-model').val(model);
+                // Keep the original autosave only when this is the saved connection.
+                const saved = captureIndependentConfig(runtime.settings);
+                if (apiChannel(saved) === apiChannel(config) && saved.apiUrl === config.apiUrl
+                    && saved.apiKey === config.apiKey && saved.apiProtocol === config.apiProtocol) {
+                    runtime.settings.apiModel = model;
+                    runtime.save();
+                }
+            },
         });
-        $select.show();
-
-        if (runtime.settings.apiModel && models.includes(runtime.settings.apiModel)) {
-            $select.val(runtime.settings.apiModel);
-        }
 
         toastr.success(`找到 ${models.length} 个模型`);
     } catch (e) {
@@ -210,24 +218,27 @@ async function fetchModelList() {
         markFailed(diagnostics.metrics, issue.signal);
         diagnostics.publish({ lastRequestIssue: issue });
         console.error('[Theater] 获取模型列表失败:', issue.signal);
-        runtime.theaterError(runtime.requestFailureMessage('获取模型失败', issue));
+        if (formRequest.current()) runtime.theaterError(runtime.requestFailureMessage('获取模型失败', issue));
     } finally {
         if (!diagnostics.metrics.failedAt) markCompleted(diagnostics.metrics);
         runtime.recordRequestMetrics(diagnostics.metrics);
         diagnostics.finish();
-        $btn.removeClass('disabled');
-        $btn.find('span').text('获取模型列表');
+        if (formRequest.latest()) {
+            $btn.removeClass('disabled');
+            $btn.find('span').text(API_CHANNELS[apiChannel(runtime.readApiFormConfig())].models ? '获取' : '手动填写');
+        }
     }
 }
 // @theater-source-end fetchModelList
 
 // @theater-source-begin testAPIConnection
 async function testAPIConnection() {
-    const url = ($('#theater-api-url').val() || runtime.settings.apiUrl || '').trim().replace(/\/+$/, '');
-    const key = ($('#theater-api-key').val() || runtime.settings.apiKey || '').trim();
-    const model = $('#theater-api-model-select').val() || $('#theater-api-model').val()?.trim();
-    if (!url) { toastr.warning('请先填写 API URL'); return; }
-    if (!model) { toastr.warning('请先选择或填写模型名称'); return; }
+    const config = runtime.readApiFormConfig();
+    const error = channelConfigError(config);
+    if (error) { toastr.warning(error); return; }
+    const key = config.apiKey;
+    let releaseVertex = () => {};
+    const formRequest = beginApiFormRequest(runtime, 'test', config);
 
     const $btn = $('#theater-test-api-btn');
     $btn.addClass('disabled');
@@ -236,23 +247,25 @@ async function testAPIConnection() {
         context: { kind: '连接测试' }, metrics: createRequestMetrics('support:connection-test') });
 
     try {
-        const request = buildApiRequest({
-            url,
-            protocol: $('#theater-api-protocol').val() || runtime.settings.apiProtocol,
-            key,
-            model,
-            systemPrompt: '',
-            userPrompt: 'Hi',
-            maxTokens: 16,
-            stream: false,
+        if (apiChannel(config) === 'vertex') releaseVertex = beginVertexRequest();
+        const preparedRequest = createIndependentRequest(config, {
+            systemPrompt: '', userPrompt: 'Hi',
+            maxTokens: apiChannel(config) === 'custom' ? 16 : 256, stream: false,
         });
+        const request = preparedRequest?.then ? await preparedRequest : preparedRequest;
+        if (apiChannel(config) === 'vertex') await checkVertexCredential(config);
         if (request.protocol === API_PROTOCOLS.ANTHROPIC && !key) { toastr.warning('Anthropic 接口需要 API Key'); return; }
         runtime.runtimeLog('info', '连接测试请求发出', {
             protocol: request.protocol,
             preset_generation_options: 'not_inherited',
         });
+        if (!formRequest.current()) return;
         const res = await fetch(request.endpoint, { method: 'POST', headers: request.headers, body: JSON.stringify(request.body) });
-        if (res.ok) toastr.success('连接成功！');
+        if (res.ok) {
+            const data = await res.json().catch(() => null);
+            if (!data || data.error) throw new Error('接口返回了错误或无效响应');
+            if (formRequest.current()) toastr.success('接口已响应；实际写作与长文本输出仍需体验');
+        }
         else {
             const issue = classifyRequestFailure({
                 code: 'THEATER_HTTP_STATUS',
@@ -260,19 +273,19 @@ async function testAPIConnection() {
             }, { stage: '连接测试' });
             markFailed(diagnostics.metrics, issue.signal);
             diagnostics.publish({ lastRequestIssue: issue });
-            runtime.theaterError(runtime.requestFailureMessage('连接失败', issue));
+            if (formRequest.current()) runtime.theaterError(runtime.requestFailureMessage('连接失败', issue));
         }
     } catch (e) {
         const issue = classifyRequestFailure(e, { stage: '连接测试' });
         markFailed(diagnostics.metrics, issue.signal);
         diagnostics.publish({ lastRequestIssue: issue });
-        runtime.theaterError(runtime.requestFailureMessage('连接失败', issue));
+        if (formRequest.current()) runtime.theaterError(runtime.requestFailureMessage('连接失败', issue));
     } finally {
         if (!diagnostics.metrics.failedAt) markCompleted(diagnostics.metrics);
         runtime.recordRequestMetrics(diagnostics.metrics);
         diagnostics.finish();
-        $btn.removeClass('disabled');
-        $btn.find('span').text('测试连接');
+        if (formRequest.latest()) { $btn.removeClass('disabled'); $btn.find('span').text('测试连接'); }
+        releaseVertex();
     }
 }
 // @theater-source-end testAPIConnection

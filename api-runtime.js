@@ -1,3 +1,6 @@
+import { beginVertexRequest } from './vertex-credentials.js';
+import { createIndependentRequest, checkVertexCredential } from './independent-request.js';
+import { apiChannel } from './api-channels.js';
 import { emitReasoningSafeChunk, reasoningOnlyError, reasoningSafeResult, noTextResponseError, safeUsageSummary, publicResult, statusError, normalizeFetchError, readNonStreamingResponse, readSSEStream } from './api-response.js';
 export { CUSTOM_STREAM_IDLE_TIMEOUT_MS, readNonStreamingResponse, readSSEStream } from './api-response.js';
 import {
@@ -522,8 +525,9 @@ export async function requestCustomApi({
     onResponse = noop,
     onConnection = noop,
     fetchImpl = (...args) => globalThis.fetch(...args),
+    getHeaders,
 } = {}) {
-    const url = String(config.apiUrl || '').replace(/\/+$/, '');
+    const releaseVertex = apiChannel(config) === 'vertex' ? beginVertexRequest() : noop;
     const candidates = maxTokenFallbackSequence(config.maxOutputTokens);
     const safeChunk = text => emitReasoningSafeChunk(onChunk, text);
     let connection = null;
@@ -554,18 +558,10 @@ export async function requestCustomApi({
     try {
     for (let index = 0; index < candidates.length && index < 8; index++) {
         const maxTokens = candidates[index];
-        const request = buildApiRequest({
-            url,
-            protocol: config.apiProtocol || API_PROTOCOLS.AUTO,
-            key: config.apiKey,
-            model: config.apiModel,
-            systemPrompt,
-            userPrompt,
-            messages,
-            postProcessing,
-            maxTokens,
-            stream: shouldStream,
-        });
+        const preparedRequest = createIndependentRequest(config, {
+            systemPrompt, userPrompt, messages, postProcessing, maxTokens, stream: shouldStream,
+        }, { getHeaders });
+        const request = preparedRequest?.then ? await preparedRequest : preparedRequest;
         if (request.protocol === API_PROTOCOLS.ANTHROPIC && !config.apiKey) {
             throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONFIG, {
                 code: 'THEATER_CONFIG', phase: 'body', transport: request.protocol,
@@ -591,6 +587,8 @@ export async function requestCustomApi({
             publishConnection({});
             let response;
             try {
+                if (apiChannel(config) === 'vertex') await checkVertexCredential(config, { fetchImpl, getHeaders, signal });
+                if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
                 response = await fetchImpl(request.endpoint, { method: 'POST', headers: request.headers, body: JSON.stringify(body), signal });
             } catch (error) {
                 throw normalizeFetchError(error, { phase: 'awaiting-response', transport: request.protocol, networkSignal: REQUEST_DIAGNOSTIC_SIGNAL.NO_RESPONSE });
@@ -715,5 +713,5 @@ export async function requestCustomApi({
         publishConnection({ state: aborted ? 'aborted' : 'failed', failedAt: connection?.state || null,
             failureSignal: aborted ? null : (knownSignal ? error.diagnosticSignal : REQUEST_DIAGNOSTIC_SIGNAL.UNKNOWN) });
         throw error;
-    }
+    } finally { releaseVertex(); }
 }

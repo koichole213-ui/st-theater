@@ -1,3 +1,4 @@
+import { syncContextExclusionDraft } from './context-exclusion-ui.js';
 import { extractPresetEntries } from './preset-layout.js';
 // theater-materials: receives live state and cross-feature callbacks from index.js.
 import { normalizeTagList, normalizeTagFilter, TAG_UNCATEGORIZED } from './tag-system.js';
@@ -34,26 +35,29 @@ function historyTagFilterLabel() {
 // @theater-source-begin contextExclusionSettingsHTML
 function contextExclusionSettingsHTML() {
     return `<div class="theater-section theater-context-exclusions">
-        <details class="theater-addon-details" id="theater-context-exclusions">
-            <summary class="theater-addon-summary"><i class="fa-solid fa-filter" aria-hidden="true"></i> 前文排除规则 <span id="theater-exclusion-count">${normalizeContextExclusionRules(runtime.settings.contextExclusionRules).filter(rule => rule.enabled).length} 条启用</span></summary>
-            <p class="theater-hint">排除小剧场读取的聊天内容，原消息不变。添加后自动保存，可随时停用或删除。</p>
+        <details class="theater-addon-details theater-exclusion-panel" id="theater-context-exclusions">
+            <summary class="theater-addon-summary"><i class="fa-solid fa-filter" aria-hidden="true"></i><span class="theater-exclusion-heading"><b>前文排除</b><small>让小剧场不读取状态栏、尾注等内容</small></span><span id="theater-exclusion-count">${normalizeContextExclusionRules(runtime.settings.contextExclusionRules).filter(rule => rule.enabled).length} 条启用</span></summary>
+            <div class="theater-exclusion-body"><p class="theater-hint">把状态栏、固定尾注等内容从小剧场的聊天前文里过滤掉。只影响小剧场读取，聊天原文不会改变。</p>
+            <div class="theater-exclusion-group-heading"><b>已添加的排除规则</b><small>添加或切换后自动生效</small></div>
             <div id="theater-exclusion-list">${contextExclusionRulesHTML()}</div>
-            <label class="theater-label" for="theater-exclusion-type">添加规则</label>
-            <select id="theater-exclusion-type" class="theater-select" data-select2-id="${runtime.theaterNativeSelectCompatId()}"><option value="literal">固定内容</option><option value="tag">标签区块</option></select>
-            <label class="theater-exclusion-field-label" for="theater-exclusion-value" id="theater-exclusion-value-label">要排除的完整内容</label>
-            <textarea id="theater-exclusion-value" class="theater-textarea" rows="3" maxlength="${MAX_CONTEXT_EXCLUSION_LENGTH}" aria-describedby="theater-exclusion-help" placeholder="粘贴固定收尾文字或完整 HTML…"></textarea>
-            <p class="theater-hint" id="theater-exclusion-help">精确匹配，包括空格和换行；有 HTML 时请连同标签一起粘贴。</p>
-            <div class="theater-btn-row"><button type="button" id="theater-exclusion-add" class="theater-btn primary"><i class="fa-solid fa-plus" aria-hidden="true"></i><span>添加规则</span></button></div>
-            <p class="theater-hint" id="theater-exclusion-feedback" role="status" hidden></p>
-            <details class="theater-addon-details theater-exclusion-preview">
-                <summary class="theater-addon-summary">过滤预览</summary>
-                <label class="theater-exclusion-field-label" for="theater-exclusion-preview-input">测试消息</label>
-                <textarea id="theater-exclusion-preview-input" class="theater-textarea" rows="4" placeholder="粘贴一段带标签或收尾标记的消息，仅在本地测试，不会保存…"></textarea>
-                <p class="theater-hint">只应用上方已添加且启用的规则，再按生成时相同方式读取正文。</p>
-                <div class="theater-btn-row"><button type="button" id="theater-exclusion-preview-run" class="theater-btn"><i class="fa-solid fa-eye" aria-hidden="true"></i><span>过滤预览</span></button></div>
-                <p class="theater-hint" id="theater-exclusion-preview-status" role="status" hidden></p>
-                <pre id="theater-exclusion-preview-output" aria-label="过滤后读取的正文" hidden></pre>
-            </details>
+            <section class="theater-exclusion-add-box"><b class="theater-exclusion-step">① 选择排除方式</b>
+            <div class="theater-exclusion-modes" role="group" aria-label="排除方式"><button type="button" data-exclusion-type="tag" class="active" aria-pressed="true">按标签整块排除</button><button type="button" data-exclusion-type="literal" aria-pressed="false">按原文精确排除</button></div>
+            <select id="theater-exclusion-type" class="theater-select" data-select2-id="${runtime.theaterNativeSelectCompatId()}" hidden aria-label="排除规则类型"><option value="tag">标签区块</option><option value="literal">固定内容</option></select>
+            <b class="theater-exclusion-step">② 填写要忽略的内容</b><label class="theater-exclusion-field-label" for="theater-exclusion-value" id="theater-exclusion-value-label">标签名</label>
+            <textarea id="theater-exclusion-value" class="theater-textarea is-tag" rows="1" maxlength="${MAX_CONTEXT_EXCLUSION_LENGTH}" aria-describedby="theater-exclusion-help" placeholder="例如 status"></textarea>
+            <p class="theater-hint" id="theater-exclusion-help">例如原文是 &lt;status&gt;人物状态&lt;/status&gt;，这里只填 status。不是作品或指令的分类标签。</p>
+            <div class="theater-exclusion-effect"><small id="theater-exclusion-effect-label">添加后，将忽略下面这一整块</small><code id="theater-exclusion-effect">&lt;标签名&gt;这里的全部内容&lt;/标签名&gt;</code></div>
+            <p class="theater-hint" id="theater-exclusion-tag-caution">不要随便填 p、div 等通用标签，它们也可能包着故事正文。标签未闭合时会保留。</p>
+            <div class="theater-btn-row"><button type="button" id="theater-exclusion-add" class="theater-btn primary"><span>添加并启用</span></button></div>
+            <p class="theater-hint" id="theater-exclusion-feedback" role="status" hidden></p></section>
+            <section class="theater-exclusion-preview"><div class="theater-exclusion-group-heading"><b>看一眼过滤效果</b><small>只应用已添加且启用的规则</small></div>
+            <div class="theater-exclusion-compare"><div><label class="theater-exclusion-field-label" for="theater-exclusion-preview-input">原消息 · 可粘贴一段试试</label>
+            <textarea id="theater-exclusion-preview-input" class="theater-textarea" rows="5" placeholder="例如：正文&lt;status&gt;人物状态&lt;/status&gt;后续正文（仅在本地测试，不会保存）"></textarea></div>
+            <div><label class="theater-exclusion-field-label" for="theater-exclusion-preview-output">小剧场实际读取</label><pre id="theater-exclusion-preview-output" aria-label="过滤后读取的正文">粘贴原消息后，在这里查看结果。</pre></div></div>
+            <p class="theater-hint" id="theater-exclusion-preview-status" role="status" hidden></p>
+            <button type="button" id="theater-exclusion-preview-run" class="theater-btn theater-config-text-button">重新预览</button></section>
+            <p class="theater-hint">规则只处理聊天前文，不影响角色设定、世界书和指令。关闭“读取聊天前文”或读取条数为 0 时，不会读取聊天消息。</p>
+            </div>
         </details>
     </div>`;
 }
@@ -63,9 +67,9 @@ function contextExclusionSettingsHTML() {
 function contextExclusionRulesHTML() {
     const rules = normalizeContextExclusionRules(runtime.settings.contextExclusionRules);
     if (!rules.length) return '<p class="theater-empty">尚未添加，按原方式读取聊天前文。</p>';
-    return rules.map((rule, index) => `<div class="theater-exclusion-rule">
-        <label class="theater-exclusion-rule-toggle"><input type="checkbox" data-exclusion-toggle="${index}" ${rule.enabled ? 'checked' : ''} aria-label="启用第 ${index + 1} 条排除规则"><span>${rule.type === 'tag' ? '标签区块' : '固定内容'}</span></label>
-        <code class="theater-exclusion-rule-value">${runtime.esc(rule.value)}</code>
+    return rules.map((rule, index) => `<div class="theater-exclusion-rule${rule.enabled ? '' : ' is-disabled'}">
+        <label class="theater-exclusion-rule-toggle"><input type="checkbox" data-exclusion-toggle="${index}" ${rule.enabled ? 'checked' : ''} aria-label="启用第 ${index + 1} 条排除规则"></label>
+        <div class="theater-exclusion-rule-copy"><code class="theater-exclusion-rule-value">${runtime.esc(rule.type === 'tag' ? `<${rule.value}>…</${rule.value}>` : rule.value)}</code><small>${rule.enabled ? '已启用' : '已停用'} · ${rule.type === 'tag' ? '整块标签及内部内容都不读取' : '只排除完全相同的原文'}</small></div>
         <button type="button" class="theater-btn danger-soft" data-exclusion-delete="${index}" aria-label="删除第 ${index + 1} 条排除规则">删除</button>
     </div>`).join('');
 }
@@ -75,8 +79,7 @@ function contextExclusionRulesHTML() {
 function refreshContextExclusionRules() {
     $('#theater-exclusion-list').html(contextExclusionRulesHTML());
     $('#theater-exclusion-count').text(`${runtime.settings.contextExclusionRules.filter(rule => rule.enabled).length} 条启用`);
-    $('#theater-exclusion-preview-output').empty().prop('hidden', true);
-    $('#theater-exclusion-preview-status').text('规则已变化，请重新预览。').prop('hidden', false);
+    if ($('#theater-exclusion-preview-input').val()) previewContextExclusions();
     runtime.save();
     runtime.scheduleTokenEstimate();
 }
@@ -94,6 +97,7 @@ function addContextExclusionRule() {
     if (problem) { $('#theater-exclusion-feedback').text(problem).prop('hidden', false); return; }
     runtime.settings.contextExclusionRules = [...rules, rule];
     $('#theater-exclusion-value').val('');
+    syncContextExclusionDraft();
     $('#theater-exclusion-feedback').text('已添加并保存。').prop('hidden', false);
     refreshContextExclusionRules();
 }

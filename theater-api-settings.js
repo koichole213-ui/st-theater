@@ -1,4 +1,6 @@
 // theater-api-settings: receives live state and cross-feature callbacks from index.js.
+import { captureIndependentConfig, channelConfigError, channelFields, apiChannel } from './api-channels.js';
+import { readApiChannelFields, syncApiChannelForm } from './api-channel-settings.js';
 import { normalizeMaxTokens } from './api-client.js';
 import { normalizeApiPresetList, MAX_API_PRESETS } from './api-presets.js';
 import { SOUND_PRESETS } from './theater-defaults.js';
@@ -6,18 +8,20 @@ import { SOUND_PRESETS } from './theater-defaults.js';
 export function createTheaterApiSettings(runtime) {
 // @theater-source-begin readApiFormConfig
 function readApiFormConfig() {
-    return {
+    return captureIndependentConfig({
+        ...readApiChannelFields(),
         apiUrl: ($('#theater-api-url').val() || '').trim().replace(/\/+$/, ''),
         apiKey: ($('#theater-api-key').val() || '').trim(),
         apiModel: ($('#theater-api-model').val() || '').trim(),
         apiProtocol: $('#theater-api-protocol').val() || 'auto',
         maxOutputTokens: normalizeMaxTokens($('#theater-max-output-tokens').val()),
-    };
+    });
 }
 // @theater-source-end readApiFormConfig
 
 // @theater-source-begin writeApiFormConfig
 function writeApiFormConfig(config) {
+    syncApiChannelForm(config);
     $('#theater-api-url').val(config.apiUrl || '');
     $('#theater-api-key').val(config.apiKey || '');
     $('#theater-api-model').val(config.apiModel || '');
@@ -43,8 +47,8 @@ function apiPresetDisplayLabel(preset) {
 
 // @theater-source-begin validateApiPresetConfig
 function validateApiPresetConfig(config) {
-    if (!config.apiUrl) { toastr.warning('请先填写 API URL'); return false; }
-    if (!config.apiModel) { toastr.warning('请先填写模型名称'); return false; }
+    const error = channelConfigError(config);
+    if (error) { toastr.warning(error); return false; }
     return true;
 }
 // @theater-source-end validateApiPresetConfig
@@ -52,6 +56,10 @@ function validateApiPresetConfig(config) {
 // @theater-source-begin persistCurrentApiConfig
 function persistCurrentApiConfig(config = readApiFormConfig()) {
     runtime.settings.apiMode = $('#theater-api-mode').val() || 'custom';
+    runtime.settings.apiChannel = apiChannel(config);
+    runtime.settings.apiPlan = config.apiPlan || 'standard';
+    for (const field of ['vertexCredentialId', 'vertexProjectId', 'vertexLocation']) runtime.settings[field] = config[field] || '';
+    Object.assign(runtime.settings, channelFields(config));
     runtime.settings.apiUrl = config.apiUrl;
     runtime.settings.apiKey = config.apiKey;
     runtime.settings.apiModel = config.apiModel;

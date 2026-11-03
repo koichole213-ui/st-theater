@@ -1,4 +1,5 @@
 // theater-diagnostics: receives live state and cross-feature callbacks from index.js.
+import { apiChannel, channelConfigError, API_CHANNELS } from './api-channels.js';
 import { autoSourceLabel } from './auto-mode.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, diagnosticSignalCatalog, formatConnectionDiagnostics } from './request-diagnostics.js';
 import { isPlainTextSelection } from './plain-text-renderer.js';
@@ -70,6 +71,8 @@ function diagnosticCatalogHTML() {
 // @theater-source-begin buildDiagnostics
 function buildDiagnostics() {
     const apiMode = runtime.settings.apiMode || 'custom';
+    const channel = apiChannel(runtime.settings);
+    const channelIssue = channelConfigError(runtime.settings);
     const apiUrl = ($('#theater-api-url').val() || runtime.settings.apiUrl || '').trim();
     const apiKey = ($('#theater-api-key').val() || runtime.settings.apiKey || '').trim();
     const apiModel = ($('#theater-api-model').val() || runtime.settings.apiModel || '').trim();
@@ -94,10 +97,11 @@ function buildDiagnostics() {
         diagnosticLine('ok', '诊断范围', '这份报告只检查小剧场插件，不检查酒馆正文生成链路'),
         diagnosticLine('ok', '插件版本', `本地 v${runtime.VERSION}${runtime.latestRemoteVersion ? `，正式版 v${runtime.latestRemoteVersion}` : ''}${runtime.installedBranchStatusKnown && runtime.installedBranchName ? `，当前分支 ${runtime.installedBranchName}${runtime.installedBranchHasUpdate ? ' 有新更新' : ' 已是最新'}` : '，还没有拿到分支状态'}`),
         diagnosticLine('ok', 'API 模式', apiMode === 'main' ? '酒馆主 API（实验）' : '独立 API'),
+        diagnosticLine('ok', '独立 API 渠道', apiMode === 'main' ? '不适用' : API_CHANNELS[channel].name),
         diagnosticLine('ok', '独立 API 协议', apiMode === 'main' ? '不适用' : `${runtime.settings.apiProtocol || 'auto'}（实际：${resolveProtocol(runtime.settings.apiProtocol, apiUrl)}）`),
         diagnosticLine('ok', '最大输出 Token', apiMode === 'main' ? '遵循酒馆当前设置' : String(normalizeMaxTokens(runtime.settings.maxOutputTokens))),
         diagnosticLine(timingStatus, '最近请求计时', timingDetail),
-        diagnosticLine(apiMode === 'main' || (apiUrl && apiModel) ? 'ok' : 'bad', 'API 配置', apiMode === 'main' ? '使用酒馆当前 API 设置' : (apiUrl && apiModel ? `已填写，模型：${apiModel}${apiKey ? '，已填写 Key' : '，未填写 Key（OpenAI 兼容本地服务可为空）'}` : 'API URL 和模型名至少有一项没填')),
+        diagnosticLine(apiMode === 'main' || !channelIssue ? 'ok' : 'bad', 'API 配置', apiMode === 'main' ? '使用酒馆当前 API 设置' : (channelIssue || (channel === 'vertex' ? `已保存酒馆凭证引用，Gemini 模型：${apiModel}` : `已填写，模型：${apiModel}${apiKey ? '，已填写 Key' : '，未填写 Key（OpenAI 兼容本地服务可为空）'}`))),
         diagnosticLine(typeof fetch === 'function' && typeof AbortController === 'function' ? 'ok' : 'bad', '请求能力', 'fetch / AbortController ' + (typeof fetch === 'function' && typeof AbortController === 'function' ? '可用' : '不可用')),
         diagnosticLine(window.indexedDB ? (runtime.idb ? 'ok' : 'warn') : 'bad', '本地存档库', window.indexedDB ? (runtime.idb ? 'IndexedDB 已打开' : 'IndexedDB 存在，但当前未打开，可能会回退到 settings') : '浏览器不支持 IndexedDB'),
         diagnosticLine('warn', '历史存储提示', '历史存在浏览器本地存储里。夸克等手机浏览器崩溃或清理后可能丢失，建议定期批量导出备份'),

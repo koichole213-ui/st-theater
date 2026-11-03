@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { requestCustomApi } from '../api-runtime.js';
 import { normalizeMaxTokens } from '../api-client.js';
+import { channelBaseUrl } from '../api-channels.js';
 import { createLongDreamRecord, normalizeLongDreamRecord, setLongDreamMemoryStatus, applyLongDreamMemoryPatch, LONG_DREAM_MEMORY_STATUS } from '../long-dream.js';
 import { buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, shouldWeaveLongDreamMemory, DEFAULT_LONG_DREAM_MEMORY_PRESET } from '../long-dream-memory.js';
 import { refreshLongDreamSummary } from '../long-dream-summary.js';
@@ -19,7 +20,7 @@ function entry(name) {
     return source.slice(start, end);
 }
 
-async function exercise(kind, { tokens, stream, failure = false } = {}) {
+async function exercise(kind, { tokens, stream, failure = false, config = {} } = {}) {
     let current = createLongDreamRecord({ source: { text: '虚构第一章', html: '<p>虚构第一章</p>' } });
     if (kind !== 'weave') current = applyLongDreamMemoryPatch(current, { operations: [] }, 1);
     if (kind === 'series') current.source.kind = 'history-folder';
@@ -27,7 +28,7 @@ async function exercise(kind, { tokens, stream, failure = false } = {}) {
     const beforeChapters = JSON.stringify(current.chapters);
     const beforeEntries = JSON.stringify(current.memory.storyEntries);
     const saved = [], requests = [], warnings = [];
-    const preset = { name: 'synthetic', apiUrl: 'https://example.invalid/v1', apiModel: 'synthetic', maxOutputTokens: tokens };
+    const preset = { name: 'synthetic', apiUrl: 'https://example.invalid/v1', apiModel: 'synthetic', maxOutputTokens: tokens, ...config };
     const beforePreset = JSON.stringify(preset);
     const runtime = {
         settings: { streamEnabled: stream, longDreamMemoryEnabled: true, longDreamMemoryBatchSize: 1 },
@@ -41,6 +42,7 @@ async function exercise(kind, { tokens, stream, failure = false } = {}) {
     };
     let chunksObserved = 0;
     const request = options => requestCustomApi({ ...options, fetchImpl: async (_url, init) => {
+        assert.equal(_url, preset.apiUrl+'/chat/completions');
         const body = JSON.parse(init.body); requests.push(body);
         assert.equal(body.max_tokens, normalizeMaxTokens(tokens));
         assert.equal(body.stream, stream !== false);
@@ -116,5 +118,14 @@ for (const kind of ['weave', 'summary', 'series']) {
     test(`${kind}: 流式及非流式截断不覆盖旧概要或推进完成进度`, async () => {
         for (const stream of [true, false]) await exercise(kind, { stream, failure: true });
         await exercise(kind, { stream: true, failure: 'interrupted' });
+    });
+}
+for (const kind of ['weave', 'summary', 'series']) {
+    test(kind + ': 套餐副API沿用所选地址，完整结果才保存，截断保留旧稿', async () => {
+        for (const apiChannel of ['glm', 'volc']) for (const stream of [true, false]) {
+            const config = { apiChannel, apiPlan: 'coding', apiUrl: channelBaseUrl(apiChannel, 'coding') };
+            await exercise(kind, { tokens: 8192, stream, config });
+            await exercise(kind, { tokens: 8192, stream, config, failure: true });
+        }
     });
 }

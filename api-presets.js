@@ -1,3 +1,4 @@
+import { channelFields, apiChannel } from './api-channels.js';
 import { DEFAULT_MAX_OUTPUT_TOKENS, normalizeMaxTokens } from './api-client.js';
 
 export const MAX_API_PRESETS = 30;
@@ -18,10 +19,11 @@ export function normalizeApiPreset(raw = {}) {
         id: cleanText(raw.id, 100) || createApiPresetId(),
         name: cleanText(raw.name, 40),
         apiUrl: cleanText(raw.apiUrl, 1000).replace(/\/+$/, ''),
-        apiKey: cleanText(raw.apiKey, 4000),
+        apiKey: apiChannel(raw) === 'vertex' ? '' : cleanText(raw.apiKey, 4000),
         apiModel: cleanText(raw.apiModel, 300),
         apiProtocol: protocol,
         maxOutputTokens: normalizeMaxTokens(raw.maxOutputTokens, DEFAULT_MAX_OUTPUT_TOKENS),
+        ...channelFields(raw),
     };
 }
 
@@ -44,6 +46,7 @@ export function normalizeApiPresetList(raw) {
 
 export function createApiPresetFromConfig(name, config = {}, id = '') {
     return normalizeApiPreset({
+        ...channelFields(config),
         id: id || createApiPresetId(),
         name,
         apiUrl: config.apiUrl,

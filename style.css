@@ -7528,7 +7528,8 @@ body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) :is(.popup-content
 .theater-popup .theater-prompt-inspector button.primary{background:var(--t-accent);border-color:var(--t-accent);color:var(--t-on-accent)}
 .theater-popup .theater-prompt-inspector button:focus-visible,.theater-popup .theater-prompt-inspector summary:focus-visible{outline:2px solid var(--t-accent);outline-offset:2px}
 .theater-popup .theater-pi-segmented button{border:0;background:transparent;min-height:30px;padding:5px 10px;border-radius:7px;color:var(--t-fg-soft)}
-.theater-popup .theater-pi-segmented button.active{background:var(--t-surface-1);color:var(--t-accent-deep);box-shadow:0 1px 4px rgba(46,38,32,.08);font-weight:600}
+.theater-popup .theater-pi-segmented button.active,
+.theater-popup .theater-pi-segmented button.active:is(:hover,:active){background:var(--t-surface-1);color:var(--t-accent-deep);box-shadow:0 1px 4px rgba(46,38,32,.08);font-weight:600}
 .theater-popup .theater-pi-meta{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 11px;text-align:left}
 .theater-popup .theater-pi-pill{padding:4px 9px;background:var(--t-surface-2);border-radius:999px;font-size:var(--t-text-xs);color:var(--t-fg-soft);overflow-wrap:anywhere}
 .theater-popup .theater-pi-tools{display:flex;justify-content:space-between;gap:8px;margin-bottom:10px}
@@ -7577,3 +7578,114 @@ body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) :is(.popup-content
 @media(max-width:540px){.theater-popup .theater-pi-diagnostic-row>.theater-btn-row{width:100%;display:flex;flex-wrap:wrap}.theater-popup .theater-pi-diagnostic-row>.theater-btn-row>.theater-btn{flex:1 1 calc(50% - 8px)}}
 
 @media(max-width:540px){.theater-popup .theater-pi-diagnostic-row>.theater-btn-row{flex-direction:row}.theater-popup .theater-pi-diagnostic-row>.theater-btn-row>.theater-btn{width:auto;min-width:0}}
+
+/* Independent API channels — keep the existing settings card and control styles. */
+.theater-channel-card { padding: 14px; margin-bottom: 14px; border: 1px solid var(--t-border); border-radius: 12px; background: color-mix(in srgb, var(--t-surface-2) 65%, var(--t-surface-1)); }
+.theater-channel-card .theater-config-field { margin-bottom: 0; }
+.theater-channel-note { margin: 7px 0 10px; color: var(--t-fg-soft); font-size: var(--t-text-xs); line-height: 1.7; text-align: left; }
+.theater-channel-card .theater-channel-note { margin-bottom: 0; }
+.theater-channel-warning { border-left: 2px solid var(--t-accent); padding: 9px 11px; margin: 0 0 12px; border-radius: 0 8px 8px 0; background: var(--t-surface-2); color: var(--t-fg-soft); font-size: var(--t-text-xs); line-height: 1.7; text-align: left; }
+.theater-vertex-credential { display: flex; gap: 11px; align-items: center; padding: 13px; margin-bottom: 8px; border: 1px dashed var(--t-border-strong); border-radius: 12px; }
+.theater-vertex-credential > i { color: var(--t-accent); font-size: 22px; }
+.theater-vertex-credential > div { flex: 1; min-width: 0; }
+.theater-vertex-credential b { font-size: var(--t-text-xs); color: var(--t-fg-soft); }
+.theater-vertex-credential p { margin: 4px 0 0; color: var(--t-fg-mute); font-size: var(--t-text-xs); line-height: 1.7; text-align: left; }
+.theater-vertex-credential .theater-btn { flex: 0 0 auto; font-size: var(--t-text-xs); padding: 8px 10px; }
+.theater-vertex-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.theater-popup #theater-custom-api-area [hidden] { display: none !important; }
+.theater-channel-card label small, .theater-vertex-grid label small { text-align: left; }
+@media(max-width:600px) {
+    .theater-channel-card { padding: 12px; }
+    .theater-vertex-grid { grid-template-columns: 1fr; gap: 0; }
+    .theater-vertex-credential { flex-wrap: wrap; }
+    .theater-vertex-credential > div { flex-basis: calc(100% - 40px); }
+    .theater-vertex-credential .theater-btn { margin-left: 32px; }
+}
+
+.theater-popup #theater-custom-api-actions[hidden], .theater-popup .theater-config-token-field[hidden] { display: none !important; }
+
+/* Model choices stay in the active popup so native/dialog layering cannot hide them. */
+.theater-popup .theater-model-picker { grid-column:1 / -1; min-width:0; padding:12px; margin-top:4px; border:1px solid var(--t-border); border-radius:12px; background:var(--t-surface-1); text-align:left; }
+.theater-model-picker-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:9px; font-size:var(--t-text-xs); }
+.theater-model-picker-close { border:0; background:transparent; color:var(--t-fg-soft); padding:6px; cursor:pointer; }
+.theater-model-picker-count,.theater-model-picker-empty { margin:7px 0; font-size:var(--t-text-xs); color:var(--t-fg-mute); text-align:left; }
+.theater-model-picker-list { max-height:min(260px,36dvh); overflow-y:auto; overscroll-behavior:contain; display:grid; gap:4px; }
+.theater-model-picker-option { min-height:40px; width:100%; border:0; border-radius:8px; background:transparent; color:var(--t-fg); text-align:left; padding:9px 10px; cursor:pointer; overflow-wrap:anywhere; word-break:break-word; }
+.theater-model-picker-option:hover,.theater-model-picker-option[aria-pressed="true"] { background:var(--t-surface-2); color:var(--t-accent-deep); }
+.theater-model-picker-option:focus-visible { outline:2px solid var(--t-accent); outline-offset:-2px; }
+/* Approved chat-context exclusion design; filtering semantics stay in context-exclusions.js. */
+.theater-exclusion-panel > summary { display:flex; align-items:center; gap:10px; }
+.theater-exclusion-heading { min-width:0; flex:1; display:grid; gap:3px; text-align:left; }
+.theater-exclusion-heading b { font-size:var(--t-text-sm); }
+.theater-exclusion-heading small { color:var(--t-fg-soft); font-size:11px; font-weight:400; line-height:1.6; text-align:left; }
+.theater-exclusion-body { padding-top:12px; }
+.theater-exclusion-group-heading { display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px; margin:14px 0 10px; color:var(--t-fg-soft); font-size:var(--t-text-xs); }
+.theater-exclusion-group-heading small { font-size:11px; color:var(--t-fg-mute); text-align:left; }
+.theater-exclusion-add-box { padding:14px; margin-top:16px; border:1px solid var(--t-border); border-radius:12px; background:var(--t-surface-2); }
+.theater-exclusion-step { display:block; margin:0 0 10px; font-size:var(--t-text-xs); color:var(--t-fg-soft); text-align:left; }
+.theater-exclusion-modes { display:grid; grid-template-columns:1fr 1fr; gap:4px; padding:3px; margin-bottom:16px; border-radius:11px; background:var(--t-surface-3); }
+.theater-exclusion-modes button { border:0; min-height:40px; border-radius:8px; padding:7px; background:transparent; color:var(--t-fg-soft); font:inherit; font-size:var(--t-text-xs); cursor:pointer; }
+.theater-exclusion-modes button[aria-pressed="true"] { background:var(--t-surface-1); color:var(--t-accent-deep); box-shadow:var(--t-elev-1); font-weight:600; }
+.theater-popup .theater-context-exclusions #theater-exclusion-type[hidden] { display:none !important; }
+.theater-exclusion-effect { padding:10px 12px; margin:11px 0; border-left:2px solid var(--t-accent-soft); border-radius:0 8px 8px 0; background:var(--t-surface-1); text-align:left; }
+.theater-exclusion-effect small { color:var(--t-fg-mute); font-size:11px; text-align:left; }
+.theater-exclusion-effect code { display:block; margin-top:5px; font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.theater-context-exclusions .theater-exclusion-rule { display:flex; align-items:center; gap:10px; padding:11px; margin-bottom:8px; border:1px solid var(--t-border); border-radius:11px; }
+.theater-exclusion-rule-copy { flex:1; min-width:0; }
+.theater-exclusion-rule-copy code { display:block; overflow-wrap:anywhere; }
+.theater-exclusion-rule-copy small { display:block; margin-top:4px; color:var(--t-fg-mute); font-size:11px; line-height:1.65; text-align:left; }
+.theater-exclusion-rule.is-disabled .theater-exclusion-rule-copy { opacity:.6; }
+.theater-exclusion-compare { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; }
+.theater-context-exclusions .theater-exclusion-preview { margin-top:18px; padding-top:5px; border-top:1px solid var(--t-border); }
+.theater-exclusion-compare textarea { min-height:164px; margin:0; }
+.theater-exclusion-compare #theater-exclusion-preview-output { min-height:164px; max-height:300px; margin:0; background:var(--t-card-green); color:var(--t-fg); white-space:pre-wrap; overflow-wrap:anywhere; overflow:auto; text-align:left; }
+.theater-context-exclusions #theater-exclusion-value.is-tag { min-height:42px; height:42px; resize:none; }
+.theater-context-exclusions .theater-hint { text-align:left; line-height:1.8; }
+.theater-dream-definition-hint { color:var(--t-fg-soft); font-size:var(--t-text-xs); line-height:1.7; text-align:left; }
+@media(max-width:600px) {
+ .theater-exclusion-compare { grid-template-columns:1fr; }
+ .theater-exclusion-add-box { padding:12px; }
+ .theater-exclusion-add-box .theater-btn-row > button { width:100%; }
+ .theater-exclusion-rule .theater-btn { flex:0 0 auto; padding:7px 9px; }
+}
+/* Revision popup: use the same specificity as its existing host overrides. */
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) { height:fit-content !important; }
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) .popup-body { display:flex !important; flex-direction:column !important; height:auto !important; max-height:none !important; padding:0 !important; flex:0 1 auto !important; }
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) .popup-content { display:flex !important; flex-direction:column !important; height:auto !important; max-height:none !important; flex:0 1 auto !important; margin-top:0 !important; }
+.theater-popup.theater-compact-popup.theater-dream-revise-popup { display:flex; flex-direction:column; min-height:0; flex:0 1 auto; }
+.theater-dream-revise-popup textarea.theater-textarea { min-height:140px; height:clamp(180px,36dvh,340px); max-height:48dvh; flex:1 1 auto; resize:vertical; }
+@media(max-width:600px) {
+ body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) { width:calc(100vw - 24px) !important; max-width:calc(100vw - 24px) !important; height:min(720px,calc(100dvh - 24px)) !important; max-height:calc(100dvh - 24px) !important; margin:12px auto !important; }
+ body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) .popup-body,
+ body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) .popup-content { flex:1 1 auto !important; min-height:0 !important; overflow:hidden !important; }
+ .theater-popup.theater-compact-popup.theater-dream-revise-popup { padding:20px 16px 0; flex:1 1 auto; }
+ .theater-dream-revise-popup textarea.theater-textarea { height:auto; min-height:80px; max-height:none; flex:1 1 auto; resize:none; }
+ body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-revise-popup[data-skin]) :is(.popup-controls,.popup-buttons) { padding:14px 16px calc(14px + env(safe-area-inset-bottom)) !important; }
+}
+
+/* API 预设命名：仅此入口使用按内容高度的小卡片。 */
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-api-name-popup[data-skin]) {
+    display:flex !important; flex-direction:column !important;
+    width:min(420px,calc(100vw - 28px)) !important; min-width:0 !important; max-width:calc(100vw - 28px) !important;
+    height:fit-content !important; min-height:0 !important; max-height:calc(100dvh - 28px) !important;
+    padding:0 !important; border-radius:20px !important;
+}
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-api-name-popup[data-skin]) .popup-body {
+    display:flex !important; flex-direction:column !important; height:auto !important; min-height:0 !important; max-height:none !important; padding:0 !important; flex:0 1 auto !important; overflow-y:auto !important;
+}
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-api-name-popup[data-skin]) .popup-content {
+    height:auto !important; min-height:0 !important; max-height:none !important; margin:0 !important; flex:0 0 auto !important; overflow:visible !important;
+}
+.theater-popup.theater-compact-popup.theater-api-name-popup { padding:22px 22px 0; min-height:0; flex:0 0 auto; background:var(--t-bg); border-radius:0; }
+.theater-api-name-popup .theater-popup-header { margin:0 0 18px; padding:0; }
+.theater-api-name-field { display:flex; flex-direction:column; gap:8px; text-align:left; font-size:13px; }
+.theater-api-name-field .theater-input { width:100%; min-width:0; margin:0; }
+.theater-api-name-popup .theater-api-name-hint { margin:10px 0 0; color:var(--t-fg-soft); font-size:12px; line-height:1.6; text-align:left; }
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-api-name-popup[data-skin]) :is(.popup-controls,.popup-buttons) {
+    display:grid !important; grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important; gap:10px !important; padding:18px 22px 22px !important; margin:0 !important; flex:0 0 auto !important;
+}
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-api-name-popup[data-skin]) :is(.popup-button-ok,.popup-button-cancel) {
+    width:100% !important; min-width:0 !important; min-height:44px !important; height:auto !important; margin:0 !important; padding:10px 12px !important; font-size:14px !important; line-height:1.4 !important;
+}
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-api-name-popup[data-skin]) .popup-button-cancel { grid-column:1; grid-row:1; }
+body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-api-name-popup[data-skin]) .popup-button-ok { grid-column:2; grid-row:1; }

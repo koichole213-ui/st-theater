@@ -1494,8 +1494,8 @@ function longDreamDefinitionHTML(dream) {
         <section class="ui-card theater-dream-settings is-workspace">
             <div class="ui-title"><span><i class="fa-solid fa-pen-nib"></i> 此梦设定 (Canon)</span></div>
             <div class="theater-dream-settings-body">
-                <label class="ia-field" for="theater-dream-edit-title"><span>长卷名字</span><input id="theater-dream-edit-title" class="ui-input theater-input" maxlength="80" value="${runtime.esc(dream.title)}" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}></label>
-                <label class="ia-field" for="theater-dream-edit-canon"><span>此梦正典与初始设定</span><textarea id="theater-dream-edit-canon" class="ui-textarea theater-textarea" rows="7" placeholder="写下这条世界线必须遵守的事实。" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}>${runtime.esc(dream.canon)}</textarea></label>
+                <label class="ia-field" for="theater-dream-edit-title"><span>长卷名字</span><input id="theater-dream-edit-title" class="ui-input theater-input" maxlength="80" value="${runtime.esc(dream.title)}" ${state.isGeneratingThisDream ? 'disabled' : ''}></label>
+                <label class="ia-field" for="theater-dream-edit-canon"><span>此梦正典与初始设定</span><textarea id="theater-dream-edit-canon" class="ui-textarea theater-textarea" rows="7" placeholder="写下这条世界线必须遵守的事实。" ${state.isGeneratingThisDream ? 'disabled' : ''}>${runtime.esc(dream.canon)}</textarea></label>
             </div>
         </section>
         <section class="ui-card theater-dream-inheritance">
@@ -1511,7 +1511,8 @@ function longDreamDefinitionHTML(dream) {
                 <p class="theater-dream-world-book-hint">${state.selectedPolicy ? '按素材页勾选，重新读取并更新冻结资料。' : '不会读取或猜测原世界书。'}</p>
             </div>
         </section>
-        <button type="button" id="theater-dream-save-definition" class="ui-btn ui-btn-primary theater-btn primary theater-dream-definition-save" ${state.isGeneratingThisDream || state.hasReviewDraft ? 'disabled' : ''}><i class="fa-solid fa-floppy-disk"></i><span>保存定梦设置</span></button>
+        <p class="theater-dream-definition-hint">保存新定梦时会保留现有候选。新设定用于后续生成，旧候选正文不会自动改写。</p>
+        <button type="button" id="theater-dream-save-definition" class="ui-btn ui-btn-primary theater-btn primary theater-dream-definition-save" ${state.isGeneratingThisDream ? 'disabled' : ''}><i class="fa-solid fa-floppy-disk"></i><span>保存定梦设置</span></button>
     </div>`;
 }
 // @theater-source-end longDreamDefinitionHTML
@@ -1574,7 +1575,6 @@ function longDreamDetailHTML(dream) {
         <p class="theater-dream-retention-note">其他已保留版本也会收入本章，可随时回看。</p>
         ${longDreamKeptVersionsHTML(dream)}</div>
         <div class="theater-dream-candidate-actions">
-        <button type="button" id="theater-dream-exit-review" class="ui-btn ui-btn-sm">保留候选并退出</button>
         <button type="button" id="theater-dream-regenerate-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="按原要求再生成一版；成功后未保留候选仅留最新三版，已保留版本不被替换"><i class="fa-solid fa-plus"></i><span>再来一版</span></button>
         <button type="button" id="theater-dream-revise-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="修改要求再生成；成功后未保留候选仅留最新三版，已保留版本不被替换"><i class="fa-solid fa-pen-to-square"></i><span>改要求重写</span></button>
         </div>
@@ -1729,7 +1729,7 @@ function syncLongDreamPanel({ renderDrafts = true } = {}) {
             .attr('aria-busy', String(runtime.refreshingLongDreamWorldBooks)).find('span').text(runtime.refreshingLongDreamWorldBooks ? '更新中…' : '更新世界书');
         $('#theater-dream-frozen-count').text(`· ${state.snapshotEntries} 条`);
         $('#theater-dream-frozen-books').text(state.selectedPolicy ? `当前冻结资料库：${state.bookText}` : '当前完全隔离，不读取原世界书');
-        $('#theater-dream-save-definition').prop('disabled', state.isGeneratingThisDream || state.hasReviewDraft || String(runtime.refreshingLongDreamWorldBookId) === String(dream.id));
+        $('#theater-dream-save-definition').prop('disabled', state.isGeneratingThisDream || String(runtime.refreshingLongDreamWorldBookId) === String(dream.id));
     }
     if (runtime.longDreamWorkspaceSection === 'continue' && dream) {
         if (renderDrafts) {

@@ -1,3 +1,5 @@
+import { syncContextExclusionDraft } from './context-exclusion-ui.js';
+import { bindApiChannelSettings } from './api-channel-settings.js';
 import { TAG_UNCATEGORIZED } from './tag-system.js';
 import { LONG_DREAM_MEMORY_BUILTIN_PRESET_ID, createLongDreamMemoryPreset, normalizeLongDreamMemoryPresetList, MAX_LONG_DREAM_MEMORY_PRESET_BYTES, parseLongDreamMemoryPreset, exportLongDreamMemoryPreset } from './long-dream-memory-presets.js';
 import { normalizeMaxTokens } from './api-client.js';
@@ -9,6 +11,7 @@ import { REQUEST_DIAGNOSTIC_SIGNAL } from './request-diagnostics.js';
 // Event registration order and handler closures are preserved by the coordinator.
 export function bindSettingsEvents(runtime, $d) {
     // ---- Config ----
+    bindApiChannelSettings(runtime, $d);
     $d.off('click.tamodeswitch').on('click.tamodeswitch', '[data-theater-api-mode]', function () {
         const mode = $(this).data('theater-api-mode') === 'main' ? 'main' : 'custom';
         $('#theater-api-mode').val(mode).trigger('change');
@@ -16,6 +19,8 @@ export function bindSettingsEvents(runtime, $d) {
     $d.off('change.tamode').on('change.tamode', '#theater-api-mode', function () {
         runtime.settings.apiMode = $(this).val();
         $('#theater-custom-api-area').toggle(runtime.settings.apiMode !== 'main');
+        $('#theater-custom-api-actions').prop('hidden', runtime.settings.apiMode === 'main');
+        $('.theater-config-token-field').prop('hidden', runtime.settings.apiMode === 'main');
         $('[data-theater-api-mode]').removeClass('active').attr('aria-pressed', 'false')
             .filter(`[data-theater-api-mode="${runtime.settings.apiMode}"]`).addClass('active').attr('aria-pressed', 'true');
         runtime.save();
@@ -137,15 +142,15 @@ export function bindSettingsEvents(runtime, $d) {
     // 前文排除仅修改读取规则；预览文本不写入设置或聊天。
     $d.off('click.texcladd').on('click.texcladd', '#theater-exclusion-add', runtime.addContextExclusionRule);
     $d.off('click.texclpreview').on('click.texclpreview', '#theater-exclusion-preview-run', runtime.previewContextExclusions);
+    $d.off('click.texclmode').on('click.texclmode', '[data-exclusion-type]', function () {
+        $('#theater-exclusion-type').val(this.dataset.exclusionType).trigger('change');
+    });
     $d.off('change.texcltype').on('change.texcltype', '#theater-exclusion-type', function () {
-        const tag = this.value === 'tag';
-        $('#theater-exclusion-value-label').text(tag ? '要排除的标签名' : '要排除的完整内容');
-        $('#theater-exclusion-value').attr('placeholder', tag ? '例如 anti_cut（无需填写正则）' : '粘贴固定收尾文字或完整 HTML…');
-        $('#theater-exclusion-help').text(tag
-            ? '排除成对标签及其内部内容。p、span 等通用标签可能包含正文，请谨慎选择。未闭合区块会保留。'
-            : '精确匹配，包括空格和换行；有 HTML 时请连同标签一起粘贴。');
+        $('#theater-exclusion-value').val('');
+        syncContextExclusionDraft();
         $('#theater-exclusion-feedback').prop('hidden', true);
     });
+    $d.off('input.texclvalue').on('input.texclvalue', '#theater-exclusion-value', () => syncContextExclusionDraft());
     $d.off('change.texcltoggle').on('change.texcltoggle', '[data-exclusion-toggle]', function () {
         const rules = normalizeContextExclusionRules(runtime.settings.contextExclusionRules);
         const index = Number(this.dataset.exclusionToggle);
@@ -164,8 +169,7 @@ export function bindSettingsEvents(runtime, $d) {
         $('#theater-exclusion-feedback').text('已删除规则。').prop('hidden', false);
     });
     $d.off('input.texclpreview').on('input.texclpreview', '#theater-exclusion-preview-input', function () {
-        $('#theater-exclusion-preview-output').empty().prop('hidden', true);
-        $('#theater-exclusion-preview-status').prop('hidden', true);
+        runtime.previewContextExclusions();
     });
     $d.off('change.tquickrendera').on('change.tquickrendera', '#theater-quick-render-a', function () {
         runtime.updateQuickRenderSetting('A', $(this).val());
@@ -190,7 +194,9 @@ export function bindSettingsEvents(runtime, $d) {
         await runtime.reloadWorldBooks();
     });
     $d.off('click.tsa').on('click.tsa', '#theater-save-api-btn', function () {
-        runtime.persistCurrentApiConfig();
+        const config = runtime.readApiFormConfig();
+        if (runtime.settings.apiMode !== 'main' && !runtime.validateApiPresetConfig(config)) return;
+        runtime.persistCurrentApiConfig(config);
         toastr.success('API 已保存');
     });
     $d.off('change.tapreset').on('change.tapreset', '#theater-api-preset-select', function () {
@@ -214,7 +220,7 @@ export function bindSettingsEvents(runtime, $d) {
         const config = runtime.readApiFormConfig();
         if (!runtime.validateApiPresetConfig(config)) return;
         const { Popup } = SillyTavern.getContext();
-        const input = await runtime.askNewItemName('保存 API 预设', runtime.apiPresetDefaultName(config), 40);
+        const input = await runtime.askNewItemName('保存 API 预设', runtime.apiPresetDefaultName(config), 40, { compact: true });
         const name = String(input || '').trim().slice(0, 40);
         if (!name) return;
         const duplicate = normalizeApiPresetList(runtime.settings.apiPresets).find(preset => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase());

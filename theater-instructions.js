@@ -414,9 +414,13 @@ async function chooseTags({ title = '选择标签', subtitle = '可多选；多�
 // @theater-source-end chooseTags
 
 // @theater-source-begin askNewItemName
-async function askNewItemName(title, defaultName, maxLength = 80) {
+async function askNewItemName(title, defaultName, maxLength = 80, { compact = false } = {}) {
     const { Popup, POPUP_TYPE } = SillyTavern.getContext();
-    const popup = new Popup(`<div class="theater-popup"><label>${runtime.esc(title)}<input class="theater-input theater-default-name" data-new-item-name maxlength="${maxLength}" value="" placeholder="${runtime.esc(defaultName)}" autocomplete="off"></label></div>`, POPUP_TYPE.CONFIRM, '', { okButton: '保存', cancelButton: '取消' });
+    const field = `<input class="theater-input theater-default-name" data-new-item-name maxlength="${maxLength}" value="" placeholder="${runtime.esc(defaultName)}" autocomplete="off">`;
+    const html = compact
+        ? `<div class="theater-popup theater-compact-popup theater-api-name-popup" data-skin="${runtime.esc(runtime.settings.skinMode || 'default')}"><div class="theater-popup-header"><p class="theater-title">${runtime.esc(title)}</p></div><label class="theater-api-name-field"><span>预设名称</span>${field}</label><p class="theater-api-name-hint">保存当前连接设置，方便下次切换。留空使用默认名称。</p></div>`
+        : `<div class="theater-popup"><label>${runtime.esc(title)}${field}</label></div>`;
+    const popup = new Popup(html, POPUP_TYPE.CONFIRM, '', { okButton: '保存', cancelButton: '取消' });
     if (!(await popup.show())) return null;
     return (String($(popup.dlg).find('[data-new-item-name]').val() || '').trim() || String(defaultName).trim()).slice(0, maxLength);
 }

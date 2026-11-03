@@ -372,7 +372,7 @@ export function bindLongDreamEvents(runtime, $d) {
     });
     $d.off('click.tdconfirm').on('click.tdconfirm', '#theater-dream-confirm-chapter', runtime.confirmLongDreamChapter);
     $d.off('click.tddiscard').on('click.tddiscard', '#theater-dream-discard-draft', runtime.discardLongDreamDraft);
-    $d.off('click.tdexitreview').on('click.tdexitreview', '#theater-dream-exit-review', () => runtime.regenerateLongDreamDraft({ exitReview: true }));
+    $d.off('click.tdexitreview');
     $d.off('click.tdclearinstruction').on('click.tdclearinstruction', '#theater-dream-clear-next-instruction', async function () {
         const input = $('#theater-dream-next-instruction');
         if (!input.length || !String(input.val() || '').trim()) return;
@@ -600,10 +600,6 @@ export function bindLongDreamEvents(runtime, $d) {
         }
         const dream = runtime.longDreamCache.find(item => String(item.id) === String(runtime.activeLongDreamId));
         if (!dream) return;
-        if (dream.draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW) {
-            toastr.warning('请先确认或放弃待确认章节，再修改长梦设置');
-            return;
-        }
         runtime.longDreamCandidateSavePending = true;
         try {
             const worldLineRelation = $('input[name="theater-dream-edit-relation"]:checked').val() || LONG_DREAM_WORLD_LINE_RELATION.ISOLATED;
@@ -628,7 +624,12 @@ export function bindLongDreamEvents(runtime, $d) {
                     return;
                 }
             }
-            const updated = updateLongDreamDefinition(dream, {
+            const latest = runtime.longDreamCache.find(item => String(item.id) === String(dream.id));
+            if (String(runtime.activeLongDreamId) !== String(dream.id) || latest !== dream
+                || runtime.isPreparingGeneration || runtime.longDreamGenerationController?.active || runtime.longDreamChapterEditController) {
+                toastr.info('长梦状态已变化，本次未保存定梦'); return;
+            }
+            const updated = updateLongDreamDefinition(latest, {
                 title: $('#theater-dream-edit-title').val(),
                 canon: $('#theater-dream-edit-canon').val(),
                 worldBookPolicy,
@@ -636,6 +637,9 @@ export function bindLongDreamEvents(runtime, $d) {
                 worldBookNames: inheritedBookNames,
                 worldBookSnapshot,
             });
+            if (updated.draft?.status === LONG_DREAM_DRAFT_STATUS.REVIEW) {
+                updated.draft = { ...updated.draft, candidates: updated.draft.candidates.map(candidate => ({ ...candidate, retained: true })) };
+            }
             const saved = await runtime.longDreamPut(updated);
             if (!saved) return;
             runtime.renderLongDreamPanel();

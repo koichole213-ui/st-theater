@@ -1,3 +1,4 @@
+import { apiChannelSettingsHTML } from './api-channel-settings.js';
 import { promptInspectorHTML } from './prompt-inspector-ui.js';
 import { releaseNotesHTML, latestReleaseVersion, hasUnreadRelease } from './release-notes.js';
 import { historyFiltersHTML } from './history-ui.js';
@@ -483,8 +484,9 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                             <button type="button" id="theater-delete-api-preset-btn" class="theater-config-icon-btn danger ${runtime.settings.selectedApiPresetId ? '' : 'disabled'}" title="删除当前预设" aria-label="删除当前预设" ${runtime.settings.selectedApiPresetId ? '' : 'disabled'}><i class="fa-solid fa-trash"></i></button>
                         </div>
                     </div>
-                    <p class="theater-api-preset-note"><i class="fa-solid fa-shield-halved"></i> 预设会保存地址、协议、Key、模型和单轮输出上限；请勿把 settings.json 分享给他人。</p>
+                    <p class="theater-api-preset-note"><i class="fa-solid fa-shield-halved"></i> 同一渠道可保存多个模型，也可供梦脉织录与独立排版选择；请勿分享含密钥的 settings.json。</p>
                 </div>
+                ${apiChannelSettingsHTML(runtime.settings, runtime.esc)}
                 <div class="theater-config-field">
                     <label for="theater-api-protocol"><b>请求格式</b><small>多数兼容服务保持自动即可</small></label>
                     <select id="theater-api-protocol" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}">
@@ -504,16 +506,31 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                 <div class="theater-config-field">
                     <label for="theater-api-model"><b>模型</b><small>可以手填或读取线路列表</small></label>
                     <div class="theater-config-model-control">
-                        <select id="theater-api-model-select" class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}" style="display:none;"></select>
+                        <select id="theater-api-model-select" hidden class="theater-select" data-select2-id="${theaterNativeSelectCompatId()}" style="display:none;"></select>
                         <input id="theater-api-model" class="theater-input" placeholder="模型名称" value="${runtime.esc(runtime.settings.apiModel || '')}">
                         <button type="button" id="theater-fetch-models-btn" class="theater-config-field-action" title="获取模型列表"><i class="fa-solid fa-arrows-rotate"></i><span>获取</span></button>
                     </div>
                 </div>
-                <div class="theater-config-api-actions">
+
+
+            </div>
+            <details class="theater-config-extra-details">
+                <summary><span><i class="fa-solid fa-gear"></i> 高级设置</span><i class="fa-solid fa-chevron-down"></i></summary>
+                <div class="theater-config-extra-body" data-config-extra-body="generation">
+                    <div class="theater-config-field theater-config-token-field" ${runtime.settings.apiMode === 'main' ? 'hidden' : ''}>
+                        <label for="theater-max-output-tokens"><b>单轮 Max Output Tokens</b><small>模型不支持时会自动降低重试</small></label>
+                        <input id="theater-max-output-tokens" class="theater-input theater-number-input" type="number" min="256" max="131072" step="256" value="${normalizeMaxTokens(runtime.settings.maxOutputTokens)}">
+                    </div>
+            <div class="theater-config-setting-row">
+                <span class="theater-config-setting-copy"><b>流式实时显示</b><small>逐字生成正文，可实时查看效果</small></span>
+                <label class="theater-config-switch" aria-label="流式实时显示"><input type="checkbox" id="theater-stream-enabled" ${runtime.settings.streamEnabled !== false ? 'checked' : ''}><span></span></label>
+            </div>
+                </div>
+            </details>
+                <div class="theater-config-api-actions" id="theater-custom-api-actions" ${runtime.settings.apiMode === 'main' ? 'hidden' : ''}>
                     <button type="button" id="theater-test-api-btn" class="theater-btn"><i class="fa-solid fa-plug"></i><span>测试连接</span></button>
                     <button type="button" id="theater-save-api-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存设置</span></button>
                 </div>
-            </div>
             <details class="theater-memory-api-card">
                 <summary><span><i class="fa-solid fa-route"></i><b>梦脉织录</b></span><small id="theater-dream-memory-summary">${runtime.settings.longDreamMemoryApiPresetId ? `${runtime.esc(apiPresets.find(preset => preset.id === runtime.settings.longDreamMemoryApiPresetId)?.name || '已绑定副 API')} · 每 ${Number(runtime.settings.longDreamMemoryBatchSize) || 3} 章` : '尚未绑定副 API'}</small><i class="fa-solid fa-chevron-down"></i></summary>
                 <div class="theater-memory-api-body">
@@ -571,10 +588,6 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                 <small>可以选择任意内置或自定义模板；三个剧情自适应模板分别侧重阅读、参与和探索。</small>
             </div>
             <div class="theater-config-setting-row">
-                <span class="theater-config-setting-copy"><b>流式实时显示</b><small>逐字生成正文，可实时查看效果</small></span>
-                <label class="theater-config-switch" aria-label="流式实时显示"><input type="checkbox" id="theater-stream-enabled" ${runtime.settings.streamEnabled !== false ? 'checked' : ''}><span></span></label>
-            </div>
-            <div class="theater-config-setting-row">
                 <span class="theater-config-setting-copy"><b>创作增强</b><small>为正文加入虚构叙事约定；下一次生成生效，不额外发起请求</small></span>
                 <label class="theater-config-switch" aria-label="创作增强"><input type="checkbox" id="theater-creative-enhancement" ${runtime.settings.creativeEnhancementEnabled === true ? 'checked' : ''}><span></span></label>
             </div>
@@ -590,15 +603,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                     <button type="button" data-theater-number-step="1" data-theater-number-target="theater-max-auto-rounds" aria-label="增加一轮">＋</button>
                 </div>
             </div>
-            <details class="theater-config-extra-details">
-                <summary><span><i class="fa-solid fa-gear"></i> 高级参数设置</span><i class="fa-solid fa-chevron-down"></i></summary>
-                <div class="theater-config-extra-body" data-config-extra-body="generation">
-                    <div class="theater-config-field theater-config-token-field">
-                        <label for="theater-max-output-tokens"><b>单轮 Max Output Tokens</b><small>模型不支持时会自动降低重试</small></label>
-                        <input id="theater-max-output-tokens" class="theater-input theater-number-input" type="number" min="256" max="131072" step="256" value="${normalizeMaxTokens(runtime.settings.maxOutputTokens)}">
-                    </div>
-                </div>
-            </details>
+
         </div>
         ${configGroupEnd}
         ${configGroupStart('materials', 'fa-book-atlas', '素材与提示')}

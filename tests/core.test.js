@@ -4884,7 +4884,7 @@ test('正式生成与连接测试都不再读取创作预设采样参数', () =>
     const end = source.indexOf('// Update', start);
     const connectionTestSource = source.slice(start, end);
     assert.match(connectionTestSource, /preset_generation_options: 'not_inherited'/);
-    assert.match(connectionTestSource, /maxTokens: 16/);
+    assert.match(connectionTestSource, /maxTokens: apiChannel\(config\) === 'custom' \? 16 : 256/);
     assert.doesNotMatch(connectionTestSource, /temperature|top_p|top_k|min_p|reasoning_effort/);
 });
 

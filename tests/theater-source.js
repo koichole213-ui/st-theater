@@ -1,3 +1,9 @@
+import { showModelPicker } from '../model-picker.js';
+import { syncContextExclusionDraft } from '../context-exclusion-ui.js';
+import { beginApiFormRequest, apiChannelSettingsHTML, readApiChannelFields, syncApiChannelForm, bindApiChannelSettings } from '../api-channel-settings.js';
+import { captureIndependentConfig, channelConfigError, channelFields, apiChannel, API_CHANNELS } from '../api-channels.js';
+import { beginVertexRequest } from '../vertex-credentials.js';
+import { createIndependentRequest, checkVertexCredential } from '../independent-request.js';
 import { promptInspectorHTML, bindPromptInspector, refreshPromptInspector } from '../prompt-inspector-ui.js';
 import { beginRequestDiagnostics } from '../request-ownership.js';
 import { beginPromptInspection, recordSentInspection } from '../prompt-inspector.js';
@@ -53,7 +59,7 @@ export function readTheaterImplementation() {
 // fixtures. This preserves their assertions about writes, identity and failures.
 export function runInNewContext(code, sandbox = {}, options) {
     // Real imported helpers used by relocated production bodies. Fixtures remain synthetic.
-    Object.assign(sandbox, { beginRequestDiagnostics, promptInspectorHTML, bindPromptInspector, refreshPromptInspector, beginPromptInspection, recordSentInspection, longDreamPromptPlacement, normalizeManualTarget, longDreamWritingPlan, resolveTheaterPreset, filterStoryOutput, STORY_OUTPUT_RULE, captureLayoutApiSelection, resolveLayoutApiRoute, bindLayoutApi, bindLayoutRetry, bindReleaseNotes, releaseNotesHTML, latestReleaseVersion, hasUnreadRelease, creativeEnhancementPrompt, hasPendingManualSummary, pendingManualStoryEntries, summaryEditorHTML, bindSummaryEditor, isHistoryItemExpanded, historyFiltersHTML, normalizeRoleSources, captureHistoryRoles, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED, closeHistoryMenus, ...sandbox });
+    Object.assign(sandbox, { presentModelPicker: showModelPicker, syncContextExclusionDraft, beginApiFormRequest, beginVertexRequest, captureIndependentConfig, channelConfigError, channelFields, apiChannel, API_CHANNELS, apiChannelSettingsHTML, readApiChannelFields, syncApiChannelForm, bindApiChannelSettings, createIndependentRequest, checkVertexCredential, beginRequestDiagnostics, promptInspectorHTML, bindPromptInspector, refreshPromptInspector, beginPromptInspection, recordSentInspection, longDreamPromptPlacement, normalizeManualTarget, longDreamWritingPlan, resolveTheaterPreset, filterStoryOutput, STORY_OUTPUT_RULE, captureLayoutApiSelection, resolveLayoutApiRoute, bindLayoutApi, bindLayoutRetry, bindReleaseNotes, releaseNotesHTML, latestReleaseVersion, hasUnreadRelease, creativeEnhancementPrompt, hasPendingManualSummary, pendingManualStoryEntries, summaryEditorHTML, bindSummaryEditor, isHistoryItemExpanded, historyFiltersHTML, normalizeRoleSources, captureHistoryRoles, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED, closeHistoryMenus, ...sandbox });
     if (!sandbox.SillyTavern) sandbox.SillyTavern = { getContext: () => ({}) };
     const context = createContext(sandbox);
     const entry = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
