@@ -318,15 +318,8 @@ export function bindSettingsEvents(runtime, $d) {
         runtime.renderRuntimeLog();
         toastr.success('日志已清空');
     });
-    $d.off('change.tams').on('change.tams', '#theater-api-model-select', function () {
-        const val = $(this).val();
-        if (val) {
-            $('#theater-api-model').val(val);
-            runtime.settings.apiModel = val;
-            runtime.save();
-            runtime.scheduleTokenEstimate?.(); runtime.scheduleLongDreamTokenEstimate?.(); runtime.updateWBCount?.();
-        }
-    });
+    // The fetched dropdown owns its guarded callback; clear the old unconditional autosave.
+    $d.off('change.tams');
 
     // ---- Result bookmark & Floating Ball ----
     $d.off('change.trbe').on('change.trbe', '#theater-result-bookmark-enabled', function () {
