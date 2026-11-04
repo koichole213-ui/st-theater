@@ -1,3 +1,5 @@
+import { inspectHtmlIntegrity, recoverHtmlText } from './html-integrity.js';
+import { buildPlainTextHtml } from './plain-text-renderer.js';
 import { bindResultSwipe } from './result-swipe.js';
 
 const HEIGHT_MESSAGE = 'st-theater:height';
@@ -77,7 +79,13 @@ export function renderSafeIframe(frame, html, {
         clearTimeout(previousState.blankTimeoutId);
         pendingStates.delete(previousState);
     }
-    frame.srcdoc = injectResizeReporter(html, typeof onWorkspaceSwipe === 'function');
+    // Stored/imported originals remain untouched; only a confirmed broken preview
+    // uses a readable recovery view. CSS-only and complete scripted pages pass through.
+    const inspection = inspectHtmlIntegrity(html);
+    const displayHtml = inspection.valid ? html : buildPlainTextHtml(
+        '【页面交互未完成】下方显示文件中可读取的内容，原 HTML 文件保持不变。\n\n' + recoverHtmlText(html),
+    );
+    frame.srcdoc = injectResizeReporter(displayHtml, typeof onWorkspaceSwipe === 'function');
     const sourceWindow = frame.contentWindow;
     const state = {
         frame,

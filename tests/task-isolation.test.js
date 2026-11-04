@@ -1,8 +1,9 @@
+import { assertHtmlIntegrity, recoverHtmlText } from '../html-integrity.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { createGenerationJob, abortGenerationJob, generationTextWithLiveSegment } from '../generation-job.js';
+import { createGenerationJob, abortGenerationJob, generationTextWithLiveSegment, addGenerationSegment } from '../generation-job.js';
 import { filterStoryOutput } from '../story-output.js';
 import { readableCharCount } from '../text-counter.js';
 import { requestMainApi, requestCustomApi, MAIN_FIRST_TOKEN_TIMEOUT_MS, MAIN_RESPONSE_TIMEOUT_MS, MAIN_STREAM_IDLE_TIMEOUT_MS } from '../api-runtime.js';
@@ -13,11 +14,11 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 function deferred() { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
 const source = readFileSync(new URL('../theater-generation.js', import.meta.url), 'utf8');
 function productionFunction(name) { const start = source.indexOf(`${name === 'runGeneration' ? 'async ' : ''}function ${name}(`); return source.slice(start, source.indexOf(`// @theater-source-end ${name}`, start)); }
-function generationHarness({ honorAbort = true } = {}) {
+function generationHarness({ honorAbort = true, htmlMode = false } = {}) {
     const save = deferred(), requests = [], saved = [], updates = [], resets = [];
     const ui = new Proxy(() => {}, { get: (_target, key) => key === 'length' ? 0 : () => ui });
     const runtime = { settings: { maxAutoRounds: 1, autoContinue: false, selectedWorldBooks: [] },
-        knownInstructionTags: () => [], captureGenerationApiRoute: () => ({}), clearRequestIssue() {}, runtimeLog() {},
+        extractHtml: text => text, knownInstructionTags: () => [], captureGenerationApiRoute: () => ({}), clearRequestIssue() {}, runtimeLog() {},
         archiveCurrentResult: async () => true, createCumulativeStreamRenderer: () => ({ update: value => updates.push(value), reset: opts => resets.push(opts) }), recordRequestMetrics() {},
         requestConfiguredGenerationApi(options) { const request = { options, ...deferred() }; requests.push(request);
             if (honorAbort) options.signal.addEventListener('abort', () => request.reject(new DOMException('Aborted', 'AbortError')), { once: true });
@@ -28,10 +29,11 @@ function generationHarness({ honorAbort = true } = {}) {
     };
     const sandbox = { runtime, $: () => ui, AbortController, DOMException, console: { error() {} }, toastr: { info() {}, warning() {} },
         normalizeRoleSources: () => [], captureHistoryRoles: () => [], SillyTavern: { getContext: () => ({}) },
-        resolveTargetWordCount: () => 6000, isStagedRenderTarget: () => true, resolveRenderSelection: () => ({ label: 'synthetic', isPlainTextRender: false }), updateContinueHint() {},
-        assembleGenerationPayload: async () => ({ ctx: {}, targetWordCount: 6000, isPlainTextRender: true }), textOutputModeForTheme: () => 'text', normalizeContextRange: value => value,
+        resolveTargetWordCount: () => htmlMode ? 0 : 6000, isStagedRenderTarget: () => !htmlMode, resolveRenderSelection: () => ({ label: 'synthetic', isPlainTextRender: false }), updateContinueHint() {},
+        assembleGenerationPayload: async () => ({ ctx: {}, targetWordCount: htmlMode ? 0 : 6000, isPlainTextRender: !htmlMode }), textOutputModeForTheme: () => 'text', normalizeContextRange: value => value,
         itemTags: () => [], classifyLengthTier: () => 'long', createGenerationJob, abortGenerationJob, generationTextWithLiveSegment, filterStoryOutput, readableCharCount,
-        htmlToPlainText: text => text, continuationRoundHistory: () => [], prepareContinuationContext: text => text, newHistoryKey: () => 'synthetic-id', markFirstToken() {},
+        assertHtmlIntegrity, addGenerationSegment, shouldContinueJob: () => false, markCompleted() {},
+        htmlToPlainText: htmlMode ? recoverHtmlText : text => text, continuationRoundHistory: () => [], prepareContinuationContext: text => text, newHistoryKey: () => 'synthetic-id', markFirstToken() {},
     };
     const api = runInNewContext(productionFunction('runGeneration') + '\n' + productionFunction('stopGeneration') + '\n({run:runGeneration,stop:stopGeneration})', sandbox);
     return { ...api, runtime, save, requests, saved, updates, resets };
@@ -165,4 +167,17 @@ test('batched normal log rendering uses the latest 500-entry cache and clearing 
     assert.equal((html.match(/class="theater-error-log-item /g) || []).length, 500);
     appearance.runtimeLog('info', 'pending'); clearRuntimeLogs(); appearance.renderRuntimeLog();
     t.mock.timers.tick(0); assert.equal(count, 0); assert.match(html, /暂无运行日志/);
+});
+
+
+for (const suffix of ['', '<script>function next(){']) test(`direct HTML failure retains the body before reporting layout error: ${suffix ? 'truncated' : 'missing-script'}`, async () => {
+    const h = generationHarness({ htmlMode: true });
+    const task = h.run('virtual interactive', false); while (!h.requests.length) await tick();
+    const html = '<html><body><button onclick="next()">NEXT</button><p>第一段完整正文。</p><p hidden>第二段完整正文。</p>' + suffix + (suffix ? '' : '</body></html>');
+    h.requests[0].resolve({ text: html, stopReason: 'stop' });
+    while (!h.saved.length) await tick();
+    assert.match(h.saved[0].html, /第一段完整正文/); assert.match(h.saved[0].html, /第二段完整正文/);
+    assert.equal(h.saved[0].mode, 'text'); assert.equal(h.saved[0].complete, false);
+    assert.equal(h.requests.length, 1); assert.equal(h.runtime.isGenerating, true);
+    h.save.resolve(); await task; assert.equal(h.runtime.isGenerating, false);
 });

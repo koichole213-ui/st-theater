@@ -4233,7 +4233,7 @@ test('无专用标记的 HTML 直接保留；多轮排版仍保护正文并在�
                 currentGenerationJob: { segments: Array(scenario === 'single' || scenario.startsWith('staged') ? 1 : 2).fill({}) },
                 plannedRenderSelection: { rules: profile.rules }, renderTemplate: profile.name,
                 payload: { generationFoundation: { originalInstruction: '按钮必须使用指定的 HTML、CSS 和 JavaScript。' } },
-                newText: '第一段。\n\n第二段。', firstHtml: initialHtml,
+                newText: '第一段。\n\n第二段。', firstHtml: initialHtml, firstHtmlSource: initialHtml,
                 generationAbortController: new AbortController(), ownsGeneration: () => true,
                 ctx: {}, apiRoute: {}, abortController: null, onChunk() {},
                 popupAlive: () => false, runtimeLog() {}, markCompleted() {}, recordRequestMetrics() {},

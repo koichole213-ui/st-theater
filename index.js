@@ -112,6 +112,7 @@ const cloneDefaultSettings = () => {
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 // @theater-source-group 2
 const HTML_RENDER_FINAL_GUARDRAILS = `【HTML格式】用户要求Markdown或Markdown代码块时，仅把标题、编号、列表、强调层级转为语义化HTML，直接输出完整HTML；其HTML/CSS/JavaScript、视觉、交互、内容要求照常实现。
+【交互】正文先可读，绑定成功才隐藏；失败恢复阅读。按钮函数和script须完整；音效异常不阻塞推进。原生折叠/CSS交互不强加脚本。
 【配色】各场景/状态同步设置背景、正文、小字、边框、控件；浅底深字、深底浅字，逐状态检查，禁止文字与背景明度相近。`;
 
 const BUILTIN_RENDER_SELECTIONS = new Set([

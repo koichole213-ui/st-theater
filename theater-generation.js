@@ -1,3 +1,4 @@
+import { assertHtmlIntegrity } from './html-integrity.js';
 import { estimateTavernTexts } from './tavern-token-counter.js';
 import { resolveTheaterPreset } from './preset-compat.js';
 import { filterStoryOutput, STORY_OUTPUT_RULE } from './story-output.js';
@@ -524,6 +525,7 @@ function validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText) {
         invalidHtml.code = 'THEATER_RENDER_VALIDATION';
         throw invalidHtml;
     }
+    assertHtmlIntegrity(renderText);
     const templateHtml = runtime.extractHtml(renderText);
     const finalHtml = hydrateFinalRenderHtml(templateHtml, finalRenderPayload.placeholderPlan);
     const sourceChars = readableCharCount(sourceText);
@@ -830,6 +832,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
 
     try {
         let firstHtml = '';
+        let firstHtmlSource = '';
         let roundPayload = payload;
         while (true) {
             if (generationJob.aborted || !ownsGeneration()) throw new DOMException('Aborted', 'AbortError');
@@ -876,6 +879,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
 
             let segmentText;
             if (round === 1 && !isPlainTextRender) {
+                firstHtmlSource = responseText;
                 firstHtml = runtime.extractHtml(responseText);
                 segmentText = htmlToPlainText(firstHtml) || htmlToPlainText(responseText) || String(responseText).trim();
             } else {
@@ -927,6 +931,8 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             runtime.lastGeneratedHtml = runtime.textFallbackHtml(newText, selectedTextTheme);
             runtime.currentOutputMode = textOutputModeForTheme(selectedTextTheme);
         } else if (!stagedRenderMode && runtime.currentGenerationJob.segments.length === 1) {
+            // Check only after the body segment is retained, so a bad layout cannot lose it.
+            assertHtmlIntegrity(firstHtmlSource || firstHtml);
             runtime.lastGeneratedHtml = firstHtml || runtime.textFallbackHtml(newText);
         } else {
             const { rules } = plannedRenderSelection;
