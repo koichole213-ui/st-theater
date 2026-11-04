@@ -1,3 +1,4 @@
+import { estimateTavernTexts } from './tavern-token-counter.js';
 import { normalizeManualTarget } from './length-policy.js';
 import { creativeEnhancementPrompt } from './creative-enhancement.js';
 import { runSeriesMemoryBatches, applySeriesStoryBatch, refreshSeriesStorySummary } from './long-dream-series.js';
@@ -173,7 +174,7 @@ async function generateLongDreamCanonSuggestions() {
         runtime.longDreamCanonSuggestionState.errorSignal = issue.signal;
         runtime.runtimeLog('error', 'AI 定梦建议失败', { signal: issue.signal });
         runtime.renderLongDreamCanonSuggestions(source.key);
-        runtime.theaterError(`AI 定梦建议失败：${issue.signal}。你仍可直接手写定梦。`);
+        runtime.theaterError(`AI 定梦建议失败：${issue.signal}。你仍可直接手写定梦。`, '', { requestIssue: issue });
     } finally {
         if (runtime.longDreamCanonSuggestionState.requestId === requestId) {
             runtime.longDreamCanonSuggestionState.controller = null;
@@ -407,14 +408,15 @@ async function refreshLongDreamTokenEstimate() {
             layoutContext: foundation.layoutContext,
             squashSystemMessages: foundation.squashSystemMessages,
         }), foundation.postProcessing);
-        const total = messages.reduce((sum, message) => sum + estimateTokenCount(message.content), 0);
-        const presetTokens = foundation.presetEntries.reduce((sum, entry) => sum + estimateTokenCount(entry.content), 0);
-        const identityTokens = Object.values(foundation.identitySlots).reduce((sum, text) => sum + estimateTokenCount(text), 0);
-        const worldBookTokens = payload.worldInfoEntries.reduce((sum, entry) => sum + estimateTokenCount(entry.content), 0);
+        const tokenResult = await estimateTavernTexts([
+            messages.map(m => m.content).join('\n\n'), foundation.presetEntries.map(e => e.content).join('\n\n'),
+            Object.values(foundation.identitySlots).join('\n\n'), payload.worldInfoEntries.map(e => e.content).join('\n\n'),
+        ], { ...runtime.settings });
+        const [total, presetTokens, identityTokens, worldBookTokens] = tokenResult.counts;
         const continuityTokens = Math.max(0, total - presetTokens - identityTokens - worldBookTokens);
         if (requestId !== runtime.longDreamTokenEstimateRequestId || !document.getElementById('theater-dream-token-summary-value')) return;
         const reference = runtime.LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET;
-        valueEl.textContent = `预计${payload.continuationRound ? '恢复续写轮' : '首轮'}输入约 ${formatTokenCount(total)} Token`;
+        valueEl.textContent = `预计${payload.continuationRound ? '恢复续写轮' : '首轮'}输入约 ${formatTokenCount(total)} Token · ${tokenResult.source}`;
         detailsEl.textContent = `预设 ${formatTokenCount(presetTokens)} · Char/User ${formatTokenCount(identityTokens)} · 冻结世界书 ${payload.worldInfoEntries.length} 条 / ${formatTokenCount(worldBookTokens)} · 长梦前情与规则 ${formatTokenCount(continuityTokens)}${reference ? ` · 本地参考 ${reference.toLocaleString()} 字符（非模型真实上限）` : ''}`;
     } catch (error) {
         if (requestId !== runtime.longDreamTokenEstimateRequestId) return;
@@ -566,7 +568,7 @@ async function generateNextLongDreamChapter({ appendCandidate = false, candidate
                 raw_stop_reason: issue.rawStopReason,
                 retained_chars: retainedChars,
             });
-            runtime.theaterError(runtime.requestFailureMessage('长梦续章失败', issue, { retained: !!retainedChars }));
+            runtime.theaterError(runtime.requestFailureMessage('长梦续章失败', issue, { retained: !!retainedChars }), '', { requestIssue: issue, retained: !!retainedChars });
         }
     } finally {
         resetLongDreamStreamRenderer({ flushPending: true });
@@ -707,6 +709,7 @@ function syncLongDreamSummaryButton(key) {
 
 // @theater-source-begin refreshLongDreamSummaryNow
 async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {}) {
+    const errorIssueOwner = runtime.lastRequestIssue, errorMetricsOwner = runtime.lastRequestMetrics;
     const key = String(dreamId);
     if (runtime.refreshingLongDreamSummaries.has(key)) { toastr.info('概要正在更新，请稍候'); return; }
     const dream = runtime.longDreamCache.find(item => String(item.id) === key);
@@ -757,7 +760,10 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
             : error?.diagnosticSignal ? diagnosticSignalInfo(error.diagnosticSignal).title
             : summaryReasons[error?.code] || '接口未返回可用概要或保存失败';
         if (error?.summaryDiagnostic) runtime.runtimeLog('warn', '概要更新失败', { code: error.code, ...error.summaryDiagnostic });
-        toastr.warning(`${reason}，原概要已保留；可点击“更新概要”重试`);
+        const signal = error?.diagnosticSignal || (stage === 'preset' ? 'T-API-CONFIG' : error?.code === 'LONG_DREAM_SUMMARY_TIMEOUT' ? 'T-NET-TIMEOUT' : error?.code === 'LONG_DREAM_SUMMARY_SAVE_FAILED' ? 'T-STORAGE-WRITE' : 'T-API-INVALID-RESPONSE');
+        const issue = { ...diagnosticSignalInfo(signal), signal, stage: '概要更新', contextNote: reason + '，原概要已保留', httpStatus: error?.theaterFailure?.status ?? null };
+        if (!runtime.isGenerating && runtime.lastRequestIssue === errorIssueOwner && runtime.lastRequestMetrics === errorMetricsOwner) runtime.lastRequestIssue = issue;
+        runtime.theaterError(reason + '，原概要已保留；可查看处理建议', '', { requestIssue: issue });
     } finally {
         runtime.refreshingLongDreamSummaries.delete(key);
         syncLongDreamSummaryButton(key);
@@ -784,6 +790,7 @@ async function weaveLongDreamMemory(dreamId, { force = false, announce = false, 
     if (saved?.seriesMemoryAutoWeave === true && !paused() && !saved.memory.pendingChapterNumbers.length && !saved.memory.pendingConflicts.length && saved.memory.summaryNeedsRefresh) await refreshLongDreamSummaryNow(saved.id, { fillMissing: true });
 }
 async function weaveLongDreamMemoryBatch(dreamId, { force = false, announce = false, chapters = null } = {}) {
+    const errorIssueOwner = runtime.lastRequestIssue, errorMetricsOwner = runtime.lastRequestMetrics;
     const dream = runtime.longDreamCache.find(item => String(item.id) === String(dreamId));
     if (!dream || (runtime.settings.longDreamMemoryEnabled === false && !(dream.source?.kind === 'history-folder' && force))) return;
     const preset = runtime.selectedLongDreamMemoryApiPreset();
@@ -857,7 +864,9 @@ async function weaveLongDreamMemoryBatch(dreamId, { force = false, announce = fa
         await runtime.longDreamPut(setLongDreamMemoryStatus(latest, LONG_DREAM_MEMORY_STATUS.FAILED, { errorSignal: signal }));
         runtime.runtimeLog('error', '梦脉织录失败', { dream_id: String(dream.id), signal });
         if (String(runtime.activeLongDreamId) === String(dream.id) && runtime.longDreamView === 'detail') { if (chapters) runtime.rememberLongDreamComposerDraft?.(); runtime.renderLongDreamPanel(); }
-        if (announce) runtime.theaterError(`梦脉织录失败：${signal}`);
+        const issue = { ...diagnosticSignalInfo(signal), signal, stage: '梦脉织录', httpStatus: error?.theaterFailure?.status ?? null };
+        if (!runtime.isGenerating && runtime.lastRequestIssue === errorIssueOwner && runtime.lastRequestMetrics === errorMetricsOwner) runtime.lastRequestIssue = issue;
+        if (announce) runtime.theaterError('梦脉织录失败：' + signal, '', { requestIssue: issue });
     }
 }
 // @theater-source-end weaveLongDreamMemory

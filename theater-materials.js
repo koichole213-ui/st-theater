@@ -1,3 +1,4 @@
+import { estimateTavernTexts } from './tavern-token-counter.js';
 import { syncContextExclusionDraft } from './context-exclusion-ui.js';
 import { extractPresetEntries } from './preset-layout.js';
 // theater-materials: receives live state and cross-feature callbacks from index.js.
@@ -248,6 +249,7 @@ function hasManualEntries() {
 
 // @theater-source-begin updateWBCount
 function updateWBCount() {
+    const countRequestId = (updateWBCount.requestId || 0) + 1; updateWBCount.requestId = countRequestId;
     const total = runtime.wbEntries.length;
     let active = 0;
     const parts = [];
@@ -260,7 +262,14 @@ function updateWBCount() {
     // 与生成页实时预览使用同一份包装文本和同一个估算器，避免中文内容出现两套口径。
     const worldBookText = parts.length ? `世界书设定：\n${parts.join('\n\n')}` : '';
     const roughTokens = estimateTokenCount(worldBookText);
-    $('#theater-wb-count').html(`${active}/${total} 个条目已勾选 · 已勾选上限约 ${formatTokenCount(roughTokens)} token`);
+    $('#theater-wb-count').html(`${active}/${total} 个条目已勾选 · 已勾选上限约 ${formatTokenCount(roughTokens)} token（字符粗估，正在分词统计）`);
+    if (typeof estimateTavernTexts === 'function') {
+        const target = document.getElementById('theater-wb-count');
+        estimateTavernTexts([worldBookText], { ...runtime.settings }).then(result => {
+            if (countRequestId !== updateWBCount.requestId || target !== document.getElementById('theater-wb-count')) return;
+            if (target) target.textContent = active + '/' + total + ' 个条目已勾选 · 已勾选上限约 ' + formatTokenCount(result.counts[0]) + ' token · ' + result.source;
+        }).catch(() => {});
+    }
     $('#theater-wb-header').toggle(total > 0);
     updateWBGroupCounts();
 }

@@ -70,6 +70,7 @@ function persistCurrentApiConfig(config = readApiFormConfig()) {
     $('#theater-max-output-tokens').val(runtime.settings.maxOutputTokens);
     $('#theater-max-auto-rounds').val(runtime.settings.maxAutoRounds);
     runtime.save();
+    runtime.scheduleTokenEstimate?.(); runtime.scheduleLongDreamTokenEstimate?.(); runtime.updateWBCount?.();
 }
 // @theater-source-end persistCurrentApiConfig
 

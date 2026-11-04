@@ -1,3 +1,4 @@
+import { httpErrorReason } from './error-help.js';
 import {
     API_PROTOCOLS,
     buildApiRequest,
@@ -139,7 +140,10 @@ export function statusError(status, body = '', { phase = 'body', transport = '' 
             code: 'THEATER_OUTPUT_LIMIT', status: numericStatus, phase, transport,
         });
     }
-    if (isContentBlockedErrorMessage(body)) {
+    const explicitReason = httpErrorReason(body);
+    if (explicitReason) return createDiagnosticError(explicitReason, { code: 'THEATER_HTTP_STATUS', status: numericStatus, phase, transport });
+    // A field named safety or an HTML gateway page is not a content-policy signal.
+    if (!/<(?:html|!doctype)/i.test(String(body)) && /(?:"(?:code|status|type)"\s*:\s*"(?:SAFETY|CONTENT_FILTER|PROHIBITED_CONTENT)"|blocked.{0,40}(?:safety|content policy)|(?:content policy|safety).{0,30}(?:blocked|violation)|内容.{0,10}(?:策略拦截|审核未通过))/i.test(String(body))) {
         return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
             code: 'THEATER_CONTENT_FILTER', status: numericStatus, phase, transport,
         });

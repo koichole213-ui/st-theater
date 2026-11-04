@@ -30,7 +30,8 @@ function clearRequestIssue() {
 
 // @theater-source-begin requestFailureMessage
 function requestFailureMessage(prefix, issue, { retained = false } = {}) {
-    return `${prefix}：${issue.signal}\n\n请打开【诊断】查看“常见问题汇总”中的 ${issue.signal}。${retained ? '\n\n已保留此前已生成的正文。' : ''}`;
+    issue.retained = retained;
+    return `${prefix}：${issue.signal} · ${issue.title}\n\n${issue.action}${retained ? '\n\n已保留此前已生成的正文。' : ''}`;
 }
 // @theater-source-end requestFailureMessage
 

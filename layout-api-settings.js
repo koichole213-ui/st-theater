@@ -1,3 +1,6 @@
+import { statusError } from './api-response.js';
+import { createIndependentRequest, checkVertexCredential } from './independent-request.js';
+import { beginVertexRequest } from './vertex-credentials.js';
 import { normalizeMaxTokens, buildApiRequest } from './api-client.js';
 import { DEFAULT_LAYOUT_MAX_TOKENS, resolveLayoutApiRoute, captureLayoutApiSelection } from './layout-api.js';
 import { classifyRequestFailure } from './request-diagnostics.js';
@@ -42,20 +45,25 @@ export function bindLayoutApi($d, runtime) {
         $button.prop('disabled', true).find('span').text('测试中…');
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 30000);
+        let releaseVertex = () => {};
         try {
-            const request = buildApiRequest({ url: route.custom.apiUrl, protocol: route.custom.apiProtocol,
-                key: route.custom.apiKey, model: route.custom.apiModel,
-                systemPrompt: '', userPrompt: 'Hi', maxTokens: 16, stream: false });
+            if (route.custom.apiChannel === 'vertex') releaseVertex = beginVertexRequest();
+            const request = await createIndependentRequest(route.custom, { systemPrompt: '', userPrompt: 'Hi', maxTokens: route.custom.apiChannel && route.custom.apiChannel !== 'custom' ? 256 : 16, stream: false });
+            if (route.custom.apiChannel === 'vertex') await checkVertexCredential(route.custom, { signal: controller.signal });
+            if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
             if (request.protocol === 'anthropic' && !route.custom.apiKey) { toastr.warning('Anthropic 接口需要 API Key'); return; }
             const response = await fetch(request.endpoint, { method: 'POST', headers: request.headers,
                 body: JSON.stringify(request.body), signal: controller.signal });
-            if (!response.ok) throw { code: 'THEATER_HTTP_STATUS', theaterFailure: { status: response.status } };
+            if (!response.ok) throw statusError(response.status, await response.text().catch(() => ''));
+            const result = await response.json();
+            if (result?.error) throw statusError(response.status, JSON.stringify({ error: result.error }));
             toastr.success('排版 API 连接成功');
         } catch (error) {
             const issue = classifyRequestFailure(error, { stage: '排版 API 连接测试' });
             runtime.lastRequestIssue = issue;
-            runtime.theaterError(runtime.requestFailureMessage('排版 API 连接失败', issue));
+            runtime.theaterError(runtime.requestFailureMessage('排版 API 连接失败', issue), '', { requestIssue: issue, retained: false });
         } finally {
+            releaseVertex();
             clearTimeout(timeout);
             $button.prop('disabled', false).find('span').text('测试连接');
         }

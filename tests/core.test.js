@@ -3644,9 +3644,9 @@ test('常见问题汇总是诊断报告后的独立可折叠界面', () => {
     const library = source.indexOf('class="theater-diagnostic-catalog theater-diagnostic-library"', diagnosticsPanel);
     assert.ok(reportOutput >= 0 && library > reportOutput);
     assert.match(source, /按弹窗里的错误信号查原因/);
-    assert.match(source, /theater-diagnostic-catalog-head/);
-    assert.match(source, /theater-diagnostic-catalog-reason/);
-    assert.match(source, /theater-diagnostic-catalog-action/);
+    assert.match(readFileSync(new URL('../error-help-ui.js', import.meta.url), 'utf8'), /teh-catalog-item/);
+    assert.match(readFileSync(new URL('../error-help-ui.js', import.meta.url), 'utf8'), /esc\(c.detail\)/);
+    assert.match(readFileSync(new URL('../error-help-ui.js', import.meta.url), 'utf8'), /c.steps/);
     assert.doesNotMatch(source, /【常见问题汇总｜按错误信号查询】/);
     assert.doesNotMatch(source.match(/function (?:runtime\.)?runDiagnostics\(\)[\s\S]*?\n\}/)?.[0] || '', /diagnostic-catalog/);
     assert.match(signals, /T-API-CONTENT-FILTER/);
@@ -3750,13 +3750,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.6b 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.6c 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.6b'/);
-    assert.equal(manifest.version, '4.4.6b');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.6b/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.6c'/);
+    assert.equal(manifest.version, '4.4.6c');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.6c/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 
@@ -4727,7 +4727,7 @@ test('独立 API 的普通 400 不因预设采样参数再发第二次请求', a
             calls += 1;
             return new Response('{"error":{"message":"Unknown parameter: top_k"}}', { status: 400 });
         },
-    }), error => error?.diagnosticSignal === 'T-HTTP-400');
+    }), error => error?.diagnosticSignal === 'T-API-PARAMETER-UNSUPPORTED');
     assert.equal(calls, 1);
 });
 
@@ -7206,6 +7206,7 @@ test('概要点击立即反馈、去重、超时解锁和配置异常提示', as
         diagnosticSignalInfo: () => ({ title: '网络连接没有完成' }),
         $d: { off() { return this; }, on(type, selector, callback) { assert.equal(selector, '[data-dream-summary-refresh]'); handler=callback; return this; } },
     };
+    scope.theaterError = text => notices.push(['warning', text]);
     scope.confirmLongDreamSummaryAction = id => scope.refreshLongDreamSummaryNow(id);
     runInNewContext(functions + '\n' + binding, scope);
     const pending = handler();
@@ -7869,6 +7870,7 @@ test('概要刷新成功及失败均同步恢复按钮，保留失效正文和�
         renderLongDreamPanel(){buttons.forEach(b=>b.disabled=scope.refreshingLongDreamSummaries.has(String(dream.id)));},
         toastr:{info(){},warning(){},success(){}},
     };
+    scope.theaterError = () => {}; scope.diagnosticSignalInfo = diagnosticSignalInfo;
     runInNewContext(functions,scope);await scope.refreshLongDreamSummaryNow(dream.id);
     assert.deepEqual(buttons.map(b=>b.disabled),[false,true,true]);
     scope.refreshLongDreamSummary=async()=>{throw new Error('synthetic failure')};await scope.refreshLongDreamSummaryNow(dream.id);

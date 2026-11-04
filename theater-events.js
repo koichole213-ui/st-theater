@@ -1,3 +1,4 @@
+import { bindErrorLibrary } from './error-help-ui.js';
 import { bindPromptInspector } from './prompt-inspector-ui.js';
 import { bindLayoutRetry } from './layout-retry.js';
 import { bindLayoutApi } from './layout-api-settings.js';
@@ -14,6 +15,7 @@ export function createTheaterEvents(runtime) {
 // @theater-source-begin bindEvents
 function bindEvents() {
     const $d = $(document);
+    bindErrorLibrary(document);
     bindSourcePicker($d, runtime);
     bindSummaryEditor($d, runtime);
     bindLayoutApi($d, runtime);

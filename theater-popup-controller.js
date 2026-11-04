@@ -27,9 +27,9 @@ function activateTheaterTab(tabName, { persist = true, resetScroll = true } = {}
 // @theater-source-end activateTheaterTab
 
 // @theater-source-begin openTheaterPopup
-async function openTheaterPopup() {
+async function openTheaterPopup(initialTabOverride = '') {
     runtime.restoreLongDreamNavigation();
-    const initialTab = runtime.longDreamGenerationController?.active || runtime.longDreamChapterEditController
+    const initialTab = initialTabOverride === 'diagnostics' ? 'diagnostics' : runtime.longDreamGenerationController?.active || runtime.longDreamChapterEditController
         ? 'long-dream'
         : runtime.normalizeTheaterTab(runtime.settings.lastTheaterTab);
     const { Popup, POPUP_TYPE } = SillyTavern.getContext();

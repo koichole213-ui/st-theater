@@ -24,6 +24,7 @@ export function bindSettingsEvents(runtime, $d) {
         $('[data-theater-api-mode]').removeClass('active').attr('aria-pressed', 'false')
             .filter(`[data-theater-api-mode="${runtime.settings.apiMode}"]`).addClass('active').attr('aria-pressed', 'true');
         runtime.save();
+        runtime.scheduleTokenEstimate?.(); runtime.scheduleLongDreamTokenEstimate?.(); runtime.updateWBCount?.();
     });
     $d.off('change.tdmemoryapi').on('change.tdmemoryapi', '#theater-dream-memory-api-preset', function () {
         runtime.settings.longDreamMemoryApiPresetId = $(this).val() || '';
@@ -323,6 +324,7 @@ export function bindSettingsEvents(runtime, $d) {
             $('#theater-api-model').val(val);
             runtime.settings.apiModel = val;
             runtime.save();
+            runtime.scheduleTokenEstimate?.(); runtime.scheduleLongDreamTokenEstimate?.(); runtime.updateWBCount?.();
         }
     });
 

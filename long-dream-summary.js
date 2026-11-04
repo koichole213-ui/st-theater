@@ -59,7 +59,11 @@ export async function refreshLongDreamSummary({ record, request, readLatest, sav
         const error = Object.assign(new Error('概要更新失败'), { code,
             summaryDiagnostic: { stage, batch, expectedCount, receivedCount } });
         // Preserve the existing classified network hint, never arbitrary response/error text.
-        if (stage === 'request' && cause?.diagnosticSignal) error.diagnosticSignal = cause.diagnosticSignal;
+        if (stage === 'request' && cause?.diagnosticSignal) {
+            error.diagnosticSignal = cause.diagnosticSignal;
+            const status = cause?.theaterFailure?.status;
+            if (Number.isInteger(status) && status >= 100 && status <= 599) error.theaterFailure = { status };
+        }
         throw error;
     } finally {
         clearTimeout(timer);

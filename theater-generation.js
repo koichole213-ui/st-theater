@@ -1,3 +1,4 @@
+import { estimateTavernTexts } from './tavern-token-counter.js';
 import { resolveTheaterPreset } from './preset-compat.js';
 import { filterStoryOutput, STORY_OUTPUT_RULE } from './story-output.js';
 import { resolveLayoutApiRoute } from './layout-api.js';
@@ -368,6 +369,8 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
 
 // @theater-source-begin refreshTokenEstimate
 async function refreshTokenEstimate() {
+    const tokenRequestId = (refreshTokenEstimate.requestId || 0) + 1;
+    refreshTokenEstimate.requestId = tokenRequestId;
     if (!$('#theater-token-summary-value').length) return;
     try {
         const instruction = $('#theater-instruction').val() || '';
@@ -386,8 +389,14 @@ async function refreshTokenEstimate() {
             evaluateWorldBook: false,
             estimateOnly: true,
         });
-        const estimate = runtime.estimateInputTokens(payload.tokenParts);
-        $('#theater-token-summary-value').text(`预计正文输入约 ${formatTokenCount(estimate.total)} Token`);
+        if (tokenRequestId !== refreshTokenEstimate.requestId) return;
+        $('#theater-token-summary-value').text('正在按酒馆分词统计…');
+        const keys = Object.keys(payload.tokenParts);
+        const result = await estimateTavernTexts(Object.values(payload.tokenParts), { ...runtime.settings });
+        if (tokenRequestId !== refreshTokenEstimate.requestId || !$('#theater-token-summary-value').length) return;
+        const estimate = Object.fromEntries(keys.map((key, i) => [key, result.counts[i]]));
+        estimate.total = result.counts.reduce((sum, n) => sum + n, 0);
+        $('#theater-token-summary-value').text(`预计正文输入约 ${formatTokenCount(estimate.total)} Token · ${result.source}`);
         $('#theater-token-details').text(`预设 ${formatTokenCount(estimate.preset)} · 角色/人设 ${formatTokenCount(estimate.role)} · 世界书 ${formatTokenCount(estimate.worldBook)} · 上下文 ${formatTokenCount(estimate.context)} · 续写 ${formatTokenCount(estimate.continuation)} · 规则 ${formatTokenCount(estimate.rules)} · 当前指令 ${formatTokenCount(estimate.instruction)}`);
     } catch (error) {
         console.warn('[Theater] Token estimate failed:', error);
@@ -1079,7 +1088,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             raw_stop_reason: issue.rawStopReason,
             retained_chars: readableCharCount(partialText),
         });
-        runtime.theaterError(runtime.requestFailureMessage('生成失败', issue, { retained: !!partialText }));
+        runtime.theaterError(runtime.requestFailureMessage('生成失败', issue, { retained: !!partialText }), '', { requestIssue: issue, retained: !!partialText });
     } finally {
         generationFinished = true;
         streamRenderer.reset({ flushPending: ownsGeneration() });

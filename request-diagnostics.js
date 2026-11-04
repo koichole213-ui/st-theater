@@ -1,3 +1,4 @@
+import { ERROR_HELP } from './error-help.js';
 export const REQUEST_DIAGNOSTIC_SIGNAL = Object.freeze({
     CONTENT_FILTER: 'T-API-CONTENT-FILTER',
     EMPTY: 'T-API-EMPTY',
@@ -160,13 +161,15 @@ export function safeDiagnosticReason(value) {
 }
 
 export function diagnosticSignalInfo(signal) {
+    if (CATALOG[signal]) return { ...CATALOG[signal], ...(ERROR_HELP[signal] ? { group: ERROR_HELP[signal].group, steps: ERROR_HELP[signal].steps } : {}) };
+    if (ERROR_HELP[signal]) return ERROR_HELP[signal];
     if (/^T-HTTP-5\d\d$/.test(String(signal || ''))) return CATALOG[REQUEST_DIAGNOSTIC_SIGNAL.HTTP_SERVER];
     if (/^T-HTTP-4\d\d$/.test(String(signal || ''))) return CATALOG[REQUEST_DIAGNOSTIC_SIGNAL.HTTP_CLIENT];
     return CATALOG[signal] || CATALOG[REQUEST_DIAGNOSTIC_SIGNAL.UNKNOWN];
 }
 
 export function diagnosticSignalCatalog() {
-    return Object.entries(CATALOG).map(([signal, info]) => ({ signal, ...info }));
+    return Object.keys({ ...CATALOG, ...ERROR_HELP }).map(signal => ({ signal, ...diagnosticSignalInfo(signal) }));
 }
 
 export function formatConnectionDiagnostics(connection) {
@@ -214,7 +217,7 @@ export function classifyRequestFailure(error, { stage = '正文生成' } = {}) {
     const httpStatus = Number.isFinite(Number(failure.status)) ? Number(failure.status) : null;
     let signal = error?.diagnosticSignal || failure.signal || '';
 
-    if (!CATALOG[signal] && !/^T-HTTP-[45]\d\d$/.test(signal)) {
+    if (!CATALOG[signal] && !ERROR_HELP[signal] && !/^T-HTTP-[45]\d\d$/.test(signal)) {
         const statusFromMessage = `${code} ${message}`.match(/\b([45]\d\d)\b/);
         if (httpStatus === 429) {
             signal = REQUEST_DIAGNOSTIC_SIGNAL.RATE_LIMIT;

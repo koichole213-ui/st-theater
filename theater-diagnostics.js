@@ -1,3 +1,4 @@
+import { errorHelpHTML, errorCatalogHTML } from './error-help-ui.js';
 // theater-diagnostics: receives live state and cross-feature callbacks from index.js.
 import { apiChannel, channelConfigError, API_CHANNELS } from './api-channels.js';
 import { autoSourceLabel } from './auto-mode.js';
@@ -53,18 +54,8 @@ function buildAutoModeDiagnostic() {
 // @theater-source-end buildAutoModeDiagnostic
 
 // @theater-source-begin diagnosticCatalogHTML
-function diagnosticCatalogHTML() {
-    return diagnosticSignalCatalog().map(item => `
-        <div class="theater-diagnostic-catalog-item ${item.status}">
-            <div class="theater-diagnostic-catalog-head">
-                <code>${runtime.esc(item.signal)}</code>
-                <b>${runtime.esc(item.title)}</b>
-            </div>
-            <p class="theater-diagnostic-catalog-reason"><strong>原因</strong><span>${runtime.esc(item.detail)}</span></p>
-            ${item.aliases?.length ? `<p class="theater-diagnostic-catalog-alias"><strong>同类信号</strong><span>${runtime.esc(item.aliases.join('、'))}</span></p>` : ''}
-            <p class="theater-diagnostic-catalog-action"><strong>可以怎么处理</strong><span>${runtime.esc(item.action)}</span></p>
-        </div>
-    `).join('');
+function diagnosticCatalogHTML({ recent = false } = {}) {
+    return recent ? errorHelpHTML(runtime.lastRequestIssue) : errorCatalogHTML();
 }
 // @theater-source-end diagnosticCatalogHTML
 
@@ -109,7 +100,7 @@ function buildDiagnostics() {
         diagnosticLine(runtime.continueContext ? 'warn' : 'ok', '续写状态', runtime.continueContext ? `续写模式仍有前情：约 ${readableCharCount(runtime.continueContext)} 字` : '未处于续写模式'),
         diagnosticLine(runtime.isGenerating ? 'warn' : 'ok', '生成状态', runtime.isGenerating ? '正在生成中' : '空闲'),
         diagnosticLine(runtime.lastRequestIssue ? runtime.lastRequestIssue.status : (runtime.bgError ? 'bad' : 'ok'), '最近错误信号', runtime.lastRequestIssue
-            ? `${runtime.lastRequestIssue.signal} · ${runtime.lastRequestIssue.title}${runtime.lastRequestIssue.rawStopReason ? `（上游结束原因：${runtime.lastRequestIssue.rawStopReason}）` : ''}`
+            ? `${runtime.lastRequestIssue.signal}${runtime.lastRequestIssue.httpStatus ? ` · HTTP ${runtime.lastRequestIssue.httpStatus}` : ''} · ${runtime.lastRequestIssue.title}${runtime.lastRequestIssue.rawStopReason ? `（上游结束原因：${runtime.lastRequestIssue.rawStopReason}）` : ''}`
             : (runtime.bgError ? `${REQUEST_DIAGNOSTIC_SIGNAL.UNKNOWN} · 请打开“常见问题汇总”查询` : '无')),
         ...(runtime.lastRequestIssue ? [diagnosticLine('warn', '错误处理建议', `${runtime.lastRequestIssue.signal}：${runtime.lastRequestIssue.action}`)] : []),
         diagnosticLine(runtime.lastRequestContext ? 'ok' : 'warn', '最近请求摘要', runtime.formatRequestContextSummary(runtime.lastRequestContext)),

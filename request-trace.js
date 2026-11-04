@@ -70,6 +70,7 @@ export function formatRequestTrace(trace) {
         `预设：${trace.presetName} · 后处理：${trace.postProcessing} · 工具：${trace.toolsDisabled ? '已强制禁用' : '未知'}`,
         `预设采样参数：${trace.route === 'custom' ? '未继承（使用线路默认值）' : '由酒馆主 API 决定'}`,
         `消息兼容：${requestTraceCompatibilityLabel(trace)}`,
+        `Token 统计：${trace.tokenCountSource || '字符粗估（非接口实际用量）'}`,
     ];
     const body = (trace.messages || []).map(message =>
         `[${message.index}] ${requestTraceMessageLabel(message)} · ${message.chars ?? 0} 字符 · 约 ${message.estimatedTokens ?? 0} token${message.foldedMessageCount > 1 ? ` · 合并 ${message.foldedMessageCount} 条` : ''}`

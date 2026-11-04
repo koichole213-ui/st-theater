@@ -38,7 +38,7 @@ async function exercise(kind, { tokens, stream, failure = false, config = {} } =
             current = normalizeLongDreamRecord(value);
             runtime.longDreamCache = [current]; saved.push(current); return current;
         },
-        runtimeLog() {}, renderLongDreamPanel() {}, theaterError() {},
+        runtimeLog() {}, renderLongDreamPanel() {}, theaterError(message) { warnings.push(message); },
     };
     let chunksObserved = 0;
     const request = options => requestCustomApi({ ...options, fetchImpl: async (_url, init) => {

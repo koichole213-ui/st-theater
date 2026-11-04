@@ -1,3 +1,5 @@
+import { statusError } from './api-response.js';
+import { estimateTavernTexts } from './tavern-token-counter.js';
 import { showModelPicker } from './model-picker.js';
 import { beginApiFormRequest } from './api-channel-settings.js';
 import { beginVertexRequest } from './vertex-credentials.js';
@@ -17,7 +19,14 @@ export function createTheaterApi(runtime, { presentModelPicker = showModelPicker
 // @theater-source-begin captureActualRequestTrace
 function captureActualRequestTrace(details, purpose = 'support') {
     if (purpose !== 'creative') return;
-    runtime.lastRequestTrace = createRequestTrace({ ...details, purpose });
+    const trace = runtime.lastRequestTrace = createRequestTrace({ ...details, purpose });
+    // Display-only accounting. Never delay or modify the generation request.
+    if (typeof estimateTavernTexts === 'function') estimateTavernTexts((details.messages || []).map(m => m.content),
+        { apiMode: details.route === 'main' ? 'main' : 'custom', apiModel: details.model }).then(result => {
+        if (runtime.lastRequestTrace !== trace) return;
+        trace.messages.forEach((message, i) => { message.estimatedTokens = result.counts[i]; });
+        trace.tokenCountSource = result.source;
+    }).catch(() => {});
 }
 // @theater-source-end captureActualRequestTrace
 
@@ -178,7 +187,7 @@ async function fetchModelList() {
             : (key ? { 'Authorization': `Bearer ${key}` } : {});
         const res = await fetch(modelsEndpoint, { method: 'GET', headers });
         if (!res.ok) {
-            throw { code: 'THEATER_HTTP_STATUS', theaterFailure: { status: res.status } };
+            throw statusError(res.status, await res.text().catch(() => ''));
         }
         const data = await res.json();
         if (!formRequest.current()) return;
@@ -208,6 +217,7 @@ async function fetchModelList() {
                     && saved.apiKey === config.apiKey && saved.apiProtocol === config.apiProtocol) {
                     runtime.settings.apiModel = model;
                     runtime.save();
+                    runtime.scheduleTokenEstimate?.(); runtime.scheduleLongDreamTokenEstimate?.(); runtime.updateWBCount?.();
                 }
             },
         });
@@ -218,7 +228,7 @@ async function fetchModelList() {
         markFailed(diagnostics.metrics, issue.signal);
         diagnostics.publish({ lastRequestIssue: issue });
         console.error('[Theater] 获取模型列表失败:', issue.signal);
-        if (formRequest.current()) runtime.theaterError(runtime.requestFailureMessage('获取模型失败', issue));
+        if (formRequest.current()) runtime.theaterError(runtime.requestFailureMessage('获取模型失败', issue), '', { requestIssue: issue, retained: false });
     } finally {
         if (!diagnostics.metrics.failedAt) markCompleted(diagnostics.metrics);
         runtime.recordRequestMetrics(diagnostics.metrics);
@@ -267,19 +277,16 @@ async function testAPIConnection() {
             if (formRequest.current()) toastr.success('接口已响应；实际写作与长文本输出仍需体验');
         }
         else {
-            const issue = classifyRequestFailure({
-                code: 'THEATER_HTTP_STATUS',
-                theaterFailure: { status: res.status },
-            }, { stage: '连接测试' });
+            const issue = classifyRequestFailure(statusError(res.status, await res.text().catch(() => '')), { stage: '连接测试' });
             markFailed(diagnostics.metrics, issue.signal);
             diagnostics.publish({ lastRequestIssue: issue });
-            if (formRequest.current()) runtime.theaterError(runtime.requestFailureMessage('连接失败', issue));
+            if (formRequest.current()) runtime.theaterError(runtime.requestFailureMessage('连接失败', issue), '', { requestIssue: issue, retained: false });
         }
     } catch (e) {
         const issue = classifyRequestFailure(e, { stage: '连接测试' });
         markFailed(diagnostics.metrics, issue.signal);
         diagnostics.publish({ lastRequestIssue: issue });
-        if (formRequest.current()) runtime.theaterError(runtime.requestFailureMessage('连接失败', issue));
+        if (formRequest.current()) runtime.theaterError(runtime.requestFailureMessage('连接失败', issue), '', { requestIssue: issue, retained: false });
     } finally {
         if (!diagnostics.metrics.failedAt) markCompleted(diagnostics.metrics);
         runtime.recordRequestMetrics(diagnostics.metrics);

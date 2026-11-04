@@ -156,7 +156,7 @@ function theaterError(message, title = '', opts = {}) {
     const text = String(message || '');
     const head = title || '小剧场报错';
     runtimeLog('error', head, { message: text });
-    notifyTheaterError(text, head, opts);
+    notifyTheaterError(text, head, { ...opts, openDiagnostics: () => { const tab = document.querySelector('.theater-tab[data-tab="diagnostics"]'); if (tab) { tab.click(); const recent = document.getElementById('theater-recent-request-issue'); if (recent) recent.innerHTML = runtime.diagnosticCatalogHTML({ recent: true }); } else { runtime.settings.lastTheaterTab = 'diagnostics'; runtime.openTheaterPopup('diagnostics'); } } });
 }
 // @theater-source-end theaterError
 

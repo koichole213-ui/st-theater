@@ -40,7 +40,7 @@ export async function retryCurrentLayout(runtime) {
         if (error?.name === 'AbortError') toastr.info('已停止排版，正文仍保留');
         else {
             const issue = runtime.captureRequestIssue(error, { stage: '重新 HTML 排版' });
-            runtime.theaterError(runtime.requestFailureMessage('排版失败，正文仍保留', issue));
+            runtime.theaterError(runtime.requestFailureMessage('排版失败，正文仍保留', issue, { retained: true }), '', { requestIssue: issue, retained: true });
         }
         return false;
     } finally {
