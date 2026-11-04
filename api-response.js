@@ -174,6 +174,9 @@ function htmlResponseError(raw) {
 }
 
 function streamPayloadError(message) {
+    if (httpErrorReason(message) === 'T-API-MESSAGE-END') {
+        return createDiagnosticError('T-API-MESSAGE-END', { code: 'THEATER_ASSISTANT_TAIL_UNSUPPORTED', phase: 'body', transport: 'stream' });
+    }
     if (isContentBlockedErrorMessage(message)) {
         return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
             code: 'THEATER_CONTENT_FILTER', rawStopReason: message, phase: 'body', transport: 'stream',

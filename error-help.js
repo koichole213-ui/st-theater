@@ -14,12 +14,12 @@ export const ERROR_HELP=Object.freeze({
   },
   "T-API-MESSAGE-END": {
     "title": "模型不接受当前消息结尾",
-    "detail": "接口明确说明：请求不能以模型消息结尾。",
-    "action": "这是消息格式兼容问题，先保留预设和世界书。",
+    "detail": "当前模型不支持请求以助手消息结尾（助手预填）。",
+    "action": "保留预设内容；需要助手预填时，请选择支持它的模型或线路。",
     "steps": [
       "保留当前预设、世界书和指令，不需要先删除内容。",
       "记录所选渠道、模型和错误时间，复制脱敏诊断报告。",
-      "可暂用已验证正常的线路；等待对这类消息格式的兼容修复。"
+      "插件不会自动改写、删除助手尾或补用户消息；需要保留助手预填时，手动选择支持它的模型或线路。"
     ],
     "group": "消息与参数",
     "status": "bad"
@@ -386,7 +386,7 @@ export function httpErrorReason(body='') {
   if(!message)break;value=message;text=message;
  }
  if(/service account authentication failed|invalid_grant|invalid jwt|invalid jwt signature|unauthorized_client/i.test(text))return 'T-API-CREDENTIAL-AUTH';
- if(/requests? ending with (?:a )?model turn|does not support assistant message prefill|prefill(?:ed)? (?:model|assistant) (?:turns?|messages?).*(?:not supported|unsupported)/i.test(text))return 'T-API-MESSAGE-END';
+ if(/requests? ending with (?:a )?model turn.{0,60}(?:not supported|unsupported|not allowed)|(?:does not|doesn\x27t) support (?:assistant|model)(?: message)? prefill|(?:assistant|model)(?: message)? prefill(?:ing)? (?:is )?(?:not supported|unsupported)|(?:last|final) (?:message|turn)(?: in (?:the )?(?:request|conversation))? (?:must|should) (?:be|have (?:the )?role) [\x27\"]?user|(?:must not|cannot|can\x27t) end (?:with|on) (?:an? )?[\x27\"]?(?:assistant|model)|prefill(?:ed)? (?:model|assistant) (?:turns?|messages?).*(?:not supported|unsupported)/i.test(text))return 'T-API-MESSAGE-END';
  if(/(?:insufficient|exhausted|out of|no remaining).{0,24}(?:credits?|balance)|(?:credits?|balance).{0,24}(?:insufficient|exhausted)|余额不足|余额已耗尽/i.test(text))return 'T-API-CREDIT-EXHAUSTED';
  if(/(?:model|publisher model).{0,100}(?:not found|does not exist|not available|not supported in|not accessible)|(?:location|region).{0,80}(?:not supported|not available|invalid)|模型.{0,30}(?:不存在|不可用)|地区.{0,20}(?:不支持|不可用)/i.test(text))return 'T-API-MODEL-UNAVAILABLE';
  if(/unknown (?:name|field|parameter)|unrecognized (?:field|parameter)|unsupported (?:parameter|field)|(?:parameter|field).{0,80}(?:not supported|not allowed)|不支持.{0,10}参数/i.test(text))return 'T-API-PARAMETER-UNSUPPORTED';

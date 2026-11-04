@@ -95,7 +95,7 @@ export function noToolsPostProcessingMode(value = '') {
     return Object.values(PROMPT_POST_PROCESSING).includes(mode) ? mode : PROMPT_POST_PROCESSING.NONE;
 }
 
-export function applyPromptPostProcessing(messages = [], mode = '', placeholder = '[Start a new chat]') {
+export function applyPromptPostProcessing(messages = [], mode = '', placeholder = "Let's get started.") {
     const normalized = normalizeRequestMessages(messages);
     const safeMode = noToolsPostProcessingMode(mode);
     if (safeMode === PROMPT_POST_PROCESSING.NONE) return normalized;
@@ -104,31 +104,25 @@ export function applyPromptPostProcessing(messages = [], mode = '', placeholder 
         return content ? [{ role: 'user', content, source: 'post-processing', sourceId: 'single' }] : [];
     }
 
-    const merged = mergeAdjacentMessages(normalized);
-    if (safeMode !== PROMPT_POST_PROCESSING.STRICT) return merged;
+    if (safeMode !== PROMPT_POST_PROCESSING.STRICT) return mergeAdjacentMessages(normalized);
 
-    const result = [];
-    for (const message of merged) {
-        const previous = result[result.length - 1];
-        if (message.role === 'system') {
-            result.push(message);
-            continue;
-        }
-        if (!previous || previous.role === 'system') {
-            if (message.role === 'assistant') {
-                result.push({ role: 'user', content: placeholder, source: 'post-processing', sourceId: 'strict-placeholder' });
-            }
-        } else if (previous.role === message.role) {
-            result.push({
-                role: message.role === 'user' ? 'assistant' : 'user',
-                content: placeholder,
-                source: 'post-processing',
-                sourceId: 'strict-placeholder',
-            });
-        }
-        result.push(message);
+    // SillyTavern 1.15 mergeMessages(strict=true, placeholders=true):
+    // merge first, convert later system turns in place, add a user only at
+    // the start when required, then merge again. Never repair an assistant tail.
+    const named = normalized.map(({ name, ...message }) => ({ ...message,
+        content: name && message.role !== 'system' && !message.content.startsWith(`${name}: `)
+            ? `${name}: ${message.content}` : message.content,
+    }));
+    const merged = mergeAdjacentMessages(named);
+    const userPlaceholder = () => ({ role: 'user', content: placeholder,
+        source: 'post-processing', sourceId: 'strict-placeholder' });
+    if (!merged.length) return [userPlaceholder()];
+    for (let index = 1; index < merged.length; index++) {
+        if (merged[index].role === 'system') merged[index].role = 'user';
     }
-    return result;
+    if (merged[0].role === 'system' && merged[1]?.role !== 'user') merged.splice(1, 0, userPlaceholder());
+    else if (merged[0].role !== 'system' && merged[0].role !== 'user') merged.unshift(userPlaceholder());
+    return mergeAdjacentMessages(merged);
 }
 
 function numeric(value, fallback = 0) {

@@ -6,7 +6,8 @@ export function promptInspectorHTML() {
     return `<details class="theater-section theater-prompt-inspector" data-theater-prompt-inspector open>
         <summary><span>完整提示词查看器</span>${chevronIcon}</summary><div class="theater-pi-body">
         <div class="theater-pi-selects"><div class="theater-pi-field"><label for="theater-pi-request">选择请求</label><select id="theater-pi-request" class="theater-input" data-pi-request><option value="">暂无请求记录</option></select></div>
-        <div class="theater-pi-field"><label>查看阶段</label><div class="theater-pi-segmented" role="group" aria-label="查看阶段"><button type="button" class="active" data-pi-stage="assembled" aria-pressed="true">组装消息</button><button type="button" data-pi-stage="sent" aria-pressed="false">发送前</button></div></div></div>
+        <div class="theater-pi-field"><label>查看阶段</label><div class="theater-pi-segmented" role="group" aria-label="查看阶段"><button type="button" class="active" data-pi-stage="assembled" aria-pressed="true">组装消息</button><button type="button" data-pi-stage="sent" aria-pressed="false">交给接口的消息</button></div></div></div>
+        <p class="theater-pi-notice">“交给接口的消息”记录插件交出的内容；酒馆后端或中转仍可能继续转换，不代表模型最终收到的内容。</p>
         <div class="theater-pi-meta" data-pi-meta></div><div class="theater-pi-tools"><button type="button" data-pi-action="toggle">全部展开</button><button type="button" class="theater-pi-export" data-pi-action="export" aria-label="导出 JSON" title="导出 JSON">⇩</button></div>
         <div class="theater-pi-search-row"><input class="theater-input" type="search" data-pi-search placeholder="搜索提示词内容或来源…" aria-label="搜索提示词"><button type="button" class="primary" data-pi-action="copy">复制全文</button></div>
         <p class="theater-pi-count" data-pi-count></p><div class="theater-pi-messages" data-pi-messages></div>

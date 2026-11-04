@@ -49,59 +49,8 @@ export function buildApiEndpoint(url, protocol) {
 
 export const MESSAGE_COMPATIBILITY = Object.freeze({
     NATIVE: 'native',
-    OPENAI_SYSTEM_FIRST: 'openai-system-first',
     ANTHROPIC_TOP_LEVEL_SYSTEM: 'anthropic-top-level-system',
 });
-
-function mergeAdjacentCompatibilityMessages(messages = [], source = 'independent-api-compat') {
-    const merged = [];
-    for (const message of messages) {
-        const previous = merged[merged.length - 1];
-        if (previous?.role === message.role) {
-            previous.content = [previous.content, message.content].filter(Boolean).join('\n\n');
-            previous.source = source;
-            previous.sourceId = `${message.role}-fold`;
-            previous.foldedMessageCount = (previous.foldedMessageCount || 1) + (message.foldedMessageCount || 1);
-        } else {
-            merged.push({ ...message });
-        }
-    }
-    return merged;
-}
-
-// OpenAI 兼容网关对中后段 system 的支持并不一致。只要 system 出现在
-// 对话消息之后，就把全部 system 按原顺序合为开头一条，并保留每一轮
-// user/assistant 的先后和完整内容。原本已经是纯开头 system 的请求不改。
-export function applyIndependentOpenAICompatibility(messages = []) {
-    const source = Array.isArray(messages) ? messages.map(message => ({ ...message })) : [];
-    let dialogueStarted = false;
-    let hasDeferredSystem = false;
-    for (const message of source) {
-        if (message.role === 'system') {
-            if (dialogueStarted) hasDeferredSystem = true;
-        } else {
-            dialogueStarted = true;
-        }
-    }
-    const hasRiskyTopology = hasDeferredSystem;
-    if (!hasRiskyTopology) {
-        return { messages: source, mode: MESSAGE_COMPATIBILITY.NATIVE };
-    }
-
-    const systemMessages = source.filter(message => message.role === 'system');
-    const dialogueMessages = source.filter(message => message.role !== 'system');
-    const foldedSystem = {
-        role: 'system',
-        content: systemMessages.map(message => message.content).filter(Boolean).join('\n\n'),
-        source: 'openai-compat',
-        sourceId: 'system-fold',
-        foldedMessageCount: systemMessages.length,
-    };
-    return {
-        messages: [foldedSystem, ...mergeAdjacentCompatibilityMessages(dialogueMessages, 'openai-compat')],
-        mode: MESSAGE_COMPATIBILITY.OPENAI_SYSTEM_FIRST,
-    };
-}
 
 export function buildApiRequest({
     url, protocol, key, model, systemPrompt, userPrompt, messages,
@@ -132,14 +81,13 @@ export function buildApiRequest({
                 : MESSAGE_COMPATIBILITY.NATIVE,
         };
     }
-    const compatible = applyIndependentOpenAICompatibility(finalMessages);
     const headers = { 'Content-Type': 'application/json', Accept: stream ? 'text/event-stream' : 'application/json' };
     if (key) headers.Authorization = `Bearer ${key}`;
     return {
         protocol: resolved, endpoint, headers,
-        body: { model, messages: compatible.messages.map(message => ({ role: message.role, content: message.content })), stream, max_tokens: maxTokens },
-        messages: compatible.messages,
-        messageCompatibility: compatible.mode,
+        body: { model, messages: finalMessages.map(message => ({ role: message.role, content: message.content })), stream, max_tokens: maxTokens },
+        messages: finalMessages,
+        messageCompatibility: MESSAGE_COMPATIBILITY.NATIVE,
     };
 }
 

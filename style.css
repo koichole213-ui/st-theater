@@ -7706,4 +7706,4 @@ body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-a
 
 :is(#toast-container,.theater-error-toast-layer) > .theater-request-error-toast{max-height:calc(100dvh - 32px);overflow-y:auto;overscroll-behavior:contain} .theater-error-help [data-error-status]{font-size:11px;text-align:left}
 
-.theater-error-toast-layer{position:fixed;top:12px;right:12px;z-index:2147483647;max-width:calc(100vw - 24px);pointer-events:none}.theater-error-toast-layer>.toast{pointer-events:auto}
+.theater-error-toast-layer{position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:safe center;gap:12px;padding:16px 12px;box-sizing:border-box;overflow-y:auto;max-width:100vw;pointer-events:none}.theater-error-toast-layer>.toast{pointer-events:auto;flex:none;margin:0;max-width:100%}

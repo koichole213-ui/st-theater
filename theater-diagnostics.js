@@ -106,7 +106,7 @@ function buildDiagnostics() {
         diagnosticLine(runtime.lastRequestContext ? 'ok' : 'warn', '最近请求摘要', runtime.formatRequestContextSummary(runtime.lastRequestContext)),
         diagnosticLine(runtime.lastRequestTrace ? 'ok' : 'warn', '创作请求结构', runtime.lastRequestTrace
             ? `${runtime.lastRequestTrace.route}/${runtime.lastRequestTrace.transport} · ${runtime.lastRequestTrace.messages.length} 条消息 · ${runtime.lastRequestTrace.route === 'custom' ? '预设采样参数未继承' : '预设采样参数由酒馆主 API 决定'} · 消息兼容：${requestTraceCompatibilityLabel(runtime.lastRequestTrace)} · 工具已强制禁用`
-            : '暂无；完成一次插件正文请求后会在此显示发送前的角色、来源和长度，不包含消息正文'),
+            : '暂无；完成一次插件正文请求后会在此显示交给接口的消息角色、来源和长度，不包含消息正文'),
         diagnosticLine(runtime.lastApiResponseSummary?.hasText ? 'ok' : 'warn', '最近响应结构', formatApiResponseSummary(runtime.lastApiResponseSummary)),
         diagnosticLine(runtime.lastApiConnectionSummary?.state === 'failed' ? 'bad' : runtime.lastApiConnectionSummary?.state === 'complete' ? 'ok' : 'warn', '独立 API 连接过程', formatConnectionDiagnostics(runtime.lastApiConnectionSummary)),
         buildAutoModeDiagnostic(),

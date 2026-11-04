@@ -19,7 +19,7 @@ export function snapshotPromptMessages(messages = []) {
 export function promptMessageSource(message) {
     const slots = { charDescription: 'Char 描述', charPersonality: 'Char 性格', personaDescription: 'User 人设', scenario: '角色场景', dialogueExamples: '示例对话', worldInfoBefore: '前置世界书', worldInfoAfter: '后置世界书', 'task-preamble': '小剧场任务说明', 'theater-task': '小剧场 · 本次任务' };
     if (slots[message.sourceId]) return slots[message.sourceId];
-    const sources = { preset: '预设', 'preset-depth': '预设 · 深度条目', 'chat-history': '聊天背景', 'world-info-depth': '世界书 · 深度条目', 'world-info-author-note': '作者注', 'persona-depth': 'User 人设 · 深度条目', 'character-depth': '角色深度备注', 'fallback-slot': '补充资料', 'squashed-system': '合并后的 system', 'openai-compat': '发送前 · 合并消息', 'post-processing': '预设后处理' };
+    const sources = { preset: '预设', 'preset-depth': '预设 · 深度条目', 'chat-history': '聊天背景', 'world-info-depth': '世界书 · 深度条目', 'world-info-author-note': '作者注', 'persona-depth': 'User 人设 · 深度条目', 'character-depth': '角色深度备注', 'fallback-slot': '补充资料', 'squashed-system': '合并后的 system', 'openai-compat': '旧版兼容 · 合并消息', 'post-processing': '预设后处理' };
     return sources[message.source] || (message.source === 'request' ? '请求消息' : message.source);
 }
 

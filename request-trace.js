@@ -49,7 +49,7 @@ export function createRequestTrace({
 
 export function requestTraceCompatibilityLabel(trace = {}) {
     if (trace.route !== 'custom') return '由酒馆主 API 决定';
-    if (trace.messageCompatibility === 'openai-system-first') return 'OpenAI system 已安全前置';
+    if (trace.messageCompatibility === 'openai-system-first') return '旧版 system 前置';
     if (trace.messageCompatibility === 'anthropic-top-level-system') return 'Anthropic 顶层 system';
     return '原始消息结构';
 }

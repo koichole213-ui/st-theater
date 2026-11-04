@@ -1,5 +1,6 @@
+import { httpErrorReason } from './error-help.js';
 import { beginVertexRequest } from './vertex-credentials.js';
-import { createIndependentRequest, checkVertexCredential } from './independent-request.js';
+import { createIndependentRequest, checkVertexCredential, assertSupportedMessageTail } from './independent-request.js';
 import { apiChannel } from './api-channels.js';
 import { emitReasoningSafeChunk, reasoningOnlyError, reasoningSafeResult, noTextResponseError, safeUsageSummary, publicResult, statusError, normalizeFetchError, readNonStreamingResponse, readSSEStream } from './api-response.js';
 export { CUSTOM_STREAM_IDLE_TIMEOUT_MS, readNonStreamingResponse, readSSEStream } from './api-response.js';
@@ -41,7 +42,9 @@ async function performCustomFetch(fetchRequest, { phase = 'body', transport = ''
 }
 
 function shouldNotFallbackMainApi(error) {
+    if (error?.diagnosticSignal === 'T-API-MESSAGE-END') return true;
     return [
+        'THEATER_ASSISTANT_TAIL_UNSUPPORTED',
         'THEATER_CONTENT_FILTER', 'THEATER_RATE_LIMIT', 'THEATER_OUTPUT_LIMIT', 'THEATER_CONFIG',
         'THEATER_REASONING_ONLY', 'THEATER_RESPONSE_EMPTY', 'THEATER_STREAM_EMPTY',
         'MAIN_FIRST_TOKEN_TIMEOUT', 'MAIN_STREAM_IDLE_TIMEOUT', 'MAIN_RESPONSE_TIMEOUT',
@@ -51,6 +54,9 @@ function shouldNotFallbackMainApi(error) {
 function normalizeMainApiFallbackError(error) {
     if (error?.name === 'AbortError' || error?.diagnosticSignal) return error;
     const message = String(error?.message || error || '');
+    if (httpErrorReason(message) === 'T-API-MESSAGE-END') {
+        return createDiagnosticError('T-API-MESSAGE-END', { code: 'THEATER_ASSISTANT_TAIL_UNSUPPORTED', phase: 'main', transport: 'ChatCompletionService' });
+    }
     if (isContentBlockedErrorMessage(message)) {
         return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
             code: 'THEATER_CONTENT_FILTER', phase: 'main', transport: 'ChatCompletionService',
@@ -118,6 +124,7 @@ export async function requestMainApi({
         postProcessing,
     );
     const mainApiSettings = captureMainApiRequestSettings(ctx, getContext);
+    assertSupportedMessageTail(mainApiSettings, finalMessages);
     const { maxTokens } = mainApiSettings;
     const model = mainApiSettings.model || '未识别';
     const CCS = chatCompletionService || mainApiSettings.context?.ChatCompletionService || ctx?.ChatCompletionService;
@@ -369,6 +376,9 @@ export function throwFriendlyMainApi(error, onChunk = noop) {
     if (error?.name === 'AbortError') throw error;
     if (error?.diagnosticSignal) throw error;
     const message = String(error?.message || error || '');
+    if (httpErrorReason(message) === 'T-API-MESSAGE-END') {
+        throw createDiagnosticError('T-API-MESSAGE-END', { code: 'THEATER_ASSISTANT_TAIL_UNSUPPORTED', phase: 'main', transport: 'TavernHelper' });
+    }
     if (isContentBlockedErrorMessage(message)) {
         throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
             code: 'THEATER_CONTENT_FILTER', phase: 'main', transport: 'TavernHelper',

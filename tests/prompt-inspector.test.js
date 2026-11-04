@@ -110,3 +110,10 @@ test('real custom adapter capture matches the outgoing request while summary/log
         for (const key of ['temperature', 'top_p']) assert.equal(key in bodies[0], false);
     } finally { globalThis.fetch = oldFetch; promptInspectorStore.clear(); }
 });
+
+test('交给接口的消息明确说明后续转换，不称模型最终请求', () => {
+    const html = promptInspectorHTML();
+    assert.match(html, />交给接口的消息<\/button>/);
+    assert.match(html, /不代表模型最终收到的内容/);
+    assert.doesNotMatch(html, />发送前<\/button>/);
+});
