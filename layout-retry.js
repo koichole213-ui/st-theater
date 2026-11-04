@@ -25,7 +25,9 @@ export async function retryCurrentLayout(runtime) {
             apiRoute: runtime.captureGenerationApiRoute(SillyTavern.getContext()),
             metricScope: 'final-render-retry' });
         if (controller.signal.aborted || runtime.currentGenerationResult !== item || item.html !== originalHtml) return false;
-        const updated = { ...item, html: result.html, mode: result.mode };
+        const updated = { ...item, html: result.html, mode: result.mode,
+            ...(retry.originalHtml ? { originalFailedHtml: retry.originalHtml } : {}),
+        };
         delete updated.layoutRetry;
         if (!await runtime.storeCurrentResult(updated)) return false;
         const version = runtime.continuationSession?.versions?.find(v => v.html === originalHtml && v.text === retry.sourceText);
@@ -38,7 +40,9 @@ export async function retryCurrentLayout(runtime) {
         return true;
     } catch (error) {
         if (error?.name === 'AbortError') toastr.info('已停止排版，正文仍保留');
-        else {
+        else if (error?.code === 'THEATER_LAYOUT_API_MISSING') {
+            runtime.theaterError('请先在【设置 → 独立 HTML 排版 API】中启用并绑定有效预设，再点击重试；已有正文仍保留。');
+        } else {
             const issue = runtime.captureRequestIssue(error, { stage: '重新 HTML 排版' });
             runtime.theaterError(runtime.requestFailureMessage('排版失败，正文仍保留', issue, { retained: true }), '', { requestIssue: issue, retained: true });
         }

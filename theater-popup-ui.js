@@ -515,6 +515,10 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
 
 
             </div>
+            <div class="theater-config-setting-row">
+                <span class="theater-config-setting-copy"><b>流式实时显示</b><small>开启时逐字显示；关闭后等待完整内容返回</small></span>
+                <label class="theater-config-switch" aria-label="流式实时显示"><input type="checkbox" id="theater-stream-enabled" ${runtime.settings.streamEnabled !== false ? 'checked' : ''}><span></span></label>
+            </div>
             <details class="theater-config-extra-details">
                 <summary><span><i class="fa-solid fa-gear"></i> 高级设置</span><i class="fa-solid fa-chevron-down"></i></summary>
                 <div class="theater-config-extra-body" data-config-extra-body="generation">
@@ -522,10 +526,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                         <label for="theater-max-output-tokens"><b>单轮 Max Output Tokens</b><small>模型不支持时会自动降低重试</small></label>
                         <input id="theater-max-output-tokens" class="theater-input theater-number-input" type="number" min="256" max="131072" step="256" value="${normalizeMaxTokens(runtime.settings.maxOutputTokens)}">
                     </div>
-            <div class="theater-config-setting-row">
-                <span class="theater-config-setting-copy"><b>流式实时显示</b><small>逐字生成正文，可实时查看效果</small></span>
-                <label class="theater-config-switch" aria-label="流式实时显示"><input type="checkbox" id="theater-stream-enabled" ${runtime.settings.streamEnabled !== false ? 'checked' : ''}><span></span></label>
-            </div>
+
                 </div>
             </details>
                 <div class="theater-config-api-actions" id="theater-custom-api-actions" ${runtime.settings.apiMode === 'main' ? 'hidden' : ''}>

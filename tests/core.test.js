@@ -3750,13 +3750,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.6c 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.6d 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.6c'/);
-    assert.equal(manifest.version, '4.4.6c');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.6c/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.6d'/);
+    assert.equal(manifest.version, '4.4.6d');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.6d/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 
@@ -7075,7 +7075,7 @@ test('普通新稿第三轮中断后保存再续写只带第二轮和未完成�
     const live = '第三轮未完成' + '丙'.repeat(4000);
     let saved;
     const context = { currentGenerationResult: null, resultEditSnapshot: null, lastGeneratedHtml: '<main>中断保留正文</main>', currentDisplayHtml: '', currentOutputMode:'text',
-        retainedResultSource:null, generationRoles:[], instruction:'创作指令', sourceTags:['标签'], generationSourceConfig:{},
+        retainedResultSource:null, singleHtmlLayoutRetry:null, generationRoles:[], instruction:'创作指令', sourceTags:['标签'], generationSourceConfig:{},
         continuationRun:null, currentGenerationJob:{segments:rounds}, liveBodyText:live,
         continuationRoundHistory, prepareContinuationContext:value=>value.trim(), normalizeContinuationRounds,
         continuationSession:null, displayedContinuationVersion:()=>null, recentCache:[], historyCache:[],

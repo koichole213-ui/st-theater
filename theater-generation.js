@@ -1,4 +1,4 @@
-import { assertHtmlIntegrity } from './html-integrity.js';
+import { assertHtmlIntegrity, recoverHtmlText } from './html-integrity.js';
 import { estimateTavernTexts } from './tavern-token-counter.js';
 import { resolveTheaterPreset } from './preset-compat.js';
 import { filterStoryOutput, STORY_OUTPUT_RULE } from './story-output.js';
@@ -558,9 +558,16 @@ async function requestFinalRenderedHtml({
     onRetry = () => {},
     renderLabel = '所选模板',
     metricScope = 'final-render',
+    requireIndependentApi = false,
 } = {}) {
     const finalRenderPayload = buildFinalRenderPayload({ sourceText, rules, originalInstruction });
-    const renderApiRoute = resolveLayoutApiRoute(apiRoute || runtime.captureGenerationApiRoute(ctx));
+    const bodyApiRoute = apiRoute || runtime.captureGenerationApiRoute(ctx);
+    if (requireIndependentApi && bodyApiRoute?.layoutSelection?.enabled !== true) {
+        const error = new Error('请先在设置中启用独立 HTML 排版 API 并绑定排版预设，再重新排版；已有正文仍保留');
+        error.code = 'THEATER_LAYOUT_API_MISSING';
+        throw error;
+    }
+    const renderApiRoute = resolveLayoutApiRoute(bodyApiRoute);
     runtime.lastRequestContext = {
         kind: '最终 HTML 排版',
         sourceChars: readableCharCount(sourceText),
@@ -798,6 +805,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     let nextProgressAt = 1000;
     let retainStreamAsBody = true;
     let currentRoundStreamText = '';
+    let firstHtmlSource = '';
     const onChunk = (value) => {
         if (generationFinished || generationAbortController.signal.aborted || !ownsGeneration()) return;
         const text = retainStreamAsBody
@@ -832,7 +840,6 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
 
     try {
         let firstHtml = '';
-        let firstHtmlSource = '';
         let roundPayload = payload;
         while (true) {
             if (generationJob.aborted || !ownsGeneration()) throw new DOMException('Aborted', 'AbortError');
@@ -933,6 +940,14 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         } else if (!stagedRenderMode && runtime.currentGenerationJob.segments.length === 1) {
             // Check only after the body segment is retained, so a bad layout cannot lose it.
             assertHtmlIntegrity(firstHtmlSource || firstHtml);
+            if (!/<!doctype\s+html\b|<[a-z][\w:-]*(?:\s[^<>]*)?\/?>/i.test(firstHtmlSource || firstHtml)
+                || runtime.currentGenerationJob.stopReason === 'length') {
+                const error = new Error(runtime.currentGenerationJob.stopReason === 'length'
+                    ? '一轮 HTML 达到输出上限，尚未确认完整；已保留正文，可重新 HTML 排版'
+                    : '模型返回了文字，未完成 HTML 排版；已保留正文，可重新 HTML 排版');
+                error.code = 'THEATER_RENDER_VALIDATION';
+                throw error;
+            }
             runtime.lastGeneratedHtml = firstHtml || runtime.textFallbackHtml(newText);
         } else {
             const { rules } = plannedRenderSelection;
@@ -1048,7 +1063,17 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         const liveBodyText = retainStreamAsBody
             ? (htmlToPlainText(currentRoundStreamText) || String(currentRoundStreamText || '').trim())
             : '';
-        const partialText = generationTextWithLiveSegment(runtime.currentGenerationJob, liveBodyText);
+        const singleHtmlSource = !isPlainTextRender && !stagedRenderMode
+            && runtime.currentGenerationJob.segments.length <= 1
+            ? firstHtmlSource || currentRoundStreamText : '';
+        // Extract existing text only. Never send half-written scripts as the manuscript.
+        const partialText = singleHtmlSource ? recoverHtmlText(singleHtmlSource)
+            : generationTextWithLiveSegment(runtime.currentGenerationJob, liveBodyText);
+        const singleHtmlLayoutRetry = partialText && singleHtmlSource ? {
+            sourceText: partialText, rules: plannedRenderSelection.rules,
+            originalInstruction: payload.generationFoundation?.originalInstruction || '',
+            renderLabel: renderTemplate, requireIndependentApi: true, originalHtml: singleHtmlSource,
+        } : null;
         if (partialText) {
             runtime.runtimeLog('warn', '渲染路径', { path: '错误兜底', retained_chars: readableCharCount(partialText) });
             runtime.lastGeneratedText = partialText;
@@ -1057,6 +1082,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             runtime.retainedResultSource = {
                 html: runtime.lastGeneratedHtml, mode: runtime.currentOutputMode, instruction,
                 ...continuationRun?.historyMetadata,
+                ...(singleHtmlLayoutRetry ? { layoutRetry: singleHtmlLayoutRetry } : {}),
                 tags: [...sourceTags], sourceConfig: generationSourceConfig, roleSources: generationRoles,
                 continuationRounds: continuationRoundHistory(continuationRun?.source.rounds, [...runtime.currentGenerationJob.segments, liveBodyText].map(prepareContinuationContext)),
             };

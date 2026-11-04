@@ -1,4 +1,4 @@
-import { assertHtmlIntegrity } from '../html-integrity.js';
+import { assertHtmlIntegrity, recoverHtmlText } from '../html-integrity.js';
 import { errorHelpHTML, errorCatalogHTML, bindErrorLibrary } from '../error-help-ui.js';
 import { statusError } from '../api-response.js';
 import { showModelPicker } from '../model-picker.js';
@@ -62,7 +62,7 @@ export function readTheaterImplementation() {
 // fixtures. This preserves their assertions about writes, identity and failures.
 export function runInNewContext(code, sandbox = {}, options) {
     sandbox.lastRequestIssue ??= null; sandbox.lastRequestMetrics ??= null; sandbox.isGenerating ??= false;
-    Object.assign(sandbox, { errorHelpHTML, errorCatalogHTML, bindErrorLibrary, statusError, assertHtmlIntegrity });
+    Object.assign(sandbox, { errorHelpHTML, errorCatalogHTML, bindErrorLibrary, statusError, assertHtmlIntegrity, recoverHtmlText });
     // Real imported helpers used by relocated production bodies. Fixtures remain synthetic.
     Object.assign(sandbox, { presentModelPicker: showModelPicker, syncContextExclusionDraft, beginApiFormRequest, beginVertexRequest, captureIndependentConfig, channelConfigError, channelFields, apiChannel, API_CHANNELS, apiChannelSettingsHTML, readApiChannelFields, syncApiChannelForm, bindApiChannelSettings, createIndependentRequest, checkVertexCredential, beginRequestDiagnostics, promptInspectorHTML, bindPromptInspector, refreshPromptInspector, beginPromptInspection, recordSentInspection, longDreamPromptPlacement, normalizeManualTarget, longDreamWritingPlan, resolveTheaterPreset, filterStoryOutput, STORY_OUTPUT_RULE, captureLayoutApiSelection, resolveLayoutApiRoute, bindLayoutApi, bindLayoutRetry, bindReleaseNotes, releaseNotesHTML, latestReleaseVersion, hasUnreadRelease, creativeEnhancementPrompt, hasPendingManualSummary, pendingManualStoryEntries, summaryEditorHTML, bindSummaryEditor, isHistoryItemExpanded, historyFiltersHTML, normalizeRoleSources, captureHistoryRoles, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED, closeHistoryMenus, ...sandbox });
     if (!sandbox.SillyTavern) sandbox.SillyTavern = { getContext: () => ({}) };

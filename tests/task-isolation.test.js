@@ -18,7 +18,7 @@ function generationHarness({ honorAbort = true, htmlMode = false } = {}) {
     const save = deferred(), requests = [], saved = [], updates = [], resets = [];
     const ui = new Proxy(() => {}, { get: (_target, key) => key === 'length' ? 0 : () => ui });
     const runtime = { settings: { maxAutoRounds: 1, autoContinue: false, selectedWorldBooks: [] },
-        extractHtml: text => text, knownInstructionTags: () => [], captureGenerationApiRoute: () => ({}), clearRequestIssue() {}, runtimeLog() {},
+        extractHtml: text => text, knownInstructionTags: () => [], captureGenerationApiRoute: () => ({}), clearRequestIssue() {}, runtimeLog() {}, setActiveInstructionTags() {}, playNotificationSound() {},
         archiveCurrentResult: async () => true, createCumulativeStreamRenderer: () => ({ update: value => updates.push(value), reset: opts => resets.push(opts) }), recordRequestMetrics() {},
         requestConfiguredGenerationApi(options) { const request = { options, ...deferred() }; requests.push(request);
             if (honorAbort) options.signal.addEventListener('abort', () => request.reject(new DOMException('Aborted', 'AbortError')), { once: true });
@@ -27,12 +27,12 @@ function generationHarness({ honorAbort = true, htmlMode = false } = {}) {
         async storeCurrentResult(item) { saved.push(item); await save.promise; return true; },
         textFallbackHtml: text => `<p>${text}</p>`, captureRequestIssue: error => ({ signal: error.name }), requestFailureMessage: () => '', theaterError() {}, showInIframe() {},
     };
-    const sandbox = { runtime, $: () => ui, AbortController, DOMException, console: { error() {} }, toastr: { info() {}, warning() {} },
+    const sandbox = { runtime, $: () => ui, AbortController, DOMException, console: { error() {} }, toastr: { info() {}, warning() {}, success() {} },
         normalizeRoleSources: () => [], captureHistoryRoles: () => [], SillyTavern: { getContext: () => ({}) },
-        resolveTargetWordCount: () => htmlMode ? 0 : 6000, isStagedRenderTarget: () => !htmlMode, resolveRenderSelection: () => ({ label: 'synthetic', isPlainTextRender: false }), updateContinueHint() {},
+        resolveTargetWordCount: () => htmlMode ? 0 : 6000, isStagedRenderTarget: () => !htmlMode, resolveRenderSelection: () => ({ label: 'synthetic', rules: 'VIRTUAL_INTERACTIVE_RULE', isPlainTextRender: false }), updateContinueHint() {}, updateLengthHint() {},
         assembleGenerationPayload: async () => ({ ctx: {}, targetWordCount: htmlMode ? 0 : 6000, isPlainTextRender: !htmlMode }), textOutputModeForTheme: () => 'text', normalizeContextRange: value => value,
         itemTags: () => [], classifyLengthTier: () => 'long', createGenerationJob, abortGenerationJob, generationTextWithLiveSegment, filterStoryOutput, readableCharCount,
-        assertHtmlIntegrity, addGenerationSegment, shouldContinueJob: () => false, markCompleted() {},
+        assertHtmlIntegrity, recoverHtmlText, addGenerationSegment, shouldContinueJob: () => false, markCompleted() {},
         htmlToPlainText: htmlMode ? recoverHtmlText : text => text, continuationRoundHistory: () => [], prepareContinuationContext: text => text, newHistoryKey: () => 'synthetic-id', markFirstToken() {},
     };
     const api = runInNewContext(productionFunction('runGeneration') + '\n' + productionFunction('stopGeneration') + '\n({run:runGeneration,stop:stopGeneration})', sandbox);
@@ -178,6 +178,68 @@ for (const suffix of ['', '<script>function next(){']) test(`direct HTML failure
     while (!h.saved.length) await tick();
     assert.match(h.saved[0].html, /第一段完整正文/); assert.match(h.saved[0].html, /第二段完整正文/);
     assert.equal(h.saved[0].mode, 'text'); assert.equal(h.saved[0].complete, false);
+    assert.equal(h.saved[0].layoutRetry.originalHtml, html);
+    assert.equal(h.saved[0].layoutRetry.requireIndependentApi, true);
+    assert.equal(h.saved[0].layoutRetry.rules, 'VIRTUAL_INTERACTIVE_RULE');
+    assert.match(h.saved[0].layoutRetry.sourceText, /第一段完整正文。[\s\S]*第二段完整正文。/);
+    assert.doesNotMatch(h.saved[0].layoutRetry.sourceText, /<script|function next/);
     assert.equal(h.requests.length, 1); assert.equal(h.runtime.isGenerating, true);
     h.save.resolve(); await task; assert.equal(h.runtime.isGenerating, false);
+});
+
+
+for (const outcome of ['length', 'network-error', 'abort']) test(`single HTML ${outcome} retains a manual independent layout task without requesting layout automatically`, async () => {
+    const h = generationHarness({ htmlMode: true });
+    const task = h.run('virtual interactive', false); while (!h.requests.length) await tick();
+    const raw = '<html><head><style>STYLE_SENTINEL</style></head><body><p>第一段完整正文。</p><p hidden>第二段已有正文。</p>';
+    if (outcome === 'length') h.requests[0].resolve({ text: raw + '</body></html>', stopReason: 'length' });
+    else {
+        h.requests[0].options.onChunk(raw + '<script>CODE_SENTINEL');
+        if (outcome === 'abort') h.stop(); else h.requests[0].reject(Error('synthetic transport failure'));
+    }
+    while (!h.saved.length) await tick();
+    assert.equal(h.saved[0].complete, false);
+    assert.equal(h.saved[0].layoutRetry.requireIndependentApi, true);
+    assert.match(h.saved[0].layoutRetry.sourceText, /第一段完整正文。[\s\S]*第二段已有正文。/);
+    assert.doesNotMatch(h.saved[0].layoutRetry.sourceText, /STYLE_SENTINEL|CODE_SENTINEL|<html|<script/);
+    assert.match(h.saved[0].layoutRetry.originalHtml, /<html>/);
+    assert.equal(h.requests.length, 1);
+    h.save.resolve(); await task;
+    assert.equal(h.runtime.isGenerating, false);
+});
+
+test('single HTML with only styles or scripts does not invent a manuscript or layout task', async () => {
+    const h = generationHarness({ htmlMode: true });
+    const task = h.run('virtual empty', false); while (!h.requests.length) await tick();
+    h.requests[0].options.onChunk('<html><head><style>STYLE_SENTINEL');
+    h.requests[0].reject(Error('synthetic transport failure'));
+    await task;
+    assert.equal(h.saved.length, 0); assert.equal(h.requests.length, 1);
+});
+
+
+test('HTML mode receiving only text exposes manual layout instead of claiming a completed HTML page', async () => {
+    const h = generationHarness({ htmlMode: true });
+    const task = h.run('virtual text-only', false); while (!h.requests.length) await tick();
+    h.requests[0].resolve({ text: '第一段原文。\n\n第二段原文。', stopReason: 'stop' });
+    while (!h.saved.length) await tick();
+    assert.equal(h.saved[0].mode, 'text'); assert.equal(h.saved[0].complete, false);
+    assert.equal(h.saved[0].layoutRetry.sourceText, '第一段原文。\n\n第二段原文。');
+    assert.equal(h.saved[0].layoutRetry.requireIndependentApi, true);
+    assert.equal(h.requests.length, 1);
+    h.save.resolve(); await task;
+});
+
+
+test('complete single HTML is saved successfully without a recovery task', async () => {
+    const h = generationHarness({ htmlMode: true });
+    const task = h.run('virtual complete HTML', false); while (!h.requests.length) await tick();
+    const html = '<html><body><p>完整正文。</p><button onclick="next()">下一幕</button><script>function next(){}</script></body></html>';
+    h.requests[0].resolve({text:html,stopReason:'stop'});
+    while (!h.saved.length) await tick();
+    assert.equal(h.saved[0].mode,'html'); assert.equal(h.saved[0].html,html);
+    assert.equal(h.saved[0].layoutRetry,undefined);
+    h.save.resolve(); await task;
+    assert.equal(h.saved.length,1);assert.equal(h.requests.length,1);
+    assert.equal(h.runtime.currentGenerationJob,null);
 });

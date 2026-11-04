@@ -135,3 +135,75 @@ test('重试排版有停止入口，停止保留正文；长梦相关任务与�
     handlers.get('#theater-stop-layout-btn')();assert.equal(await running,false);
     assert.equal(runtime.currentGenerationResult,item);assert.equal(props.get('#theater-stop-layout-btn:hidden'),true);assert.equal(runtime.isGenerating,false);
 });
+
+
+test('single HTML recovery requires the independent layout API and never falls back to the body route', async () => {
+    for (const patch of [{ layoutApiEnabled: false }, { layoutApiPresetId: '' }, { apiPresets: [] }]) {
+        const config = { ...settings(), ...patch }; let calls = 0;
+        const bodyRoute = createTheaterApi({ settings: config }).captureGenerationApiRoute({});
+        const runtime = { requestConfiguredGenerationApi() { calls++; throw Error('must not request'); } };
+        await assert.rejects(createTheaterGeneration(runtime).requestFinalRenderedHtml({
+            sourceText: '保留正文。', rules: '保留互动', apiRoute: bodyRoute, requireIndependentApi: true,
+        }), { code: 'THEATER_LAYOUT_API_MISSING' });
+        assert.equal(calls, 0);
+    }
+});
+
+test('manual single HTML recovery uses the current independent preset, excludes broken code and retains incomplete-story status', async t => {
+    const old = Object.fromEntries(['$', 'toastr', 'SillyTavern', 'document'].map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+    t.after(() => { for (const [k, descriptor] of Object.entries(old)) { if (descriptor) Object.defineProperty(globalThis, k, descriptor); else delete globalThis[k]; } });
+    globalThis.$ = () => ({ prop() { return this; }, text() { return this; } });
+    globalThis.toastr = { success() {}, info() {} }; globalThis.SillyTavern = { getContext: () => ({}) };
+    globalThis.document = { createElement: () => ({ set innerHTML(v) { this.textContent = v.replace(/<[^>]*>/g, ''); }, querySelectorAll: () => [] }) };
+    const config = settings(), calls = [];
+    const item = { resultId: 'partial', html: '已有正文', mode: 'text', complete: false, layoutRetry: {
+        sourceText: '第一段已有正文。\n\n第二段已有正文。', rules: '完整互动', originalInstruction: '指定的故事',
+        originalHtml: '<script>ORIGINAL_BROKEN_CODE_SENTINEL', requireIndependentApi: true,
+    } };
+    const runtime = { settings: config, currentGenerationResult: item, currentDisplayHtml: item.html,
+        updateContinueHint() {}, runtimeLog() {}, recordRequestMetrics() {}, extractHtml: v => v,
+        storeCurrentResult: async updated => { runtime.currentGenerationResult = updated; return true; },
+        showInIframe(html) { runtime.currentDisplayHtml = html; },
+        requestConfiguredGenerationApi: async args => { calls.push(args); return { text: '<html><body><p>{{THEATER_P0001}}</p><p>{{THEATER_P0002}}</p></body></html>' }; },
+        captureRequestIssue: () => ({}), requestFailureMessage: () => '', theaterError() {},
+    };
+    runtime.resultStorageQueue = Promise.resolve(); runtime.recentCache = []; runtime.save = () => {};
+    Object.assign(runtime, createTheaterStorage(runtime));
+    runtime.captureGenerationApiRoute = createTheaterApi(runtime).captureGenerationApiRoute;
+    runtime.requestFinalRenderedHtml = createTheaterGeneration(runtime).requestFinalRenderedHtml;
+    // Keep the production route capture and final layout, replacing only network transport.
+    runtime.requestConfiguredGenerationApi = async args => { calls.push(args); return { text: '<html><body><p>{{THEATER_P0001}}</p><p>{{THEATER_P0002}}</p></body></html>' }; };
+    assert.equal(await retryCurrentLayout(runtime), true);
+    assert.equal(calls.length, 1); assert.equal(calls[0].apiRoute.model, 'layout-model');
+    assert.doesNotMatch(calls[0].systemPrompt + calls[0].userPrompt, /ORIGINAL_BROKEN_CODE_SENTINEL/);
+    assert.match(runtime.currentGenerationResult.html, /第一段已有正文。[\s\S]*第二段已有正文。/);
+    assert.equal(runtime.currentGenerationResult.complete, false);
+    assert.equal(runtime.currentGenerationResult.layoutRetry, undefined);
+    assert.equal(item.layoutRetry.originalHtml, '<script>ORIGINAL_BROKEN_CODE_SENTINEL');
+    const reopened = JSON.parse(JSON.stringify(runtime.settings.currentGenerationResult));
+    assert.equal(reopened.originalFailedHtml, '<script>ORIGINAL_BROKEN_CODE_SENTINEL');
+    assert.equal(reopened.layoutRetry, undefined);
+    assert.equal(reopened.complete, false);
+});
+
+
+test('missing independent layout setup gives actionable guidance and retains the one-shot manuscript', async t => {
+    const old = Object.fromEntries(['$', 'toastr', 'SillyTavern'].map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+    t.after(() => { for (const [k, d] of Object.entries(old)) { if (d) Object.defineProperty(globalThis, k, d); else delete globalThis[k]; } });
+    globalThis.$ = () => ({ prop() { return this; }, text() { return this; } });
+    globalThis.toastr = { info() {} }; globalThis.SillyTavern = { getContext: () => ({}) };
+    for (const patch of [{layoutApiEnabled:false},{layoutApiPresetId:''},{apiPresets:[]}]) {
+        const config = {...settings(),...patch}, messages=[];
+        const item={html:'已有正文',mode:'text',layoutRetry:{sourceText:'已有正文',rules:'互动',requireIndependentApi:true}};
+        const runtime={settings:config,currentGenerationResult:item,currentDisplayHtml:item.html,updateContinueHint(){},
+            theaterError:message=>messages.push(message),captureRequestIssue(){throw Error('setup errors must retain guidance')},
+            requestConfiguredGenerationApi(){throw Error('must not request')},storeCurrentResult(){throw Error('must not replace')},
+        };
+        runtime.captureGenerationApiRoute=createTheaterApi(runtime).captureGenerationApiRoute;
+        runtime.requestFinalRenderedHtml=createTheaterGeneration(runtime).requestFinalRenderedHtml;
+        assert.equal(await retryCurrentLayout(runtime),false);
+        assert.match(messages[0],/设置.*独立 HTML 排版 API.*启用并绑定/);
+        assert.equal(runtime.currentGenerationResult,item);assert.ok(item.layoutRetry);
+        assert.equal(runtime.isGenerating,false);
+    }
+});
