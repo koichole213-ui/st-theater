@@ -417,10 +417,9 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
 
     <!-- ===== 6. 诊断 ===== -->
     <div class="theater-panel${activeTabClass('diagnostics')}" data-panel="diagnostics">
-        ${runtime.backup?.diagnosticHTML() || ''}
         <div class="theater-section">
             <label class="theater-label theater-pi-log-title"><span><i class="fa-solid fa-terminal"></i> 运行日志终端</span><small><span id="theater-runtime-log-count">${runtimeEntries.length}</span> / ${MAX_RUNTIME_LOGS}</small></label>
-            <div class="theater-btn-row">
+            <div class="theater-btn-row theater-diagnostic-actions">
                 <div class="theater-copy-runtime-log-btn theater-btn"><i class="fa-solid fa-copy"></i><span>复制日志</span></div>
                 <div id="theater-clear-runtime-log-btn" class="theater-btn"><i class="fa-solid fa-eraser"></i><span>清空日志</span></div>
             </div>
@@ -435,7 +434,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
         </div>
         <div class="theater-section">
             <div class="theater-pi-diagnostic-row"><label class="theater-label"><i class="fa-solid fa-stethoscope"></i> 插件诊断</label>
-            <div class="theater-btn-row">
+            <div class="theater-btn-row theater-diagnostic-actions">
                 <div id="theater-run-diagnostics-btn" class="theater-btn primary"><i class="fa-solid fa-list-check"></i><span>生成诊断报告</span></div>
                 <div id="theater-export-diagnostics-btn" class="theater-btn"><i class="fa-solid fa-download"></i><span>导出排查 TXT</span></div>
                 <div id="theater-copy-diagnostics-btn" class="theater-btn" style="display:none;"><i class="fa-solid fa-copy"></i><span>复制报告</span></div>
@@ -451,6 +450,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                 <div class="theater-diagnostic-catalog-list">${runtime.diagnosticCatalogHTML()}</div>
             </details>
         </div>
+        ${runtime.backup?.diagnosticHTML() || ''}
         ${promptInspectorHTML()}
     </div>
 
