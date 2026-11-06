@@ -95,6 +95,7 @@ function buildDiagnostics() {
         diagnosticLine(apiMode === 'main' || !channelIssue ? 'ok' : 'bad', 'API 配置', apiMode === 'main' ? '使用酒馆当前 API 设置' : (channelIssue || (channel === 'vertex' ? `已保存酒馆凭证引用，Gemini 模型：${apiModel}` : `已填写，模型：${apiModel}${apiKey ? '，已填写 Key' : '，未填写 Key（OpenAI 兼容本地服务可为空）'}`))),
         diagnosticLine(typeof fetch === 'function' && typeof AbortController === 'function' ? 'ok' : 'bad', '请求能力', 'fetch / AbortController ' + (typeof fetch === 'function' && typeof AbortController === 'function' ? '可用' : '不可用')),
         diagnosticLine(window.indexedDB ? (runtime.idb ? 'ok' : 'warn') : 'bad', '本地存档库', window.indexedDB ? (runtime.idb ? 'IndexedDB 已打开' : 'IndexedDB 存在，但当前未打开，可能会回退到 settings') : '浏览器不支持 IndexedDB'),
+        ...(runtime.backup ? [diagnosticLine(runtime.backup.diagnosticLevel(), '定期备份', runtime.backup.diagnosticText())] : []),
         diagnosticLine('warn', '历史存储提示', '历史存在浏览器本地存储里。夸克等手机浏览器崩溃或清理后可能丢失，建议定期批量导出备份'),
         diagnosticLine(customRenderOk ? 'ok' : 'bad', '渲染模板', customRenderOk ? `当前模板：${runtime.renderSelectionMeta(selectedRender, runtime.settings.renderTemplates).name}` : `当前选择 ${selectedRender} 找不到对应模板`),
         diagnosticLine(runtime.continueContext ? 'warn' : 'ok', '续写状态', runtime.continueContext ? `续写模式仍有前情：约 ${readableCharCount(runtime.continueContext)} 字` : '未处于续写模式'),

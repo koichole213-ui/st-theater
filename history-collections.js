@@ -21,6 +21,7 @@ export function normalizeCollections(value, items) {
     const owned = new Set(), ids = new Set();
     return (Array.isArray(value) ? value : []).filter(folder => folder && folder.id && !ids.has(String(folder.id)) && ids.add(String(folder.id))).map(folder => ({
         id: String(folder.id), title: String(folder.title || '未命名系列').trim() || '未命名系列',
+        ...(Array.isArray(folder.backupOrigins) ? { backupOrigins: folder.backupOrigins.filter(value => typeof value === 'string').slice(-100) } : {}),
         itemIds: (Array.isArray(folder.itemIds) ? folder.itemIds : []).map(String).filter(id => (!valid || valid.has(id)) && !owned.has(id) && owned.add(id)),
     }));
 }

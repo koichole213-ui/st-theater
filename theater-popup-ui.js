@@ -35,7 +35,7 @@ function guardTheaterNativeSelectEvent(event) {
 function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
     initialTab = runtime.normalizeTheaterTab(initialTab);
     const activeTabClass = tab => initialTab === tab ? ' active' : '';
-    const configGroupOrder = { api: 1, layout: 2, generation: 3, automation: 4, materials: 5, access: 6, extension: 7 };
+    const configGroupOrder = { api: 1, layout: 2, generation: 3, automation: 4, materials: 5, access: 6, extension: 8 };
     const configGroupStart = (id, icon, title) => `<section class="theater-config-card" data-config-group="${id}" style="order:${configGroupOrder[id]}"><div class="theater-config-card-title"><span><i class="fa-solid ${icon}"></i>${title}</span></div><div class="theater-config-card-body">`;
     const configGroupEnd = '</div></section>';
     const inst = runtime.settings.instructionTemplates || [];
@@ -417,6 +417,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
 
     <!-- ===== 6. 诊断 ===== -->
     <div class="theater-panel${activeTabClass('diagnostics')}" data-panel="diagnostics">
+        ${runtime.backup?.diagnosticHTML() || ''}
         <div class="theater-section">
             <label class="theater-label theater-pi-log-title"><span><i class="fa-solid fa-terminal"></i> 运行日志终端</span><small><span id="theater-runtime-log-count">${runtimeEntries.length}</span> / ${MAX_RUNTIME_LOGS}</small></label>
             <div class="theater-btn-row">
@@ -714,6 +715,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
             </div>
         </div>
         ${configGroupEnd}
+        ${runtime.backup?.settingsHTML() || ''}
         ${configGroupStart('extension', 'fa-toolbox', '扩展管理')}
         <div class="theater-section" data-config-section="extension">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-arrows-rotate"></i> 扩展入口</label>
@@ -733,7 +735,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
             <p id="theater-update-ready-hint" class="theater-update-ready-hint" ${runtime.updateReadyToReload ? '' : 'hidden'}><i class="fa-solid fa-circle-check"></i><span>更新文件已下载；你可以稍后刷新，不会自动打断当前操作。</span></p>
         </div>
         ${configGroupEnd}
-        <p class="theater-version" style="order:8">当前版本 v${runtime.VERSION}</p>
+        <p class="theater-version" style="order:9">当前版本 v${runtime.VERSION}</p>
         </div></div>
     </div>
 

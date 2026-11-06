@@ -8,6 +8,7 @@ import { createTheaterAppearance } from './theater-appearance.js';
 import { createTheaterPopupUi } from './theater-popup-ui.js';
 import { createLongDreamWorkspace } from './long-dream-workspace.js';
 import { createTheaterMaterials } from './theater-materials.js';
+import { createTheaterBackup } from './theater-backup.js';
 import { createTheaterInstructions } from './theater-instructions.js';
 import { createTheaterPopupController } from './theater-popup-controller.js';
 import { createTheaterApiSettings } from './theater-api-settings.js';
@@ -77,7 +78,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.4.7';
+const VERSION = '4.4.7a';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -275,7 +276,7 @@ async function init() {
         save();
     }
     settings.contextRange = normalizeContextRange(settings.contextRange);
-    setRuntimeLogSecretProvider(() => [settings?.apiKey, ...apiPresetSecretValues(settings?.apiPresets)]);
+    setRuntimeLogSecretProvider(() => [settings?.apiKey, runtime.backup?.secret(), ...apiPresetSecretValues(settings?.apiPresets)]);
     if (upgradeNeedsProtocolCompatibility) settings.apiProtocol = 'auto';
     settings.apiPresets = normalizeApiPresetList(settings.apiPresets);
     const previousMemoryPrompt = String(settings.longDreamMemoryPrompt || '').trim();
@@ -371,6 +372,7 @@ async function init() {
     }
 
     await storageInit();
+    await runtime.backup.initialize();
     await migrateHistoryTags();
     applyUIFontSize();
 
@@ -514,7 +516,7 @@ function esc(s) {
     if (s === null || s === undefined) return '';
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-function save() { SillyTavern.getContext().saveSettingsDebounced(); }
+function save() { runtime.backup?.noteSettingsSave(); SillyTavern.getContext().saveSettingsDebounced(); }
 
 // Live bindings preserve the existing state ownership and asynchronous snapshots.
 // Factories register functions without reading these getters during construction.
@@ -1040,5 +1042,7 @@ window.addEventListener('mousedown', guardTheaterNativeSelectEvent, true);
 window.addEventListener('touchend', guardTheaterNativeSelectEvent, true);
 const scheduleTokenEstimate = debounce(refreshTokenEstimate, 220);
 const scheduleLongDreamTokenEstimate = debounce(refreshLongDreamTokenEstimate, 220);
+
+runtime.backup = createTheaterBackup(runtime);
 
 jQuery(async () => { await init(); });

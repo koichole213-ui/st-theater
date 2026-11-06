@@ -15,6 +15,7 @@ export function createTheaterEvents(runtime) {
 // @theater-source-begin bindEvents
 function bindEvents() {
     const $d = $(document);
+    runtime.backup?.bind(document);
     bindErrorLibrary(document);
     bindSourcePicker($d, runtime);
     bindSummaryEditor($d, runtime);

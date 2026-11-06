@@ -771,6 +771,7 @@ function normalizedZipEntryName(value) {
 
 // @theater-source-begin importHistoryBackup
 function importHistoryBackup() {
+    if (runtime.backup) { void runtime.backup.openRestore('history').catch(() => toastr.warning('暂时无法打开恢复，请停止生成后重试')); return; }
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.zip,.json,.html,.htm,application/zip,application/json,text/html';

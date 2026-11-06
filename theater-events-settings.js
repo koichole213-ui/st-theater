@@ -422,7 +422,7 @@ export function bindSettingsEvents(runtime, $d) {
     });
 
     // ---- Instruction Import/Export ----
-    $d.off('click.timp').on('click.timp', '#theater-import-inst-btn', runtime.importInstructionTemplates);
+    $d.off('click.timp').on('click.timp', '#theater-import-inst-btn', () => runtime.backup ? void runtime.backup.openRestore('instructions').catch(() => toastr.warning('暂时无法打开恢复，请停止生成后重试')) : runtime.importInstructionTemplates());
     $d.off('click.texp').on('click.texp', '#theater-export-inst-btn', runtime.exportInstructionTemplates);
 
     // ---- Preset Collapse ----

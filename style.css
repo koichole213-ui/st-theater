@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.4.7
+/* 千夜浮梦 · 小剧场生成器 v4.4.7a
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -7707,3 +7707,45 @@ body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-a
 :is(#toast-container,.theater-error-toast-layer) > .theater-request-error-toast{max-height:calc(100dvh - 32px);overflow-y:auto;overscroll-behavior:contain} .theater-error-help [data-error-status]{font-size:11px;text-align:left}
 
 .theater-error-toast-layer{position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;align-items:center;justify-content:safe center;gap:12px;padding:16px 12px;box-sizing:border-box;overflow-y:auto;max-width:100vw;pointer-events:none}.theater-error-toast-layer>.toast{pointer-events:auto;flex:none;margin:0;max-width:100%}
+
+/* Complete backup: inherit the existing settings-card and control system. */
+.theater-backup-settings .theater-layout-note,
+.theater-backup-diagnostics .theater-layout-note,
+.theater-backup-dialog .theater-dialog-note,
+.theater-backup-pick small { text-align: left; overflow-wrap: anywhere; }
+.theater-backup-destinations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.theater-backup-destinations > .theater-section { min-width: 0; }
+.theater-backup-settings .theater-config-extra-body { min-width: 0; }
+.theater-backup-guide { display: inline-block; padding-top: 10px; font-size: var(--t-config-desc-size); color: var(--t-accent-deep); text-align: left; }
+.theater-backup-protection { color: var(--t-danger); padding: 8px 0; }
+.theater-backup-dialog { width: min(620px, calc(100vw - 28px)); max-height: calc(100dvh - 28px); padding: 0; }
+.theater-backup-dialog > form { margin: 0; padding: 18px; max-height: calc(100dvh - 28px); overflow: auto; overscroll-behavior: contain; }
+.theater-backup-dialog header { position: sticky; top: -18px; z-index: 1; background: var(--t-surface-1); padding: 8px 0; }
+.theater-backup-dialog header > div { min-width: 0; }
+.theater-backup-dialog h2 { margin: 0; font-size: var(--t-text-lg); }
+.theater-backup-dialog footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 12px 0 0; }
+.theater-backup-dialog .theater-btn { min-height: 40px; }
+.theater-backup-source-tabs { display: flex; gap: 8px; margin: 16px 0; }
+.theater-backup-source-tabs .theater-btn { flex: 1; }
+.theater-backup-source-tabs [aria-pressed="true"] { background: var(--t-surface-2); border-color: var(--t-accent); }
+.theater-backup-file { display: flex; flex-direction: column; gap: 12px; padding: 14px 0; text-align: left; }
+.theater-backup-file input { max-width: 100%; width: 100%; min-width: 0; font: inherit; }
+.theater-backup-device-filter { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 14px 0; text-align: left; }
+.theater-backup-device-filter select { min-width: 0; max-width: 100%; flex: 1; }
+.theater-backup-list-item { display: flex; flex-direction: column; gap: 5px; width: 100%; padding: 12px 0; border: 0; border-bottom: 1px solid var(--t-border); background: transparent; color: var(--t-fg); text-align: left; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.theater-backup-list-item small { color: var(--t-fg-soft); font-size: var(--t-text-sm); text-align: left; }
+.theater-backup-pick { display: flex; gap: 10px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--t-border); text-align: left; cursor: pointer; }
+.theater-backup-pick input { margin-top: 5px; flex-shrink: 0; }
+.theater-backup-pick > span { display: flex; flex-direction: column; gap: 3px; }
+.theater-backup-pick small { color: var(--t-fg-soft); font-size: var(--t-text-sm); }
+.theater-backup-policy { background: var(--t-surface-2); border-radius: var(--t-radius-sm); padding: 10px; }
+.theater-backup-counts { width: 100%; border-collapse: collapse; font-size: var(--t-text-sm); margin: 12px 0; }
+.theater-backup-counts th { font-weight: 400; color: var(--t-fg-soft); }
+.theater-backup-counts td, .theater-backup-counts th { text-align: right; padding: 8px 3px; border-bottom: 1px solid var(--t-border); }
+.theater-backup-counts td:first-child, .theater-backup-counts th:first-child { text-align: left; }
+.theater-backup-error { color: var(--t-danger); }
+@media (max-width: 600px) {
+    .theater-backup-destinations { grid-template-columns: 1fr; gap: 0; }
+    .theater-backup-dialog > form { padding: 14px; }
+    .theater-backup-dialog header { top: -14px; }
+}

@@ -475,6 +475,7 @@ function importedLongDreamTitle(record) {
 
 // @theater-source-begin importLongDreamBackup
 function importLongDreamBackup() {
+    if (runtime.backup) { void runtime.backup.openRestore('dreams').catch(() => toastr.warning('暂时无法打开恢复，请停止生成后重试')); return; }
     if (runtime.longDreamGenerationController?.active || runtime.longDreamChapterEditController) {
         toastr.warning('请先完成或停止当前长梦生成，再导入备份');
         return;
@@ -1619,7 +1620,7 @@ function longDreamWorkDetailHTML(dream) {
             <div class="theater-dream-chapter-list">${longDreamChapterDirectoryHTML(dream)}</div>
         </section>
         <section class="ui-card theater-dream-action-card theater-dream-work-menu">
-            <div class="theater-dream-action-heading"><span class="theater-dream-action-icon"><i class="fa-solid fa-sliders"></i></span><span><b>作品菜单</b><small>管理整部作品；导入备份会新建副本，不会覆盖当前作品</small></span></div>
+            <div class="theater-dream-action-heading"><span class="theater-dream-action-icon"><i class="fa-solid fa-sliders"></i></span><span><b>作品菜单</b><small>管理整部作品；相同内容跳过，缺失内容补回，差异版本另存</small></span></div>
             <div class="theater-dream-work-menu-actions">
                 <button type="button" id="theater-dream-import-backup" class="theater-dream-fat-btn is-secondary"><i class="fa-solid fa-upload"></i><span>导入 / 恢复</span></button>
                 <button type="button" id="${dream.status === 'complete' ? 'theater-dream-reopen' : 'theater-dream-complete'}" class="theater-dream-fat-btn is-primary" ${state.statusControlDisabled ? 'disabled' : ''}><i class="fa-solid ${dream.status === 'complete' ? 'fa-feather-pointed' : 'fa-book-bookmark'}"></i><span>${dream.status === 'complete' ? '重新打开作品' : '标记完结'}</span></button>

@@ -65,7 +65,7 @@ test('拆分后的真实入口完整链接，先注册功能再安装全局监�
 
     await t.test('所有功能factory只注册函数，构造期间不读取未初始化的状态', async () => {
         const registrations = [...entrySource.matchAll(/^import \{ (create\w+) \} from '\.\/(theater-[^']+|long-dream-(?:navigation|workspace|runtime)\.js)';$/gm)];
-        assert.equal(registrations.length, 20);
+        assert.equal(registrations.length, 21);
         for (const [, name, file] of registrations) {
             const module = await import(new URL(`../${file}`, import.meta.url));
             const functions = module[name](new Proxy({}, { get(_, key) { throw new Error(`Early read: ${file}:${String(key)}`); } }));
