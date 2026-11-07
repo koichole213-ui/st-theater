@@ -1,5 +1,6 @@
 import { syncFollowedWorldBooks } from './world-book-policy.js';
 import { normalizeContextRange } from './context-policy.js';
+import { refreshBaiBaiMemoryStatus } from './baibai-memory-ui.js';
 import { withPreservedPopupViewport } from './popup-lifecycle.js';
 import { itemTags } from './tag-system.js';
 import { requestedListPage } from './pagination.js';
@@ -221,6 +222,7 @@ export function bindMaterialEvents(runtime, $d) {
     $d.off('change.trng').on('change.trng', '#theater-context-range', function () {
         runtime.settings.contextRange = normalizeContextRange($(this).val());
         $(this).val(runtime.settings.contextRange);
+        refreshBaiBaiMemoryStatus(runtime.settings, SillyTavern.getContext());
         runtime.save();
         runtime.scheduleTokenEstimate();
     });
@@ -228,6 +230,12 @@ export function bindMaterialEvents(runtime, $d) {
         runtime.settings.readChatContext = this.checked;
         $('#theater-context-range-row').toggleClass('is-disabled', !this.checked);
         $('#theater-context-range').prop('disabled', !this.checked);
+        refreshBaiBaiMemoryStatus(runtime.settings, SillyTavern.getContext());
+        runtime.save();
+    });
+    $d.off('change.tbbmemory').on('change.tbbmemory', '#theater-read-baibai-memory', function () {
+        runtime.settings.readBaiBaiMemory = this.checked === true;
+        refreshBaiBaiMemoryStatus(runtime.settings, SillyTavern.getContext());
         runtime.save();
     });
 

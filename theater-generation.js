@@ -11,6 +11,7 @@ import { DEFAULT_RENDER_TEMPLATE_TEXT, DEFAULT_RENDER_TEMPLATE, DEFAULT_RENDER_T
 import { buildContinuationPayload, STORY_RELATION_CONTINUITY_RULE, buildGenerationPayload, hydrateFinalRenderHtml, buildFinalRenderPayload, buildContinuationInstruction, recentGenerationRoundsContext } from './generation-payload.js';
 import { composeGenerationContinuationMessages, composePresetMessages } from './request-layout.js';
 import { normalizeContextRange, takeRecentMessages } from './context-policy.js';
+import { BAIBAI_MEMORY_HINTS, baiBaiChatId, readBaiBaiMemory } from './baibai-memory.js';
 import { createChatContextReader } from './context-exclusions.js';
 import { stripTargetWordCountRequirement, resolveTargetWordCount, isStagedRenderTarget, continuationFirstRoundGuidance, longFormFirstRoundGuidance, firstRoundGuidance, normalizeManualTarget, classifyLengthTier } from './length-policy.js';
 import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
@@ -62,6 +63,10 @@ function generationPreparationKey(ctx = SillyTavern.getContext()) {
         worldBookReadMode: String(runtime.settings.worldBookReadMode || 'all'),
         presetName: String(runtime.settings.selectedPresetName || ''),
         creativeEnhancementEnabled: runtime.settings.creativeEnhancementEnabled === true,
+        readBaiBaiMemory: runtime.settings.readBaiBaiMemory === true,
+        ...(runtime.settings.readBaiBaiMemory === true ? { memoryChatId: baiBaiChatId(ctx), memoryGroupId: String(ctx?.groupId ?? ''),
+            memoryChatLength: ctx?.chat?.length || 0, readChatContext: runtime.settings.readChatContext !== false,
+            contextRange: normalizeContextRange(runtime.settings.contextRange) } : {}),
     });
 }
 // @theater-source-end generationPreparationKey
@@ -169,22 +174,23 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     const contextCount = normalizeContextRange(runtime.settings.contextRange);
     const readChatContext = runtime.settings.readChatContext !== false;
     const readContextMessage = createChatContextReader(runtime.settings.contextExclusionRules);
-    const recentChatMessages = readChatContext ? takeRecentMessages(chat, contextCount) : [];
-    const structuredChatMessages = recentChatMessages.map((message, index) => ({
-        role: message.is_user ? 'user' : 'assistant',
-        content: readContextMessage(message.mes),
-        name: message.is_user ? (name1 || 'User') : (message.name || name2 || 'Char'),
-        source: 'chat-history',
-        sourceId: `chat-${index + 1}`,
-    })).filter(message => message.content.trim());
-    const chatCtx = structuredChatMessages.map(message =>
-        `${message.name}: ${message.content}`
-    ).join('\n\n');
-    const context = readChatContext && contextCount > 0
-        ? `以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}`
-        : readChatContext
-            ? '本次聊天前文读取条数设为 0，请只根据角色设定、世界书和用户指令生成小剧场。'
-        : '本次不读取聊天前文，请只根据角色设定、世界书和用户指令生成小剧场。';
+    const captureRecentContext = () => {
+        const recentChatMessages = readChatContext ? takeRecentMessages(chat, contextCount) : [];
+        const structuredChatMessages = recentChatMessages.map((message, index) => ({
+            role: message.is_user ? 'user' : 'assistant',
+            content: readContextMessage(message.mes),
+            name: message.is_user ? (name1 || 'User') : (message.name || name2 || 'Char'),
+            source: 'chat-history',
+            sourceId: `chat-${index + 1}`,
+        })).filter(message => message.content.trim());
+        const chatCtx = structuredChatMessages.map(message =>
+            `${message.name}: ${message.content}`
+        ).join('\n\n');
+        return { recentChatMessages, structuredChatMessages, chatCtx };
+    };
+    // Preserve the existing early snapshot when memory is off; with memory on,
+    // capture raw text beside the memory DTOs after asynchronous preparation.
+    const initialChatContext = runtime.settings.readBaiBaiMemory === true ? null : captureRecentContext();
 
     if (evaluateWorldBook) await runtime.ensureWorldBooksCurrent({ silent: true });
     const selectedBookNames = new Set(runtime.settings.selectedWorldBooks || []);
@@ -249,6 +255,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     }
 
     const presetSnapshot = loadPreset ? await runtime.ensureSelectedPresetLoaded() : runtime.currentPresetSnapshot();
+    const { recentChatMessages, structuredChatMessages, chatCtx } = initialChatContext ?? captureRecentContext();
     const targetWordCount = resolveTargetWordCount(instruction, {
         manualEnabled: runtime.settings.manualTargetEnabled,
         manualTarget: runtime.settings.manualTargetChars,
@@ -258,6 +265,18 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         : (presetSnapshot.prompt ? [{ id: 'main', role: 'system', content: presetSnapshot.prompt }] : []), {
         ...identity.layoutContext, user: name1 || 'User', char: name2 || character?.name || 'Char', lastUserMessage: cleanInstruction,
     }, { targetChars: targetWordCount, ...(estimateOnly ? { random: () => 0 } : {}) });
+    // A preset can disable chatHistory even while the UI raw-text switch is on.
+    // Then no recent raw messages reach the request, so summarize through the end.
+    const presetDisablesChat = [...(presetSnapshot.disabledSlotIds || []), ...(presetCompatibility.inactiveIds || [])].includes('chatHistory');
+    const memory = readBaiBaiMemory({ settings: presetDisablesChat ? { ...runtime.settings, readChatContext: false } : runtime.settings, ctx });
+    const context = readChatContext && contextCount > 0
+        ? `以下是最近的正文剧情（仅供参考背景，不要续写正文）：\n${chatCtx}`
+        : memory.content
+            ? '本次不读取近期聊天原文；背景记忆见柏宝书资料。'
+        : readChatContext
+            ? '本次聊天前文读取条数设为 0，请只根据角色设定、世界书和用户指令生成小剧场。'
+        : '本次不读取聊天前文，请只根据角色设定、世界书和用户指令生成小剧场。';
+
     const selectedPresetPrompt = presetCompatibility.entries.map(entry => entry.content).join('\n\n');
     const preset = selectedPresetPrompt || DEFAULT_SYSTEM_PROMPT;
     const addons = [
@@ -288,7 +307,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
     fixed += `\n${STORY_OUTPUT_RULE}`;
     if (isPlainTextRender) fixed += '\n本轮故事正文请只用一对<content>...</content>包裹；若有ECoT思考须在content之外完整闭合，此外不附加其他部件。程序会隐藏思考并移除正文包装标签，再计字与排版。';
     const payload = buildGenerationPayload({
-        preset, role, persona, worldBook, context, continuation, rules, addons, creativeEnhancement,
+        preset, role, persona, worldBook, context, memory: memory.content, continuation, rules, addons, creativeEnhancement,
         fixed,
         instruction: taskInstruction,
     });
@@ -299,6 +318,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         ? selectedPresetEntries
         : [{ id: 'main', role: 'system', content: DEFAULT_SYSTEM_PROMPT }];
     const foundationTailMessages = [
+        memory.content ? { role: 'user', content: memory.content, source: 'baibai-memory', sourceId: 'current-chat' } : null,
         addons ? { role: 'user', content: addons, source: 'theater-addon', sourceId: 'addons' } : null,
         (!structuredChatMessages.length && context)
             ? { role: 'user', content: context, source: 'theater-context', sourceId: 'context-policy' }
@@ -336,6 +356,7 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         textTheme,
         targetWordCount,
         presetCompatibilitySummary: Object.freeze({ ...presetCompatibility.stats }),
+        memorySummary: Object.freeze({ status: memory.status, before: memory.before, missingFloors: memory.missingFloors }),
         ctx,
         generationFoundation: Object.freeze({
             creativeEnhancement,
@@ -354,6 +375,8 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
             kind: '普通小剧场',
             presetSource: selectedPresetPrompt ? '已选酒馆预设' : '内置默认预设',
             readChatContext,
+            readBaiBaiMemory: runtime.settings.readBaiBaiMemory === true,
+            memoryStatus: memory.status,
             contextRange: contextCount,
             chatMessages: recentChatMessages.length,
             character: !!role.trim(),
@@ -398,7 +421,7 @@ async function refreshTokenEstimate() {
         const estimate = Object.fromEntries(keys.map((key, i) => [key, result.counts[i]]));
         estimate.total = result.counts.reduce((sum, n) => sum + n, 0);
         $('#theater-token-summary-value').text(`预计正文输入约 ${formatTokenCount(estimate.total)} Token · ${result.source}`);
-        $('#theater-token-details').text(`预设 ${formatTokenCount(estimate.preset)} · 角色/人设 ${formatTokenCount(estimate.role)} · 世界书 ${formatTokenCount(estimate.worldBook)} · 上下文 ${formatTokenCount(estimate.context)} · 续写 ${formatTokenCount(estimate.continuation)} · 规则 ${formatTokenCount(estimate.rules)} · 当前指令 ${formatTokenCount(estimate.instruction)}`);
+        $('#theater-token-details').text(`预设 ${formatTokenCount(estimate.preset)} · 角色/人设 ${formatTokenCount(estimate.role)} · 世界书 ${formatTokenCount(estimate.worldBook)} · 上下文 ${formatTokenCount(estimate.context)}${estimate.memory != null ? ` · 柏宝书记忆 ${formatTokenCount(estimate.memory)}` : ''} · 续写 ${formatTokenCount(estimate.continuation)} · 规则 ${formatTokenCount(estimate.rules)} · 当前指令 ${formatTokenCount(estimate.instruction)}`);
     } catch (error) {
         console.warn('[Theater] Token estimate failed:', error);
         $('#theater-token-summary-value').text('Token 预估暂不可用');
@@ -739,6 +762,11 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     };
     runtime.clearRequestIssue();
     if (payload.presetCompatibilitySummary) runtime.runtimeLog('info', '预设兼容处理', payload.presetCompatibilitySummary);
+    if (payload.memorySummary && payload.memorySummary.status !== 'disabled') {
+        const memoryReady = payload.memorySummary.status === 'ready';
+        runtime.runtimeLog(memoryReady ? 'info' : 'warn', '柏宝书记忆读取', payload.memorySummary);
+        if (!memoryReady) toastr.warning(`${BAIBAI_MEMORY_HINTS[payload.memorySummary.status]} 将按本次可用的已选资料生成。`);
+    }
     if (isAuto) runtime.lastAutoIssue = null;
     const targetWordCount = payload.targetWordCount;
     const autoTargetContinue = isStagedRenderTarget(targetWordCount) && runtime.settings.autoContinue;

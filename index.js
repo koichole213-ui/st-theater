@@ -59,6 +59,7 @@ import { rememberWorldBookEntryStates, shouldReadWorldBookEntry, syncFollowedWor
 import { buildProtagonistAnchor } from './protagonist-anchor.js';
 import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { MAX_CONTEXT_MESSAGES, normalizeContextRange, takeRecentMessages } from './context-policy.js';
+import { bindBaiBaiMemoryUpdates, refreshBaiBaiMemoryStatus } from './baibai-memory-ui.js';
 import { MAX_CONTEXT_EXCLUSION_LENGTH, MAX_CONTEXT_EXCLUSION_RULES, createChatContextReader, normalizeContextExclusionRules, previewChatContext, validateContextExclusionRule } from './context-exclusions.js';
 import { PLAIN_TEXT_DARK_SELECTION, PLAIN_TEXT_LIGHT_SELECTION, buildPlainTextHtml, isPlainTextSelection, isTextOutputMode, plainTextThemeForSelection, textOutputModeForTheme, textThemeForOutputMode } from './plain-text-renderer.js';
 import { HISTORY_ARCHIVE_MANIFEST, createHistoryArchive, createHistoryJsonBackup, historyItemsFromArchive, normalizeHistoryBackup } from './history-backup.js';
@@ -78,7 +79,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.4.7c';
+const VERSION = '4.4.7d';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -128,6 +129,7 @@ let settings = {};
 const defaultSettings = Object.freeze({
     contextRange: 10,
     readChatContext: true,
+    readBaiBaiMemory: false,
     contextExclusionRules: [],
     instructionTemplates: [],
     instructionGroups: [],            // 用户创建的分组名列表
@@ -276,6 +278,7 @@ async function init() {
         save();
     }
     settings.contextRange = normalizeContextRange(settings.contextRange);
+    settings.readBaiBaiMemory = settings.readBaiBaiMemory === true;
     setRuntimeLogSecretProvider(() => [settings?.apiKey, runtime.backup?.secret(), ...apiPresetSecretValues(settings?.apiPresets)]);
     if (upgradeNeedsProtocolCompatibility) settings.apiProtocol = 'auto';
     settings.apiPresets = normalizeApiPresetList(settings.apiPresets);
@@ -396,12 +399,14 @@ async function init() {
     if (event_types?.CHAT_CHANGED) {
         eventSource.on(event_types.CHAT_CHANGED, async () => {
             scheduleTokenEstimate();
+            refreshBaiBaiMemoryStatus(settings, SillyTavern.getContext());
             if (!settings.followCharCard) return;
             try { await applyCharBoundBooks(); } catch (e) { console.warn('[Theater] 跟随角色卡失败:', e); }
         });
     }
 
     bindPersonaFollowRefresh({ eventSource, event_types, settings, save, theaterError });
+    bindBaiBaiMemoryUpdates({ getSettings: () => settings, getContext: () => SillyTavern.getContext(), scheduleTokenEstimate });
 
     // 自动模式：AI 每回完一条就看看攒没攒够
     if (event_types?.MESSAGE_RECEIVED) {

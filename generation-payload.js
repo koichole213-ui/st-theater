@@ -6,6 +6,7 @@ export function buildGenerationPayload(parts = {}) {
     const persona = String(parts.persona || '');
     const worldBook = String(parts.worldBook || '');
     const context = String(parts.context || '');
+    const memory = String(parts.memory || '');
     const continuation = String(parts.continuation || '');
     const rules = String(parts.rules || '');
     const addons = String(parts.addons || '');
@@ -16,12 +17,12 @@ export function buildGenerationPayload(parts = {}) {
     const systemPrompt = [preset, addons].filter(Boolean).join('\n\n');
     // 对齐酒馆的 Chat History → Post-History Instructions 顺序：
     // 用户本轮指令属于当前消息，渲染与创作硬规则作为最后约束。
-    const userPrompt = [role, persona, worldBook, context, continuation, creativeEnhancement, instruction, rules, fixed]
+    const userPrompt = [role, persona, worldBook, context, memory, continuation, creativeEnhancement, instruction, rules, fixed]
         .filter(Boolean).join('\n\n---\n\n');
     return {
         systemPrompt,
         userPrompt,
-        tokenParts: { preset, role: role + persona, worldBook, context, continuation, rules: rules + fixed + addons + creativeEnhancement, instruction },
+        tokenParts: { preset, role: role + persona, worldBook, context, ...(memory ? { memory } : {}), continuation, rules: rules + fixed + addons + creativeEnhancement, instruction },
     };
 }
 

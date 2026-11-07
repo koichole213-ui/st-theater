@@ -26,7 +26,7 @@ function bindEvents() {
     // 恢复入口最先绑定。即使后续某个功能按钮初始化异常，用户仍能拉取修复。
     $d.off('click.tup').on('click.tup', '#theater-update-btn', runtime.updateExtension);
     $d.off('click.treload').on('click.treload', '#theater-reload-after-update-btn', runtime.confirmReloadAfterUpdate);
-    const tokenAffectingSelectors = '#theater-context-range,#theater-read-chat-context,#theater-render-select,#theater-preset-name-select,#theater-style-addon,#theater-nsfw-addon,.theater-preset-check,.theater-wb-check';
+    const tokenAffectingSelectors = '#theater-context-range,#theater-read-chat-context,#theater-read-baibai-memory,#theater-render-select,#theater-preset-name-select,#theater-style-addon,#theater-nsfw-addon,.theater-preset-check,.theater-wb-check';
     $d.off('change.ttoken').on('change.ttoken', tokenAffectingSelectors, runtime.scheduleTokenEstimate);
 
     // Tabs

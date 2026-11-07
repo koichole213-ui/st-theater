@@ -11,7 +11,7 @@ import { normalizeManualTarget } from './length-policy.js';
 import { LAMP_SVG_HTML, SKIN_LABELS, SOUND_PRESETS } from './theater-defaults.js';
 import { normalizeBookmarkSide } from './result-bookmark.js';
 import { readerPaneHTML } from './result-reader.js';
-import { MAX_CONTEXT_MESSAGES } from './context-policy.js';
+import { chatContextSettingsHTML } from './baibai-memory-ui.js';
 import { DEFAULT_LONG_DREAM_MEMORY_PRESET } from './long-dream-memory.js';
 import { normalizeMaxTokens } from './api-client.js';
 import { TAG_UNCATEGORIZED } from './tag-system.js';
@@ -255,20 +255,8 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
             <div class="theater-btn-row"><div id="theater-save-persona-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存</span></div></div>
         </div>
 
-        <!-- Context Range -->
-        <div class="theater-section">
-            <label class="theater-label"><i class="fa-solid fa-layer-group"></i> 聊天前文</label>
-            <div class="theater-toggle-row" style="margin-bottom:8px;">
-                <label class="theater-toggle-label"><input type="checkbox" id="theater-read-chat-context" ${runtime.settings.readChatContext !== false ? 'checked' : ''}><span>读取聊天前文</span></label>
-                <span class="theater-hint-inline">关闭后只使用角色设定、世界书和指令</span>
-            </div>
-            <div id="theater-context-range-row" class="theater-context-count-control${runtime.settings.readChatContext === false ? ' is-disabled' : ''}">
-                <span class="theater-context-count-label">读取最近</span>
-                <input id="theater-context-range" type="number" min="0" max="${MAX_CONTEXT_MESSAGES}" step="1" inputmode="numeric" value="${runtime.settings.contextRange}" class="theater-input theater-number-input theater-context-number" aria-label="读取最近多少条消息" ${runtime.settings.readChatContext === false ? 'disabled' : ''}>
-                <span class="theater-context-count-unit">条消息</span>
-                <span class="theater-hint-inline theater-context-count-hint">填 0 表示不读取聊天消息，最多 ${MAX_CONTEXT_MESSAGES} 条</span>
-            </div>
-        </div>
+        <!-- Chat context and optional read-only memory -->
+        ${chatContextSettingsHTML(runtime.settings, SillyTavern.getContext())}
         ${runtime.contextExclusionSettingsHTML()}
     </div>
 
