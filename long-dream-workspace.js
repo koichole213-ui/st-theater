@@ -697,17 +697,21 @@ function longDreamListHTML() {
     return `<div class="ia-works-level active theater-dream-home" data-works-level="shelf">
         <header class="theater-dream-library-header">
             <div class="theater-dream-library-title"><h2><i class="fa-solid fa-book-journal-whills"></i><span>我的长梦</span></h2><p>点击作品卡片进入章节目录</p></div>
-            <button type="button" id="theater-dream-new" class="ui-btn ui-btn-sm ui-btn-primary"><i class="fa-solid fa-plus"></i><span>新建</span></button>
-        </header>
-        ${cards ? `<div class="theater-dream-list">${cards}</div>` : `<section class="ui-card theater-dream-empty"><div class="theater-dream-empty-icon">☾</div><b>还没有长梦</b><span>从定梦开始建立第一本作品。</span><button type="button" data-dream-new class="ui-btn ui-btn-primary">创建第一部长梦</button></section>`}
-        <section class="ui-card theater-dream-action-card theater-dream-library-tools">
+            <div class="theater-dream-header-actions"><details class="theater-dream-backup-menu">
+                <summary aria-label="备份与恢复" title="备份与恢复"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></summary>
+                <div class="theater-dream-backup-popover">        <section class="ui-card theater-dream-action-card theater-dream-library-tools">
             <div class="theater-dream-action-heading"><span class="theater-dream-action-icon"><i class="fa-solid fa-box-archive"></i></span><span><b>备份与恢复</b><small>导入可信备份，或导出全部长梦</small></span></div>
             <div class="theater-dream-library-action-grid">
                 <button type="button" id="theater-dream-import-backup" class="theater-dream-fat-btn is-secondary"><i class="fa-solid fa-upload"></i><span>导入备份</span></button>
                 <button type="button" id="theater-dream-export-all" class="theater-dream-fat-btn is-primary" ${dreams.length ? '' : 'disabled'}><i class="fa-solid fa-download"></i><span>导出全部</span></button>
             </div>
             <small class="theater-dream-archive-note">备份会保留章节原始 HTML，请只导入可信来源。</small>
-        </section>
+        </section></div>
+            </details>
+            <button type="button" id="theater-dream-new" class="ui-btn ui-btn-sm ui-btn-primary"><i class="fa-solid fa-plus"></i><span>新建</span></button></div>
+        </header>
+        ${cards ? `<div class="theater-dream-list">${cards}</div>` : `<section class="ui-card theater-dream-empty"><div class="theater-dream-empty-icon">☾</div><b>还没有长梦</b><span>从定梦开始建立第一本作品。</span><button type="button" data-dream-new class="ui-btn ui-btn-primary">创建第一部长梦</button></section>`}
+
     </div>`;
 }
 // @theater-source-end longDreamListHTML
@@ -779,12 +783,12 @@ function refreshLongDreamCreateWorldBookState(source = resolveLongDreamSource($(
 // @theater-source-begin longDreamCreateHTML
 function longDreamCreateHTML() {
     const sources = longDreamSources();
-    const first = sources[0] || null;
+    const first = sources.find(s => s.kind === 'history') || sources.find(s => s.kind === 'current') || sources.find(s => s.kind === 'recent') || null;
     const selectedBooks = (runtime.settings.selectedWorldBooks || []).filter(Boolean);
     return `<div class="theater-dream-create">
         ${sources.length ? `<div class="theater-dream-form-grid">
             <section class="ui-card theater-dream-form-card">
-                <div class="ui-title"><span>选择作品</span></div>
+                <div class="ui-title"><span><i class="fa-solid fa-book-open" aria-hidden="true"></i> 选择作品</span></div>
                 ${sourcePickerHTML(runtime, sources)}
                 <div id="theater-dream-source-preview" hidden></div>
             </section>

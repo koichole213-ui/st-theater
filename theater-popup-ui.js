@@ -84,7 +84,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                 <button type="button" id="theater-quick-render-toggle" class="theater-quick-render-toggle${selectedAdaptiveRender ? ' is-adaptive' : ''}" title="在设置中指定的 A/B 两个模板之间切换" aria-label="切换生成模板">${runtime.quickRenderButtonContent()}</button>
                 <label class="theater-label" id="theater-instruction-label" for="theater-instruction">${runtime.continuationSession ? '本段续写方向' : '小剧场指令'}</label>
             </div>
-            <textarea id="theater-instruction" class="theater-textarea" rows="4" placeholder="${runtime.continuationSession ? '可留空自然续写，也可填写本段方向…' : '例如：生成一个角色们一起吃火锅的番外小剧场'}">${runtime.esc(runtime.continuationSession ? runtime.continuationSession.direction : (runtime.settings.lastInstruction || ''))}</textarea>
+            <textarea id="theater-instruction" class="theater-textarea" rows="8" placeholder="${runtime.continuationSession ? '可留空自然续写，也可填写本段方向…' : '例如：生成一个角色们一起吃火锅的番外小剧场'}">${runtime.esc(runtime.continuationSession ? runtime.continuationSession.direction : (runtime.settings.lastInstruction || ''))}</textarea>
             <details id="theater-manual-target-control" class="theater-target-details ${runtime.settings.manualTargetEnabled ? 'is-enabled' : ''}" ${runtime.settings.manualTargetPanelOpen ? 'open' : ''}>
                 <summary class="theater-target-summary">
                     <span><i class="fa-solid fa-bullseye"></i> 独立设置目标字数</span>
@@ -317,8 +317,9 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
             </select>
             <p class="theater-hint" id="theater-render-selection-hint" style="margin:7px 1px 0;">${runtime.esc(runtime.renderSelectionHint(selRender))}</p>
             <textarea id="theater-render-content" class="theater-textarea" rows="6" style="margin-top:10px;">${runtime.esc(runtime.renderTemplateContentForSelection(selRender, render))}</textarea>
-            <div class="theater-btn-row">
-                <div id="theater-save-render-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存为新模板</span></div>
+            <div class="theater-btn-row theater-render-editor-actions">
+                <button type="button" id="theater-new-render-btn" class="theater-btn primary"><i class="fa-solid fa-plus"></i><span>新建模板</span></button>
+                <button type="button" id="theater-save-render-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存</span></button>
                 <button type="button" id="theater-delete-render-btn" class="theater-btn danger" ${runtime.isBuiltinRenderSelection(selRender) ? 'disabled title="内置模板不可删除"' : ''}><i class="fa-solid fa-trash"></i><span>${runtime.isBuiltinRenderSelection(selRender) ? '内置模板不可删除' : '删除这个自定义模板'}</span></button>
             </div>
         </div>
@@ -329,7 +330,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
         <div class="theater-section">
             <div class="theater-history-top-bar theater-history-collection-bar">
                 <div class="theater-history-section-head">
-                    <strong>保存的小剧场</strong>
+                    <strong><i class="fa-solid fa-book-bookmark" aria-hidden="true"></i> 保存的小剧场</strong>
                     <button type="button" class="theater-history-manage theater-history-menu-trigger" aria-label="整理与备份" aria-expanded="false"><i class="fa-solid fa-bars"></i><span>整理与备份</span><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
                     <template data-history-menu-content hidden>
                         <p class="theater-history-menu-label">整理</p>
@@ -419,10 +420,6 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
     <div class="theater-panel${activeTabClass('diagnostics')}" data-panel="diagnostics">
         <div class="theater-section">
             <label class="theater-label theater-pi-log-title"><span><i class="fa-solid fa-terminal"></i> 运行日志终端</span><small><span id="theater-runtime-log-count">${runtimeEntries.length}</span> / ${MAX_RUNTIME_LOGS}</small></label>
-            <div class="theater-btn-row theater-diagnostic-actions">
-                <div class="theater-copy-runtime-log-btn theater-btn"><i class="fa-solid fa-copy"></i><span>复制日志</span></div>
-                <div id="theater-clear-runtime-log-btn" class="theater-btn"><i class="fa-solid fa-eraser"></i><span>清空日志</span></div>
-            </div>
             <div id="theater-runtime-log-list" class="theater-error-log-list">
                 ${runtimeEntries.length ? runtimeEntries.map(entry => `
                 <div class="theater-error-log-item theater-runtime-log-${entry.level}">
@@ -430,6 +427,10 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                     <span class="theater-runtime-log-level">[${runtime.esc(entry.level.toUpperCase())}]</span>
                     <span class="theater-runtime-log-message">${runtime.esc(entry.message)}</span>
                 </div>`).join('') : '<p class="theater-empty">暂无运行日志</p>'}
+            </div>
+            <div class="theater-btn-row theater-diagnostic-actions">
+                <div class="theater-copy-runtime-log-btn theater-btn"><i class="fa-solid fa-copy"></i><span>复制日志</span></div>
+                <div id="theater-clear-runtime-log-btn" class="theater-btn"><i class="fa-solid fa-eraser"></i><span>清空日志</span></div>
             </div>
         </div>
         <div class="theater-section">
@@ -534,7 +535,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                     <button type="button" id="theater-test-api-btn" class="theater-btn"><i class="fa-solid fa-plug"></i><span>测试连接</span></button>
                     <button type="button" id="theater-save-api-btn" class="theater-btn primary"><i class="fa-solid fa-floppy-disk"></i><span>保存设置</span></button>
                 </div>
-            <details class="theater-memory-api-card">
+            <details class="theater-memory-api-card" open>
                 <summary><span><i class="fa-solid fa-route"></i><b>梦脉织录</b></span><small id="theater-dream-memory-summary">${runtime.settings.longDreamMemoryApiPresetId ? `${runtime.esc(apiPresets.find(preset => preset.id === runtime.settings.longDreamMemoryApiPresetId)?.name || '已绑定副 API')} · 每 ${Number(runtime.settings.longDreamMemoryBatchSize) || 3} 章` : '尚未绑定副 API'}</small><i class="fa-solid fa-chevron-down"></i></summary>
                 <div class="theater-memory-api-body">
                     <p>正文线路与梦脉完全分开。确认章节只加入待织录队列，默认累计三章后在后台批量整理。</p>

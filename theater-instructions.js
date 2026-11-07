@@ -584,7 +584,7 @@ async function manageInstructionTags() {
             <button type="button" class="theater-tag-mgmt-delete theater-btn danger" data-tag="${runtime.esc(tag)}"><i class="fa-solid fa-trash"></i><span>删除</span></button>
         </div>`;
     }).join('');
-    const html = `<div class="theater-popup" data-skin="${runtime.settings.skinMode || 'default'}"><div class="theater-popup-header"><p class="theater-title">管理标签</p><p class="theater-subtitle">模板和历史共用名称；删除标签不会删除内容</p></div><div class="theater-section">${rows}</div></div>`;
+    const html = `<div class="theater-popup theater-compact-popup theater-tag-manager-popup" data-skin="${runtime.settings.skinMode || 'default'}"><div class="theater-popup-header"><p class="theater-title">管理标签</p><p class="theater-subtitle">模板和历史共用名称；删除标签不会删除内容</p></div><div class="theater-section theater-tag-manager-list" role="region" aria-label="标签列表" tabindex="0">${rows}</div></div>`;
     const popup = new Popup(html, POPUP_TYPE.TEXT, '', { wide: false, okButton: '关闭', allowVerticalScrolling: true });
     const $body = $(popup.dlg);
     const close = () => typeof popup.completeAffirmative === 'function' ? popup.completeAffirmative() : popup.dlg?.close?.();
@@ -752,7 +752,16 @@ function clearInstSelection() {
 // @theater-source-begin saveRenderTpl
 async function saveRenderTpl() {
     const content = $('#theater-render-content').val().trim();
-    if (!content) return;
+    if (!content) { toastr.info('先填写模板内容'); return; }
+    const selected = $('#theater-render-select').val();
+    const current = selected !== 'draft' && !runtime.isBuiltinRenderSelection(selected) ? runtime.settings.renderTemplates[Number(selected)] : null;
+    if (current) {
+        current.content = content;
+        runtime.save();
+        runtime.refreshRenderSelectionControls();
+        toastr.success('已保存');
+        return;
+    }
     const name = await askNewItemName('保存渲染模板', `渲染模板 ${runtime.settings.renderTemplates.length + 1}`);
     if (!name) return;
     runtime.settings.renderTemplates.push({ name, content });

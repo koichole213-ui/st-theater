@@ -367,8 +367,16 @@ export function bindMaterialEvents(runtime, $d) {
     // ---- Rules: Render templates ----
     $d.off('change.tr').on('change.tr', '#theater-render-select', function () {
         const v = $(this).val();
+        $(this).find('[data-render-draft]').remove();
         runtime.settings.selectedRenderIndex = v; runtime.save();
         runtime.refreshRenderSelectionControls();
+    });
+    $d.off('click.tnewrender').on('click.tnewrender', '#theater-new-render-btn', () => {
+        $('#theater-render-select').append('<option value="draft" data-render-draft>新模板 · 未保存</option>').val('draft');
+        $('#theater-render-select [data-render-draft]').not(':last').remove();
+        $('#theater-render-content').val('').trigger('input').trigger('focus');
+        $('#theater-render-selection-hint').text('新模板');
+        $('#theater-delete-render-btn').prop('disabled', true).find('span').text('删除模板');
     });
     $d.off('click.tsr').on('click.tsr', '#theater-save-render-btn', runtime.saveRenderTpl);
     $d.off('click.trenderdelete').on('click.trenderdelete', '#theater-delete-render-btn', runtime.deleteRenderTpl);

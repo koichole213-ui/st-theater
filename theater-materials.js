@@ -38,9 +38,9 @@ function contextExclusionSettingsHTML() {
     return `<div class="theater-section theater-context-exclusions">
         <details class="theater-addon-details theater-exclusion-panel" id="theater-context-exclusions">
             <summary class="theater-addon-summary"><i class="fa-solid fa-filter" aria-hidden="true"></i><span class="theater-exclusion-heading"><b>前文排除</b><small>让小剧场不读取状态栏、尾注等内容</small></span><span id="theater-exclusion-count">${normalizeContextExclusionRules(runtime.settings.contextExclusionRules).filter(rule => rule.enabled).length} 条启用</span></summary>
-            <div class="theater-exclusion-body"><p class="theater-hint">把状态栏、固定尾注等内容从小剧场的聊天前文里过滤掉。只影响小剧场读取，聊天原文不会改变。</p>
+            <div class="theater-exclusion-body"><section class="theater-exclusion-rules-box"><p class="theater-hint">过滤聊天前文中的状态栏、固定尾注等内容。<br><span>只影响小剧场读取，聊天原文不会改变。</span></p>
             <div class="theater-exclusion-group-heading"><b>已添加的排除规则</b><small>添加或切换后自动生效</small></div>
-            <div id="theater-exclusion-list">${contextExclusionRulesHTML()}</div>
+            <div id="theater-exclusion-list">${contextExclusionRulesHTML()}</div></section>
             <section class="theater-exclusion-add-box"><b class="theater-exclusion-step">① 选择排除方式</b>
             <div class="theater-exclusion-modes" role="group" aria-label="排除方式"><button type="button" data-exclusion-type="tag" class="active" aria-pressed="true">按标签整块排除</button><button type="button" data-exclusion-type="literal" aria-pressed="false">按原文精确排除</button></div>
             <select id="theater-exclusion-type" class="theater-select" data-select2-id="${runtime.theaterNativeSelectCompatId()}" hidden aria-label="排除规则类型"><option value="tag">标签区块</option><option value="literal">固定内容</option></select>
@@ -57,7 +57,6 @@ function contextExclusionSettingsHTML() {
             <div><label class="theater-exclusion-field-label" for="theater-exclusion-preview-output">小剧场实际读取</label><pre id="theater-exclusion-preview-output" aria-label="过滤后读取的正文">粘贴原消息后，在这里查看结果。</pre></div></div>
             <p class="theater-hint" id="theater-exclusion-preview-status" role="status" hidden></p>
             <button type="button" id="theater-exclusion-preview-run" class="theater-btn theater-config-text-button">重新预览</button></section>
-            <p class="theater-hint">规则只处理聊天前文，不影响角色设定、世界书和指令。关闭“读取聊天前文”或读取条数为 0 时，不会读取聊天消息。</p>
             </div>
         </details>
     </div>`;

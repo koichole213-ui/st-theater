@@ -6,6 +6,26 @@ import { normalizeManualTarget } from './length-policy.js';
 
 // Event registration order and handler closures are preserved by the coordinator.
 export function bindLongDreamEvents(runtime, $d) {
+    $d.off('click.tdreambackup').on('click.tdreambackup', event => {
+        document.querySelectorAll('.theater-dream-backup-menu[open]').forEach(menu => {
+            if (!menu.contains(event.target) || event.target.closest('button')) menu.open = false;
+        });
+    });
+    const backupMenuHandlerKey = Symbol.for('st-theater.backup-menu-keydown');
+    const previousKeyHandler = document[backupMenuHandlerKey];
+    if (previousKeyHandler) document.removeEventListener?.('keydown', previousKeyHandler, true);
+    const closeBackupMenu = event => {
+        if (event.key !== 'Escape') return;
+        const menu = document.querySelector('.theater-dream-backup-menu[open]');
+        if (!menu) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        menu.open = false;
+        menu.querySelector('summary')?.focus();
+    };
+    document.addEventListener?.('keydown', closeBackupMenu, true);
+    document[backupMenuHandlerKey] = closeBackupMenu;
+
     // ---- Long Dream ----
     $d.off('input.tdcompose change.tdcompose').on('input.tdcompose change.tdcompose', '#theater-dream-next-instruction,#theater-dream-next-title,#theater-dream-next-target', function () {
         runtime.rememberLongDreamComposerDraft();

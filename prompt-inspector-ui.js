@@ -3,7 +3,7 @@ import { promptInspectorStore, promptMessageSource, inspectionBoundary, inspecti
 const chevronIcon = '<svg class="theater-pi-chevron" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="m7.5 5 5 5-5 5"/></svg>';
 
 export function promptInspectorHTML() {
-    return `<details class="theater-section theater-prompt-inspector" data-theater-prompt-inspector open>
+    return `<details class="theater-section theater-prompt-inspector" data-theater-prompt-inspector>
         <summary><span>完整提示词查看器</span>${chevronIcon}</summary><div class="theater-pi-body">
         <div class="theater-pi-selects"><div class="theater-pi-field"><label for="theater-pi-request">选择请求</label><select id="theater-pi-request" class="theater-input" data-pi-request><option value="">暂无请求记录</option></select></div>
         <div class="theater-pi-field"><label>查看阶段</label><div class="theater-pi-segmented" role="group" aria-label="查看阶段"><button type="button" class="active" data-pi-stage="assembled" aria-pressed="true">组装消息</button><button type="button" data-pi-stage="sent" aria-pressed="false">交给接口的消息</button></div></div></div>

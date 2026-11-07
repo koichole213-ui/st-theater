@@ -8,13 +8,13 @@ function dateText(source) {
 export function sourcePickerHTML(runtime, sources) {
     const folders = sources.filter(source => source.kind === 'history-folder');
     const singles = sources.filter(source => source.kind === 'history');
-    const first = folders[0] || sources[0];
-    states.set(runtime, { sources, key: first?.key || '', tab: folders.length ? 'folder' : 'single', query: '', page: 0, sort: 'recent' });
+    const first = singles[0] || sources.find(s => s.kind === 'current') || sources.find(s => s.kind === 'recent') || null;
+    states.set(runtime, { sources, key: first?.key || '', tab: 'single', query: '', page: 0, sort: 'recent' });
     const quick = [sources.find(s => s.kind === 'current'), sources.find(s => s.kind === 'recent')].filter(Boolean);
     return `<div class="theater-source-picker"><input type="hidden" id="theater-dream-source" value="${runtime.esc(first?.key || '')}">
         <div class="theater-source-library">
-            <div class="theater-source-quick">${quick.map(s => `<button type="button" class="ui-btn" data-source-pick="${runtime.esc(s.key)}"><span aria-hidden="true">${s.kind === 'current' ? '↗' : '◷'}</span>${s.kind === 'current' ? '正在查看的剧场' : '最近生成'}</button>`).join('')}</div>
-            <div class="theater-source-tabs" role="group" aria-label="来源分类">${[['folder', `文件夹 · ${folders.length}`], ['single', `单篇 · ${singles.length}`]].map(([tab, label]) => `<button type="button" class="ui-btn" data-source-tab="${tab}" aria-pressed="${state(runtime).tab === tab}">${label}</button>`).join('')}</div>
+            <div class="theater-source-quick">${quick.map(s => `<button type="button" class="ui-btn" data-source-pick="${runtime.esc(s.key)}"><i aria-hidden="true" class="fa-solid ${s.kind === 'current' ? 'fa-arrow-up-right-from-square' : 'fa-clock-rotate-left'}"></i>${s.kind === 'current' ? '正在查看的剧场' : '最近生成'}</button>`).join('')}</div>
+            <div class="theater-source-tabs" role="group" aria-label="来源分类">${[['single', `单篇 · ${singles.length}`], ['folder', `文件夹 · ${folders.length}`]].map(([tab, label]) => `<button type="button" class="ui-btn" data-source-tab="${tab}" aria-pressed="${state(runtime).tab === tab}">${label}</button>`).join('')}</div>
             <div class="theater-source-tools">
                 <input type="search" class="ui-input" id="theater-source-search" placeholder="搜索标题或正文…" aria-label="搜索标题或正文">
                 <select id="theater-source-sort" aria-label="排列顺序" class="ui-select theater-select" data-select2-id="${runtime.esc(runtime.theaterNativeSelectCompatId?.() || 'long-dream-source-sort')}"><option value="recent">最近保存优先</option><option value="old">最早保存优先</option></select>

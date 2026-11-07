@@ -3750,13 +3750,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.7b 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.7c 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.7b'/);
-    assert.equal(manifest.version, '4.4.7b');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.7b/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.7c'/);
+    assert.equal(manifest.version, '4.4.7c');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.7c/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 
@@ -3790,7 +3790,8 @@ test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦�
     assert.match(continuation, /fa-sliders/);
     assert.match(continuation, /id="theater-dream-token-summary"[\s\S]*?明细 ▾[\s\S]*?id="theater-dream-token-details"/);
     assert.match(workDetail, /data-dream-work-back/);
-    assert.ok(shelf.indexOf('class="theater-dream-list"') < shelf.indexOf('备份与恢复'));
+    assert.ok(shelf.indexOf('theater-dream-backup-menu') < shelf.indexOf('class="theater-dream-list"'));
+    assert.match(shelf, /<header class="theater-dream-library-header">[\s\S]*?aria-label="备份与恢复"[\s\S]*?id="theater-dream-new"[\s\S]*?<\/header>/);
     assert.doesNotMatch(shelf, /ia-book-cover|打开作品/);
     assert.match(source, /data-dream-open-chapter/);
     assert.match(workDetail, /class="[^"]*theater-dream-work-menu/);
