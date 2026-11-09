@@ -9,6 +9,8 @@ import { parseLongDreamBackup } from './long-dream-backup.js';
 import { LONG_DREAM_ARCHIVE_MANIFEST, parseLongDreamArchive } from './long-dream-archive.js';
 import { sanitizeLogText } from './runtime-log.js';
 import { backupFileMetadata, createBackupImportTrace } from './backup-import-diagnostics.js';
+import { discoverOldArchives } from './archive-discovery.js';
+import { ARCHIVE_SEARCH_SCOPE, archiveSearchHTML } from './archive-discovery-ui.js';
 
 export function createTheaterBackup(runtime) {
     const storage = createBackupStorage(runtime);
@@ -165,24 +167,41 @@ export function createTheaterBackup(runtime) {
         return createCompleteBackup(normalized,{sourceId:(await digest(normalized)).slice(0,32),deviceName:'旧格式备份'});
     }
     async function openRestore(scope='all', initialSource='local') {
+        const archives=initialSource==='archives';
         const openingTrace=createBackupImportTrace(runtime,{scope,source:initialSource});
         openingTrace.step('opening');
         try { await initialize(); idle(); if (!root()) throw new Error('小剧场窗口未找到，请重新打开'); } catch(error) { openingTrace.fail(); throw error; }
         root().querySelector('.theater-backup-dialog')?.close();
         let view;
-        try { view=restoreDialog(root(),scope); openingTrace.finish(); } catch(error) { openingTrace.fail(); throw error; }
-        const allowed=scope==='all'?Object.keys(BACKUP_LABELS):[scope];
+        try { view=restoreDialog(root(),scope,archives?{title:'查找旧存档'}:{}); openingTrace.finish(); } catch(error) { openingTrace.fail(); throw error; }
+        if(archives)view.element.classList.add('archive-dialog');
+        const allowed=archives?['history','dreams']:scope==='all'?Object.keys(BACKUP_LABELS):[scope];
         let packet=null, preview=null, entries=[], selected=[...allowed], ticket=0, committing=false, readingTrace=null, currentSource=initialSource;
+        let archiveController=null,archiveResult=null;
         function beginTrace(stage,meta={}) {
             readingTrace?.cancel();
             const trace=createBackupImportTrace(runtime,{scope,source:currentSource,onProgress:value=>{if(view.alive()&&readingTrace===trace)view.status(value);}});
             readingTrace=trace;trace.step(stage,meta);return trace;
         }
         function failure(error,trace=readingTrace) { const diagnostic=trace?.fail();if(view.alive())view.error(`${safeError(error)}${diagnostic?'。'+diagnostic:''}`); }
-        view.element.addEventListener('close',()=>{readingTrace?.cancel();ticket++;},{once:true});
+        view.element.addEventListener('close',()=>{archiveController?.abort();readingTrace?.cancel();ticket++;},{once:true});
         function options(){return `<div class="theater-backup-source-tabs"><button type="button" class="theater-btn" data-source="local">本地文件</button><button type="button" class="theater-btn" data-source="github">GitHub 仓库</button></div>`;}
         async function choose(source='local') {
             const current=++ticket; readingTrace?.cancel();currentSource=source;view.error('');view.status(''); preview=null;
+            if(archives&&source==='archives'){
+                archiveController?.abort();archiveController=new AbortController();
+                const controller=archiveController;
+                archiveResult=null;
+                view.body.innerHTML=ARCHIVE_SEARCH_SCOPE+'<div class="archive-state" role="status"><span class="archive-spinner" aria-hidden="true"></span><b>正在查找旧存档…</b><p class="theater-dialog-note">正在只读检查，不会改动现有作品。</p></div>';
+                runtime.runtimeLog('info','旧存档查找开始');
+                try{
+                    const result=await discoverOldArchives({currentDatabaseName:runtime.idb?.name||'st-theater',settings:runtime.settings,current:{history:runtime.historyCache,dreams:runtime.longDreamCache},signal:controller.signal});
+                    if(!view.alive()||current!==ticket)return;
+                    archiveResult=result;view.body.innerHTML=archiveSearchHTML(result);
+                    runtime.runtimeLog('info','旧存档查找完成',{checked:result.checked,candidates:result.candidates.length,failed:result.failed,partial:result.status!=='complete'});
+                }catch(error){if(view.alive()&&current===ticket&&error.name!=='AbortError'){archiveResult={candidates:[],status:'failed'};view.body.innerHTML=archiveSearchHTML(archiveResult);}}
+                return;
+            }
             view.body.innerHTML=options();
             view.body.querySelector(`[data-source="${source}"]`).setAttribute('aria-pressed','true');
             if (source==='local') {
@@ -209,12 +228,12 @@ export function createTheaterBackup(runtime) {
             if(!view.alive()||current!==ticket)return;
             preview=nextPreview;
             const plan=preview.plan,c=packet.counts;
-            view.body.innerHTML=`<p class="theater-dialog-note">${e(packet.deviceName)} · ${e(new Date(packet.exportedAt).toLocaleString('zh-CN',{hour12:false}))}</p>
+            view.body.innerHTML=`<p class="theater-dialog-note">${e(packet.deviceName)}${archives?'':` · ${e(new Date(packet.exportedAt).toLocaleString('zh-CN',{hour12:false}))}`}</p>
               <table class="theater-backup-counts"><thead><tr><th>恢复内容</th><th>新增</th><th>跳过</th><th>另存</th></tr></thead><tbody>${allowed.map(kind=>{const s=selected.includes(kind)?plan.stats[kind]:null;return `<tr><th scope="row"><label class="theater-backup-pick"><input type="checkbox" value="${kind}" ${selected.includes(kind)?'checked':''}><b>${e(BACKUP_LABELS[kind])}</b></label></th><td>${s?s.added:'—'}</td><td>${s?s.same:'—'}</td><td>${s?s.different:'—'}</td></tr>`;}).join('')}</tbody></table>
               ${selected.includes('dreams')&&c.candidates?`<p class="theater-dialog-note">含 ${c.candidates} 篇待选候选，恢复后仍需选择。</p>`:''}
               ${selected.includes('recent')?'<p class="theater-dialog-note">最近结果恢复为找回副本，保留当前结果。</p>':''}
               <p class="theater-dialog-note">相同跳过，差异另存，保留当前内容。</p>
-              <footer><button type="button" class="theater-btn" data-back>重新选择</button><button type="button" class="theater-btn primary" data-confirm ${!plan.changed||!selected.length?'disabled':''}>${plan.changed?'确认恢复':'无需重复恢复'}</button></footer>`;
+              <footer><button type="button" class="theater-btn" data-back>${archives?'返回查找结果':'重新选择'}</button><button type="button" class="theater-btn primary" data-confirm ${!plan.changed||!selected.length?'disabled':''}>${plan.changed?'确认恢复':'无需重复恢复'}</button></footer>`;
             trace.finish();
             view.body.querySelectorAll('.theater-backup-pick input').forEach(input=>input.addEventListener('change',async()=>{selected=[...view.body.querySelectorAll('.theater-backup-pick input:checked')].map(x=>x.value);try{await review();}catch(error){failure(error);}}));
         }
@@ -235,8 +254,15 @@ export function createTheaterBackup(runtime) {
             const button=event.target.closest('button');if(!button||button.disabled)return;
             if(committing)return;
             try {
-                if(button.dataset.source)await choose(button.dataset.source);
-                else if(button.hasAttribute('data-back'))await choose();
+                if(button.hasAttribute('data-archive-retry'))await choose('archives');
+                else if(button.hasAttribute('data-archive-backup')){view.close();await openRestore('all');}
+                else if(button.hasAttribute('data-archive-review')){
+                    const index=Number(view.body.querySelector('[data-archive-choice]:checked')?.value);
+                    const candidate=archiveResult?.candidates[index];if(!candidate)return;
+                    packet=candidate.packet;selected=allowed.filter(kind=>packet.counts[kind]>0);await review();
+                }
+                else if(button.dataset.source)await choose(button.dataset.source);
+                else if(button.hasAttribute('data-back')){if(archives&&archiveResult){ticket++;view.error('');view.status('');view.body.innerHTML=archiveSearchHTML(archiveResult);}else await choose();}
                 else if(button.hasAttribute('data-legacy-instructions')){view.close();runtime.importInstructionTemplates();}
                 else if(button.hasAttribute('data-remote')){
                     const current=++ticket;button.disabled=true;
@@ -300,6 +326,7 @@ export function createTheaterBackup(runtime) {
                 const action=button.dataset.backupAction;
                 if(action==='settings'){runtime.activateTheaterTab('config');return;}
                 if(action==='recovered'){await recoveredResults();return;}
+                if(action==='find-archives'){await openRestore('all','archives');return;}
                 await initialize();
                 if(busy)throw new Error('备份操作正在进行，请稍后再试');
                 if(action==='save'){

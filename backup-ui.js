@@ -1,4 +1,4 @@
-export const BACKUP_TUTORIAL_URL = ''; // Fill only after 禾禾 supplies her illustrated guide.
+export const BACKUP_TUTORIAL_URL = 'https://docs.google.com/document/d/1wsqCEkfX0gwvds4ajVY9mCsAknUqBnqOWPDxff0Rvss/edit?usp=sharing';
 export const escapeBackup = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
 export const BACKUP_LABELS = { instructions: '指令库', history: '普通历史', dreams: '长梦作品', recent: '当前与最近结果' };
 const date = value => value ? new Date(value).toLocaleString('zh-CN', { hour12:false }) : '暂无';
@@ -14,6 +14,7 @@ export function backupSettingsHTML(config = {}, state = {}, { recoveredCount = 0
     const tutorial = BACKUP_TUTORIAL_URL ? `<a class="theater-backup-guide" href="${e(BACKUP_TUTORIAL_URL)}" target="_blank" rel="noopener noreferrer">图文教程 ↗</a>` : '<span class="theater-backup-guide">图文教程（待接入）</span>';
     return `<section class="theater-config-card theater-backup-settings" data-config-group="backup" style="order:7"><div class="theater-config-card-title"><span><i class="fa-solid fa-box-archive"></i>备份与恢复</span></div><div class="theater-config-card-body">
       <div class="theater-config-api-actions theater-backup-main-actions"><button type="button" class="theater-btn" data-backup-action="download"><i class="fa-solid fa-download"></i>下载备份</button><button type="button" class="theater-btn" data-theater-restore="all"><i class="fa-solid fa-box-archive"></i>恢复备份</button></div>
+      <button type="button" class="theater-btn archive-find" data-backup-action="find-archives"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>查找旧存档</button>
       <div class="theater-section"><div class="theater-config-setting-row"><label class="theater-config-setting-copy" for="theater-backup-enabled"><b>定期备份</b></label>${toggle('theater-backup-enabled','开启定期备份',config.enabled)}</div>
       <div class="theater-backup-schedule" data-backup-schedule ${config.enabled?'':'hidden'}><label class="theater-config-choice-row"><span><b>备份频率</b></span><select id="theater-backup-interval" class="theater-select">${[[1,'每天'],[3,'每三天'],[7,'每周']].map(([n,t]) => `<option value="${n}" ${Number(config.days)===n?'selected':''}>${t}</option>`).join('')}</select></label><p class="theater-layout-note">到期后打开小剧场时备份，内容没变就跳过。</p></div></div>
       <p class="theater-backup-protection theater-layout-note" data-backup-protection ${state.protection?'':'hidden'}>${e(state.protection || '')}</p>
@@ -35,11 +36,11 @@ export function backupDiagnosticHTML(state = {}) {
       <div class="theater-backup-protection-panel" data-backup-protection-panel ${state.protection?'':'hidden'}><p class="theater-layout-note theater-backup-protection" data-backup-protection>${e(state.protection)}</p><details class="theater-config-extra-details" data-backup-reduction-controls ${isBackupReduction(state)?'':'hidden'}><summary>确认是自己删除的？<i class="fa-solid fa-chevron-down" aria-hidden="true"></i></summary><div class="theater-config-extra-body"><label class="theater-toggle-label"><input type="checkbox" data-backup-confirm-reduction><span>已核对，是我主动删除的</span></label><button type="button" class="theater-btn" data-backup-action="confirmed-backup" disabled>为当前内容创建新备份</button></div></details></div></div>`;
 }
 
-export function restoreDialog(root, scope) {
+export function restoreDialog(root, scope, { title } = {}) {
     const dialog = document.createElement('dialog');
     dialog.className = 'theater-organize-dialog theater-backup-dialog';
     const e = escapeBackup;
-    dialog.innerHTML = `<form><header><h2>${scope==='all'?'恢复备份':`导入${e(BACKUP_LABELS[scope])}备份`}</h2><button type="button" data-restore-close aria-label="关闭恢复备份">×</button></header><p class="theater-dialog-note" data-restore-progress role="status" aria-live="polite" hidden></p><p class="theater-dialog-note theater-backup-error" data-restore-error role="alert" hidden></p><div data-restore-body></div></form>`;
+    dialog.innerHTML = `<form><header><h2>${title?e(title):scope==='all'?'恢复备份':`导入${e(BACKUP_LABELS[scope])}备份`}</h2><button type="button" data-restore-close aria-label="${e(title?`关闭${title}`:'关闭恢复备份')}">×</button></header><p class="theater-dialog-note" data-restore-progress role="status" aria-live="polite" hidden></p><p class="theater-dialog-note theater-backup-error" data-restore-error role="alert" hidden></p><div data-restore-body></div></form>`;
     const previousFocus = document.activeElement;
     let writing = false;
     dialog.addEventListener('cancel', event => { if (writing) event.preventDefault(); });

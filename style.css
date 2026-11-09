@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.4.7e
+/* 千夜浮梦 · 小剧场生成器 v4.4.7f
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -7912,3 +7912,38 @@ body :is(.popup,dialog.popup):has(.theater-tag-manager-popup) :is(.popup-control
 /* Connection test result stays next to its button, including on phones. */
 .theater-backup-connection-feedback { text-align:left; overflow-wrap:anywhere; }
 .theater-backup-connection-feedback[data-state="error"] { color:var(--t-danger); }
+
+/* Manual, read-only old archive discovery. */
+
+.archive-find{width:100%;justify-content:center;margin:0 0 16px;min-height:40px}
+
+.archive-dialog form{min-width:0}.archive-dialog [data-find-body]{min-width:0}
+.archive-dialog .theater-dialog-note{text-align:left;overflow-wrap:anywhere}
+.archive-scope{margin:0 0 16px!important}
+.archive-state{padding:24px 4px;text-align:left;display:flex;flex-direction:column;gap:12px}
+.archive-state>b{font-size:var(--t-text-md,16px);font-weight:600}
+.archive-state p{margin:0!important}.archive-state>i{font-size:24px;color:var(--t-accent-deep)}
+.archive-candidate{padding:16px;border:1px solid var(--t-border-strong);border-radius:12px;background:var(--t-card-blue,var(--t-surface-2))}
+.archive-candidate-heading{display:flex;flex-direction:column;gap:7px}
+.archive-candidate-heading span{font-size:var(--t-text-sm);color:var(--t-fg-soft)}
+.archive-candidate .theater-dialog-note{margin:8px 0 12px!important}
+.archive-samples{border-top:1px solid var(--t-border);padding-top:12px;text-align:left}
+.archive-samples summary{cursor:pointer;min-height:32px;font-size:var(--t-text-sm);color:var(--t-accent-deep)}
+.archive-samples ul{list-style:none;margin:6px 0 0;padding:0}.archive-samples li{display:flex;justify-content:space-between;gap:12px;padding:7px 0;overflow-wrap:anywhere;font-size:var(--t-text-sm)}
+.archive-samples small{color:var(--t-fg-soft);flex-shrink:0;font-size:var(--t-text-xs)}
+.archive-dialog footer{display:flex;gap:10px;margin-top:20px}.archive-dialog footer .theater-btn{flex:1;min-width:0;min-height:40px;justify-content:center;white-space:normal}
+.archive-warning{color:var(--t-danger);padding:10px 12px;border-left:2px solid currentColor}
+.archive-spinner{width:22px;height:22px;border:2px solid var(--t-border-strong);border-top-color:var(--t-accent-deep);border-radius:50%;animation:archive-spin .8s linear infinite}
+@keyframes archive-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.archive-spinner{animation:none}}
+@media(max-width:370px){.archive-dialog .theater-backup-counts{font-size:12px}.archive-dialog .theater-backup-counts th,.archive-dialog .theater-backup-counts td{padding:9px 4px}}
+
+.theater-backup-dialog:has(.archive-state),.theater-backup-dialog:has(.archive-candidate){width:min(560px,calc(100vw - 24px))}
+.archive-candidate+.archive-candidate{margin-top:12px}
+.archive-found-title{font-size:var(--t-text-sm);font-weight:600;text-align:left}
+.archive-candidate-heading{flex-direction:row;align-items:flex-start;cursor:pointer;min-height:40px}
+.archive-candidate-heading>input{margin:3px 8px 0 0;accent-color:var(--t-accent-deep)}
+.archive-candidate-heading>span{display:flex;flex-direction:column;gap:7px;min-width:0}
+.archive-candidate-heading b{color:var(--t-fg);overflow-wrap:anywhere}
+.archive-samples li>span{min-width:0}
+.theater-backup-dialog .archive-scope,.theater-backup-dialog .archive-state,.theater-backup-dialog .archive-candidate{text-align:left}
