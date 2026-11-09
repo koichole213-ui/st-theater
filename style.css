@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.4.7d
+/* 千夜浮梦 · 小剧场生成器 v4.4.7e
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -7908,3 +7908,7 @@ body :is(.popup,dialog.popup):has(.theater-tag-manager-popup) :is(.popup-control
 .theater-context-reading .context-memory-hint[hidden]{display:none!important}
 .theater-context-reading .context-memory-hint[data-warning=true]{color:var(--t-danger)}
 @media(max-width:370px){.theater-context-reading .context-choice{gap:0 12px}.theater-context-reading .theater-context-count-control{margin-left:24px;margin-bottom:7px}.theater-context-reading .context-memory .context-choice{gap:0}}
+
+/* Connection test result stays next to its button, including on phones. */
+.theater-backup-connection-feedback { text-align:left; overflow-wrap:anywhere; }
+.theater-backup-connection-feedback[data-state="error"] { color:var(--t-danger); }

@@ -47,6 +47,11 @@ export function createTheaterBackup(runtime) {
     }
     async function saveState() { await storage.put('backup-state',state); refresh(); }
     function feedback(text) { const el = root()?.querySelector('[data-backup-feedback]'); if (el) { el.textContent=text; el.hidden=!text; } }
+    function connectionFeedback(button,text,status) {
+        if(!button.isConnected)return;
+        const el=button.closest('.theater-config-extra-body')?.querySelector('[data-backup-connection-feedback]');
+        if(el){el.textContent=text;el.hidden=!text;el.dataset.state=status;}
+    }
     async function exclusive(operation) {
         if (busy) throw new Error('备份操作正在进行，请稍后再试');
         busy=true;
@@ -276,12 +281,20 @@ export function createTheaterBackup(runtime) {
         const changeHandler=event=>{
             if(event.target.id==='theater-backup-enabled'){const schedule=root()?.querySelector('[data-backup-schedule]');if(schedule)schedule.hidden=!event.target.checked;}
             if(event.target.matches?.('[data-backup-confirm-reduction]'))refreshBackupControls();
+            if(event.target.matches?.('#theater-backup-repository,#theater-backup-token')){
+                const message=event.target.closest('.theater-config-extra-body')?.querySelector('[data-backup-connection-feedback]');
+                if(message&&message.dataset.state!=='pending'){message.hidden=true;message.textContent='';}
+            }
         };
         documentRoot.__theaterBackupEntryHandler=entryHandler;documentRoot.addEventListener('click',entryHandler,true);
         documentRoot.__theaterBackupChangeHandler=changeHandler;documentRoot.addEventListener('change',changeHandler);
         const handler=async event=>{
             const button=event.target.closest('[data-theater-restore],[data-backup-action]');if(!button||button.disabled)return;
             event.preventDefault();
+            const testing=button.dataset.backupAction==='test';
+            let testedConnection=null;
+            const connectionChanged=()=>{const current=readForm();return testedConnection&&(current.repository!==testedConnection.repository||current.token!==testedConnection.token);};
+            if(testing){button.disabled=true;button.textContent='测试中…';button.setAttribute('aria-busy','true');connectionFeedback(button,'正在测试连接…','pending');}
             try {
                 if(button.hasAttribute('data-theater-restore')){await openRestore(button.dataset.theaterRestore,button.dataset.restoreSource||'local');return;}
                 const action=button.dataset.backupAction;
@@ -295,24 +308,31 @@ export function createTheaterBackup(runtime) {
                     if(next.github){validateBackupRepository(next.repository);if(!next.token)throw new Error('请先填写 GitHub 访问密钥');}
                     const newState=await storage.saveConfiguration(next,previous.repository!==next.repository);config=next;
                     if(newState){state=newState;refresh();}
-                    const input=document.getElementById('theater-backup-token');if(input)input.value='';
+                    const input=document.getElementById('theater-backup-token');if(input){input.value='';input.placeholder=config.token?'密钥已保存，留空保留':'填写访问密钥';}
                     feedback('备份设置已保存');
                     if(config.enabled){
                         const first=[...(config.local&&(!previous.enabled||!previous.local)?['local']:[]),...(config.github&&(!previous.enabled||!previous.github||previous.repository!==config.repository)?['github']:[])];
                         if(first.length)await runBackup(first);
                     }
                 }else if(action==='test'){
-                    button.disabled=true;await createGithubBackupClient(readForm()).test();feedback('私有仓库可读取；写入权限将在首次上传时核对。请保存连接设置后启用自动上传。');
+                    testedConnection=readForm();await createGithubBackupClient(testedConnection).test();
+                    if(connectionChanged())connectionFeedback(button,'连接设置已变更，请重新测试。','changed');
+                    else connectionFeedback(button,'连接成功：私有仓库可读取。请保存设置；写入权限将在首次上传时核对。','success');
                 }else if(action==='clear-key'){
                     config={...config,token:'',github:false};await storage.put('backup-config',config);
-                    const input=document.getElementById('theater-backup-token');if(input)input.value='';document.getElementById('theater-backup-github').checked=false;feedback('已清除本机保存的密钥，并关闭 GitHub 自动备份');
+                    const input=document.getElementById('theater-backup-token');if(input){input.value='';input.placeholder='填写访问密钥';}document.getElementById('theater-backup-github').checked=false;feedback('已清除本机保存的密钥，并关闭 GitHub 自动备份');connectionFeedback(button,'','idle');
                 }else if(action==='download'||action==='upload')await runBackup([action==='download'?'local':'github']);
                 else if(action==='confirmed-backup'){
                     if(!root()?.querySelector('[data-backup-confirm-reduction]')?.checked)throw new Error('请先核对数据，并勾选确认是自己删除的');
                     await runBackup([...(config.local?['local']:[]),...(config.github?['github']:[])],{confirmed:true});
                 }
-            }catch(error){const message=safeError(error);feedback(message);toastr.warning(message);}
-            finally{if(button.isConnected)button.disabled=false;refreshBackupControls();}
+            }catch(error){
+                if(testing&&(!button.isConnected||connectionChanged())){connectionFeedback(button,'连接设置已变更，请重新测试。','changed');return;}
+                const message=safeError(error);
+                if(testing)connectionFeedback(button,`连接失败：${message}`,'error');else feedback(message);
+                toastr.warning(message);
+            }
+            finally{if(button.isConnected){button.disabled=false;if(testing){button.textContent='测试连接';button.removeAttribute('aria-busy');}}refreshBackupControls();}
         };
         documentRoot.__theaterBackupHandler=handler;documentRoot.addEventListener('click',handler);
     }
