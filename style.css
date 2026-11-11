@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.4.8
+/* 千夜浮梦 · 小剧场生成器 v4.4.8a
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -7498,6 +7498,19 @@ body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) :is(.popup-content
 .theater-release-previous small { flex: 1; }
 .theater-release-entry:focus-visible { outline: 2px solid var(--t-accent-deep); outline-offset: 3px; }
 @media (max-width: 520px) { .theater-release header { align-items: flex-start; flex-direction: column; gap: 6px; } }
+
+.theater-popup [data-relayout][hidden] { display:none !important; }
+.theater-result-actions .theater-relayout-menu { grid-column:1 / -1; }
+.theater-result-toolbox.is-inline-menu.is-open:has([data-relayout]:not([hidden])) .theater-result-actions-toggle {
+    position:relative;
+    z-index:3;
+}
+.theater-reader-relayout { margin:0 0 8px; }
+.theater-continuation-actions.has-relayout,
+.theater-panel[data-panel="long-dream"] .theater-dream-review .theater-dream-candidate-actions.has-relayout {
+    grid-template-columns:repeat(3, minmax(0, 1fr));
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-candidate-actions.has-relayout > .ui-btn { min-width:0; align-self:stretch; white-space:normal; }
 
 .theater-popup #theater-retry-layout-btn[hidden] { display: none !important; }
 

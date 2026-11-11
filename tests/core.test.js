@@ -26,7 +26,7 @@ test('生成完成与中断保留结果在缺少 randomUUID 时仍可保存，�
     const source = readTheaterImplementation();
     const keys = readFileSync(new URL('../history-collections.js', import.meta.url), 'utf8').replace(/^import .+;\r?\n/gm, '').replaceAll('export ', '');
     const completeStart = source.indexOf('            const item = {', source.indexOf('// The current result is independent'));
-    const completeCode = source.slice(completeStart, source.indexOf("            runtime.setActiveInstructionTags", completeStart));
+    const completeCode = source.slice(source.indexOf('        const resultId = newHistoryKey();'), source.indexOf('        if (popupAlive())', completeStart));
     const partialStart = source.indexOf('            const partialItem = {');
     const partialCode = source.slice(partialStart, source.indexOf('            if (popupAlive())', partialStart));
     assert.ok(completeStart > 0 && partialStart > 0);
@@ -36,6 +36,7 @@ test('生成完成与中断保留结果在缺少 randomUUID 时仍可保存，�
         const context = {
             crypto: supported ? globalThis.crypto : { getRandomValues: bytes => globalThis.crypto.getRandomValues(bytes) },
             lastGeneratedHtml: html, currentOutputMode: 'html', continuationRun: null, layoutRetry: null,
+            stagedRenderMode: true, plannedTargetWordCount: 5000, newText: '本次正文', payload: {}, setActiveInstructionTags() {},
             continuationRounds: ['旧前情', '本次正文'], instruction: '本轮方向', generationSourceConfig: { presetName: '合成' },
             ownsGeneration: () => true,
             generationRoles: [], sourceTags: ['标签'], itemTags: ({ tags }) => tags, knownInstructionTags: () => [],
@@ -50,6 +51,7 @@ test('生成完成与中断保留结果在缺少 randomUUID 时仍可保存，�
         assert.equal(saved[0].mode, 'html');
         assert.deepEqual(Array.from(saved[0].continuationRounds), ['旧前情', '本次正文']);
         if (partial) assert.equal(saved[0].complete, false);
+        else assert.equal(saved[0].layoutSource.text, '本次正文');
         assert.equal(context.currentGenerationResult, stored ? null : saved[0]);
     }
 });
@@ -1217,7 +1219,7 @@ test('长梦首帧使用当前页面，慢资料完成后不重建输入或抢�
         updateContinueHint() {}, initializeResultWorkspace() {}, currentGenerationResult: null, histBatchMode: false, continuationSession: null,
         loadWorldBookList: async () => {}, loadPresetNameList: () => materials,
         reloadWorldBooks: async () => {}, refreshTokenEstimate: async () => { finishEstimate(); },
-        refreshLongDreamCreateWorldBookState() {}, queueLongDreamMemoryWeave() {},
+        refreshLongDreamCreateWorldBookState() {}, queueLongDreamMemoryWeave() {}, syncDreamRelayout() {}, activeRelayout() {}, cancelManualRelayout() {},
         longDreamDetailState: () => ({ currentCheckedEntries: 0 }),
         longDreamDefinitionHTML: () => '<input id="definition" value="saved">',
         longDreamCreateHTML: () => '<input id="create" value="">', longDreamListHTML: () => '<div>作品列表</div>',
@@ -3750,13 +3752,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.8 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.8a 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.8'/);
-    assert.equal(manifest.version, '4.4.8');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.8/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.8a'/);
+    assert.equal(manifest.version, '4.4.8a');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.8a\b/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 
@@ -7077,7 +7079,7 @@ test('普通新稿第三轮中断后保存再续写只带第二轮和未完成�
     const live = '第三轮未完成' + '丙'.repeat(4000);
     let saved;
     const context = { currentGenerationResult: null, resultEditSnapshot: null, lastGeneratedHtml: '<main>中断保留正文</main>', currentDisplayHtml: '', currentOutputMode:'text',
-        retainedResultSource:null, singleHtmlLayoutRetry:null, generationRoles:[], instruction:'创作指令', sourceTags:['标签'], generationSourceConfig:{},
+        retainedResultSource:null, singleHtmlLayoutRetry:null, layoutSource:null, generationRoles:[], instruction:'创作指令', sourceTags:['标签'], generationSourceConfig:{},
         continuationRun:null, currentGenerationJob:{segments:rounds}, liveBodyText:live,
         continuationRoundHistory, prepareContinuationContext:value=>value.trim(), normalizeContinuationRounds,
         continuationSession:null, displayedContinuationVersion:()=>null, recentCache:[], historyCache:[],

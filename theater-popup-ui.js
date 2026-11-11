@@ -140,6 +140,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                         <div id="theater-delete-result-btn" class="theater-btn danger-soft" role="menuitem"><i class="fa-solid fa-trash-can"></i><span>移除结果</span></div>
                         <div id="theater-save-edit-btn" class="theater-btn primary" role="menuitem" style="display:none;"><i class="fa-solid fa-check"></i><span>应用修改</span></div>
                         <div id="theater-cancel-edit-btn" class="theater-btn" role="menuitem" style="display:none;"><i class="fa-solid fa-xmark"></i><span>退出编辑</span></div>
+                        <button type="button" data-relayout="generate" class="theater-btn theater-relayout-menu" role="menuitem" hidden>重新排版</button>
                     </div>
                     <button id="theater-result-actions-toggle" class="theater-result-actions-toggle" type="button" aria-expanded="false" aria-controls="theater-result-actions" title="结果操作；可上下拖动并吸附左右页边">
                         <span class="theater-result-bookmark-lamp">${LAMP_SVG_HTML}</span>
@@ -162,6 +163,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                 <div class="theater-continuation-actions">
                     <button type="button" class="theater-btn" id="theater-cont-rewrite">重写本段</button>
                     <button type="button" class="theater-btn primary" id="theater-cont-next">接着这一版续写</button>
+                    <button type="button" class="theater-btn" data-relayout="continuation" hidden>重新排版</button>
                 </div>
             </div>
             <div id="theater-output-container">

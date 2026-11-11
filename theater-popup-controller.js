@@ -2,6 +2,7 @@ import { refreshPromptInspector } from './prompt-inspector-ui.js';
 // theater-popup-controller: receives live state and cross-feature callbacks from index.js.
 import { closeHistoryMenus } from './history-menus.js';
 import { waitForPopupElements } from './popup-lifecycle.js';
+import { activeRelayout, cancelManualRelayout } from './manual-relayout.js';
 
 export function createTheaterPopupController(runtime) {
 // @theater-source-begin activateTheaterTab
@@ -42,6 +43,7 @@ async function openTheaterPopup(initialTabOverride = '') {
         closed = true;
         if (runtime.activeTheaterPopupSession !== session) return;
         runtime.activeTheaterPopupSession = null;
+        cancelManualRelayout(runtime);
         runtime.closeInstructionActionMenus();
         closeHistoryMenus();
         runtime.resultSwipeCleanup?.();
@@ -123,7 +125,7 @@ async function openTheaterPopup(initialTabOverride = '') {
     runtime.longDreamCache.forEach(dream => runtime.queueLongDreamMemoryWeave(dream.id));
 
     // === 恢复后台生成状态 ===
-    if (runtime.isGenerating) {
+    if (runtime.isGenerating && !activeRelayout(runtime)) {
         // 正在后台生成中：显示流式输出区域和停止按钮
         $('#theater-stream-section').show();
         $('#theater-stream-text').text(runtime.bgStreamText || '后台生成中…');

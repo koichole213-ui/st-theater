@@ -91,14 +91,8 @@ export function hydrateFinalRenderHtml(renderedHtml = '', plan = {}) {
         previousIndex = firstIndex;
     }
 
-    let hydrated = html;
-    for (const paragraph of paragraphs) {
-        hydrated = hydrated.replace(paragraph.token, escapeParagraphHtml(paragraph.text));
-    }
-    if ((hydrated.match(FINAL_RENDER_TOKEN_PATTERN) || []).length) {
-        throw finalRenderValidationError('最终排版仍残留未识别的段落编号');
-    }
-    return hydrated;
+    const paragraphText = new Map(paragraphs.map(({ token, text }) => [token, text]));
+    return html.replace(FINAL_RENDER_TOKEN_PATTERN, token => escapeParagraphHtml(paragraphText.get(token)));
 }
 
 export function buildFinalRenderPayload({ sourceText = '', rules = '', originalInstruction = '' } = {}) {

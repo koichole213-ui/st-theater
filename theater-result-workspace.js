@@ -1,3 +1,4 @@
+import { manualLayoutSource, positionRelayoutMenu, syncResultRelayout } from './manual-relayout.js';
 // theater-result-workspace: receives live state and cross-feature callbacks from index.js.
 import { bookmarkPosition, normalizeBookmarkYRatio } from './result-bookmark.js';
 import { buildPlainTextHtml, isTextOutputMode, textThemeForOutputMode, textOutputModeForTheme } from './plain-text-renderer.js';
@@ -47,6 +48,7 @@ function positionResultToolbox() {
     toolbox.style.left = `${Math.round(position.left)}px`;
     toolbox.style.right = 'auto';
     toolbox.style.top = `${Math.round(position.top)}px`;
+    if (toolbox.classList.contains('is-open')) positionRelayoutMenu(toolbox);
 }
 // @theater-source-end positionResultToolbox
 
@@ -106,7 +108,7 @@ function showInIframe(html, mode = 'html', allowTextFallback = true) {
     $textFallback.hide().empty().toggleClass('is-dark', textTheme === 'dark');
     $(f).show();
     runtime.currentDisplayHtml = html;
-    $('#theater-retry-layout-btn').prop('hidden', !runtime.currentGenerationResult?.layoutRetry || runtime.currentGenerationResult.html !== html);
+    $('#theater-retry-layout-btn').prop('hidden', !runtime.currentGenerationResult?.layoutRetry || !!manualLayoutSource(runtime.currentGenerationResult) || runtime.currentGenerationResult.html !== html);
     runtime.currentOutputMode = mode;
     runtime.updateContinueHint();
     updateRecentNav();
@@ -294,7 +296,16 @@ function initializeResultWorkspace() {
         warn: message => toastr.warning(message), success: message => toastr.success(message),
         copy: runtime.copyToClipboard, save: runtime.saveToHistory, fullscreen: openFullscreenReader,
         position: positionResultToolbox,
-        update: runtime.updateResultItem,
+        update: async (item, html, mode) => {
+            const originalHtml = item.html;
+            const stored = await runtime.updateResultItem(item, html, mode);
+            if (stored && item.resultId) {
+                const version = runtime.continuationSession?.versions.find(entry => entry.resultId === item.resultId && entry.html === originalHtml);
+                if (version) version.layoutSource = null;
+            }
+            return stored;
+        },
+        syncRelayout: item => syncResultRelayout(runtime, 'read', item?.resultId && !runtime.historyReadingItems ? item : null),
         continue: item => {
             if (runtime.isGenerating || runtime.isPreparingGeneration || runtime.resultEditSnapshot) { toastr.warning('请先完成当前生成或文字编辑'); return; }
             runtime.startContinue(item.html, item.tags, { sourceLabel: item.title || '阅读中的小剧场', sourceRounds: item.continuationRounds, sourceItem: item });

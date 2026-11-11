@@ -73,6 +73,11 @@ function cleanResult(value,seen=new WeakSet(),depth=0) {
     for (const key of ['id', 'resultId', 'chapterId', 'parentChapterId', 'title', 'text', 'html', 'mode', 'date', 'time', 'createdAt', 'instruction', 'tags', 'roleSources', 'sourceConfig', 'continuationRounds', 'incomplete', 'finishReason']) {
         if (value[key] !== undefined) result[key] = copy(value[key]);
     }
+    const layout = value.layoutSource;
+    if (Number.isFinite(layout?.targetChars) && typeof layout.text === 'string' && layout.text.trim()) {
+        result.layoutSource = { targetChars: layout.targetChars, text: layout.text,
+            originalInstruction: typeof layout.originalInstruction === 'string' ? layout.originalInstruction : '' };
+    }
     if(Array.isArray(value.seriesSources))result.seriesSources=value.seriesSources.map(x=>cleanResult(x,seen,depth+1)).filter(Boolean);
     if (result.sourceConfig) result.sourceConfig = createHistoryJsonBackup([{...value,html:value.html || '<p>snapshot</p>'}]).items[0]?.sourceConfig || null;
     seen.delete(value);

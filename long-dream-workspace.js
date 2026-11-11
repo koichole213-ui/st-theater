@@ -1,3 +1,4 @@
+import { dreamRelayoutButton, manualLayoutSource, resultRelayoutTarget, syncDreamRelayout } from './manual-relayout.js';
 import { normalizeManualTarget } from './length-policy.js';
 import { summaryEditorHTML } from './long-dream-summary-editor.js';
 import { longDreamFolderSources } from './long-dream-series.js';
@@ -78,7 +79,9 @@ function longDreamSources() {
     if (currentHtml) {
         const matchingHistory = runtime.historyCache.slice().reverse().find(item => item.html === currentHtml);
         const matchingRecent = runtime.recentCache.find(item => item.html === currentHtml);
-        const currentMeta = matchingHistory || matchingRecent;
+        const currentResult = resultRelayoutTarget(runtime, 'continuation') || resultRelayoutTarget(runtime, 'generate');
+        const layoutSource = currentResult?.html === currentHtml && manualLayoutSource(currentResult) ? currentResult.layoutSource : null;
+        const currentMeta = matchingHistory || currentResult || matchingRecent;
         sources.push({
             key: 'current',
             kind: 'current',
@@ -88,12 +91,14 @@ function longDreamSources() {
             instruction: currentMeta ? (currentMeta.instruction || '') : ($('#theater-instruction').val() || runtime.settings.lastInstruction || ''),
             sourceConfig: currentMeta?.sourceConfig || null,
             html: currentHtml,
-            // 始终从当前 HTML 重新提取，避免历史浏览后误带上一轮生成的 lastGeneratedText。
-            text: runtime.htmlToPlainText(currentHtml),
+            // The staged manuscript belongs to this exact result; legacy sources still use their own HTML.
+            text: layoutSource?.text ?? runtime.htmlToPlainText(currentHtml),
+            ...(layoutSource ? { targetChars: layoutSource.targetChars } : {}),
             mode: currentMeta?.mode || runtime.currentOutputMode || 'html',
         });
     }
     runtime.recentCache.forEach((item, index) => {
+        const layoutSource = manualLayoutSource(item) ? item.layoutSource : null;
         sources.push({
             key: `recent:${index}`,
             kind: 'recent',
@@ -102,7 +107,8 @@ function longDreamSources() {
             instruction: item.instruction || '',
             sourceConfig: item.sourceConfig || null,
             html: item.html || '',
-            text: runtime.htmlToPlainText(item.html || ''),
+            text: layoutSource?.text ?? runtime.htmlToPlainText(item.html || ''),
+            ...(layoutSource ? { targetChars: layoutSource.targetChars } : {}),
             mode: item.mode || 'html',
         });
     });
@@ -1569,6 +1575,7 @@ function longDreamDetailHTML(dream) {
             <p>${runtime.esc(longDreamExcerpt(state.chapterText, 230))}</p>
         </section>
     </div>`;
+    const relayoutCandidate = state.draftCandidates[state.selectedCandidateIndex];
     const reviewFlow = state.hasReviewDraft ? `<div class="ia-flow-state active theater-dream-review-state"><section class="review-wrapper theater-dream-review" data-dream-continuation-stage="review">
         <div class="review-head theater-dream-review-head">
             <div class="review-title-area theater-dream-review-copy"><span>待确认新章</span><h3>${runtime.esc(state.draft.title || `第 ${state.nextNumber} 章`)}</h3></div>
@@ -1579,9 +1586,10 @@ function longDreamDetailHTML(dream) {
         <div class="theater-dream-review-choice"><div class="theater-dream-review-actions"><button type="button" id="theater-dream-keep-candidate" class="ui-btn ui-btn-sm" aria-pressed="${state.draftCandidates[state.selectedCandidateIndex]?.retained === true}"><i class="fa-${state.draftCandidates[state.selectedCandidateIndex]?.retained ? 'solid' : 'regular'} fa-heart"></i><span>${state.draftCandidates[state.selectedCandidateIndex]?.retained ? '已保留' : '保留这版'}</span></button><button type="button" id="theater-dream-confirm-chapter" class="ui-btn ui-btn-sm ui-btn-primary"><i class="fa-solid fa-check"></i><span>用这版继续</span></button></div>
         <p class="theater-dream-retention-note">其他已保留版本也会收入本章，可随时回看。</p>
         ${longDreamKeptVersionsHTML(dream)}</div>
-        <div class="theater-dream-candidate-actions">
+        <div class="theater-dream-candidate-actions${manualLayoutSource(relayoutCandidate, true) ? ' has-relayout' : ''}">
         <button type="button" id="theater-dream-regenerate-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="按原要求再生成一版；成功后未保留候选仅留最新三版，已保留版本不被替换"><i class="fa-solid fa-plus"></i><span>再来一版</span></button>
         <button type="button" id="theater-dream-revise-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="修改要求再生成；成功后未保留候选仅留最新三版，已保留版本不被替换"><i class="fa-solid fa-pen-to-square"></i><span>改要求重写</span></button>
+        ${dreamRelayoutButton(relayoutCandidate, 'candidate')}
         </div>
     </section></div>` : '';
     return `<div class="theater-dream-detail theater-dream-continuation" data-id="${runtime.esc(dream.id)}">
@@ -1649,6 +1657,7 @@ function longDreamChapterDetailHTML(dream, chapter) {
                 <button type="button" id="theater-dream-save-chapter" class="ui-btn ui-btn-sm ui-btn-primary" role="menuitem" ${locked ? 'disabled' : ''}><i class="fa-solid fa-check"></i><span>保存编辑</span></button>
                 <button type="button" id="theater-dream-export-chapter" class="ui-btn ui-btn-sm" role="menuitem"><i class="fa-solid fa-file-export"></i><span>单章导出</span></button>
                 <button type="button" id="theater-dream-read-chapter-fullscreen" class="ui-btn ui-btn-sm" role="menuitem"><i class="fa-solid fa-book-open"></i><span>阅读原排版</span></button>
+                ${dreamRelayoutButton(chapter, 'chapter')}
             </div>
             <label class="ia-field"><span>章节标题</span><input id="theater-dream-chapter-edit-title" class="ui-input theater-input" maxlength="80" value="${runtime.esc(chapter.title)}" ${locked ? 'disabled' : ''}></label>
             <label class="ia-field"><span>章节正文</span><textarea id="theater-dream-chapter-edit-text" class="ui-textarea ia-reader theater-textarea" rows="16" ${locked ? 'disabled' : ''}>${runtime.esc(text)}</textarea></label>
@@ -1753,6 +1762,7 @@ function renderLongDreamPanel() {
     if (!$root.length) return;
     $root.html(longDreamPanelHTML());
     syncLongDreamPanel();
+    syncDreamRelayout(runtime);
 }
 // @theater-source-end renderLongDreamPanel
 

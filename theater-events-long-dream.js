@@ -319,7 +319,7 @@ export function bindLongDreamEvents(runtime, $d) {
         panel.toggleAttribute('hidden', !open);
         $(this).attr('aria-expanded', String(open));
     });
-    $d.off('click.tdchaptertoolaction').on('click.tdchaptertoolaction', '#theater-dream-chapter-tools-panel button', closeLongDreamChapterTools);
+    $d.off('click.tdchaptertoolaction').on('click.tdchaptertoolaction', '#theater-dream-chapter-tools-panel button:not([data-relayout])', closeLongDreamChapterTools);
     $d.off('click.tdchaptertooloutside').on('click.tdchaptertooloutside', function (event) {
         if ($(event.target).closest('#theater-dream-chapter-tools-toggle,#theater-dream-chapter-tools-panel').length) return;
         closeLongDreamChapterTools();

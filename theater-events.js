@@ -1,3 +1,4 @@
+import { bindManualRelayout, positionRelayoutMenu } from './manual-relayout.js';
 import { bindErrorLibrary } from './error-help-ui.js';
 import { bindPromptInspector } from './prompt-inspector-ui.js';
 import { bindLayoutRetry } from './layout-retry.js';
@@ -21,6 +22,7 @@ function bindEvents() {
     bindSummaryEditor($d, runtime);
     bindLayoutApi($d, runtime);
     bindLayoutRetry($d, runtime);
+    bindManualRelayout($d, runtime);
     bindReleaseNotes($d, runtime);
     bindPromptInspector({ document, copyToClipboard: runtime.copyToClipboard, downloadTextContent: runtime.downloadTextContent });
     // 恢复入口最先绑定。即使后续某个功能按钮初始化异常，用户仍能拉取修复。
@@ -90,8 +92,9 @@ function bindEvents() {
         runtime.closeResultActions();
         $toolbox.toggleClass('is-open', open);
         $(this).attr('aria-expanded', String(open));
+        if (open) positionRelayoutMenu($toolbox[0]);
     });
-    $d.off('click.trac').on('click.trac', '.theater-result-actions .theater-btn', function () {
+    $d.off('click.trac').on('click.trac', '.theater-result-actions .theater-btn:not([data-relayout])', function () {
         const $toolbox = $(this).closest('.theater-result-toolbox');
         $toolbox.removeClass('is-open').find('.theater-result-actions-toggle').attr('aria-expanded', 'false');
     });

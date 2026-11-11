@@ -79,7 +79,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.4.8';
+const VERSION = '4.4.8a';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -977,6 +977,7 @@ const runtime = {
     set updateReadyToReload(value) { updateReadyToReload = value; },
     get updateRecentNav() { return updateRecentNav; },
     get updateResultItem() { return updateResultItem; },
+    get updateLongDreamLayout() { return updateLongDreamLayout; },
     get updateWBCount() { return updateWBCount; },
     get validateApiPresetConfig() { return validateApiPresetConfig; },
     get visibleHistoryItems() { return visibleHistoryItems; },
@@ -1008,7 +1009,7 @@ const { isBuiltinRenderSelection, renderTemplateContentForSelection, normalizeRe
 
 const { normalizeTheaterTab, longDreamComposerDrafts, getLongDreamComposerDraft, rememberLongDreamComposerDraft, setLongDreamComposerDraft, clearLongDreamComposerDraft, rememberLongDreamNavigation, restoreLongDreamNavigation } = createLongDreamNavigation(runtime);
 
-const { idbReq, idbTransactionDone, storageInit, histAdd, histAddStorage, histDelete, histDeleteStorage, recentPersist, queueResultStorage, archiveCurrentResult, storeCurrentResult, updateResultItem, longDreamAdd, longDreamPut, longDreamDelete, histPut, histPutStorage, queueHistoryWrite } = createTheaterStorage(runtime);
+const { idbReq, idbTransactionDone, storageInit, histAdd, histAddStorage, histDelete, histDeleteStorage, recentPersist, queueResultStorage, archiveCurrentResult, storeCurrentResult, updateResultItem, longDreamAdd, longDreamPut, updateLongDreamLayout, longDreamDelete, histPut, histPutStorage, queueHistoryWrite } = createTheaterStorage(runtime);
 
 const { checkRemoteVersion, hasRemoteUpdate, remoteUpdateLabel, updateBadgeHTML, refreshUpdateBadges, showReloadAfterUpdateAction, confirmReloadAfterUpdate, updateExtension } = createTheaterUpdate(runtime);
 

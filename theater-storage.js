@@ -356,16 +356,69 @@ function storeCurrentResult(item) {
 }
 // @theater-source-end storeCurrentResult
 
+async function persistResultLayout(item, updated, canCommit) {
+    // A reader may still pin an item that has already aged out of local storage.
+    if (runtime.currentGenerationResult !== item && !runtime.recentCache.includes(item)) return true;
+    if (runtime.storageReadErrors?.current || runtime.storageReadErrors?.recent) return false;
+    try {
+        const tx = runtime.idb.transaction('kv', 'readwrite');
+        const store = tx.objectStore('kv');
+        const done = idbTransactionDone(tx);
+        const current = store.get('current-result');
+        const recent = store.get('recent');
+        let changed = false;
+        const match = row => row?.resultId === item.resultId;
+        const unchanged = row => row.html === item.html && row.mode === item.mode
+            && row.layoutSource?.text === item.layoutSource?.text
+            && row.layoutSource?.targetChars === item.layoutSource?.targetChars
+            && row.layoutSource?.originalInstruction === item.layoutSource?.originalInstruction;
+        const change = row => ({ ...row, html: updated.html, mode: updated.mode, ...(row.layoutRetry ? { layoutRetry: null } : {}) });
+        // Both requests belong to this transaction; the second result sees the latest pair.
+        recent.onsuccess = () => {
+            if (!canCommit()) return;
+            const rows = Array.isArray(recent.result) ? recent.result : [];
+            const targets = [current.result, ...rows].filter(match);
+            if (!targets.length || targets.some(row => !unchanged(row))) return;
+            if (match(current.result)) store.put(change(current.result), 'current-result');
+            if (rows.some(match)) store.put(rows.map(row => match(row) ? change(row) : row), 'recent');
+            changed = true;
+        };
+        await done;
+        if (!changed) toastr.info('结果已变更，原有排版已保留');
+        return changed;
+    } catch (error) {
+        console.error('[Theater] 保存结果排版失败:', error);
+        toastr.error('本地保存失败，原有排版已保留');
+        return false;
+    }
+}
+
 // @theater-source-begin updateResultItem
-function updateResultItem(item, html, mode) {
+function updateResultItem(item, html, mode, { layoutOnly = false, canCommit = () => true } = {}) {
     return queueResultStorage(async () => {
-        const text = runtime.htmlToPlainText(html);
-        const updated = { ...item, html, mode, continuationRounds: [text] };
-        // An applied body edit invalidates the old layout task; failed writes retain it.
+        if (!canCommit()) return false;
+        const updated = { ...item, html, mode };
+        if (!layoutOnly) {
+            updated.continuationRounds = [runtime.htmlToPlainText(html)];
+            if (item.layoutSource) updated.layoutSource = null;
+        }
         if (item.layoutRetry) updated.layoutRetry = null;
         const next = runtime.recentCache.map(entry => entry === item ? updated : entry);
         const current = runtime.currentGenerationResult === item ? updated : runtime.currentGenerationResult;
-        if (!await recentPersist(next, current)) return false;
+        let saved;
+        if (!layoutOnly) saved = await recentPersist(next, current);
+        else if (runtime.idb) saved = await persistResultLayout(item, updated, canCommit);
+        else {
+            const previousRecent = runtime.settings.recentGenerations;
+            const previousCurrent = runtime.settings.currentGenerationResult;
+            try { saved = await recentPersist(next, current); }
+            catch (error) {
+                runtime.settings.recentGenerations = previousRecent;
+                runtime.settings.currentGenerationResult = previousCurrent;
+                throw error;
+            }
+        }
+        if (!saved) return false;
         // Keep the reader's pinned identity so completing a generation never replaces it.
         Object.assign(item, updated);
         return true;
@@ -422,6 +475,47 @@ async function longDreamPut(record) {
     }
 }
 // @theater-source-end longDreamPut
+
+async function updateLongDreamLayout(id, changeLayout) {
+    const indexForDream = () => runtime.longDreamCache.findIndex(item => item.id === id);
+    let updated;
+    try {
+        if (!runtime.idb) {
+            const index = indexForDream();
+            if (index < 0) return false;
+            updated = changeLayout(runtime.longDreamCache[index]);
+            if (!updated) return false;
+            const previous = runtime.settings.longDreams;
+            const records = runtime.longDreamCache.slice();
+            records[index] = updated;
+            runtime.settings.longDreams = records;
+            try { runtime.save(); }
+            catch (error) {
+                runtime.settings.longDreams = previous;
+                throw error;
+            }
+            runtime.longDreamCache[index] = updated;
+            return true;
+        }
+        const tx = runtime.idb.transaction('dreams', 'readwrite');
+        const store = tx.objectStore('dreams');
+        const done = idbTransactionDone(tx);
+        const read = store.get(id);
+        read.onsuccess = () => {
+            if (read.result && indexForDream() >= 0) updated = changeLayout(read.result);
+            if (updated) store.put(updated);
+        };
+        await done;
+        if (!updated) return false;
+        const index = indexForDream();
+        if (index >= 0) runtime.longDreamCache[index] = normalizeLongDreamRecord(updated) || updated;
+        return true;
+    } catch (error) {
+        console.error('[Theater] 保存长梦排版失败:', error);
+        toastr.error('本地保存失败，原有排版已保留');
+        return false;
+    }
+}
 
 // @theater-source-begin longDreamDelete
 async function longDreamDelete(id) {
@@ -486,5 +580,5 @@ function queueHistoryWrite(operation) {
 }
 // @theater-source-end queueHistoryWrite
 
-return { idbReq, idbTransactionDone, storageInit, histAdd, histAddStorage, histDelete, histDeleteStorage, recentPersist, queueResultStorage, archiveCurrentResult, storeCurrentResult, updateResultItem, longDreamAdd, longDreamPut, longDreamDelete, histPut, histPutStorage, queueHistoryWrite };
+return { idbReq, idbTransactionDone, storageInit, histAdd, histAddStorage, histDelete, histDeleteStorage, recentPersist, queueResultStorage, archiveCurrentResult, storeCurrentResult, updateResultItem, longDreamAdd, longDreamPut, updateLongDreamLayout, longDreamDelete, histPut, histPutStorage, queueHistoryWrite };
 }

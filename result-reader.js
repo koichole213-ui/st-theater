@@ -26,6 +26,7 @@ export function readerPaneHTML(lamp = '') {
                 </button>
             </div></div>
             <div class="theater-result-character-count" data-reader-characters></div>
+            <button type="button" class="theater-btn theater-reader-relayout" data-relayout="read" hidden>重新排版</button>
             <iframe class="theater-iframe" data-reader-frame sandbox="" title="已完成的小剧场"></iframe>
             <div class="theater-reader-editor" hidden>
                 <p class="theater-hint-inline" data-reader-edit-hint></p>
@@ -64,6 +65,7 @@ export function mountResultReader(root, state, options) {
         find('[data-reader-next]').disabled = !!edit || saving || !recent.length || pos.index === recent.length - 1;
         find('[data-reader-empty]').hidden = !!state.reading;
         find('[data-reader-result]').hidden = !state.reading;
+        options.syncRelayout?.(!edit && !saving && !collection ? state.reading : null);
         if (!state.reading || edit) return;
         const item = state.reading;
         find('[data-reader-action="copy"] span').textContent = options.isText(item.mode) ? '复制文字' : '复制HTML';

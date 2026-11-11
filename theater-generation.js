@@ -1,3 +1,4 @@
+import { activeRelayout, resultRelayoutTarget, syncResultRelayout } from './manual-relayout.js';
 import { assertHtmlIntegrity, recoverHtmlText } from './html-integrity.js';
 import { estimateTavernTexts } from './tavern-token-counter.js';
 import { resolveTheaterPreset } from './preset-compat.js';
@@ -476,7 +477,9 @@ function updateContinueHint() {
     const hasVersion = !!version && !runtime.resultEditSnapshot;
     const index = version ? runtime.continuationSession.versions.indexOf(version) : -1;
     if (version) runtime.continuationSession.selected = index;
-    $('#theater-continuation-result, #theater-continuation-retention').prop('hidden', !hasVersion || busy);
+    $('#theater-continuation-result, #theater-continuation-retention').prop('hidden', !hasVersion || (busy && !activeRelayout(runtime)));
+    syncResultRelayout(runtime, 'generate', !hasVersion && resultRelayoutTarget(runtime, 'generate'));
+    syncResultRelayout(runtime, 'continuation', hasVersion && version);
     $('#theater-cont-version-label').text(version ? `第 ${index + 1} 版 / 共 ${runtime.continuationSession.versions.length} 版${version.complete ? '' : ' · 未完成'}` : '');
     $('#theater-cont-version-prev').prop('disabled', busy || index <= 0);
     $('#theater-cont-version-next').prop('disabled', busy || !version || index >= runtime.continuationSession.versions.length - 1);
@@ -1030,8 +1033,15 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         const continuationRounds = continuationRoundHistory(continuationRun?.source.rounds, runtime.currentGenerationJob.segments.map(prepareContinuationContext));
         runtime.retainedResultSource = null;
         generationSucceeded = true;
+        const resultId = newHistoryKey();
+        const layoutSource = stagedRenderMode && newText ? {
+            targetChars: plannedTargetWordCount,
+            text: newText,
+            originalInstruction: payload.generationFoundation?.originalInstruction || '',
+        } : null;
         if (continuationRun && runtime.continuationSession === continuationRun) {
             appendContinuationVersion(continuationRun, {
+                resultId, ...(layoutSource ? { layoutSource } : {}),
                 ...continuationRun.historyMetadata,
                 html: runtime.lastGeneratedHtml, text: newText, mode: runtime.currentOutputMode, continuationRounds,
                 direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig, roleSources: generationRoles,
@@ -1042,7 +1052,8 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
         if (runtime.lastGeneratedHtml) {
             const item = {
                 ...continuationRun?.historyMetadata,
-                resultId: newHistoryKey(), html: runtime.lastGeneratedHtml,
+                resultId, html: runtime.lastGeneratedHtml,
+                ...(layoutSource ? { layoutSource } : {}),
                 ...(layoutRetry ? { layoutRetry } : {}),
                 mode: runtime.currentOutputMode, continuationRounds,
                 time: new Date().toLocaleString('zh-CN', { hour12: false }),
@@ -1103,6 +1114,11 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             renderLabel: renderTemplate, requireIndependentApi: true, originalHtml: singleHtmlSource,
         } : null;
         if (partialText) {
+            const layoutSource = stagedRenderMode && activeRound === 'render' ? {
+                targetChars: plannedTargetWordCount,
+                text: partialText,
+                originalInstruction: payload.generationFoundation?.originalInstruction || '',
+            } : null;
             runtime.runtimeLog('warn', '渲染路径', { path: '错误兜底', retained_chars: readableCharCount(partialText) });
             runtime.lastGeneratedText = partialText;
             runtime.lastGeneratedHtml = runtime.textFallbackHtml(partialText);
@@ -1111,19 +1127,21 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 html: runtime.lastGeneratedHtml, mode: runtime.currentOutputMode, instruction,
                 ...continuationRun?.historyMetadata,
                 ...(singleHtmlLayoutRetry ? { layoutRetry: singleHtmlLayoutRetry } : {}),
+                ...(layoutSource ? { layoutSource } : {}),
                 tags: [...sourceTags], sourceConfig: generationSourceConfig, roleSources: generationRoles,
                 continuationRounds: continuationRoundHistory(continuationRun?.source.rounds, [...runtime.currentGenerationJob.segments, liveBodyText].map(prepareContinuationContext)),
             };
+            const partialItem = { ...runtime.retainedResultSource, html: runtime.lastGeneratedHtml, mode: runtime.currentOutputMode,
+                resultId: newHistoryKey(), complete: false, time: new Date().toLocaleString('zh-CN', { hour12: false }) };
             if (continuationRun && runtime.continuationSession === continuationRun) {
                 appendContinuationVersion(continuationRun, {
+                    resultId: partialItem.resultId, ...(layoutSource ? { layoutSource } : {}),
                     ...continuationRun.historyMetadata,
                     html: runtime.lastGeneratedHtml, text: partialText, mode: runtime.currentOutputMode,
                     continuationRounds: continuationRoundHistory(continuationRun.source.rounds, [...runtime.currentGenerationJob.segments, liveBodyText].map(prepareContinuationContext)),
                     direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig, roleSources: generationRoles, complete: false,
                 });
             }
-            const partialItem = { ...runtime.retainedResultSource, html: runtime.lastGeneratedHtml, mode: runtime.currentOutputMode,
-                resultId: newHistoryKey(), complete: false, time: new Date().toLocaleString('zh-CN', { hour12: false }) };
             const stored = await runtime.storeCurrentResult(partialItem);
             if (!ownsGeneration()) return;
             if (!stored) runtime.currentGenerationResult = partialItem;

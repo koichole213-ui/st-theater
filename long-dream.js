@@ -329,9 +329,10 @@ function normalizeDraft(draft, chapterNumber, fallbackDate) {
     const draftText = String(draft.text || '');
     const draftHtml = String(draft.html || '');
     const instruction = String(draft.instruction || '');
-    const candidates = (Array.isArray(draft.candidates) ? draft.candidates : [])
+    const rawCandidates = Array.isArray(draft.candidates) ? draft.candidates : [];
+    const candidates = rawCandidates
         .map((candidate, index) => normalizeDraftCandidate(candidate && typeof candidate === 'object'
-            ? { instruction, title: draft.title, targetChars: draft.targetChars, versionNumber: index + 1, ...candidate }
+            ? { instruction, title: draft.title, ...(rawCandidates.length === 1 ? { targetChars: draft.targetChars } : {}), versionNumber: index + 1, ...candidate }
             : candidate, fallbackDate))
         .filter(Boolean);
     if (!candidates.length && draft.status === LONG_DREAM_DRAFT_STATUS.REVIEW) {
@@ -422,6 +423,7 @@ export function createLongDreamChapter(source = {}, now = new Date()) {
         number: 1,
         title: cleanText(source.chapterTitle, 80) || '第一章',
         instruction: String(source.instruction || ''),
+        ...(Number.isFinite(source.targetChars) ? { targetChars: normalizeManualTarget(source.targetChars) } : {}),
         text,
         html,
         mode: cleanText(source.mode, 40) || 'html',
@@ -502,6 +504,7 @@ export function normalizeLongDreamRecord(record = {}) {
                 number: index + 1,
                 title: cleanText(chapter?.title, 80) || `第 ${index + 1} 章`,
                 instruction: String(chapter?.instruction || ''),
+                ...(Number.isFinite(chapter.targetChars) ? { targetChars: normalizeManualTarget(chapter.targetChars) } : {}),
                 ...(chapter.versionNumber ? { versionNumber: Math.max(1, Math.floor(Number(chapter.versionNumber) || 1)) } : {}),
                 ...(Array.isArray(chapter.retainedVersions) ? { retainedVersions: normalizeLongDreamVersions(chapter.retainedVersions, createdAt) } : {}),
                 text,
@@ -629,6 +632,7 @@ export function appendLongDreamChapter(record, source = {}, now = new Date()) {
                 number,
                 title: cleanText(source.title, 80) || `第 ${number} 章`,
                 instruction: String(source.instruction || ''),
+                ...(Number.isFinite(source.targetChars) ? { targetChars: normalizeManualTarget(source.targetChars) } : {}),
                 versionNumber: Math.max(1, Math.floor(Number(source.versionNumber) || 1)),
                 retainedVersions: normalizeLongDreamVersions(source.retainedVersions, createdAt),
                 text,

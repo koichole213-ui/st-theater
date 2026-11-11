@@ -60,7 +60,9 @@ export function bindResultEvents(runtime, $d) {
         try {
             newHtml = snapshot.htmlEdit ? snapshot.htmlEdit.apply(text) : runtime.textFallbackHtml(text, textThemeForOutputMode(snapshot.mode));
         } catch (error) { toastr.warning(error.message); return; }
-        const target = runtime.currentGenerationResult?.html === snapshot.html ? runtime.currentGenerationResult : runtime.recentCache.find(item => item.html === snapshot.html);
+        const version = displayedContinuationVersion(runtime.continuationSession, snapshot.html);
+        const candidates = [runtime.currentGenerationResult, ...runtime.recentCache];
+        const target = candidates.find(item => item?.html === snapshot.html && (!version?.resultId || item.resultId === version.resultId));
         snapshot.saving = true;
         let stored = true;
         try { if (target) stored = await runtime.updateResultItem(target, newHtml, newMode); }
@@ -71,8 +73,7 @@ export function bindResultEvents(runtime, $d) {
         runtime.lastGeneratedText = text;
         runtime.currentDisplayHtml = newHtml;
         runtime.currentOutputMode = newMode;
-        const version = displayedContinuationVersion(runtime.continuationSession, snapshot.html);
-        if (version) Object.assign(version, { html: newHtml, text, mode: newMode, continuationRounds: [text] });
+        if (version) Object.assign(version, { html: newHtml, text, mode: newMode, continuationRounds: [text], layoutSource: null });
         if (runtime.retainedResultSource?.html === snapshot.html) runtime.retainedResultSource = { ...runtime.retainedResultSource, html: newHtml, mode: newMode, continuationRounds: [text] };
         $('#theater-result-text-editor').hide();
         runtime.showInIframe(newHtml, newMode);
