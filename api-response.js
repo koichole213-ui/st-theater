@@ -16,7 +16,9 @@ import {
     retryAfterMilliseconds,
 } from './api-client.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, createDiagnosticError } from './request-diagnostics.js';
-import { filterTaggedReasoning } from './reasoning-filter.js';
+import { filterTaggedReasoning, unclosedReasoningText } from './reasoning-filter.js';
+import { recoverHtmlText } from './html-integrity.js';
+import { readableCharCount } from './text-counter.js';
 
 export const CUSTOM_STREAM_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const noop = () => {};
@@ -31,11 +33,23 @@ export function reasoningOnlyError({ phase = 'body', transport = '' } = {}) {
     });
 }
 
-export function reasoningSafeResult(result, { phase = 'body', transport = '' } = {}) {
+export function reasoningSafeResult(result, { phase = 'body', transport = '', recoverFormat = true, log = noop } = {}) {
     const rawText = typeof result === 'string'
         ? result
         : (result?.text || result?.content || '');
     const parsed = filterTaggedReasoning(rawText);
+    if (/<\s*\/\s*(?:think|thinking|electric|ecot)(?=[\s/>])[^>]*>/i.test(rawText)
+        && !/<\s*(?:think|thinking|electric|ecot)(?=[\s/>])[^>]*>/i.test(rawText)) {
+        log('warn', '模型回复只有思考结束标签');
+    }
+    const fields = typeof result === 'string' ? {} : result;
+    if (recoverFormat && parsed.incomplete) {
+        const tail = unclosedReasoningText(rawText);
+        const remaining = recoverHtmlText(tail).match(/[\p{Script=Han}\p{L}\p{N}]/gu)?.length || 0;
+        if (remaining >= 50 && readableCharCount(recoverHtmlText(parsed.content)) < remaining / 4) {
+            return { ...fields, text: parsed.content + tail, formatRecovered: 'unclosed-reasoning' };
+        }
+    }
     if (!String(parsed.content || '').trim()) {
         if (parsed.hadReasoning) throw reasoningOnlyError({ phase, transport });
         throw noTextResponseError(result || {}, { phase, transport });

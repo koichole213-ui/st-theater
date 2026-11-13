@@ -285,6 +285,15 @@ export function bindSettingsEvents(runtime, $d) {
     $d.off('click.tfm').on('click.tfm', '#theater-fetch-models-btn', runtime.fetchModelList);
     $d.off('click.ttest').on('click.ttest', '#theater-test-api-btn', runtime.testAPIConnection);
     $d.off('click.tdiag').on('click.tdiag', '#theater-run-diagnostics-btn', runtime.runDiagnostics);
+    $d.off('click.tarchiveaccept').on('click.tarchiveaccept', '[data-archive-accept]', async () => {
+        const accepted = await runtime.archiveSafety?.confirmCurrent(() => Popup.show.confirm(
+            '以当前存档为准？', '确认后会以当前的作品数量作为新基准，并解除疑似丢失警告。你仍可导入备份。',
+        ));
+        if (accepted) {
+            runtime.runDiagnostics();
+            runtime.refreshHistList();
+        }
+    });
     $d.off('click.tdiagexport').on('click.tdiagexport', '#theater-export-diagnostics-btn', runtime.exportDiagnosticsText);
     $d.off('click.tdiagcopy').on('click.tdiagcopy', '#theater-copy-diagnostics-btn', function () {
         const text = $('#theater-diagnostics-output').data('report') || '';

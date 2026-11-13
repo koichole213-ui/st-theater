@@ -1,5 +1,5 @@
 const REASONING_TAG_NAMES = new Set(['think', 'thinking', 'electric', 'ecot']);
-const COMPLETE_TAG_PATTERN = /<\s*(\/?)\s*(think|thinking|electric|ecot)\b[^>]*>/gi;
+const COMPLETE_TAG_PATTERN = /<\s*(\/?)\s*(think|thinking|electric|ecot)(?=[\s/>])[^>]*>/gi;
 const TAG_PREFIXES = Object.freeze([
     '<think>',
     '</think>',
@@ -18,7 +18,7 @@ function trailingPartialTagLength(value) {
     const suffix = text.slice(start).toLocaleLowerCase();
     if (suffix.includes('>')) return 0;
     return TAG_PREFIXES.some(tag => tag.startsWith(suffix))
-        || /^<\s*\/?\s*(?:think|thinking|electric|ecot)\b[^>]*$/i.test(suffix)
+        || /^<\s*\/?\s*(?:think|thinking|electric|ecot)(?=[\s/])[^>]*$/i.test(suffix)
         ? text.length - start : 0;
 }
 
@@ -70,4 +70,14 @@ export function filterTaggedReasoning(value) {
 
 export function reasoningSafeContent(value) {
     return filterTaggedReasoning(value).content;
+}
+
+export function unclosedReasoningText(value) {
+    const text = String(value || '');
+    let start = -1, depth = 0;
+    for (const match of text.matchAll(new RegExp(COMPLETE_TAG_PATTERN))) {
+        if (match[1]) depth = Math.max(0, depth - 1);
+        else if (depth++ === 0) start = match.index + match[0].length;
+    }
+    return depth > 0 ? text.slice(start) : '';
 }

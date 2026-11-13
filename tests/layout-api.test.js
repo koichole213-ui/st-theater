@@ -92,9 +92,9 @@ test('普通排版重试失败/停止/保存失败保留原文，成功只替换
         assert.equal(runtime.isGenerating,false);
     }
 });
-test('更新日志最多五个可靠正式版本，未发布功能不混入，已读版本保存后不重复提示',()=>{
-    assert.ok(RELEASE_NOTES.length<=5);assert.equal(RELEASE_NOTES[0].version,'4.4.8');
-    const html=releaseNotesHTML(v=>String(v));assert.match(html,/互动 HTML 检查与单独重排/);assert.match(html,/<details/);assert.match(html,/长梦分轮与收束安排/);assert.equal(hasUnreadRelease({releaseNotesReadVersion:'4.4.2'}),true);
+test('更新日志最多五条，预览版明确标注，已读版本不重复提示',()=>{
+    assert.ok(RELEASE_NOTES.length<=5);assert.equal(RELEASE_NOTES[0].version,'4.4.8b');
+    const html=releaseNotesHTML(v=>String(v));assert.match(html,/v4\.4\.8b <span>预览版/);assert.match(html,/互动 HTML 检查与单独重排/);assert.match(html,/<details/);assert.equal(hasUnreadRelease({releaseNotesReadVersion:'4.4.2'}),true);
     assert.equal(hasUnreadRelease({}),true);assert.equal(hasUnreadRelease({releaseNotesReadVersion:latestReleaseVersion()}),false);
 });
 

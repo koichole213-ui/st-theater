@@ -16,7 +16,7 @@ import { longDreamWritingPlan } from '../long-dream-generation.js';
 import { resolveTheaterPreset } from '../preset-compat.js';
 import { BAIBAI_MEMORY_HINTS, baiBaiChatId, readBaiBaiMemory } from '../baibai-memory.js';
 import { chatContextSettingsHTML, refreshBaiBaiMemoryStatus, bindBaiBaiMemoryUpdates } from '../baibai-memory-ui.js';
-import { filterStoryOutput, STORY_OUTPUT_RULE } from '../story-output.js';
+import { filterStoryOutput, finalStoryOutput, FORMAT_RECOVERY_NOTICE, STORY_OUTPUT_RULE } from '../story-output.js';
 import { bindLayoutRetry } from '../layout-retry.js';
 import { captureLayoutApiSelection, resolveLayoutApiRoute } from '../layout-api.js';
 import { bindLayoutApi } from '../layout-api-settings.js';
@@ -63,6 +63,7 @@ export function readTheaterImplementation() {
 // A factory receives live bindings to the same sandbox state used by the older
 // fixtures. This preserves their assertions about writes, identity and failures.
 export function runInNewContext(code, sandbox = {}, options) {
+    Object.assign(sandbox, { finalStoryOutput, FORMAT_RECOVERY_NOTICE });
     sandbox.lastRequestIssue ??= null; sandbox.lastRequestMetrics ??= null; sandbox.isGenerating ??= false;
     Object.assign(sandbox, { errorHelpHTML, errorCatalogHTML, bindErrorLibrary, statusError, assertHtmlIntegrity, recoverHtmlText });
     // Real imported helpers used by relocated production bodies. Fixtures remain synthetic.

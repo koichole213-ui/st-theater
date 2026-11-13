@@ -20,6 +20,8 @@ import { restoreStorySummary, hasPendingManualSummary } from './long-dream-story
 import { refreshLongDreamSummary } from './long-dream-summary.js';
 import { requestCustomApi } from './api-runtime.js';
 import { diagnosticSignalInfo, REQUEST_DIAGNOSTIC_SIGNAL } from './request-diagnostics.js';
+import { finalStoryOutput, FORMAT_RECOVERY_NOTICE } from './story-output.js';
+import { recoverHtmlText } from './html-integrity.js';
 import { shouldWeaveLongDreamMemory, buildLongDreamMemoryPayload, DEFAULT_LONG_DREAM_MEMORY_PRESET, parseLongDreamMemoryResponse } from './long-dream-memory.js';
 
 export function createLongDreamRuntime(runtime) {
@@ -65,7 +67,10 @@ async function requestLongDreamChapter({
             metricScope: 'long-dream',
         });
         const rawText = typeof result === 'string' ? result : result?.text;
-        const text = runtime.normalizeLongDreamResponseText(rawText);
+        const output = finalStoryOutput(rawText, { plainText: true,
+            normalText: runtime.normalizeLongDreamResponseText(rawText), formatRecovered: result?.formatRecovered });
+        const text = output.formatRecovered && output.formatRecovered !== 'custom-tag'
+            ? recoverHtmlText(output.text) : output.text;
         if (!String(text || '').trim()) throw new Error('长梦正文请求没有返回内容');
         markCompleted(runtime.lastRequestMetrics);
         runtime.recordRequestMetrics(runtime.lastRequestMetrics);
@@ -73,7 +78,7 @@ async function requestLongDreamChapter({
             stop_reason: result?.stopReason || 'unknown',
             chars: readableCharCount(text),
         });
-        return typeof result === 'string' ? { text } : { ...result, text };
+        return { ...(typeof result === 'string' ? {} : result), ...output, text };
     } catch (error) {
         runtime.recordRequestMetrics(runtime.lastRequestMetrics);
         throw error;
@@ -549,8 +554,21 @@ async function generateNextLongDreamChapter({ appendCandidate = false, candidate
             : '新章节已经写好，请检查排版后确认保存', '', { timeOut: 7000 });
         runtime.playNotificationSound();
     } catch (error) {
+        const unsaved = error?.unsavedLongDreamDraft;
+        if (unsaved) {
+            runtime.unsavedLongDreamDrafts ??= new Map();
+            runtime.unsavedLongDreamDrafts.set(String(dream.id), unsaved);
+            runtime.showManualCopyPanel?.(unsaved.text, {
+                title: '长梦正文未保存，请复制或下载',
+                hint: '正文仍在当前页面。刷新前可以长按复制，或直接下载 TXT。',
+                downloadName: '千夜浮梦-未保存长梦正文.txt',
+            });
+        }
         const retainedChars = readableCharCount(error?.longDreamRecord?.draft?.text || '');
-        if (error?.name === 'AbortError') {
+        if (error?.formatRecovered || unsaved?.formatRecovered) {
+            if (!unsaved) toastr.warning(FORMAT_RECOVERY_NOTICE);
+            runtime.runtimeLog('warn', '长梦输出格式异常，已保留正文', { format: error.formatRecovered || unsaved.formatRecovered });
+        } else if (error?.name === 'AbortError') {
             runtime.runtimeLog('warn', '长梦续章停止', {
                 dream_id: String(dream.id),
                 retained_chars: retainedChars,

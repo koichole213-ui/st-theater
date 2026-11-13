@@ -31,6 +31,7 @@ function contentFor(kind, item) {
     const value = copy(item);
     for (const k of ['id', 'backupOrigins', 'historyOrder', 'chapterId', 'parentChapterId']) delete value[k];
     if (kind === 'dreams') {
+        delete value.revision;
         if (value.source) delete value.source.refId;
         for (const chapter of list(value.chapters)) delete chapter.id;
     }
@@ -61,6 +62,7 @@ function cleanDream(raw) {
     for (const key of ['id', 'schemaVersion', 'title', 'status', 'createdAt', 'updatedAt', 'canon', 'inheritance', 'source', 'sourceConfig', 'chapters', 'memory', 'draft', 'seriesMemoryAutoWeave']) {
         if (normalized[key] !== undefined) result[key] = normalized[key];
     }
+    if (Number.isSafeInteger(normalized.revision) && normalized.revision >= 0) result.revision = normalized.revision;
     if (origins(raw).length) result.backupOrigins = origins(raw);
     if (raw.composerDraft && (String(raw.composerDraft.instruction || '').trim() || String(raw.composerDraft.title || '').trim() || Number.isFinite(Number(raw.composerDraft.targetChars)))) result.composerDraft = { instruction:String(raw.composerDraft.instruction || ''),title:String(raw.composerDraft.title || ''),targetChars:Number(raw.composerDraft.targetChars) || 3000 };
     return result;
@@ -70,7 +72,7 @@ function cleanResult(value,seen=new WeakSet(),depth=0) {
     if(seen.has(value)||depth>100)throw new Error('生成结果的系列快照结构异常，请先分项导出保留');
     seen.add(value);
     const result = {};
-    for (const key of ['id', 'resultId', 'chapterId', 'parentChapterId', 'title', 'text', 'html', 'mode', 'date', 'time', 'createdAt', 'instruction', 'tags', 'roleSources', 'sourceConfig', 'continuationRounds', 'incomplete', 'finishReason']) {
+    for (const key of ['id', 'resultId', 'chapterId', 'parentChapterId', 'title', 'text', 'html', 'mode', 'date', 'time', 'createdAt', 'instruction', 'tags', 'roleSources', 'sourceConfig', 'continuationRounds', 'incomplete', 'finishReason', 'formatRecovered']) {
         if (value[key] !== undefined) result[key] = copy(value[key]);
     }
     const layout = value.layoutSource;

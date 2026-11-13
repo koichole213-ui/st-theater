@@ -61,6 +61,7 @@ function diagnosticCatalogHTML({ recent = false } = {}) {
 
 // @theater-source-begin buildDiagnostics
 function buildDiagnostics() {
+    const protection = runtime.archiveSafety?.protectionDiagnostic();
     const apiMode = runtime.settings.apiMode || 'custom';
     const channel = apiChannel(runtime.settings);
     const channelIssue = channelConfigError(runtime.settings);
@@ -95,6 +96,8 @@ function buildDiagnostics() {
         diagnosticLine(apiMode === 'main' || !channelIssue ? 'ok' : 'bad', 'API 配置', apiMode === 'main' ? '使用酒馆当前 API 设置' : (channelIssue || (channel === 'vertex' ? `已保存酒馆凭证引用，Gemini 模型：${apiModel}` : `已填写，模型：${apiModel}${apiKey ? '，已填写 Key' : '，未填写 Key（OpenAI 兼容本地服务可为空）'}`))),
         diagnosticLine(typeof fetch === 'function' && typeof AbortController === 'function' ? 'ok' : 'bad', '请求能力', 'fetch / AbortController ' + (typeof fetch === 'function' && typeof AbortController === 'function' ? '可用' : '不可用')),
         diagnosticLine(window.indexedDB ? (runtime.idb ? 'ok' : 'warn') : 'bad', '本地存档库', window.indexedDB ? (runtime.idb ? 'IndexedDB 已打开' : 'IndexedDB 存在，但当前未打开，可能会回退到 settings') : '浏览器不支持 IndexedDB'),
+        ...(protection ? [diagnosticLine(protection.status, '站点数据保护', protection.detail)] : []),
+        ...(runtime.archiveLossSuspected ? [diagnosticLine('warn', '存档疑似丢失', runtime.archiveSafety.lossMessage(runtime.archiveLossSuspected))] : []),
         ...(runtime.backup ? [diagnosticLine(runtime.backup.diagnosticLevel(), '定期备份', runtime.backup.diagnosticText())] : []),
         diagnosticLine('warn', '历史存储提示', '历史存在浏览器本地存储里。夸克等手机浏览器崩溃或清理后可能丢失，建议定期批量导出备份'),
         diagnosticLine(customRenderOk ? 'ok' : 'bad', '渲染模板', customRenderOk ? `当前模板：${runtime.renderSelectionMeta(selectedRender, runtime.settings.renderTemplates).name}` : `当前选择 ${selectedRender} 找不到对应模板`),
@@ -150,7 +153,7 @@ function runDiagnostics() {
     const rowsHtml = report.rows.map(r => `
         <div class="theater-diagnostic-row ${r.status}">
             <span class="theater-diagnostic-status">${r.status === 'ok' ? 'OK' : (r.status === 'warn' ? '注意' : '异常')}</span>
-            <div><b>${runtime.esc(r.name)}</b><br><span>${runtime.esc(r.detail)}</span></div>
+            <div style="text-align:left"><b>${runtime.esc(r.name)}</b><br><span>${runtime.esc(r.detail)}</span>${r.name === '存档疑似丢失' ? '<br><button type="button" class="theater-btn" data-archive-accept>以当前存档为准</button>' : ''}</div>
         </div>
     `).join('');
     const traceHtml = runtime.lastRequestTrace ? `

@@ -79,7 +79,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.4.8a';
+const VERSION = '4.4.8b';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -622,6 +622,7 @@ const runtime = {
     set continueContext(value) { continueContext = value; },
     get copyHtml() { return copyHtml; },
     get copyToClipboard() { return copyToClipboard; },
+    get showManualCopyPanel() { return showManualCopyPanel; },
     get countSnapshotEntries() { return countSnapshotEntries; },
     get createCumulativeStreamRenderer() { return createCumulativeStreamRenderer; },
     get createFloatingBall() { return createFloatingBall; },

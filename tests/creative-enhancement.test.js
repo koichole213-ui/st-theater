@@ -50,8 +50,8 @@ test('长梦关闭保持原顺序，开启后位于背景后本章任务前，�
 test('长梦真实控制器两轮正文都携带冻结增强，只有一次排版且排版不带增强',async()=>{
     for(const enabled of [false,true]){
         const record=createLongDreamRecord({source:{text:'首章',html:'<p>首章</p>'}}),requests=[],renders=[];
-        const controller=createLongDreamGenerationController({requestChapter:async payload=>{requests.push(payload);return {text:requests.length===1?'甲'.repeat(200):'乙'.repeat(260)}},renderChapter:async payload=>{renders.push(payload);return `<p>${payload.text}</p>`}});
-        await controller.run({record,targetChars:500,autoContinue:true,maxRounds:3,creativeEnhancement:creativeEnhancementPrompt(enabled)});
+        const controller=createLongDreamGenerationController({requestChapter:async payload=>{requests.push(payload);return {text:requests.length===1?'甲'.repeat(2000):'乙'.repeat(3500)}},renderChapter:async payload=>{renders.push(payload);return `<p>${payload.text}</p>`}});
+        await controller.run({record,targetChars:5000,autoContinue:true,maxRounds:2,creativeEnhancement:creativeEnhancementPrompt(enabled)});
         assert.equal(requests.length,2);assert.equal(renders.length,1);
         for(const request of requests){assert.equal(occurrences(request.userPrompt),Number(enabled));assert.equal(occurrences(request.messages.map(m=>m.content).join('\n')),Number(enabled));}
         assert.equal(occurrences(JSON.stringify(renders)),0);

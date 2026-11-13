@@ -93,7 +93,7 @@ export function createTheaterBackup(runtime) {
             }
             if (!reduced.length) delete state.protection;
             const now=Date.now(), interval=config.days*86400000;
-            const due=kinds.filter(kind=>!automatic || ((!state[kind]?.lastAttempt || now-state[kind].lastAttempt>300000) && (!state[kind]?.time || now-state[kind].time>=interval) && (state[kind]?.checksum!==packet.checksum || (kind==='github' && state[kind]?.repository!==config.repository))));
+            const due=kinds.filter(kind=>!automatic || ((!state[kind]?.lastAttempt || now-state[kind].lastAttempt>300000) && (!state[kind]?.time || now-state[kind].time>=interval) && (kind==='local' || state[kind]?.checksum!==packet.checksum || state[kind]?.repository!==config.repository)));
             if (!due.length) { await saveState(); return; }
             const bytes=await zipPacket(packet), outcomes=[];
             for (const kind of due) {
@@ -101,7 +101,9 @@ export function createTheaterBackup(runtime) {
                 try {
                     if (kind==='local') download(bytes,`theater-backup-${new Date(now).toISOString().replace(/[:.]/g,'-')}.zip`);
                     else await createGithubBackupClient(config).upload(bytes,{...config,counts:packet.counts,timestamp:now});
-                    state[kind]={time:now,lastAttempt:now,checksum:packet.checksum,repository:kind==='github'?config.repository:undefined};
+                    state[kind]=kind==='local'
+                        ? {time:now,lastAttempt:now}
+                        : {time:now,lastAttempt:now,checksum:packet.checksum,repository:config.repository};
                     state.baseline=packet.counts; outcomes.push(kind==='local'?'已发起本机下载，请核对浏览器下载记录':'GitHub 上传成功，文件校验通过');
                     runtime.runtimeLog('info',kind==='local'?'完整备份已发起本机下载':'GitHub完整备份上传并校验成功',{history:packet.counts.history,dreams:packet.counts.dreams,instructions:packet.counts.instructions});
                 } catch (error) {
@@ -276,6 +278,7 @@ export function createTheaterBackup(runtime) {
                     try {
                         const result=await exclusive(()=>storage.restore(packet,selected,config.sourceId,preview.before));
                         if(!view.alive())return;
+                        if(result===false)throw new Error('本页存档已过期，请刷新后重新预览并恢复。');
                         readingTrace?.finish();
                         if(selected.includes('recent')&&(result.stats.recent?.added||result.stats.recent?.different))recoveredCount=Math.max(1,recoveredCount);refreshBackupControls();
                         view.body.innerHTML=`<h3>所选内容已恢复</h3><p class="theater-dialog-note">${selected.map(kind=>{const s=result.stats[kind];return `${e(BACKUP_LABELS[kind])}：新增 ${s.added}，相同 ${s.same} 已跳过，差异 ${s.different} 已保留`;}).join('；')}</p>${selected.includes('dreams')?`<p class="theater-dialog-note">${result.counts.candidates} 篇候选仍待选择，未自动成为正式章节。</p>`:''}<footer><button type="button" class="theater-btn" data-repeat>再次核对这份备份</button>${selected.includes('recent')?'<button type="button" class="theater-btn" data-read-recovered>查看找回的结果</button>':''}<button type="button" class="theater-btn primary" data-done>返回原页面</button></footer>`;
@@ -367,5 +370,6 @@ export function createTheaterBackup(runtime) {
         settingsHTML:()=>backupSettingsHTML(config,state,{recoveredCount}),diagnosticHTML:()=>backupDiagnosticHTML(state),
         diagnosticText:()=>`${backupStatusText(state,'local')}；${backupStatusText(state,'github')}${state.protection?'；'+state.protection:''}`,
         diagnosticLevel:()=>state.protection||state.local?.error||state.github?.error?'warn':'ok',
+        hasAutomaticGithub:()=>config.enabled&&config.github,
     };
 }

@@ -300,6 +300,7 @@ function normalizeDraftCandidate(candidate, fallbackDate) {
         text,
         html,
         retained: candidate.retained === true,
+        ...(candidate.formatRecovered === 'custom-tag' ? { formatRecovered: candidate.formatRecovered } : {}),
         versionNumber: Math.max(1, Math.floor(Number(candidate.versionNumber) || 1)),
         instruction: String(candidate.instruction ?? ''),
         title: cleanText(candidate.title, 80),
@@ -365,6 +366,9 @@ function normalizeDraft(draft, chapterNumber, fallbackDate) {
     return {
         status,
         resumeStage,
+        ...((selectedCandidate?.formatRecovered || (status === LONG_DREAM_DRAFT_STATUS.WRITING
+            && ['unclosed-reasoning', 'extra-wrapper', 'custom-tag'].includes(draft.formatRecovered)))
+            ? { formatRecovered: selectedCandidate?.formatRecovered || draft.formatRecovered } : {}),
         chapterNumber,
         title: selectedCandidate?.title || cleanText(draft.title, 80) || `第 ${chapterNumber} 章`,
         instruction: selectedCandidate?.instruction ?? instruction,

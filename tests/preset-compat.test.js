@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { resolveTheaterPreset } from '../preset-compat.js';
 import { filterTaggedReasoning } from '../reasoning-filter.js';
-import { filterStoryOutput, STORY_OUTPUT_RULE } from '../story-output.js';
+import { filterStoryOutput, finalStoryOutput, STORY_OUTPUT_RULE } from '../story-output.js';
 import { composePresetMessages } from '../request-layout.js';
 import { buildApiRequest, API_PROTOCOLS } from '../api-client.js';
 import { requestCustomApi } from '../api-runtime.js';
@@ -113,7 +113,9 @@ test('一轮真实生成循环只计过滤后的正文，未达目标也不额�
             requestConfiguredGenerationApi: async () => { requests++; return { text: raw, stopReason: 'stop' }; } },
         payload: { systemPrompt: '系统', userPrompt: '任务' }, isPlainTextRender: true,
         popupAlive: () => false, apiRoute: {}, targetWordCount: 10000, onChunk: value => { chunkBody = value; },
-        filterStoryOutput, htmlToPlainText: value => value, markCompleted() {}, addGenerationSegment, readableCharCount,
+        filterStoryOutput, finalStoryOutput, generationJob: job, ownsGeneration: () => true, generationAbortController: new AbortController(),
+        htmlToPlainText: value => value, markCompleted() {}, addGenerationSegment, readableCharCount,
+        activeRound: 0, progressLogged: false, nextProgressAt: 0, retainStreamAsBody: false,
         shouldContinueJob, currentRoundStreamText: '', stagedMultiRoundMode: false, contCtx: '',
     });
     await run();

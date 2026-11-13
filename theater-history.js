@@ -229,6 +229,10 @@ function renderHistoryList() {
         if (runtime.storageReadErrors?.database || runtime.storageReadErrors?.history) {
             return '<section class="theater-history-empty"><b>历史存档读取失败</b><p>当前无法确认原数据库中的作品数量，这不代表历史已被删除。请先保留站点数据，稍后重新加载；不要清理站点数据或重装。</p></section>';
         }
+        if (runtime.archiveLossSuspected) {
+            const message = runtime.archiveSafety.lossMessage(runtime.archiveLossSuspected);
+            return `<section class="theater-history-empty"><b>存档疑似丢失</b><p style="text-align:left">${runtime.esc(message)}</p><button type="button" data-history-import>导入备份…</button></section>`;
+        }
         const filtered = runtime.historyQuery.trim() || runtime.historyRoleFilter || runtime.settings.historyTagFilter?.length;
         return `<section class="theater-history-empty"><b>${filtered ? '没有符合条件的作品' : '暂时没有可显示的小剧场'}</b><p>${filtered ? '角色、标签和搜索会同时生效，可以清空筛选再看看。' : '保存后的作品会出现在这里。如果更新前已有历史，请先核对读取提示、原网址和浏览器；也可以导入已有备份。'}</p>${filtered ? '<button type="button" data-history-reset>清空筛选</button>' : '<button type="button" data-history-import>导入备份…</button>'}</section>`;
     }
@@ -338,6 +342,7 @@ function exitHistBatchMode() {
 // @theater-source-begin commitHistoryCollection
 function commitHistoryCollection(change) {
     return runtime.queueHistoryWrite(async () => {
+        if (runtime.archiveSync?.allowWrite() === false) return false;
         if (['history', 'collections'].some(key => runtime.storageReadErrors?.[key])) {
             toastr.error('历史或文件夹尚未读取成功，暂时不能修改收纳；请先重新加载。');
             return false;
@@ -352,22 +357,39 @@ function commitHistoryCollection(change) {
                 const tx = runtime.idb.transaction(['history', 'kv'], 'readwrite');
                 const done = runtime.idbTransactionDone(tx);
                 const store = tx.objectStore('history');
-                try {
+                const write = () => {
                     for (const item of next.items) if (!runtime.historyCache.includes(item)) store.put(item);
                     tx.objectStore('kv').put(folders, 'history-collections');
+                };
+                try {
+                    if (runtime.historyCollectionsStoredJson === undefined) write();
+                    else {
+                        const request = tx.objectStore('kv').get('history-collections');
+                        request.onsuccess = () => {
+                            if (runtime.archiveStale || runtime.archiveSync.folderSignature(request.result) !== runtime.historyCollectionsStoredJson) {
+                                runtime.archiveSync.markStale();
+                                tx.abort();
+                                return;
+                            }
+                            write();
+                        };
+                    }
                 } catch (error) {
                     try { tx.abort(); } catch { /* already aborted */ }
                     await done.catch(() => {});
                     throw error;
                 }
                 await done;
+                runtime.historyCollectionsStoredJson = runtime.archiveSync?.folderSignature(folders);
+                runtime.archiveSync?.publish('history-collections');
             }
             runtime.historyCache = next.items;
             runtime.historyCollections = folders;
             if (!runtime.idb) { runtime.settings.history = runtime.historyCache; runtime.settings.historyCollections = folders; runtime.save(); }
+            else runtime.archiveSafety?.record();
             return true;
         } catch (error) {
-            toastr.error('收纳保存失败，原作品保留：' + (error?.message || error));
+            if (!runtime.archiveStale) toastr.error('收纳保存失败，原作品保留：' + (error?.message || error));
             return false;
         }
     });
@@ -613,7 +635,7 @@ function fallbackCopy(text) {
 // @theater-source-end fallbackCopy
 
 // @theater-source-begin showManualCopyPanel
-function showManualCopyPanel(text, { title = '手动复制', downloadName = '千夜浮梦-内容.txt' } = {}) {
+function showManualCopyPanel(text, { title = '手动复制', downloadName = '千夜浮梦-内容.txt', hint } = {}) {
     $('#theater-manual-copy-overlay').remove();
     const $overlay = $(`
         <div id="theater-manual-copy-overlay" class="theater-manual-copy-overlay" role="dialog" aria-modal="true" aria-labelledby="theater-manual-copy-title">
@@ -635,6 +657,7 @@ function showManualCopyPanel(text, { title = '手动复制', downloadName = '千
             </section>
         </div>`);
     $overlay.find('#theater-manual-copy-title').text(title);
+    if (hint) $overlay.find('.theater-manual-copy-hint').text(hint);
     $overlay.find('textarea').val(text);
     $overlay.data('download-name', downloadName);
     $('body').append($overlay);

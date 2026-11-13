@@ -106,6 +106,7 @@ export async function requestMainApi({
     onChunk = noop,
     onRequest = noop,
     shouldStream = true,
+    recoverFormat = false,
     signal,
     log = noop,
     onFallback = noop,
@@ -199,7 +200,7 @@ export async function requestMainApi({
                 abortPromise,
             ]);
             if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-            const finalized = reasoningSafeResult(result, { phase: 'main', transport: 'ChatCompletionService' });
+            const finalized = reasoningSafeResult(result, { phase: 'main', transport: 'ChatCompletionService', recoverFormat, log });
             onResponse({
                 transport: 'ChatCompletionService', protocol: API_PROTOCOLS.OPENAI,
                 httpStatus: null, contentType: 'sillytavern', format: 'sillytavern', events: null,
@@ -229,7 +230,7 @@ export async function requestMainApi({
                     presetName,
                     postProcessing,
                 });
-                const finalized = reasoningSafeResult(result, { phase: 'main', transport: 'TavernHelper' });
+                const finalized = reasoningSafeResult(result, { phase: 'main', transport: 'TavernHelper', recoverFormat, log });
                 onResponse({
                     transport: 'TavernHelper', protocol: API_PROTOCOLS.OPENAI,
                     httpStatus: null, contentType: 'sillytavern', format: 'sillytavern', events: null,
@@ -263,7 +264,7 @@ export async function requestMainApi({
         presetName,
         postProcessing,
     });
-    const finalized = reasoningSafeResult(result, { phase: 'main', transport: 'TavernHelper' });
+    const finalized = reasoningSafeResult(result, { phase: 'main', transport: 'TavernHelper', recoverFormat, log });
     onResponse({
         transport: 'TavernHelper', protocol: API_PROTOCOLS.OPENAI,
         httpStatus: null, contentType: 'sillytavern', format: 'sillytavern', events: null,
@@ -529,6 +530,7 @@ export async function requestCustomApi({
     onChunk = noop,
     onRequest = noop,
     shouldStream = true,
+    recoverFormat = false,
     signal,
     log = noop,
     onFallback = noop,
@@ -561,7 +563,7 @@ export async function requestCustomApi({
     };
     const finalize = (result, transport) => {
         reportResponse(result?.responseSummary || {});
-        const finalized = publicResult(reasoningSafeResult(result, { phase: 'body', transport }));
+        const finalized = publicResult(reasoningSafeResult(result, { phase: 'body', transport, recoverFormat, log }));
         publishConnection({ state: 'complete' });
         return finalized;
     };

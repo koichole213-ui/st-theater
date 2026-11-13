@@ -155,6 +155,8 @@ export function createLongDreamGenerationController({
         let accumulatedText = existingDraftText;
         let roundBaseText = accumulatedText;
         let streamedText = '';
+        let unsavedRendered;
+        let customTagRecovered = currentRecord.draft?.formatRecovered === 'custom-tag';
         let hasStreamCheckpoint = false;
         let lastCheckpointAt = Number.NEGATIVE_INFINITY;
         let persistence = Promise.resolve(currentRecord);
@@ -170,10 +172,12 @@ export function createLongDreamGenerationController({
             html = '',
             mode = 'text',
             resumeStage = LONG_DREAM_DRAFT_RESUME_STAGE.WRITING,
+            formatRecovered,
         }) => {
             pendingDraftSnapshot = {
                 status,
                 resumeStage,
+                ...(formatRecovered ? { formatRecovered } : {}),
                 title: normalizedTitle,
                 instruction: normalizedInstruction,
                 targetChars: target,
@@ -198,6 +202,9 @@ export function createLongDreamGenerationController({
                     persistenceActive = false;
                 }
             });
+            // Streaming callbacks cannot await the checkpoint. The main run still
+            // observes the failure when it awaits this same persistence promise.
+            void persistence.catch(noop);
             return persistence;
         };
 
@@ -314,6 +321,13 @@ export function createLongDreamGenerationController({
                     streamedText = String(requestResult?.text ?? requestResult ?? streamedText);
                     if (!cleanText(streamedText)) throw new Error('长梦正文请求没有返回有效内容');
                     accumulatedText = composeDraftText(roundBaseText, streamedText);
+                    const formatRecovered = requestResult?.formatRecovered;
+                    if (formatRecovered === 'custom-tag') customTagRecovered = true;
+                    if (formatRecovered && formatRecovered !== 'custom-tag') {
+                        const error = new Error('长梦正文格式异常');
+                        error.formatRecovered = formatRecovered;
+                        throw error;
+                    }
                     const addedText = accumulatedText.startsWith(roundBaseText)
                         ? accumulatedText.slice(roundBaseText.length).trim() : streamedText;
                     addGenerationSegment(job, addedText, requestResult?.stopReason || 'stop', requestResult?.rawStopReason || null);
@@ -366,8 +380,10 @@ export function createLongDreamGenerationController({
                     text: finalText,
                     html: rendered.html,
                     mode: rendered.mode,
+                    ...(customTagRecovered ? { formatRecovered: 'custom-tag' } : {}),
                     createdAt: now(),
                 }, now());
+                unsavedRendered = { text: finalText, html: rendered.html, mode: rendered.mode };
                 return storeRecord(nextRecord);
             });
             currentRecord = await persistence;
@@ -390,17 +406,20 @@ export function createLongDreamGenerationController({
             };
         } catch (error) {
             try {
-                if (active?.stage === LONG_DREAM_GENERATION_STAGE.RENDERING && cleanText(accumulatedText)) {
+                if ((error?.formatRecovered || active?.stage === LONG_DREAM_GENERATION_STAGE.RENDERING) && cleanText(accumulatedText)) {
                     await queueDraftPersistence({
                         status: LONG_DREAM_DRAFT_STATUS.WRITING,
                         resumeStage: LONG_DREAM_DRAFT_RESUME_STAGE.RENDERING,
                         text: accumulatedText,
+                        formatRecovered: error?.formatRecovered,
                     });
                 } else {
                     await checkpointWritingDraft(true);
                 }
                 currentRecord = await persistence;
             } catch (persistError) {
+                const text = composeDraftText(roundBaseText, streamedText) || accumulatedText;
+                if (cleanText(text)) persistError.unsavedLongDreamDraft = unsavedRendered || { text, formatRecovered: error?.formatRecovered };
                 attachRecord(persistError, currentRecord);
                 throw persistError;
             }

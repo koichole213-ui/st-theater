@@ -6,7 +6,7 @@ export const isBackupReduction = state => /从\s*\d+\s*变为\s*\d+/.test(state?
 export function backupStatusText(state, kind) {
     const item = state?.[kind];
     if (item?.error) return `最近失败：${item.error}；上次${kind === 'local' ? '发起下载' : '成功'}：${date(item.time)}`;
-    return item?.time ? `${kind === 'local' ? '最近发起下载' : '最近上传成功'}：${date(item.time)}` : kind === 'local' ? '尚未发起下载' : '尚未上传';
+    return item?.time ? `${kind === 'local' ? '最近发起下载（浏览器无法确认是否保存成功）' : '最近上传成功'}：${date(item.time)}` : kind === 'local' ? '尚未发起下载' : '尚未上传';
 }
 export function backupSettingsHTML(config = {}, state = {}, { recoveredCount = 0 } = {}) {
     const e = escapeBackup;

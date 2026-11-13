@@ -36,6 +36,7 @@ test('生成完成与中断保留结果在缺少 randomUUID 时仍可保存，�
         const context = {
             crypto: supported ? globalThis.crypto : { getRandomValues: bytes => globalThis.crypto.getRandomValues(bytes) },
             lastGeneratedHtml: html, currentOutputMode: 'html', continuationRun: null, layoutRetry: null,
+            formatRecovered: undefined,
             stagedRenderMode: true, plannedTargetWordCount: 5000, newText: '本次正文', payload: {}, setActiveInstructionTags() {},
             continuationRounds: ['旧前情', '本次正文'], instruction: '本轮方向', generationSourceConfig: { presetName: '合成' },
             ownsGeneration: () => true,
@@ -3752,13 +3753,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.8a 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.8b 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.8a'/);
-    assert.equal(manifest.version, '4.4.8a');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.8a\b/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.8b'/);
+    assert.equal(manifest.version, '4.4.8b');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.8b\b/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 
@@ -7080,7 +7081,7 @@ test('普通新稿第三轮中断后保存再续写只带第二轮和未完成�
     let saved;
     const context = { currentGenerationResult: null, resultEditSnapshot: null, lastGeneratedHtml: '<main>中断保留正文</main>', currentDisplayHtml: '', currentOutputMode:'text',
         retainedResultSource:null, singleHtmlLayoutRetry:null, layoutSource:null, generationRoles:[], instruction:'创作指令', sourceTags:['标签'], generationSourceConfig:{},
-        continuationRun:null, currentGenerationJob:{segments:rounds}, liveBodyText:live,
+        continuationRun:null, currentGenerationJob:{segments:rounds}, liveBodyText:live, recoveredText:'',
         continuationRoundHistory, prepareContinuationContext:value=>value.trim(), normalizeContinuationRounds,
         continuationSession:null, displayedContinuationVersion:()=>null, recentCache:[], historyCache:[],
         activeInstructionTags:[], knownInstructionTags:()=>['标签'], itemTags, mergeTagLists, normalizeTagList,

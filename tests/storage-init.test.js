@@ -191,13 +191,18 @@ function migrationFixture(t, { rows = [], failure = 'open-write' } = {}) {
         const staged = [], stagedKV = new Map();
         let aborted = false;
         const tx = { objectStore(name) { return {
+            getAll() {
+                if (activeFailure === 'read') throw new Error('synthetic read failure');
+                return request(name === 'history' ? stored : []);
+            },
+            get: key => request(kv.get(key)),
             add(item) {
                 staged.push(structuredClone(item));
                 if (activeFailure === 'add') throw new Error('synthetic synchronous add failure');
             },
             put(value, key) { stagedKV.set(key, structuredClone(value)); },
         }; }, abort() { aborted = true; aborts++; } };
-        queueMicrotask(() => {
+        setImmediate(() => {
             if (aborted || activeFailure === 'abort') { tx.error = new Error('synthetic transaction abort'); tx.onabort(); }
             else { stored.push(...staged); for (const [key, value] of stagedKV) kv.set(key, value); tx.oncomplete(); }
         });

@@ -80,11 +80,15 @@ export function createBackupStorage(runtime) {
         },
         async preview(packet, selected, sourceId) { idle(); const before = await snapshot(); return { before, plan: await planBackupRestore(before.data, packet, selected, sourceId) }; },
         async restore(packet, selected, sourceId, expected) {
+            if (runtime.archiveSync?.allowWrite() === false) return false;
             idle(); available();
             const before = await snapshot();
             if (stableJson(before.data) !== stableJson(expected.data)) throw new Error('预览后存档发生变化，请重新核对恢复预览');
             const plan = await planBackupRestore(before.data, packet, selected, sourceId);
-            if (!plan.changed) return plan;
+            if (!plan.changed) {
+                runtime.archiveSafety?.record({ restored: true });
+                return plan;
+            }
             const restoreSettings=selected.some(kind=>kind!=='recent');
             const settingsAfter={templates:plan.next.instructions,tags:plan.next.instructionTags,composers:{...instructionState().composers}};
             for(const dream of plan.additions.dreams)if(dream.composerDraft)settingsAfter.composers[dream.id]=dream.composerDraft;
@@ -94,6 +98,11 @@ export function createBackupStorage(runtime) {
                 const actual = await rawRead(tx);
                 if (stableJson(actual) !== stableJson(before.raw) || stableJson(instructionState()) !== before.instructionSignature) throw new Error('存档正在变化，请重新核对恢复预览');
                 idle();
+                if (runtime.archiveSync?.allowWrite() === false) {
+                    tx.abort();
+                    await completed.catch(() => {});
+                    return false;
+                }
                 for (const item of plan.additions.history) tx.objectStore('history').add(item);
                 for (const dream of plan.additions.dreams) tx.objectStore('dreams').add(dream);
                 if (selected.includes('history')) tx.objectStore('kv').put(plan.next.folders, 'history-collections');
@@ -104,9 +113,15 @@ export function createBackupStorage(runtime) {
                 }
             } catch (error) { try { tx.abort(); } catch {} await completed.catch(() => {}); throw error; }
             await completed;
-            if (selected.includes('history')) { runtime.historyCache = orderedHistory([...before.raw.history, ...plan.additions.history]); runtime.historyCollections = plan.next.folders; }
+            if (selected.includes('history')) {
+                runtime.historyCache = orderedHistory([...before.raw.history, ...plan.additions.history]);
+                runtime.historyCollections = plan.next.folders;
+                runtime.historyCollectionsStoredJson = runtime.archiveSync?.folderSignature(plan.next.folders);
+            }
             if (selected.includes('dreams')) runtime.longDreamCache = [...plan.additions.dreams, ...runtime.longDreamCache];
             if (restoreSettings) { journal = { before: before.instructionSignature, after:settingsAfter }; applyInstructions(journal.after); }
+            runtime.archiveSafety?.record({ restored: true });
+            runtime.archiveSync?.publish('backup-restore');
             runtime.refreshInstUI?.(); runtime.refreshHistList?.(); runtime.refreshTagControls?.(); runtime.renderLongDreamPanel?.();
             return plan;
         },

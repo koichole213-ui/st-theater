@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { createGenerationJob, abortGenerationJob, generationTextWithLiveSegment, addGenerationSegment } from '../generation-job.js';
-import { filterStoryOutput } from '../story-output.js';
+import { filterStoryOutput, finalStoryOutput, FORMAT_RECOVERY_NOTICE } from '../story-output.js';
 import { readableCharCount } from '../text-counter.js';
 import { requestMainApi, requestCustomApi, MAIN_FIRST_TOKEN_TIMEOUT_MS, MAIN_RESPONSE_TIMEOUT_MS, MAIN_STREAM_IDLE_TIMEOUT_MS } from '../api-runtime.js';
 import { createTheaterAppearance } from '../theater-appearance.js';
@@ -32,12 +32,24 @@ function generationHarness({ honorAbort = true, htmlMode = false } = {}) {
         resolveTargetWordCount: () => htmlMode ? 0 : 6000, isStagedRenderTarget: () => !htmlMode, resolveRenderSelection: () => ({ label: 'synthetic', rules: 'VIRTUAL_INTERACTIVE_RULE', isPlainTextRender: false }), updateContinueHint() {}, updateLengthHint() {},
         assembleGenerationPayload: async () => ({ ctx: {}, targetWordCount: htmlMode ? 0 : 6000, isPlainTextRender: !htmlMode }), textOutputModeForTheme: () => 'text', normalizeContextRange: value => value,
         itemTags: () => [], classifyLengthTier: () => 'long', createGenerationJob, abortGenerationJob, generationTextWithLiveSegment, filterStoryOutput, readableCharCount,
-        assertHtmlIntegrity, recoverHtmlText, addGenerationSegment, shouldContinueJob: () => false, markCompleted() {},
+        assertHtmlIntegrity, recoverHtmlText, finalStoryOutput, FORMAT_RECOVERY_NOTICE, addGenerationSegment, shouldContinueJob: () => false, markCompleted() {},
         htmlToPlainText: htmlMode ? recoverHtmlText : text => text, continuationRoundHistory: () => [], prepareContinuationContext: text => text, newHistoryKey: () => 'synthetic-id', markFirstToken() {},
     };
     const api = runInNewContext(productionFunction('runGeneration') + '\n' + productionFunction('stopGeneration') + '\n({run:runGeneration,stop:stopGeneration})', sandbox);
     return { ...api, runtime, save, requests, saved, updates, resets };
 }
+
+test('最终普通正文被附加标签包裹时，进入可重排的保留结果', async () => {
+    const h = generationHarness();
+    const generation = h.run('synthetic', false);
+    while (!h.requests.length) await tick();
+    h.save.resolve();
+    h.requests[0].resolve({ text: '<littletheatre><p>应保留的新正文</p></littletheatre>' });
+    await generation;
+    assert.equal(h.saved[0].formatRecovered, 'extra-wrapper');
+    assert.equal(h.saved[0].layoutRetry.sourceText, '应保留的新正文');
+    assert.match(h.saved[0].html, /应保留的新正文/);
+});
 
 test('stop retains text and the busy lock until asynchronous preservation ends, then allows a new task', async () => {
     const h = generationHarness();

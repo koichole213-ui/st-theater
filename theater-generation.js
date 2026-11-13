@@ -2,7 +2,7 @@ import { activeRelayout, resultRelayoutTarget, syncResultRelayout } from './manu
 import { assertHtmlIntegrity, recoverHtmlText } from './html-integrity.js';
 import { estimateTavernTexts } from './tavern-token-counter.js';
 import { resolveTheaterPreset } from './preset-compat.js';
-import { filterStoryOutput, STORY_OUTPUT_RULE } from './story-output.js';
+import { filterStoryOutput, finalStoryOutput, FORMAT_RECOVERY_NOTICE, STORY_OUTPUT_RULE } from './story-output.js';
 import { resolveLayoutApiRoute } from './layout-api.js';
 import { creativeEnhancementPrompt } from './creative-enhancement.js';
 // theater-generation: receives live state and cross-feature callbacks from index.js.
@@ -871,6 +871,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
 
     try {
         let firstHtml = '';
+        let formatRecovered;
         let roundPayload = payload;
         while (true) {
             if (generationJob.aborted || !ownsGeneration()) throw new DOMException('Aborted', 'AbortError');
@@ -910,7 +911,17 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 requestOptions,
             });
             if (generationAbortController.signal.aborted || !ownsGeneration()) throw new DOMException('Aborted', 'AbortError');
-            const responseText = filterStoryOutput(typeof result === 'string' ? result : result?.text, { plainText: round !== 1 || isPlainTextRender });
+            const output = finalStoryOutput(typeof result === 'string' ? result : result?.text, {
+                plainText: round !== 1 || isPlainTextRender, formatRecovered: result?.formatRecovered,
+            });
+            const responseText = output.text;
+            if (output.formatRecovered) formatRecovered = output.formatRecovered;
+            if (formatRecovered && formatRecovered !== 'custom-tag') {
+                const error = new Error(FORMAT_RECOVERY_NOTICE);
+                error.formatRecovered = formatRecovered;
+                error.recoveredOutput = responseText;
+                throw error;
+            }
             if (!responseText) throw new Error('API未返回内容');
             markCompleted(runtime.lastRequestMetrics);
             runtime.recordRequestMetrics(runtime.lastRequestMetrics);
@@ -1053,6 +1064,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             const item = {
                 ...continuationRun?.historyMetadata,
                 resultId, html: runtime.lastGeneratedHtml,
+                ...(formatRecovered ? { formatRecovered } : {}),
                 ...(layoutSource ? { layoutSource } : {}),
                 ...(layoutRetry ? { layoutRetry } : {}),
                 mode: runtime.currentOutputMode, continuationRounds,
@@ -1106,12 +1118,14 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             && runtime.currentGenerationJob.segments.length <= 1
             ? firstHtmlSource || currentRoundStreamText : '';
         // Extract existing text only. Never send half-written scripts as the manuscript.
-        const partialText = singleHtmlSource ? recoverHtmlText(singleHtmlSource)
+        const recoveredText = err.formatRecovered && recoverHtmlText(err.recoveredOutput);
+        const partialText = recoveredText ? generationTextWithLiveSegment(runtime.currentGenerationJob, recoveredText)
+            : singleHtmlSource ? recoverHtmlText(singleHtmlSource)
             : generationTextWithLiveSegment(runtime.currentGenerationJob, liveBodyText);
-        const singleHtmlLayoutRetry = partialText && singleHtmlSource ? {
+        const singleHtmlLayoutRetry = partialText && (singleHtmlSource || recoveredText) ? {
             sourceText: partialText, rules: plannedRenderSelection.rules,
             originalInstruction: payload.generationFoundation?.originalInstruction || '',
-            renderLabel: renderTemplate, requireIndependentApi: true, originalHtml: singleHtmlSource,
+            renderLabel: renderTemplate, requireIndependentApi: true, originalHtml: recoveredText ? '' : singleHtmlSource,
         } : null;
         if (partialText) {
             const layoutSource = stagedRenderMode && activeRound === 'render' ? {
@@ -1125,11 +1139,12 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             runtime.currentOutputMode = 'text';
             runtime.retainedResultSource = {
                 html: runtime.lastGeneratedHtml, mode: runtime.currentOutputMode, instruction,
+                ...(recoveredText ? { formatRecovered: err.formatRecovered } : {}),
                 ...continuationRun?.historyMetadata,
                 ...(singleHtmlLayoutRetry ? { layoutRetry: singleHtmlLayoutRetry } : {}),
                 ...(layoutSource ? { layoutSource } : {}),
                 tags: [...sourceTags], sourceConfig: generationSourceConfig, roleSources: generationRoles,
-                continuationRounds: continuationRoundHistory(continuationRun?.source.rounds, [...runtime.currentGenerationJob.segments, liveBodyText].map(prepareContinuationContext)),
+                continuationRounds: continuationRoundHistory(continuationRun?.source.rounds, [...runtime.currentGenerationJob.segments, recoveredText || liveBodyText].map(prepareContinuationContext)),
             };
             const partialItem = { ...runtime.retainedResultSource, html: runtime.lastGeneratedHtml, mode: runtime.currentOutputMode,
                 resultId: newHistoryKey(), complete: false, time: new Date().toLocaleString('zh-CN', { hour12: false }) };
@@ -1138,7 +1153,8 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                     resultId: partialItem.resultId, ...(layoutSource ? { layoutSource } : {}),
                     ...continuationRun.historyMetadata,
                     html: runtime.lastGeneratedHtml, text: partialText, mode: runtime.currentOutputMode,
-                    continuationRounds: continuationRoundHistory(continuationRun.source.rounds, [...runtime.currentGenerationJob.segments, liveBodyText].map(prepareContinuationContext)),
+                    ...(recoveredText ? { formatRecovered: err.formatRecovered } : {}),
+                    continuationRounds: continuationRoundHistory(continuationRun.source.rounds, [...runtime.currentGenerationJob.segments, recoveredText || liveBodyText].map(prepareContinuationContext)),
                     direction: continuationDirection, instruction, tags: [...sourceTags], sourceConfig: generationSourceConfig, roleSources: generationRoles, complete: false,
                 });
             }
@@ -1150,6 +1166,11 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 $('#theater-stream-section').hide();
                 $('#theater-output-section').show();
             }
+        }
+        if (recoveredText) {
+            toastr.warning(FORMAT_RECOVERY_NOTICE);
+            runtime.runtimeLog('warn', '模型输出格式异常，已保留正文', { format: err.formatRecovered });
+            return;
         }
         if (err.name === 'AbortError') {
             runtime.runtimeLog('warn', '生成停止', { reason: 'abort', retained_chars: readableCharCount(partialText) });

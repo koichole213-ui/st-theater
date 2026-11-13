@@ -10,6 +10,7 @@ import { buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, shouldWeaveL
 import { normalizeMaxTokens } from '../api-client.js';
 import { createLongDreamBackup, parseLongDreamBackup } from '../long-dream-backup.js';
 import { createLongDreamArchive, parseLongDreamArchive } from '../long-dream-archive.js';
+import { diagnosticSignalInfo, REQUEST_DIAGNOSTIC_SIGNAL } from '../request-diagnostics.js';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, x => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));
 function fixture(n = 7) {
     const historyCache = Array.from({ length: n }, (_, i) => ({ id:i+1, chapterId:`saved-${i+1}`, title:`篇目${i+1}`, html:`<article>完整正文${i+1} · 旧信</article>`, date:`2026-10-${String(i+1).padStart(2,'0')}` }));
@@ -48,7 +49,7 @@ function weaveFixture({ failAt=0, stopAt=0, response='normal' }={}) {
     const weave=runInNewContext(module.slice(start,end)+'\nweaveLongDreamMemory',{
         runtime,runSeriesMemoryBatches,applySeriesStoryBatch,setLongDreamMemoryStatus,applyLongDreamMemoryPatch,LONG_DREAM_MEMORY_STATUS,
         buildLongDreamMemoryPayload,parseLongDreamMemoryResponse,shouldWeaveLongDreamMemory,DEFAULT_LONG_DREAM_MEMORY_PRESET,normalizeMaxTokens,
-        REQUEST_DIAGNOSTIC_SIGNAL:{INVALID_RESPONSE:'invalid'},toastr:{warning(){},success(){},info(){}},
+        diagnosticSignalInfo,REQUEST_DIAGNOSTIC_SIGNAL,toastr:{warning(){},success(){},info(){}},
         refreshLongDreamSummaryNow:async()=>{summaryCalls++;},
         requestCustomApi:async({userPrompt})=>{
             const numbers=[...userPrompt.matchAll(/【第 (\d+) 章 ·/g)].map(m=>Number(m[1]));calls.push(numbers);
@@ -100,7 +101,7 @@ test('286篇选择器按类分页，本地正文搜索与切页不清选中来�
         bindSourcePicker($d,f.runtime);handlers['[data-source-tab]'].call({'data-source-tab':'single'});
         assert.equal((dom['#theater-source-results'].match(/class="theater-source-item"/g)||[]).length,5);
         handlers['#theater-source-search'].call({value:'车站'});assert.match(dom['#theater-source-results'],/剧场280&lt;script&gt;/);
-        assert.equal(pickerSelectedSource(f.runtime).key,f.source.key);assert.doesNotMatch(dom['#theater-source-results'],/<script>/);
+        assert.equal(pickerSelectedSource(f.runtime).key,'history:0');assert.doesNotMatch(dom['#theater-source-results'],/<script>/);
     } finally {globalThis.$=old;}
 });
 
