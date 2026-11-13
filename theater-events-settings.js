@@ -286,7 +286,7 @@ export function bindSettingsEvents(runtime, $d) {
     $d.off('click.ttest').on('click.ttest', '#theater-test-api-btn', runtime.testAPIConnection);
     $d.off('click.tdiag').on('click.tdiag', '#theater-run-diagnostics-btn', runtime.runDiagnostics);
     $d.off('click.tarchiveaccept').on('click.tarchiveaccept', '[data-archive-accept]', async () => {
-        const accepted = await runtime.archiveSafety?.confirmCurrent(() => Popup.show.confirm(
+        const accepted = await runtime.archiveSafety?.confirmCurrent(() => SillyTavern.getContext().Popup.show.confirm(
             '以当前存档为准？', '确认后会以当前的作品数量作为新基准，并解除疑似丢失警告。你仍可导入备份。',
         ));
         if (accepted) {

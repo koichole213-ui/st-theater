@@ -186,7 +186,7 @@ test('长梦在单一事务读最新版本，事务完成前不发布写入结�
     const tx = { objectStore: () => ({ get: () => read, put: value => { written = value; } }) };
     runtime.idb = { transaction: () => tx };
     const pending = runManualRelayout(runtime, 'chapter');
-    await Promise.resolve();
+    await new Promise(resolve => setImmediate(resolve));
     read.onsuccess();
     assert.equal(runtime.longDreamCache[0], dream);
     assert.equal(written.title, persisted.title);
@@ -255,7 +255,7 @@ test('旧长梦缺少候选元数据但明确保存过目标时，仍可更新�
     const tx = { objectStore: () => ({ get: () => read, put: value => { written = value; } }) };
     runtime.idb = { transaction: () => tx };
     const pending = runManualRelayout(runtime, 'candidate');
-    await Promise.resolve();
+    await new Promise(resolve => setImmediate(resolve));
     read.onsuccess();
     tx.oncomplete();
     assert.equal(await pending, true);

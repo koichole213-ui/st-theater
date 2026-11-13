@@ -617,7 +617,16 @@ async function saveLongDreamChapterEdits() {
     }
 
     try {
-        const updated = updateLongDreamChapter(dream, chapter.id, {
+        const latest = runtime.longDreamCache.find(item => String(item.id) === String(dream.id));
+        const currentChapter = latest?.chapters.find(item => String(item.id) === String(chapter.id));
+        if (!currentChapter || latest.draft || String(runtime.activeLongDreamId) !== String(dream.id)
+            || String(runtime.activeLongDreamChapterId) !== String(chapter.id)
+            || JSON.stringify(currentChapter) !== JSON.stringify(chapter)) {
+            $('#theater-dream-save-chapter').prop('disabled', false);
+            toastr.info('章节状态已变化，请核对后再保存');
+            return;
+        }
+        const updated = updateLongDreamChapter(latest, chapter.id, {
             title,
             text: textChanged ? text : chapter.text,
             html,
@@ -663,7 +672,13 @@ async function setCurrentLongDreamStatus(status) {
             : '这会恢复“续写下一章”，已经保存的章节不会改变。',
     );
     if (!confirmed) return;
-    const saved = await runtime.longDreamPut(setLongDreamStatus(dream, status));
+    const latest = runtime.longDreamCache.find(item => String(item.id) === String(dream.id));
+    if (!latest || String(runtime.activeLongDreamId) !== String(dream.id) || latest.draft
+        || latest.status !== dream.status || runtime.isPreparingGeneration || runtime.longDreamGenerationController?.active || runtime.longDreamChapterEditController) {
+        toastr.info('长梦状态已变化，请重新确认');
+        return;
+    }
+    const saved = await runtime.longDreamPut(setLongDreamStatus(latest, status));
     if (!saved) return;
     renderLongDreamPanel();
     toastr.success(complete ? '这场梦已经完卷，章节仍可随时阅读和导出' : '这场梦已恢复继续续写');
@@ -1332,7 +1347,14 @@ async function handleLongDreamChapterAction(action, chapterId) {
             `当前卷将移除后续 ${removed} 章及未完成草稿，梦脉会从保留章节重新织录。原卷不会自动留副本；如需保留，请先使用“另开支线”。`,
         );
         if (!confirmed) return;
-        const saved = await runtime.longDreamPut(truncateLongDreamAfter(dream, chapter.id));
+        const latest = runtime.longDreamCache.find(item => String(item.id) === String(dream.id));
+        if (!latest || String(runtime.activeLongDreamId) !== String(dream.id) || latest.draft
+            || runtime.isPreparingGeneration || runtime.longDreamGenerationController?.active || runtime.longDreamChapterEditController
+            || JSON.stringify(latest.chapters) !== JSON.stringify(dream.chapters)) {
+            toastr.info('长梦章节已变化，请重新确认');
+            return;
+        }
+        const saved = await runtime.longDreamPut(truncateLongDreamAfter(latest, chapter.id));
         if (!saved) return;
         runtime.clearLongDreamComposerDraft(saved.id);
         renderLongDreamPanel();
@@ -1346,7 +1368,14 @@ async function handleLongDreamChapterAction(action, chapterId) {
             `将从当前卷删除 ${removed} 章，保留到第 ${chapter.number - 1} 章；梦脉会重新织录。此操作不会删除另开的支线。`,
         );
         if (!confirmed) return;
-        const saved = await runtime.longDreamPut(deleteLongDreamFrom(dream, chapter.id));
+        const latest = runtime.longDreamCache.find(item => String(item.id) === String(dream.id));
+        if (!latest || String(runtime.activeLongDreamId) !== String(dream.id) || latest.draft
+            || runtime.isPreparingGeneration || runtime.longDreamGenerationController?.active || runtime.longDreamChapterEditController
+            || JSON.stringify(latest.chapters) !== JSON.stringify(dream.chapters)) {
+            toastr.info('长梦章节已变化，请重新确认');
+            return;
+        }
+        const saved = await runtime.longDreamPut(deleteLongDreamFrom(latest, chapter.id));
         if (!saved) return;
         runtime.clearLongDreamComposerDraft(saved.id);
         runtime.longDreamWorkspaceSection = 'works';

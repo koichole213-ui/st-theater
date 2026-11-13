@@ -438,7 +438,13 @@ export function bindLongDreamEvents(runtime, $d) {
             `将重新读取全部 ${dream.chapters.length} 章已确认正文，清理自动织录结果并从第一章重新生成。你手动保存、隐藏或否定过的内容会保留。此操作会消耗梦脉副 API。`,
         );
         if (!confirmed) return;
-        const saved = await runtime.longDreamPut(prepareLongDreamMemoryRegeneration(dream));
+        const latest = runtime.longDreamCache.find(item => String(item.id) === String(dream.id));
+        if (!latest || String(runtime.activeLongDreamId) !== String(dream.id) || latest.memory?.status === LONG_DREAM_MEMORY_STATUS.WEAVING
+            || JSON.stringify(latest.chapters) !== JSON.stringify(dream.chapters)) {
+            toastr.info('长梦或梦脉状态已变化，请重新确认');
+            return;
+        }
+        const saved = await runtime.longDreamPut(prepareLongDreamMemoryRegeneration(latest));
         if (!saved) return;
         runtime.renderLongDreamPanel();
         toastr.info('已准备重新生成整部梦脉');

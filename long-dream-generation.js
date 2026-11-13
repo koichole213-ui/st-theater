@@ -65,6 +65,7 @@ export function createLongDreamGenerationController({
     requestChapter,
     renderChapter,
     persistRecord = async record => record,
+    persistConfirmedRecord = persistRecord,
     onState = noop,
     onStream = noop,
     checkpointIntervalMs = 3000,
@@ -78,8 +79,8 @@ export function createLongDreamGenerationController({
 
     let active = null;
 
-    async function storeRecord(record) {
-        const stored = await persistRecord(record);
+    async function storeRecord(record, persist = persistRecord) {
+        const stored = await persist(record);
         if (stored === false || stored === null) throw new Error('长梦草稿保存失败');
         const normalized = normalizeLongDreamRecord(stored ?? record);
         if (!normalized) throw new Error('长梦存储返回了无效记录');
@@ -437,7 +438,7 @@ export function createLongDreamGenerationController({
     async function confirm(record) {
         if (active) throw new Error('生成进行中，不能确认章节');
         const promoted = promoteLongDreamDraft(record, now());
-        return storeRecord(promoted);
+        return storeRecord(promoted, persistConfirmedRecord);
     }
 
     function abort(reason = 'user') {

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTheaterStorage } from '../theater-storage.js';
+import { bindSettingsEvents } from '../theater-events-settings.js';
 
 const origin = 'http://192.0.2.10:8000';
 const rows = count => Array.from({ length: count }, (_, id) => ({ id }));
@@ -11,6 +12,38 @@ function setup(settings = { archiveFingerprints: { [origin]: { history: 10, drea
     createTheaterStorage(runtime, { origin, toast: { warning: (...args) => warnings.push(args), info: message => info.push(message) } });
     return { runtime, safety: runtime.archiveSafety, warnings, info };
 }
+
+test('诊断确认按钮使用酒馆的 Popup，取消保留告警，确认后才清除', async t => {
+    const { runtime, safety } = setup();
+    safety.inspect();
+    let handler, approved = false, opened = 0, refreshes = 0;
+    const chain = new Proxy({}, { get: (_target, key) => key === 'length' ? 0 : key === 'val' ? () => '' : () => chain });
+    const globals = ['$', 'Popup', 'SillyTavern'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+    t.after(() => { for (const [key, descriptor] of globals) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else delete globalThis[key];
+    } });
+    globalThis.$ = () => chain;
+    delete globalThis.Popup;
+    globalThis.SillyTavern = { getContext: () => ({ Popup: { show: { confirm(title) {
+        assert.match(title, /以当前存档为准/);
+        opened++;
+        return approved;
+    } } } }) };
+    runtime.runDiagnostics = runtime.refreshHistList = () => { refreshes++; };
+    bindSettingsEvents(runtime, { off() { return this; }, on(_event, selector, fn) {
+        if (selector === '[data-archive-accept]') handler = fn;
+        return this;
+    } });
+    await handler();
+    assert.ok(runtime.archiveLossSuspected);
+    assert.equal(refreshes, 0);
+    approved = true;
+    await handler();
+    assert.equal(opened, 2);
+    assert.equal(runtime.archiveLossSuspected, null);
+    assert.equal(refreshes, 2);
+});
 
 test('已告警的存档基准跨刷新保留，补齐普通历史和长梦才解除', () => {
     const { runtime, safety, warnings } = setup();

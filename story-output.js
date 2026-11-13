@@ -14,6 +14,20 @@ export const FORMAT_RECOVERY_NOTICE = '模型输出格式异常（思考标签�
 
 export const STORY_OUTPUT_RULE = '【本次作品输出边界】本次只交付故事正文及所选模板的排版。预设中的角色与文风要求继续保留，但其旧篇幅范围不得覆盖本次目标；预设思考步骤继续保留，但思考过程（包括ECoT）不属于故事正文，若输出须以完整思考标签独立包裹，不得混入content正文，程序会隐藏。不要输出finish字数报告、数字联想、创作解释、状态栏、变量更新或其他预设附加部件。所选模板的丰富HTML、样式及故事内交互要求仍须保留。';
 
+function startsWithWrappedBody(text) {
+    let cursor = 0, depth = 0;
+    const readable = value => readableCharCount(recoverHtmlText(value)) > 0;
+    for (const match of text.matchAll(new RegExp(EXTRA_PATTERN))) {
+        const prefix = text.slice(cursor, match.index);
+        // A plain lead-in explicitly labelled "前言" can precede a wrapped story.
+        if (readable(prefix) && !(cursor === 0 && !depth && /^前言\s*[:：]?$/.test(prefix.trim()))) return depth > 0;
+        if (match[1]) depth = Math.max(0, depth - 1);
+        else if (match[2] && !/\/\s*>$/.test(match[0])) depth++;
+        cursor = match.index + match[0].length;
+    }
+    return depth > 0 && readable(text.slice(cursor));
+}
+
 export function filterStoryOutput(value, { plainText = false } = {}) {
     const text = filterTaggedReasoning(value).content;
     let result = '', cursor = 0, depth = 0;
@@ -55,7 +69,9 @@ export function finalStoryOutput(value, { plainText = false, formatRecovered, no
     const candidate = withoutFinish.replace(EXTRA_WRAPPERS, '');
     const rawChars = readableCharCount(recoverHtmlText(candidate));
     const filteredChars = readableCharCount(recoverHtmlText(filtered));
-    if (rawChars && filteredChars < rawChars / 5) return { text: candidate, formatRecovered: 'extra-wrapper' };
+    if (rawChars && (!filteredChars || (filteredChars < rawChars / 5 && startsWithWrappedBody(withoutFinish)))) {
+        return { text: candidate, formatRecovered: 'extra-wrapper' };
+    }
     if (filteredChars && SIMILAR_TAG.test(safe)) return { text: normalText ?? filtered, formatRecovered: 'custom-tag' };
     return { text: normalText ?? filtered };
 }

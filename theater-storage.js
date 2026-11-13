@@ -9,6 +9,19 @@ import { archiveRevision, createArchiveSync } from './archive-sync.js';
 export function createTheaterStorage(runtime, archiveOptions) {
 runtime.archiveSafety = createArchiveSafety(runtime, archiveOptions);
 runtime.archiveSync = createArchiveSync(runtime, archiveOptions);
+const longDreamWrites = new Map();
+
+function queueLongDreamWrite(id, operation) {
+    const key = String(id);
+    const pending = longDreamWrites.get(key) || Promise.resolve();
+    const task = pending.then(operation);
+    const settled = task.catch(() => {});
+    longDreamWrites.set(key, settled);
+    void settled.then(() => {
+        if (longDreamWrites.get(key) === settled) longDreamWrites.delete(key);
+    });
+    return task;
+}
 // @theater-source-begin idbReq
 function idbReq(req) {
     return new Promise((resolve, reject) => {
@@ -518,25 +531,36 @@ async function longDreamAdd(record) {
 // @theater-source-end longDreamAdd
 
 // @theater-source-begin longDreamPut
-async function longDreamPut(record) {
+function longDreamPut(record, options) {
+    return queueLongDreamWrite(record?.id, () => longDreamPutStorage(record, options));
+}
+// @theater-source-end longDreamPut
+
+async function longDreamPutStorage(record, { onConflict, applyToLatest } = {}) {
     if (runtime.archiveSync?.allowWrite() === false) return false;
-    const normalized = normalizeLongDreamRecord(record);
-    if (!normalized?.id) return false;
+    const cached = runtime.longDreamCache.find(item => item.id === record?.id);
+    const revision = runtime.archiveSync?.revision(cached);
+    const localConflict = () => {
+        onConflict?.('local');
+        toastr.warning('当前页面的长梦已更新，本次未保存，请重新核对后再试。');
+        return false;
+    };
+    if (!cached) return localConflict();
+    const proposed = applyToLatest ? applyToLatest(cached) : record;
+    if (!proposed) return localConflict();
+    const normalized = normalizeLongDreamRecord(proposed);
+    if (!normalized?.id || normalized.id !== cached.id) return false;
+    if (revision !== undefined && runtime.archiveSync.revision(normalized) !== revision) return localConflict();
     if (!runtime.idb) {
         const index = runtime.longDreamCache.findIndex(item => item.id === normalized.id);
         if (index === -1) return false;
+        if (revision !== undefined) normalized.revision = revision + 1;
         runtime.longDreamCache[index] = normalized;
         runtime.settings.longDreams = runtime.longDreamCache;
         runtime.save();
         return normalized;
     }
     try {
-        const cached = runtime.longDreamCache.find(item => item.id === normalized.id);
-        const revision = runtime.archiveSync?.revision(cached);
-        if (runtime.archiveSync && (!cached || runtime.archiveSync.revision(normalized) !== revision)) {
-            runtime.archiveSync.markStale();
-            return false;
-        }
         const tx = runtime.idb.transaction('dreams', 'readwrite');
         const done = idbTransactionDone(tx);
         const store = tx.objectStore('dreams');
@@ -565,9 +589,12 @@ async function longDreamPut(record) {
         return false;
     }
 }
-// @theater-source-end longDreamPut
 
-async function updateLongDreamLayout(id, changeLayout) {
+function updateLongDreamLayout(id, changeLayout) {
+    return queueLongDreamWrite(id, () => updateLongDreamLayoutStorage(id, changeLayout));
+}
+
+async function updateLongDreamLayoutStorage(id, changeLayout) {
     if (runtime.archiveSync?.allowWrite() === false) return false;
     const indexForDream = () => runtime.longDreamCache.findIndex(item => item.id === id);
     let updated;
@@ -615,7 +642,12 @@ async function updateLongDreamLayout(id, changeLayout) {
 }
 
 // @theater-source-begin longDreamDelete
-async function longDreamDelete(id) {
+function longDreamDelete(id) {
+    return queueLongDreamWrite(id, () => longDreamDeleteStorage(id));
+}
+// @theater-source-end longDreamDelete
+
+async function longDreamDeleteStorage(id) {
     if (runtime.archiveSync?.allowWrite() === false) return false;
     if (!id) return false;
     if (!runtime.idb) {
@@ -639,7 +671,6 @@ async function longDreamDelete(id) {
         return false;
     }
 }
-// @theater-source-end longDreamDelete
 
 // @theater-source-begin histPut
 function histPut(item) { return queueHistoryWrite(() => histPutStorage(item)); }

@@ -6,6 +6,23 @@ import { createLongDreamRecord } from '../long-dream.js';
 import { createLongDreamGenerationController } from '../long-dream-generation.js';
 
 const body = '故事里的人走到窗边，迎面吹来一阵带着雨水气息的风。'.repeat(6);
+test('完整 HTML 正文后跟很长的附加块，仍走正常排版', () => {
+    const html = '<article><p>完整的短篇正文</p></article>';
+    for (const tag of ['tableedit', 'updatevariable', 'littletheatre']) {
+        const value = html + '<' + tag + '>' + '附加内容'.repeat(35) + '</' + tag + '>';
+        assert.deepEqual(story.finalStoryOutput(value), { text: html });
+        assert.deepEqual(story.finalStoryOutput('她推开了门。' + value.slice(html.length), { plainText: true }), { text: '她推开了门。' });
+        assert.deepEqual(story.finalStoryOutput('<content>她推开了门</content>' + value.slice(html.length), { plainText: true }), { text: '她推开了门' });
+        assert.deepEqual(story.finalStoryOutput('<strong>门开了</strong>' + value.slice(html.length)), { text: '<strong>门开了</strong>' });
+    }
+});
+
+test('首段正文被包住时，外面的短尾句不会让兜底丢掉首段', () => {
+    const text = '<p>' + body + '</p><p>完</p>';
+    assert.deepEqual(story.finalStoryOutput('<littletheatre><p>' + body + '</p></littletheatre><p>完</p>'), {
+        text, formatRecovered: 'extra-wrapper',
+    });
+});
 test('G1 未闭合思考标签只在最终结果保留长正文，流式仍隐藏', () => {
     const value = '<think>' + body;
     emitReasoningSafeChunk(text => assert.equal(text, ''), value);
