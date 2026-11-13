@@ -455,10 +455,13 @@ function continuationSessionHTML() {
     const session = runtime.continuationSession;
     if (!session) return '';
     return `<section id="theater-continue-hint" class="theater-continuation-session">
-        <div class="theater-continuation-session-heading"><b>普通续写 · 第 ${session.segment} 段</b><button type="button" id="theater-cancel-continue" ${runtime.isGenerating || runtime.isPreparingGeneration ? 'disabled' : ''}>退出续写</button></div>
+        <div class="theater-continuation-session-heading"><b>普通续写 · 第 ${session.segment} 段</b><button type="button" id="theater-cancel-continue" aria-controls="theater-cont-exit-confirm" ${runtime.isGenerating || runtime.isPreparingGeneration ? 'disabled' : ''}>退出续写</button></div>
         <details class="theater-continuation-source"><summary>前情：${runtime.esc(session.source.label)} · 最近 ${session.source.rounds.length} 轮完整正文（约 ${readableCharCount(session.source.text)} 字）</summary><p>${runtime.esc(session.source.text)}</p></details>
         ${session.versions.length && !displayedContinuationVersion(session, runtime.currentDisplayHtml || runtime.lastGeneratedHtml) ? '<button type="button" class="theater-btn theater-continuation-return" id="theater-cont-return">回到本段结果</button>' : ''}
-        <div id="theater-cont-exit-confirm" hidden><p>退出后结束本次续写，重要版本请先保存到历史。</p><div class="theater-continuation-actions"><button type="button" class="theater-btn" id="theater-cont-stay">留在续写</button><button type="button" class="theater-btn" id="theater-cont-confirm-exit">退出</button></div></div>
+        <div id="theater-cont-exit-confirm" role="group" aria-labelledby="theater-cont-exit-title" hidden>
+            <div class="theater-cont-exit-copy"><b id="theater-cont-exit-title">确定退出这次续写？</b><p>退出后结束本次续写，重要版本请先保存到历史。</p></div>
+            <div class="theater-cont-exit-actions"><button type="button" class="theater-btn" id="theater-cont-stay">留在续写</button><button type="button" class="theater-btn" id="theater-cont-confirm-exit">确定退出</button></div>
+        </div>
     </section>`;
 }
 // @theater-source-end continuationSessionHTML

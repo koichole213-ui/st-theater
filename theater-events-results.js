@@ -122,12 +122,16 @@ export function bindResultEvents(runtime, $d) {
     $d.off('click.tcc').on('click.tcc', '#theater-cancel-continue', function () {
         if (runtime.isGenerating || runtime.isPreparingGeneration) return;
         $('#theater-cont-exit-confirm').prop('hidden', false);
+        $('#theater-cont-stay').trigger('focus');
     });
     $d.off('click.tcce').on('click.tcce', '#theater-cont-confirm-exit', function () {
         if (runtime.isGenerating || runtime.isPreparingGeneration) return;
         runtime.clearContinueMode();
     });
-    $d.off('click.tccs').on('click.tccs', '#theater-cont-stay', () => $('#theater-cont-exit-confirm').prop('hidden', true));
+    $d.off('click.tccs').on('click.tccs', '#theater-cont-stay', () => {
+        $('#theater-cont-exit-confirm').prop('hidden', true);
+        $('#theater-cancel-continue').trigger('focus');
+    });
     $d.off('click.tcrtn').on('click.tcrtn', '#theater-cont-return', () => runtime.showContinuationVersion(runtime.continuationSession?.selected));
     $d.off('click.tcrw').on('click.tcrw', '#theater-cont-rewrite', runtime.generateTheater);
     $d.off('click.tcnx').on('click.tcnx', '#theater-cont-next', function () {

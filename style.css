@@ -1,4 +1,4 @@
-/* 千夜浮梦 · 小剧场生成器 v4.4.8c
+/* 千夜浮梦 · 小剧场生成器 v4.4.8d
  * Three skins via [data-skin] on .theater-popup:
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
@@ -355,7 +355,6 @@
 /* 普通续写：固定前情、同段版本与显式推进。 */
 #theater-continuation-result[hidden], #theater-continuation-retention[hidden], #theater-cont-exit-confirm[hidden] { display:none !important; }
 .theater-continuation-return { margin-top:8px; min-height:44px; }
-#theater-cont-exit-confirm { font-size:var(--t-text-sm); }
 .theater-continuation-session { margin:0 var(--t-space-3) var(--t-space-3); padding:10px 12px; border:1px solid var(--t-border-strong); border-radius:12px; background:var(--t-card-green, var(--t-surface-2)); color:var(--t-fg); }
 .theater-continuation-session-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .theater-continuation-session-heading b { font-size:var(--t-text-base); }
@@ -371,6 +370,33 @@
 .theater-continuation-actions { display:grid; grid-template-columns:1fr 1.35fr; gap:8px; }
 .theater-continuation-actions .theater-btn { min-width:0; min-height:44px; padding:9px 6px; border-radius:12px; white-space:normal; font-size:var(--t-text-sm); touch-action:manipulation; }
 .theater-hint-inline.theater-continuation-retention { margin:12px 0 0; text-align:left; }
+.theater-continuation-session:has(#theater-cont-exit-confirm:not([hidden])) {
+    border-color:color-mix(in srgb, #4f8067 42%, var(--t-border));
+}
+.theater-continuation-session:has(#theater-cont-exit-confirm:not([hidden])) #theater-cancel-continue { visibility:hidden; }
+.theater-continuation-session:has(#theater-cont-exit-confirm:not([hidden])) .theater-continuation-source { margin-top:8px; }
+#theater-cont-exit-confirm {
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:12px 16px;
+    margin-top:12px;
+    padding:14px;
+    border:1px solid color-mix(in srgb, var(--t-danger) 34%, var(--t-border));
+    border-radius:var(--t-radius-md);
+    background:var(--t-surface-1);
+    text-align:left;
+}
+.theater-cont-exit-copy { flex:1 1 235px; min-width:0; font-size:var(--t-text-sm); }
+.theater-cont-exit-copy p { margin:3px 0 0; color:var(--t-fg-soft); font-size:var(--t-text-xs); line-height:1.65; text-align:left; }
+.theater-cont-exit-actions { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; margin-left:auto; }
+#theater-cont-exit-confirm .theater-btn { min-width:96px; min-height:40px; padding:6px 12px; justify-content:center; text-align:center; border-radius:var(--t-radius-pill); }
+#theater-cont-confirm-exit { color:var(--t-danger); border-color:color-mix(in srgb, var(--t-danger) 55%, var(--t-border)); background:var(--t-danger-soft); }
+#theater-cont-confirm-exit:hover:not(:disabled) { background:color-mix(in srgb, var(--t-danger) 18%, var(--t-surface-1)); }
+@media(max-width:520px) {
+    .theater-cont-exit-actions { width:100%; }
+    #theater-cont-exit-confirm .theater-btn { min-width:0; min-height:42px; padding-inline:6px; }
+}
 
 /* ============================================================
  * Section (card)
@@ -7231,10 +7257,10 @@ body :is(.popup, dialog.popup):has(.theater-popup.theater-compact-popup.theater-
 @media(max-width:420px) { .theater-popup .theater-collection-actions .theater-btn { font-size:11px; gap:4px; } }
 
 /* 4.4: approved compact candidate choices and explicit summary confirmation. */
-.theater-panel[data-panel="long-dream"] .theater-dream-review-choice { margin-top:0; padding:14px; border:1px solid var(--t-border); border-radius:13px; background:var(--t-surface-1); }
-.theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-review-actions { width:100%; margin:0; grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr); gap:10px; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice { min-width:0; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-review-actions { width:100%; margin:0; grid-template-columns:minmax(0,1fr) minmax(0,1.6fr); gap:10px; }
 .theater-panel[data-panel="long-dream"] .theater-dream-review-choice .ui-btn { min-height:44px; height:auto; padding:10px 12px; border-radius:10px; line-height:1.35; }
-.theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-retention-note { margin:10px 0 0; text-align:left; }
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice > .theater-dream-retention-note { margin:10px 0 0; text-align:left; }
 .theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-kept-versions { margin-top:14px; padding-top:12px; }
 .theater-panel[data-panel="long-dream"] .theater-dream-review-choice h4 { display:flex; justify-content:space-between; align-items:center; gap:10px; margin:0 0 3px; }
 .theater-panel[data-panel="long-dream"] .theater-dream-review-choice h4 small { padding:2px 7px; border:1px solid var(--t-border); border-radius:5px; color:var(--t-fg-mute); font-size:11px; font-weight:400; text-align:left; }
@@ -7260,7 +7286,7 @@ body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-d
 body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-summary-confirmation[data-skin]) :is(.popup-button-ok,.popup-button-cancel) { width:100% !important; min-width:0 !important; min-height:44px !important; height:auto !important; margin:0 !important; padding:10px 8px !important; border-radius:10px !important; font-size:14px !important; line-height:1.4 !important; }
 body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-summary-confirmation[data-skin]) .popup-button-cancel { grid-column:1; grid-row:1; }
 body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-summary-confirmation[data-skin]) .popup-button-ok { grid-column:2; grid-row:1; }
-@media(max-width:420px) { .theater-panel[data-panel="long-dream"] .theater-dream-review-choice { padding:12px; } .theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-review-actions .ui-btn { padding:10px 8px; font-size:13px; } }
+@media(max-width:420px) { .theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-review-actions .ui-btn { padding:10px 6px; font-size:13px; } }
 
 
 /* Approved history-preview.html: collapsed works, inline filters, expanded actions. */
@@ -7511,6 +7537,82 @@ body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) :is(.popup-content
     grid-template-columns:repeat(3, minmax(0, 1fr));
 }
 .theater-panel[data-panel="long-dream"] .theater-dream-candidate-actions.has-relayout > .ui-btn { min-width:0; align-self:stretch; white-space:normal; }
+
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice .theater-dream-review-actions > .ui-btn {
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+    white-space:normal;
+    min-height:46px;
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice #theater-dream-keep-candidate {
+    background:var(--t-surface-2);
+    border-color:var(--t-border-strong);
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-review-choice #theater-dream-keep-candidate[aria-pressed="true"] {
+    border-color:color-mix(in srgb, var(--t-danger) 35%, var(--t-border));
+    color:var(--t-danger);
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-review-more {
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px 12px;
+    margin-top:14px;
+    padding-top:14px;
+    border-top:1px dashed var(--t-border);
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-review-more-label {
+    color:var(--t-fg-mute);
+    font-size:var(--t-text-xs);
+    text-align:left;
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-review .theater-dream-review-more .theater-dream-candidate-actions {
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:flex-end;
+    width:auto;
+    max-width:100%;
+    margin-left:auto;
+    gap:8px;
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-review .theater-dream-review-more .theater-dream-candidate-actions > .ui-btn {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:auto;
+    min-height:40px;
+    margin:0;
+    padding:6px 14px;
+    border-radius:var(--t-radius-pill);
+    background:transparent;
+    color:var(--t-fg-soft);
+    font-size:var(--t-text-xs);
+    text-align:center;
+    white-space:nowrap;
+}
+.theater-panel[data-panel="long-dream"] .theater-dream-review .theater-dream-review-more .theater-dream-candidate-actions > .ui-btn:hover:not(:disabled) {
+    background:var(--t-surface-2);
+    color:var(--t-fg);
+}
+@media(max-width:520px) {
+    .theater-panel[data-panel="long-dream"] .theater-dream-review .theater-dream-review-more .theater-dream-candidate-actions {
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        width:100%;
+    }
+    .theater-panel[data-panel="long-dream"] .theater-dream-review .theater-dream-review-more .theater-dream-candidate-actions.has-relayout {
+        grid-template-columns:repeat(3,minmax(0,1fr));
+    }
+    .theater-panel[data-panel="long-dream"] .theater-dream-review .theater-dream-review-more .theater-dream-candidate-actions > .ui-btn {
+        gap:4px;
+        min-height:44px;
+        padding:6px 4px;
+        white-space:normal;
+    }
+}
 
 .theater-popup #theater-retry-layout-btn[hidden] { display: none !important; }
 

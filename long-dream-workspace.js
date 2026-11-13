@@ -1605,6 +1605,7 @@ function longDreamDetailHTML(dream) {
         </section>
     </div>`;
     const relayoutCandidate = state.draftCandidates[state.selectedCandidateIndex];
+    const reviewVersion = relayoutCandidate?.versionNumber || state.selectedCandidateIndex + 1;
     const reviewFlow = state.hasReviewDraft ? `<div class="ia-flow-state active theater-dream-review-state"><section class="review-wrapper theater-dream-review" data-dream-continuation-stage="review">
         <div class="review-head theater-dream-review-head">
             <div class="review-title-area theater-dream-review-copy"><span>待确认新章</span><h3>${runtime.esc(state.draft.title || `第 ${state.nextNumber} 章`)}</h3></div>
@@ -1612,13 +1613,21 @@ function longDreamDetailHTML(dream) {
             <p class="theater-dream-review-count">第 ${state.draftCandidates[state.selectedCandidateIndex]?.versionNumber || state.selectedCandidateIndex + 1} 版 · 正文约 ${readableCharCount(state.draft.text || '')} 字</p>
         </div>
         <div class="review-canvas theater-dream-review-canvas"><iframe id="theater-dream-review-frame" sandbox="" title="待确认长梦章节"></iframe><div id="theater-dream-review-fallback" class="theater-dream-review-fallback" hidden></div></div>
-        <div class="theater-dream-review-choice"><div class="theater-dream-review-actions"><button type="button" id="theater-dream-keep-candidate" class="ui-btn ui-btn-sm" aria-pressed="${state.draftCandidates[state.selectedCandidateIndex]?.retained === true}"><i class="fa-${state.draftCandidates[state.selectedCandidateIndex]?.retained ? 'solid' : 'regular'} fa-heart"></i><span>${state.draftCandidates[state.selectedCandidateIndex]?.retained ? '已保留' : '保留这版'}</span></button><button type="button" id="theater-dream-confirm-chapter" class="ui-btn ui-btn-sm ui-btn-primary"><i class="fa-solid fa-check"></i><span>用这版继续</span></button></div>
-        <p class="theater-dream-retention-note">其他已保留版本也会收入本章，可随时回看。</p>
-        ${longDreamKeptVersionsHTML(dream)}</div>
-        <div class="theater-dream-candidate-actions${manualLayoutSource(relayoutCandidate, true) ? ' has-relayout' : ''}">
-        <button type="button" id="theater-dream-regenerate-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="按原要求再生成一版；成功后未保留候选仅留最新三版，已保留版本不被替换"><i class="fa-solid fa-plus"></i><span>再来一版</span></button>
-        <button type="button" id="theater-dream-revise-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="修改要求再生成；成功后未保留候选仅留最新三版，已保留版本不被替换"><i class="fa-solid fa-pen-to-square"></i><span>改要求重写</span></button>
-        ${dreamRelayoutButton(relayoutCandidate, 'candidate')}
+        <div class="theater-dream-review-choice">
+            <div class="theater-dream-review-actions">
+                <button type="button" id="theater-dream-keep-candidate" class="ui-btn ui-btn-sm" aria-pressed="${relayoutCandidate?.retained === true}"><i class="fa-${relayoutCandidate?.retained ? 'solid' : 'regular'} fa-heart" aria-hidden="true"></i><span>${relayoutCandidate?.retained ? '已保留' : '保留这版'}</span></button>
+                <button type="button" id="theater-dream-confirm-chapter" class="ui-btn ui-btn-sm ui-btn-primary"><i class="fa-solid fa-check" aria-hidden="true"></i><span>用第 ${reviewVersion} 版继续</span></button>
+            </div>
+            <div class="theater-dream-review-more">
+                <span class="theater-dream-review-more-label">都不满意？</span>
+                <div class="theater-dream-candidate-actions${manualLayoutSource(relayoutCandidate, true) ? ' has-relayout' : ''}">
+                    <button type="button" id="theater-dream-regenerate-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="按原要求再生成一版；成功后未保留候选仅留最新三版，已保留版本不被替换"><i class="fa-solid fa-plus" aria-hidden="true"></i><span>再来一版</span></button>
+                    <button type="button" id="theater-dream-revise-draft" class="ui-btn ui-btn-sm theater-dream-regenerate" title="修改要求再生成；成功后未保留候选仅留最新三版，已保留版本不被替换"><i class="fa-solid fa-pen-to-square" aria-hidden="true"></i><span>改要求重写</span></button>
+                    ${dreamRelayoutButton(relayoutCandidate, 'candidate')}
+                </div>
+            </div>
+            <p class="theater-dream-retention-note">采用后，点过「保留这版」的其他版本也会收进本章，随时可以回看。</p>
+            ${state.draftCandidates.some(candidate => candidate.retained) ? longDreamKeptVersionsHTML(dream) : ''}
         </div>
     </section></div>` : '';
     return `<div class="theater-dream-detail theater-dream-continuation" data-id="${runtime.esc(dream.id)}">
