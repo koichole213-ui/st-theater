@@ -19,7 +19,7 @@ import { summaryUnavailableReason } from './long-dream-summary-ui.js';
 import { restoreStorySummary, hasPendingManualSummary } from './long-dream-story-summary.js';
 import { refreshLongDreamSummary } from './long-dream-summary.js';
 import { requestCustomApi } from './api-runtime.js';
-import { diagnosticSignalInfo, REQUEST_DIAGNOSTIC_SIGNAL } from './request-diagnostics.js';
+import { classifyRequestFailure, createDiagnosticError, diagnosticSignalInfo } from './request-diagnostics.js';
 import { finalStoryOutput, FORMAT_RECOVERY_NOTICE } from './story-output.js';
 import { recoverHtmlText } from './html-integrity.js';
 import { shouldWeaveLongDreamMemory, buildLongDreamMemoryPayload, DEFAULT_LONG_DREAM_MEMORY_PRESET, parseLongDreamMemoryResponse } from './long-dream-memory.js';
@@ -561,17 +561,12 @@ async function generateNextLongDreamChapter({ appendCandidate = false, candidate
         if (unsaved) {
             runtime.unsavedLongDreamDrafts ??= new Map();
             runtime.unsavedLongDreamDrafts.set(String(dream.id), unsaved);
-            runtime.showManualCopyPanel?.(unsaved.text, {
-                title: '长梦正文未保存，请复制或下载',
-                hint: '正文仍在当前页面。刷新前可以长按复制，或直接下载 TXT。',
-                downloadName: '千夜浮梦-未保存长梦正文.txt',
-            });
         }
         const retainedChars = readableCharCount(error?.longDreamRecord?.draft?.text || '');
-        if (error?.formatRecovered || unsaved?.formatRecovered) {
-            if (!unsaved) toastr.warning(FORMAT_RECOVERY_NOTICE);
-            runtime.runtimeLog('warn', '长梦输出格式异常，已保留正文', { format: error.formatRecovered || unsaved.formatRecovered });
-        } else if (error?.name === 'AbortError') {
+        if (!unsaved && error?.formatRecovered) {
+            toastr.warning(FORMAT_RECOVERY_NOTICE);
+            runtime.runtimeLog('warn', '长梦输出格式异常，已保留正文', { format: error.formatRecovered });
+        } else if (!unsaved && error?.name === 'AbortError') {
             runtime.runtimeLog('warn', '长梦续章停止', {
                 dream_id: String(dream.id),
                 retained_chars: retainedChars,
@@ -580,7 +575,9 @@ async function generateNextLongDreamChapter({ appendCandidate = false, candidate
                 ? '已停止，当前内容已保存为可恢复草稿'
                 : '已停止，没有追加新章节');
         } else {
-            const issue = runtime.captureRequestIssue(error, { stage: '长梦续章' });
+            const failure = unsaved ? createDiagnosticError('T-STORAGE-WRITE') : error;
+            const issue = runtime.captureRequestIssue(failure, { stage: '长梦续章' });
+            issue.retainedChars = retainedChars;
             console.error('[Theater] 长梦续章失败:', issue.signal);
             runtime.runtimeLog('error', '长梦续章失败', {
                 dream_id: String(dream.id),
@@ -589,7 +586,13 @@ async function generateNextLongDreamChapter({ appendCandidate = false, candidate
                 raw_stop_reason: issue.rawStopReason,
                 retained_chars: retainedChars,
             });
-            runtime.theaterError(runtime.requestFailureMessage('长梦续章失败', issue, { retained: !!retainedChars }), '', { requestIssue: issue, retained: !!retainedChars });
+            const retained = !unsaved && retainedChars > 0;
+            runtime.theaterError(runtime.requestFailureMessage('长梦续章失败', issue, { retained }), '', { requestIssue: issue, retained });
+            if (unsaved) runtime.showManualCopyPanel?.(unsaved.text, {
+                title: '长梦正文未保存，请复制或下载',
+                hint: '正文仍在当前页面。刷新前可以长按复制，或直接下载 TXT。',
+                downloadName: '千夜浮梦-未保存长梦正文.txt',
+            });
         }
     } finally {
         resetLongDreamStreamRenderer({ flushPending: true });
@@ -789,8 +792,13 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
             : error?.diagnosticSignal ? diagnosticSignalInfo(error.diagnosticSignal).title
             : summaryReasons[error?.code] || '接口未返回可用概要或保存失败';
         if (error?.summaryDiagnostic) runtime.runtimeLog('warn', '概要更新失败', { code: error.code, ...error.summaryDiagnostic });
-        const signal = error?.diagnosticSignal || (stage === 'preset' ? 'T-API-CONFIG' : error?.code === 'LONG_DREAM_SUMMARY_TIMEOUT' ? 'T-NET-TIMEOUT' : error?.code === 'LONG_DREAM_SUMMARY_SAVE_FAILED' ? 'T-STORAGE-WRITE' : 'T-API-INVALID-RESPONSE');
-        const issue = { ...diagnosticSignalInfo(signal), signal, stage: '概要更新', contextNote: reason + '，原概要已保留', httpStatus: error?.theaterFailure?.status ?? null };
+        const issue = classifyRequestFailure(error, { stage: '概要更新' });
+        const override = stage === 'preset' ? 'T-API-CONFIG'
+            : error?.code === 'LONG_DREAM_SUMMARY_TIMEOUT' ? 'T-NET-TIMEOUT'
+            : error?.code === 'LONG_DREAM_SUMMARY_SAVE_FAILED' ? 'T-STORAGE-WRITE'
+            : null;
+        if (!error?.diagnosticSignal && override) Object.assign(issue, diagnosticSignalInfo(override), { signal: override });
+        issue.contextNote = reason + '，原概要已保留';
         if (!runtime.isGenerating && runtime.lastRequestIssue === errorIssueOwner && runtime.lastRequestMetrics === errorMetricsOwner) runtime.lastRequestIssue = issue;
         runtime.theaterError(reason + '，原概要已保留；可查看处理建议', '', { requestIssue: issue });
     } finally {
@@ -900,12 +908,13 @@ async function weaveLongDreamMemoryBatch(dreamId, { force = false, announce = fa
             if (String(runtime.activeLongDreamId) === String(dream.id) && runtime.longDreamView === 'detail') { if (chapters) runtime.rememberLongDreamComposerDraft?.(); runtime.renderLongDreamPanel(); }
             return;
         }
-        const signal = error?.diagnosticSignal || REQUEST_DIAGNOSTIC_SIGNAL.INVALID_RESPONSE;
+        const issue = classifyRequestFailure(error, { stage: '梦脉织录' });
+        issue.contextNote = '已保存的章节不受影响。';
+        const { signal } = issue;
         const failed = await saveWeaveStatus(runtime, latest, LONG_DREAM_MEMORY_STATUS.FAILED, { errorSignal: signal });
         if (!failed) await releaseWeaving();
         runtime.runtimeLog('error', '梦脉织录失败', { dream_id: String(dream.id), signal });
         if (String(runtime.activeLongDreamId) === String(dream.id) && runtime.longDreamView === 'detail') { if (chapters) runtime.rememberLongDreamComposerDraft?.(); runtime.renderLongDreamPanel(); }
-        const issue = { ...diagnosticSignalInfo(signal), signal, stage: '梦脉织录', httpStatus: error?.theaterFailure?.status ?? null };
         if (!runtime.isGenerating && runtime.lastRequestIssue === errorIssueOwner && runtime.lastRequestMetrics === errorMetricsOwner) runtime.lastRequestIssue = issue;
         if (announce) runtime.theaterError('梦脉织录失败：' + signal, '', { requestIssue: issue });
     }

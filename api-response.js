@@ -1,3 +1,4 @@
+import { describeProviderMessage, extractProviderMessage } from './provider-message.js';
 import { httpErrorReason } from './error-help.js';
 import {
     API_PROTOCOLS,
@@ -134,11 +135,13 @@ export function attachResponseSummary(error, summary) {
     return error;
 }
 
-export function statusError(status, body = '', { phase = 'body', transport = '' } = {}) {
+export function statusError(status, body = '', { phase = 'body', transport = '', secrets = [] } = {}) {
     const numericStatus = Number(status) || null;
+    const providerMessage = describeProviderMessage(extractProviderMessage(body), { secrets });
+    const failure = { status: numericStatus, phase, transport, providerMessage };
     if (numericStatus === 429) {
         return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.RATE_LIMIT, {
-            code: 'THEATER_RATE_LIMIT', status: numericStatus, phase, transport,
+            code: 'THEATER_RATE_LIMIT', ...failure,
         });
     }
     const tokenLimit = classifyTokenLimitError(numericStatus, body);
@@ -146,27 +149,27 @@ export function statusError(status, body = '', { phase = 'body', transport = '' 
         return createDiagnosticError(tokenLimit.kind === 'input'
             ? REQUEST_DIAGNOSTIC_SIGNAL.INPUT_LIMIT : REQUEST_DIAGNOSTIC_SIGNAL.CONTEXT_LIMIT, {
             code: tokenLimit.kind === 'input' ? 'THEATER_INPUT_LIMIT' : 'THEATER_CONTEXT_LIMIT',
-            status: numericStatus, phase, transport,
+            ...failure,
         });
     }
     if (tokenLimit.kind === 'output') {
         return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.OUTPUT_LIMIT, {
-            code: 'THEATER_OUTPUT_LIMIT', status: numericStatus, phase, transport,
+            code: 'THEATER_OUTPUT_LIMIT', ...failure,
         });
     }
     const explicitReason = httpErrorReason(body);
-    if (explicitReason) return createDiagnosticError(explicitReason, { code: 'THEATER_HTTP_STATUS', status: numericStatus, phase, transport });
+    if (explicitReason) return createDiagnosticError(explicitReason, { code: 'THEATER_HTTP_STATUS', ...failure });
     // A field named safety or an HTML gateway page is not a content-policy signal.
     if (!/<(?:html|!doctype)/i.test(String(body)) && /(?:"(?:code|status|type)"\s*:\s*"(?:SAFETY|CONTENT_FILTER|PROHIBITED_CONTENT)"|blocked.{0,40}(?:safety|content policy)|(?:content policy|safety).{0,30}(?:blocked|violation)|内容.{0,10}(?:策略拦截|审核未通过))/i.test(String(body))) {
         return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
-            code: 'THEATER_CONTENT_FILTER', status: numericStatus, phase, transport,
+            code: 'THEATER_CONTENT_FILTER', ...failure,
         });
     }
     const signal = numericStatus >= 400 && numericStatus <= 599
         ? `T-HTTP-${numericStatus}`
         : REQUEST_DIAGNOSTIC_SIGNAL.INVALID_RESPONSE;
     return createDiagnosticError(signal, {
-        code: 'THEATER_HTTP_STATUS', status: numericStatus, phase, transport,
+        code: 'THEATER_HTTP_STATUS', ...failure,
     });
 }
 
@@ -187,22 +190,25 @@ function htmlResponseError(raw) {
     });
 }
 
-function streamPayloadError(message) {
-    if (httpErrorReason(message) === 'T-API-MESSAGE-END') {
-        return createDiagnosticError('T-API-MESSAGE-END', { code: 'THEATER_ASSISTANT_TAIL_UNSUPPORTED', phase: 'body', transport: 'stream' });
+export function providerPayloadError(message, transport, { status = null, secrets = [], payload } = {}) {
+    const providerMessage = describeProviderMessage(extractProviderMessage(message, { allowPlainText: true }), { secrets });
+    const failure = { status, phase: 'body', transport, providerMessage };
+    const explicitSignal = httpErrorReason(payload ?? message);
+    if (explicitSignal === 'T-API-MESSAGE-END') {
+        return createDiagnosticError('T-API-MESSAGE-END', { code: 'THEATER_ASSISTANT_TAIL_UNSUPPORTED', ...failure });
     }
-    if (isContentBlockedErrorMessage(message)) {
+    if ((payload && explicitSignal === REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER) || isContentBlockedErrorMessage(message)) {
         return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
-            code: 'THEATER_CONTENT_FILTER', rawStopReason: message, phase: 'body', transport: 'stream',
+            code: 'THEATER_CONTENT_FILTER', ...failure,
         });
     }
     if (isRateLimitErrorMessage(message)) {
         return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.RATE_LIMIT, {
-            code: 'THEATER_RATE_LIMIT', phase: 'body', transport: 'stream',
+            code: 'THEATER_RATE_LIMIT', ...failure,
         });
     }
-    return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.INVALID_RESPONSE, {
-        code: 'THEATER_RESPONSE_PARSE', phase: 'body', transport: 'stream',
+    return createDiagnosticError((payload && explicitSignal) || REQUEST_DIAGNOSTIC_SIGNAL.PROVIDER_ERROR, {
+        code: payload && explicitSignal ? 'THEATER_HTTP_STATUS' : 'THEATER_PROVIDER_ERROR', ...failure,
     });
 }
 
@@ -223,7 +229,10 @@ export async function readNonStreamingResponse(response, onChunk = noop, protoco
     try {
         const json = JSON.parse(trimmed);
         const apiError = extractApiErrorMessage(json);
-        if (apiError) throw streamPayloadError(apiError);
+        if (apiError) {
+            throw attachResponseSummary(providerPayloadError(apiError, 'non_stream'),
+                createResponseSummary({ response, transport: 'non_stream', protocol, events: 1, json }));
+        }
         text = extractStreamText(json, protocol);
         meta = extractResponseMeta(json, protocol);
         responseSummary = createResponseSummary({
@@ -286,10 +295,11 @@ export async function readSSEStream(
     const decoder = new TextDecoder();
     let full = '', buffer = '', rawText = '';
     let eventData = [];
+    let heartbeatEvent = false;
     let meta = { stopReason: 'unknown', rawStopReason: null, usage: null };
     let providerError = '';
     let hadReasoning = false;
-    let eventCount = 0;
+    let eventCount = 0, heartbeats = 0;
     let lastJson = null;
     let streamFinished = false;
     let protocolDetected = false;
@@ -342,13 +352,13 @@ export async function readSSEStream(
         return {
             ...createResponseSummary({ response, transport: 'stream', protocol, events: eventCount,
                 json: lastJson, meta, hasText: bodySeen, hasReasoning: hadReasoning }),
-            receivedChunks, receivedBytes, protocolDetected, doneSeen: streamFinished,
+            receivedChunks, receivedBytes, heartbeats, protocolDetected, doneSeen: streamFinished,
             parseFailures, unsupportedEvents, readComplete,
             contentSeen: bodySeen ? true : unknownReason ? 'unknown' : false,
             contentObservationReason: bodySeen ? 'body_seen' : unknownReason || 'recognized_empty',
         };
     };
-    const consumePayload = (payload, framed = false) => {
+    const consumePayload = (payload, framed = false, namedHeartbeat = false) => {
         const text = String(payload || '').trim();
         if (!text) return;
         if (text === '[DONE]') {
@@ -363,6 +373,7 @@ export async function readSSEStream(
             return;
         }
         eventCount += 1;
+        if (!namedHeartbeat && (json?.type === 'ping' || json?.type === 'heartbeat')) heartbeats += 1;
         lastJson = json;
         const recognized = isApiObject(json);
         protocolDetected ||= framed || recognized;
@@ -376,9 +387,12 @@ export async function readSSEStream(
         if (delta) { full += delta; onChunk(full); }
     };
     const dispatchEvent = () => {
+        const namedHeartbeat = heartbeatEvent;
+        heartbeatEvent = false;
+        if (namedHeartbeat) heartbeats += 1;
         if (!eventData.length) return;
         protocolDetected = true;
-        consumePayload(eventData.join('\n'), true);
+        consumePayload(eventData.join('\n'), true, namedHeartbeat);
         eventData = [];
     };
     const consumeLine = line => {
@@ -386,6 +400,8 @@ export async function readSSEStream(
         // Once ordinary prose starts, protocol-looking lines belong to that plain reply.
         if (plainTextPreamble) return;
         // These are SSE fields at the start of a line, not keywords inside a story.
+        if (line.startsWith(':')) heartbeats += 1;
+        if (line.startsWith('event:')) heartbeatEvent = /^(?:ping|heartbeat)$/.test(line.slice(6).trim());
         if (line.startsWith(':') || /^(?:event|id|retry):/.test(line)) {
             protocolDetected = true;
             return;
@@ -458,7 +474,7 @@ export async function readSSEStream(
             }
         }
         const responseSummary = summary();
-        if (!full && providerError) throw streamPayloadError(providerError);
+        if (!full && providerError) throw providerPayloadError(providerError, 'stream');
         if (!full && (parseFailures || unsupportedEvents)) {
             throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.INVALID_RESPONSE, {
                 code: 'THEATER_RESPONSE_PARSE', phase: 'body', transport: 'stream',

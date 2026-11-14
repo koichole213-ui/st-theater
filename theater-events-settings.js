@@ -311,7 +311,7 @@ export function bindSettingsEvents(runtime, $d) {
     });
     $d.off('click.tmcopyclose').on('click.tmcopyclose', '[data-theater-manual-copy-close]', function (event) {
         if (event.target !== this && $(this).hasClass('theater-manual-copy-backdrop')) return;
-        $('#theater-manual-copy-overlay').remove();
+        this.closest('dialog')?.close();
     });
     $d.off('click.tmcopydownload').on('click.tmcopydownload', '#theater-manual-copy-download', function () {
         const $overlay = $('#theater-manual-copy-overlay');

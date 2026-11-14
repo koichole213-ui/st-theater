@@ -1,4 +1,5 @@
-import { statusError } from './api-response.js';
+import { extractProviderMessage } from './provider-message.js';
+import { providerPayloadError, statusError } from './api-response.js';
 import { estimateTavernTexts } from './tavern-token-counter.js';
 import { showModelPicker } from './model-picker.js';
 import { beginApiFormRequest } from './api-channel-settings.js';
@@ -103,6 +104,8 @@ async function requestConfiguredGenerationApi({
 // @theater-source-begin generateWithMainAPI
 async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStream = true, signal = runtime.abortController?.signal, requestOptions = {}) {
     const diagnostics = beginRequestDiagnostics(runtime);
+    const startedAt = Date.now();
+    let sent = false;
     const inspectionId = beginPromptInspection({ purpose: requestOptions.tracePurpose,
         label: requestOptions.inspectionLabel,
         round: requestOptions.inspectionRound || 1, presetName: requestOptions.presetName || runtime.settings.selectedPresetName,
@@ -116,7 +119,11 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
         recoverFormat: ['creative', 'continuation'].includes(requestOptions.tracePurpose),
         presetName: requestOptions.presetName || runtime.settings.selectedPresetName || '未指定',
         onChunk,
-        onRequest: details => { if (diagnostics.current()) captureActualRequestTrace(details, requestOptions.tracePurpose); recordSentInspection(inspectionId, details); },
+        onRequest: details => {
+            sent = true;
+            if (diagnostics.current()) captureActualRequestTrace(details, requestOptions.tracePurpose);
+            recordSentInspection(inspectionId, details);
+        },
         shouldStream,
         signal,
         log: runtime.runtimeLog,
@@ -125,7 +132,15 @@ async function generateWithMainAPI(ctx, systemPrompt, prompt, onChunk, shouldStr
         onResponse: summary => { diagnostics.publish({ lastApiResponseSummary: summary }); },
         tavernHelper: window.TavernHelper,
         getContext: () => SillyTavern.getContext(),
-    }); } finally { diagnostics.finish(); }
+    }); } catch (error) {
+        if (error && typeof error === 'object' && Object.isExtensible(error)) {
+            error.mainApiDiagnostic = {
+                mode: sent ? (shouldStream ? 'stream' : 'non-stream') : null,
+                elapsedMs: Date.now() - startedAt,
+            };
+        }
+        throw error;
+    } finally { diagnostics.finish(); }
 }
 // @theater-source-end generateWithMainAPI
 
@@ -189,7 +204,7 @@ async function fetchModelList() {
             : (key ? { 'Authorization': `Bearer ${key}` } : {});
         const res = await fetch(modelsEndpoint, { method: 'GET', headers });
         if (!res.ok) {
-            throw statusError(res.status, await res.text().catch(() => ''));
+            throw statusError(res.status, await res.text().catch(() => ''), { transport: 'non_stream', secrets: [config.apiKey] });
         }
         const data = await res.json();
         if (!formRequest.current()) return;
@@ -275,11 +290,14 @@ async function testAPIConnection() {
         const res = await fetch(request.endpoint, { method: 'POST', headers: request.headers, body: JSON.stringify(request.body) });
         if (res.ok) {
             const data = await res.json().catch(() => null);
-            if (!data || data.error) throw new Error('接口返回了错误或无效响应');
+            if (data?.error) throw providerPayloadError(extractProviderMessage(data), 'non_stream', {
+                status: res.status, secrets: [key], payload: JSON.stringify({ error: data.error }),
+            });
+            if (!data) throw new Error('接口返回了错误或无效响应');
             if (formRequest.current()) toastr.success('接口已响应；实际写作与长文本输出仍需体验');
         }
         else {
-            const issue = classifyRequestFailure(statusError(res.status, await res.text().catch(() => '')), { stage: '连接测试' });
+            const issue = classifyRequestFailure(statusError(res.status, await res.text().catch(() => ''), { transport: 'non_stream', secrets: [key] }), { stage: '连接测试' });
             markFailed(diagnostics.metrics, issue.signal);
             diagnostics.publish({ lastRequestIssue: issue });
             if (formRequest.current()) runtime.theaterError(runtime.requestFailureMessage('连接失败', issue), '', { requestIssue: issue, retained: false });

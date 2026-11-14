@@ -58,11 +58,13 @@ export async function refreshLongDreamSummary({ record, request, readLatest, sav
         const code = knownCodes.includes(cause?.code) ? cause.code : `LONG_DREAM_SUMMARY_${stage === 'parse' ? 'PARSE_FAILED' : 'REQUEST_FAILED'}`;
         const error = Object.assign(new Error('概要更新失败'), { code,
             summaryDiagnostic: { stage, batch, expectedCount, receivedCount } });
-        // Preserve the existing classified network hint, never arbitrary response/error text.
+        // Preserve structured diagnostics and separately redacted provider wording.
         if (stage === 'request' && cause?.diagnosticSignal) {
             error.diagnosticSignal = cause.diagnosticSignal;
-            const status = cause?.theaterFailure?.status;
-            if (Number.isInteger(status) && status >= 100 && status <= 599) error.theaterFailure = { status };
+            if (cause.theaterFailure) error.theaterFailure = cause.theaterFailure;
+            if (cause.providerMessage) error.providerMessage = cause.providerMessage;
+            if (cause.apiConnectionSummary) error.apiConnectionSummary = cause.apiConnectionSummary;
+            if (cause.apiResponseSummary) error.apiResponseSummary = cause.apiResponseSummary;
         }
         throw error;
     } finally {

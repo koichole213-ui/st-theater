@@ -1,4 +1,5 @@
-import { statusError } from './api-response.js';
+import { extractProviderMessage } from './provider-message.js';
+import { providerPayloadError, statusError } from './api-response.js';
 import { createIndependentRequest, checkVertexCredential } from './independent-request.js';
 import { beginVertexRequest } from './vertex-credentials.js';
 import { normalizeMaxTokens, buildApiRequest } from './api-client.js';
@@ -54,9 +55,11 @@ export function bindLayoutApi($d, runtime) {
             if (request.protocol === 'anthropic' && !route.custom.apiKey) { toastr.warning('Anthropic 接口需要 API Key'); return; }
             const response = await fetch(request.endpoint, { method: 'POST', headers: request.headers,
                 body: JSON.stringify(request.body), signal: controller.signal });
-            if (!response.ok) throw statusError(response.status, await response.text().catch(() => ''));
+            if (!response.ok) throw statusError(response.status, await response.text().catch(() => ''), { transport: 'non_stream', secrets: [route.custom.apiKey] });
             const result = await response.json();
-            if (result?.error) throw statusError(response.status, JSON.stringify({ error: result.error }));
+            if (result?.error) throw providerPayloadError(extractProviderMessage(result), 'non_stream', {
+                status: response.status, secrets: [route.custom.apiKey], payload: JSON.stringify({ error: result.error }),
+            });
             toastr.success('排版 API 连接成功');
         } catch (error) {
             const issue = classifyRequestFailure(error, { stage: '排版 API 连接测试' });

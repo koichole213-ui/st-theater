@@ -55,13 +55,17 @@ function buildAutoModeDiagnostic() {
 
 // @theater-source-begin diagnosticCatalogHTML
 function diagnosticCatalogHTML({ recent = false } = {}) {
-    return recent ? errorHelpHTML(runtime.lastRequestIssue) : errorCatalogHTML();
+    return recent ? errorHelpHTML(runtime.lastRequestIssue, { version: runtime.VERSION }) : errorCatalogHTML();
 }
 // @theater-source-end diagnosticCatalogHTML
 
 // @theater-source-begin buildDiagnostics
 function buildDiagnostics() {
     const protection = runtime.archiveSafety?.protectionDiagnostic();
+    const loss = runtime.archiveLossSuspected;
+    const lossTrigger = loss?.reason ? ` · 触发：${loss.reason}${loss.version ? `（v${loss.version}）` : ''}` : '';
+    const provider = runtime.lastRequestIssue?.providerMessage;
+    const providerNote = provider?.zh ? ` · 服务商说明：${provider.zh}` : '';
     const apiMode = runtime.settings.apiMode || 'custom';
     const channel = apiChannel(runtime.settings);
     const channelIssue = channelConfigError(runtime.settings);
@@ -97,14 +101,14 @@ function buildDiagnostics() {
         diagnosticLine(typeof fetch === 'function' && typeof AbortController === 'function' ? 'ok' : 'bad', '请求能力', 'fetch / AbortController ' + (typeof fetch === 'function' && typeof AbortController === 'function' ? '可用' : '不可用')),
         diagnosticLine(window.indexedDB ? (runtime.idb ? 'ok' : 'warn') : 'bad', '本地存档库', window.indexedDB ? (runtime.idb ? 'IndexedDB 已打开' : 'IndexedDB 存在，但当前未打开，可能会回退到 settings') : '浏览器不支持 IndexedDB'),
         ...(protection ? [diagnosticLine(protection.status, '站点数据保护', protection.detail)] : []),
-        ...(runtime.archiveLossSuspected ? [diagnosticLine('warn', '存档疑似丢失', runtime.archiveSafety.lossMessage(runtime.archiveLossSuspected))] : []),
+        ...(runtime.archiveLossSuspected ? [diagnosticLine('warn', '存档疑似丢失', runtime.archiveSafety.lossMessage(loss) + lossTrigger)] : []),
         ...(runtime.backup ? [diagnosticLine(runtime.backup.diagnosticLevel(), '定期备份', runtime.backup.diagnosticText())] : []),
         diagnosticLine('warn', '历史存储提示', '历史存在浏览器本地存储里。夸克等手机浏览器崩溃或清理后可能丢失，建议定期批量导出备份'),
         diagnosticLine(customRenderOk ? 'ok' : 'bad', '渲染模板', customRenderOk ? `当前模板：${runtime.renderSelectionMeta(selectedRender, runtime.settings.renderTemplates).name}` : `当前选择 ${selectedRender} 找不到对应模板`),
         diagnosticLine(runtime.continueContext ? 'warn' : 'ok', '续写状态', runtime.continueContext ? `续写模式仍有前情：约 ${readableCharCount(runtime.continueContext)} 字` : '未处于续写模式'),
         diagnosticLine(runtime.isGenerating ? 'warn' : 'ok', '生成状态', runtime.isGenerating ? '正在生成中' : '空闲'),
         diagnosticLine(runtime.lastRequestIssue ? runtime.lastRequestIssue.status : (runtime.bgError ? 'bad' : 'ok'), '最近错误信号', runtime.lastRequestIssue
-            ? `${runtime.lastRequestIssue.signal}${runtime.lastRequestIssue.httpStatus ? ` · HTTP ${runtime.lastRequestIssue.httpStatus}` : ''} · ${runtime.lastRequestIssue.title}${runtime.lastRequestIssue.rawStopReason ? `（上游结束原因：${runtime.lastRequestIssue.rawStopReason}）` : ''}`
+            ? `${runtime.lastRequestIssue.signal}${runtime.lastRequestIssue.httpStatus ? ` · HTTP ${runtime.lastRequestIssue.httpStatus}` : ''} · ${runtime.lastRequestIssue.title}${runtime.lastRequestIssue.rawStopReason ? `（上游结束原因：${runtime.lastRequestIssue.rawStopReason}）` : ''}${providerNote}`
             : (runtime.bgError ? `${REQUEST_DIAGNOSTIC_SIGNAL.UNKNOWN} · 请打开“常见问题汇总”查询` : '无')),
         ...(runtime.lastRequestIssue ? [diagnosticLine('warn', '错误处理建议', `${runtime.lastRequestIssue.signal}：${runtime.lastRequestIssue.action}`)] : []),
         diagnosticLine(runtime.lastRequestContext ? 'ok' : 'warn', '最近请求摘要', runtime.formatRequestContextSummary(runtime.lastRequestContext)),
@@ -138,6 +142,7 @@ function exportDiagnosticsText() {
     const entries = getRuntimeLogEntries();
     const content = [
         report.text,
+        ...(runtime.lastRequestIssue?.providerMessage?.original ? [`服务商原文：${runtime.lastRequestIssue.providerMessage.original}`] : []),
         '',
         `===== 脱敏运行日志（最近 ${entries.length}/${MAX_RUNTIME_LOGS} 条）=====`,
         entries.length ? formatRuntimeLogs() : '暂无运行日志',

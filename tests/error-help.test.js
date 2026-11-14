@@ -6,7 +6,7 @@ import {classifyRequestFailure,diagnosticSignalInfo} from '../request-diagnostic
 import {errorHelpHTML,errorCatalogHTML} from '../error-help-ui.js';
 import {estimateTavernTexts,tokenizerForModel} from '../tavern-token-counter.js';
 const json=message=>JSON.stringify({error:{message}});
-test('HTTP明确原因细分，保留实际HTTP，不泄漏错误原文',()=>{
+test('HTTP明确原因细分，保留实际HTTP，原话只进入脱敏说明',()=>{
  for(const [message,signal] of [
   ['Requests ending with a model turn are not supported.','T-API-MESSAGE-END'],
   ['Service account authentication failed: synthetic invalid_grant','T-API-CREDENTIAL-AUTH'],
@@ -14,8 +14,11 @@ test('HTTP明确原因细分，保留实际HTTP，不泄漏错误原文',()=>{
   ['Model synthetic not found','T-API-MODEL-UNAVAILABLE'],
   ['Insufficient credits','T-API-CREDIT-EXHAUSTED'],
  ]){
-  const error=statusError(400,json(message));assert.equal(error.diagnosticSignal,signal);assert.equal(error.theaterFailure.status,400);
-  assert.ok(!JSON.stringify(error).includes(message));
+  const error=statusError(400,json(message + ' token=fixture-private-token'));assert.equal(error.diagnosticSignal,signal);assert.equal(error.theaterFailure.status,400);
+  const {providerMessage,...safeError}=error;
+  assert.equal(providerMessage.original,message + ' token=****');
+  assert.ok(!JSON.stringify(safeError).includes(message));
+  assert.ok(!JSON.stringify(error).includes('fixture-private-token'));
  }
  assert.equal(statusError(200,json('Unknown parameter: fixture')).theaterFailure.status,200);
  assert.equal(statusError(502,'<html>Safety gateway outage</html>').diagnosticSignal,'T-HTTP-502');
@@ -27,7 +30,7 @@ test('429优先于通用4xx；未知400不推断凭证或末尾问题',()=>{
  assert.equal(diagnosticSignalInfo('T-HTTP-429').status,'warn');
  const issue=classifyRequestFailure(statusError(400,json('Bad request')));assert.equal(issue.signal,'T-HTTP-400');
  const html=errorHelpHTML({...issue,stage:'<img src=x onerror=alert(1)>'});assert.doesNotMatch(html,/<img/);assert.match(html,/&lt;img/);
- assert.match(errorCatalogHTML(),/data-error-search/);assert.match(html,/查看处理建议/);
+ assert.match(errorCatalogHTML(),/data-error-search/);assert.match(html,/技术信息（给维护者看）/);
 });
 test('Gemini独立模型显式选酒馆Gemma分词器，不借用当前主模型',async()=>{
  const calls=[];const result=await estimateTavernTexts(['虚构统计一','虚构统计二'],{apiMode:'custom',apiModel:'pg-gemini-4-argon'},{getHeaders:()=>({'Content-Type':'application/json'}),fetchImpl:async(url,options)=>{calls.push({url,body:JSON.parse(options.body)});return new Response(JSON.stringify({token_count:11}),{headers:{'content-type':'application/json'}})}});

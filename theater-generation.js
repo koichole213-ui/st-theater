@@ -1181,6 +1181,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             return;
         }
         const issue = runtime.captureRequestIssue(err, { stage: '正文生成' });
+        issue.retainedChars = readableCharCount(partialText);
         console.error('[Theater] 正文生成失败:', issue.signal);
         runtime.bgError = issue.signal;
         runtime.runtimeLog('error', '生成停止', {
@@ -1188,7 +1189,8 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             signal: issue.signal,
             stage: issue.stage,
             raw_stop_reason: issue.rawStopReason,
-            retained_chars: readableCharCount(partialText),
+            retained_chars: issue.retainedChars,
+            ...(issue.providerMessage ? { provider_message_zh: issue.providerMessage.zh, provider_message: issue.providerMessage.original } : {}),
         });
         runtime.theaterError(runtime.requestFailureMessage('生成失败', issue, { retained: !!partialText }), '', { requestIssue: issue, retained: !!partialText });
     } finally {

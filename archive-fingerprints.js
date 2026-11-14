@@ -4,7 +4,18 @@ const total = ({ history, dreams }) => history + dreams;
 const persistentToast = { timeOut: 0, extendedTimeOut: 0, closeButton: true };
 
 export function archiveLossMessage({ expected, found }) {
-    return `本地址的作品数量从 ${total(expected)} 变成了 ${total(found)}，疑似被浏览器清理（例如磁盘空间不足）。部分或全部原作品不在这里了，请从备份恢复；不要清理站点数据。`;
+    const decreases = [
+        found.history < expected.history && `普通历史从 ${expected.history} 条变成了 ${found.history} 条`,
+        found.dreams < expected.dreams && `长梦从 ${expected.dreams} 部变成了 ${found.dreams} 部`,
+    ].filter(Boolean);
+    return `本地址的${decreases.join('、')}，疑似被浏览器清理（例如磁盘空间不足）。请检查作品并从备份恢复；不要清理站点数据。`;
+}
+
+function lossReason(expected, found) {
+    if (expected.history > 0 && found.history === 0) return 'history-zero';
+    if (expected.dreams > 0 && found.dreams === 0) return 'dreams-zero';
+    const dropped = total(expected) - total(found);
+    return dropped >= 10 && dropped > total(expected) / 2 ? 'large-drop' : null;
 }
 
 export function createArchiveSafety(runtime, { origin = globalThis.location?.origin, toast = globalThis.toastr } = {}) {
@@ -32,24 +43,36 @@ export function createArchiveSafety(runtime, { origin = globalThis.location?.ori
         if (lossToast) toast?.clear?.(lossToast);
         lossToast = undefined;
     }
+    function clearRecovered(incident, current, found) {
+        const { expected } = incident;
+        if (found.history < expected.history || found.dreams < expected.dreams) return false;
+        clearLoss(current);
+        runtime.runtimeLog?.('info', '存档数量已恢复，解除疑似丢失告警', { expected, found });
+        return true;
+    }
+    function showLoss(known, incident) {
+        runtime.archiveLossSuspected = incident;
+        saveFingerprint({ ...known, lossSuspected: incident });
+        if (lossToast) toast?.clear?.(lossToast);
+        lossToast = toast?.warning?.(archiveLossMessage(incident), '小剧场存档疑似丢失', persistentToast);
+    }
     function inspect() {
         if (!canCount()) return;
         const known = fingerprints()[origin];
         const current = measure();
         const found = countsFor(current);
         if (known) {
+            if (known.lossSuspected) {
+                if (!clearRecovered(known.lossSuspected, current, found)) showLoss(known, { ...known.lossSuspected, found });
+                return;
+            }
             const expected = countsFor(known);
-            const dropped = total(expected) - total(found);
-            if (known.lossSuspected || (expected.history > 0 && found.history === 0)
-                || (expected.dreams > 0 && found.dreams === 0)
-                || (dropped >= 10 && dropped > total(expected) / 2)) {
-                const incident = known.lossSuspected
-                    ? { ...known.lossSuspected, found }
-                    : { expected, found, since: new Date().toISOString() };
-                runtime.archiveLossSuspected = incident;
-                saveFingerprint({ ...known, lossSuspected: incident });
-                if (lossToast) toast?.clear?.(lossToast);
-                lossToast = toast?.warning?.(archiveLossMessage(incident), '小剧场存档疑似丢失', persistentToast);
+            const reason = lossReason(expected, found);
+            if (reason) {
+                const version = runtime.VERSION || '';
+                const incident = { expected, found, since: new Date().toISOString(), reason, version };
+                showLoss(known, incident);
+                runtime.runtimeLog?.('warn', '存档疑似丢失：触发', { expected, found, version, reason });
                 return;
             }
         } else if (total(found) === 0) {
@@ -65,21 +88,16 @@ export function createArchiveSafety(runtime, { origin = globalThis.location?.ori
         if (!canCount()) return;
         const known = fingerprints()[origin];
         const incident = known?.lossSuspected;
-        if (incident && !restored) return;
         const current = measure();
         if (!incident) {
             saveFingerprint(current);
             return;
         }
-        const { expected } = incident;
         const found = countsFor(current);
-        if (found.history >= expected.history && found.dreams >= expected.dreams) clearLoss(current);
-        else {
-            const updated = { ...incident, found };
-            runtime.archiveLossSuspected = updated;
-            saveFingerprint({ ...known, lossSuspected: updated });
-            if (lossToast) toast?.clear?.(lossToast);
-            lossToast = toast?.warning?.(archiveLossMessage(updated), '小剧场存档疑似丢失', persistentToast);
+        if (clearRecovered(incident, current, found)) return;
+        if (restored || !runtime.archiveLossSuspected
+            || found.history !== incident.found?.history || found.dreams !== incident.found?.dreams) {
+            showLoss(known, { ...incident, found });
         }
     }
     async function confirmCurrent(confirm) {

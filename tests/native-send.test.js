@@ -197,14 +197,14 @@ test('known direct Vertex Argon rejects intentional assistant tail before creden
     assert.equal(calls, 0);
 });
 
-test('explicit API tail rejection is reported without retry, fallback, leaked text or injected user', async () => {
+test('explicit API tail rejection is reported without retry, fallback, leaked credentials or injected user', async () => {
     const input = [{ role: 'user', content: 'TASK' }, { role: 'assistant', content: 'INTENTIONAL_PREFILL' }];
     let calls = 0, fallbacks = 0;
     await assert.rejects(requestCustomApi({ config: config(), messages: input, shouldStream: false, onFallback: () => fallbacks++,
         fetchImpl: async (_url, options) => {
             calls++; assert.deepEqual(JSON.parse(options.body).messages, input);
-            return new Response(JSON.stringify({ error: { message: 'Requests ending with a model turn are not supported. PRIVATE_SERVER_TEXT' } }), { status: 400 });
-        } }), error => assertTailError(error) && error.theaterFailure.status === 400 && !JSON.stringify(error).includes('PRIVATE_SERVER_TEXT'));
+            return new Response(JSON.stringify({ error: { message: 'Requests ending with a model turn are not supported. token=fixture-private-token' } }), { status: 400 });
+        } }), error => assertTailError(error) && error.theaterFailure.status === 400 && error.providerMessage.original.endsWith('token=****') && !JSON.stringify(error).includes('fixture-private-token'));
     assert.equal(calls, 1); assert.equal(fallbacks, 0);
     for (const transport of ['CCS', 'Helper']) {
         const host = ctx(); let helperCalls = 0;

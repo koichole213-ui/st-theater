@@ -1,3 +1,4 @@
+import { describeProviderMessage, extractProviderMessage } from './provider-message.js';
 import { httpErrorReason } from './error-help.js';
 import { beginVertexRequest } from './vertex-credentials.js';
 import { createIndependentRequest, checkVertexCredential, assertSupportedMessageTail } from './independent-request.js';
@@ -54,24 +55,27 @@ function shouldNotFallbackMainApi(error) {
 function normalizeMainApiFallbackError(error) {
     if (error?.name === 'AbortError' || error?.diagnosticSignal) return error;
     const message = String(error?.message || error || '');
+    const providerMessage = describeProviderMessage(extractProviderMessage(message, { allowPlainText: true }));
+    const failure = { phase: 'main', transport: 'ChatCompletionService', providerMessage };
     if (httpErrorReason(message) === 'T-API-MESSAGE-END') {
-        return createDiagnosticError('T-API-MESSAGE-END', { code: 'THEATER_ASSISTANT_TAIL_UNSUPPORTED', phase: 'main', transport: 'ChatCompletionService' });
+        return createDiagnosticError('T-API-MESSAGE-END', { code: 'THEATER_ASSISTANT_TAIL_UNSUPPORTED', ...failure });
     }
     if (isContentBlockedErrorMessage(message)) {
         return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
-            code: 'THEATER_CONTENT_FILTER', phase: 'main', transport: 'ChatCompletionService',
+            code: 'THEATER_CONTENT_FILTER', ...failure,
         });
     }
     if (isRateLimitErrorMessage(message)) {
         return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.RATE_LIMIT, {
-            code: 'THEATER_RATE_LIMIT', phase: 'main', transport: 'ChatCompletionService',
+            code: 'THEATER_RATE_LIMIT', ...failure,
         });
     }
     if (/max[_\s-]?tokens|max(?:imum)?\s+(?:output|context)|输出上限|上下文上限|上下文(?:窗口|长度)?(?:已满|超出)|减少对话历史/i.test(message)) {
         return createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TOKEN_LIMIT, {
-            code: 'THEATER_OUTPUT_LIMIT', phase: 'main', transport: 'ChatCompletionService',
+            code: 'THEATER_OUTPUT_LIMIT', ...failure,
         });
     }
+    if (providerMessage && error instanceof Error && Object.isExtensible(error)) error.providerMessage = providerMessage;
     return error;
 }
 
@@ -377,36 +381,43 @@ export function throwFriendlyMainApi(error, onChunk = noop) {
     if (error?.name === 'AbortError') throw error;
     if (error?.diagnosticSignal) throw error;
     const message = String(error?.message || error || '');
+    const providerMessage = describeProviderMessage(extractProviderMessage(message, { allowPlainText: true }));
+    const failure = { phase: 'main', transport: 'TavernHelper', providerMessage };
     if (httpErrorReason(message) === 'T-API-MESSAGE-END') {
-        throw createDiagnosticError('T-API-MESSAGE-END', { code: 'THEATER_ASSISTANT_TAIL_UNSUPPORTED', phase: 'main', transport: 'TavernHelper' });
+        throw createDiagnosticError('T-API-MESSAGE-END', { code: 'THEATER_ASSISTANT_TAIL_UNSUPPORTED', ...failure });
     }
     if (isContentBlockedErrorMessage(message)) {
         throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONTENT_FILTER, {
-            code: 'THEATER_CONTENT_FILTER', phase: 'main', transport: 'TavernHelper',
+            code: 'THEATER_CONTENT_FILTER', ...failure,
         });
     }
     if (isRateLimitErrorMessage(message)) {
         throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.RATE_LIMIT, {
-            code: 'THEATER_RATE_LIMIT', phase: 'main', transport: 'TavernHelper',
+            code: 'THEATER_RATE_LIMIT', ...failure,
         });
     }
     if (/max[_\s-]?tokens|max(?:imum)?\s+(?:output|context)|输出上限|上下文上限/i.test(message)) {
         throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TOKEN_LIMIT, {
-            code: 'THEATER_OUTPUT_LIMIT', phase: 'main', transport: 'TavernHelper',
+            code: 'THEATER_OUTPUT_LIMIT', ...failure,
         });
     }
     if (/api[_\s]?key[_\s]?missing|401|unauthorized/i.test(message)) {
-        throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONFIG, {
-            code: 'THEATER_CONFIG', phase: 'main', transport: 'TavernHelper',
+        const unauthorized = /\b401\b|unauthorized/i.test(message);
+        throw createDiagnosticError(unauthorized ? 'T-HTTP-401' : REQUEST_DIAGNOSTIC_SIGNAL.CONFIG, {
+            code: 'THEATER_CONFIG', ...failure, status: unauthorized ? 401 : null,
         });
     }
-    if (/502|524|529|gateway|timeout|ECONNRESET|socket hang up/i.test(message)) {
-        throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.TIMEOUT, {
-            code: 'THEATER_MAIN_GATEWAY', phase: 'main', transport: 'TavernHelper',
-        });
+    const gatewaySignal = /timeout|\b524\b/i.test(message) ? REQUEST_DIAGNOSTIC_SIGNAL.TIMEOUT
+        : /\b502\b|bad gateway/i.test(message) ? 'T-HTTP-502'
+        : /\b529\b|overload/i.test(message) ? REQUEST_DIAGNOSTIC_SIGNAL.HTTP_SERVER
+        : /gateway|ECONNRESET|socket hang up/i.test(message) ? REQUEST_DIAGNOSTIC_SIGNAL.NETWORK
+        : null;
+    if (gatewaySignal) {
+        const status = message.match(/\b(?:502|524|529)\b/)?.[0];
+        throw createDiagnosticError(gatewaySignal, { code: 'THEATER_MAIN_GATEWAY', ...failure, status });
     }
     throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.UNKNOWN, {
-        code: 'THEATER_MAIN_UNKNOWN', phase: 'main', transport: 'TavernHelper',
+        code: 'THEATER_MAIN_UNKNOWN', ...failure,
     });
 }
 
@@ -724,6 +735,7 @@ export async function requestCustomApi({
             || /^T-HTTP-[45]\d\d$/.test(error?.diagnosticSignal || '');
         publishConnection({ state: aborted ? 'aborted' : 'failed', failedAt: connection?.state || null,
             failureSignal: aborted ? null : (knownSignal ? error.diagnosticSignal : REQUEST_DIAGNOSTIC_SIGNAL.UNKNOWN) });
+        if (error instanceof Error && Object.isExtensible(error) && connection) error.apiConnectionSummary = { ...connection };
         throw error;
     } finally { releaseVertex(); }
 }

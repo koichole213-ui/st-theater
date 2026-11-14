@@ -3648,8 +3648,8 @@ test('常见问题汇总是诊断报告后的独立可折叠界面', () => {
     assert.ok(reportOutput >= 0 && library > reportOutput);
     assert.match(source, /按弹窗里的错误信号查原因/);
     assert.match(readFileSync(new URL('../error-help-ui.js', import.meta.url), 'utf8'), /teh-catalog-item/);
-    assert.match(readFileSync(new URL('../error-help-ui.js', import.meta.url), 'utf8'), /esc\(c.detail\)/);
-    assert.match(readFileSync(new URL('../error-help-ui.js', import.meta.url), 'utf8'), /c.steps/);
+    assert.match(readFileSync(new URL('../error-help-ui.js', import.meta.url), 'utf8'), /esc\(item.what\)/);
+    assert.match(readFileSync(new URL('../error-help-ui.js', import.meta.url), 'utf8'), /stepsHTML\(item.steps\)/);
     assert.doesNotMatch(source, /【常见问题汇总｜按错误信号查询】/);
     assert.doesNotMatch(source.match(/function (?:runtime\.)?runDiagnostics\(\)[\s\S]*?\n\}/)?.[0] || '', /diagnostic-catalog/);
     assert.match(signals, /T-API-CONTENT-FILTER/);
@@ -4735,7 +4735,7 @@ test('独立 API 的 Token 降档继续生效且每一档都不带预设采样�
     assert.deepEqual(fallbacks, ['custom:max-token 16384→8192']);
 });
 
-test('独立 API 输入与总容量错误只请求一次，不误降输出或泄露错误原文', async () => {
+test('独立 API 输入与总容量错误只请求一次，不误降输出，脱敏说明独立保留', async () => {
     const cases = [
         ['input exceeds maximum context length', 'INPUT_LIMIT'],
         ['prompt is too long: 210000 tokens > 200000 maximum context length', 'INPUT_LIMIT'],
@@ -4755,12 +4755,15 @@ test('独立 API 输入与总容量错误只请求一次，不误降输出或泄
                 onFallback: value => fallbacks.push(value), log: (...value) => logs.push(value),
                 fetchImpl: async (_url, options) => {
                     bodies.push(JSON.parse(options.body));
-                    return new Response(JSON.stringify({ error: { message: message + ' PRIVATE_ERROR_MARKER' } }), { status: 400 });
+                    return new Response(JSON.stringify({ error: { message: message + ' PRIVATE_ERROR_MARKER token=fixture-private-token' } }), { status: 400 });
                 },
             }), error => {
                 assert.equal(error.diagnosticSignal, REQUEST_DIAGNOSTIC_SIGNAL[kind], message);
                 assert.equal(classifyRequestFailure(error).signal, REQUEST_DIAGNOSTIC_SIGNAL[kind]);
-                assert.doesNotMatch(JSON.stringify(error), /PRIVATE_ERROR_MARKER/);
+                const { providerMessage, ...safeError } = error;
+                assert.match(providerMessage.original, /PRIVATE_ERROR_MARKER/);
+                assert.doesNotMatch(JSON.stringify(safeError), /PRIVATE_ERROR_MARKER/);
+                assert.doesNotMatch(JSON.stringify(error), /fixture-private-token/);
                 assert.match(diagnosticSignalInfo(error.diagnosticSignal).detail, /没有/);
                 return true;
             });
@@ -6623,14 +6626,14 @@ test('请求诊断能把 HTTP 与内容过滤错误映射成稳定信号', () =>
     }), { stage: '正文生成' });
     assert.equal(contentFilter.signal, 'T-API-CONTENT-FILTER');
     assert.equal(contentFilter.rawStopReason, 'content_filter');
-    assert.match(contentFilter.detail, /不等于本轮指令一定含 NSFW/);
+    assert.match(contentFilter.detail, /不一定是这次的指令/);
 
     const server = classifyRequestFailure({
         code: 'THEATER_HTTP_STATUS',
         theaterFailure: { status: 500 },
     }, { stage: '正文生成' });
     assert.equal(server.signal, 'T-HTTP-500');
-    assert.equal(diagnosticSignalInfo(server.signal).title, '上游或中转服务器异常');
+    assert.equal(diagnosticSignalInfo(server.signal).title, '服务器内部出错');
 
     const rateLimit = classifyRequestFailure({
         code: 'THEATER_HTTP_STATUS',
@@ -7167,6 +7170,7 @@ test('概要点击立即反馈、去重、超时解锁和配置异常提示', as
         requestCustomApi: ({ signal }) => { calls++; assert.equal(signal instanceof AbortSignal, true); return new Promise(() => {}); },
         longDreamPut: r => { saves++; return r; }, rememberLongDreamComposerDraft() {}, renderLongDreamPanel() {},
         toastr: Object.fromEntries(['info','warning','success'].map(type => [type, text => notices.push([type,text])])),
+        classifyRequestFailure,
         diagnosticSignalInfo: () => ({ title: '网络连接没有完成' }),
         $d: { off() { return this; }, on(type, selector, callback) { assert.equal(selector, '[data-dream-summary-refresh]'); handler=callback; return this; } },
     };
@@ -7834,7 +7838,7 @@ test('概要刷新成功及失败均同步恢复按钮，保留失效正文和�
         renderLongDreamPanel(){buttons.forEach(b=>b.disabled=scope.refreshingLongDreamSummaries.has(String(dream.id)));},
         toastr:{info(){},warning(){},success(){}},
     };
-    scope.theaterError = () => {}; scope.diagnosticSignalInfo = diagnosticSignalInfo;
+    scope.theaterError = () => {}; scope.diagnosticSignalInfo = diagnosticSignalInfo; scope.classifyRequestFailure = classifyRequestFailure;
     runInNewContext(functions,scope);await scope.refreshLongDreamSummaryNow(dream.id);
     assert.deepEqual(buttons.map(b=>b.disabled),[false,true,true]);
     scope.refreshLongDreamSummary=async()=>{throw new Error('synthetic failure')};await scope.refreshLongDreamSummaryNow(dream.id);

@@ -10,7 +10,7 @@ import { buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, shouldWeaveL
 import { refreshLongDreamSummary } from '../long-dream-summary.js';
 import { refreshSeriesStorySummary, applySeriesStoryBatch } from '../long-dream-series.js';
 import { hasPendingManualSummary } from '../long-dream-story-summary.js';
-import { REQUEST_DIAGNOSTIC_SIGNAL, diagnosticSignalInfo } from '../request-diagnostics.js';
+import { classifyRequestFailure, diagnosticSignalInfo, REQUEST_DIAGNOSTIC_SIGNAL } from '../request-diagnostics.js';
 
 const source = readFileSync(new URL('../long-dream-runtime.js', import.meta.url), 'utf8');
 function entry(name) {
@@ -49,6 +49,9 @@ async function exercise(kind, { tokens, stream, failure = false, config = {} } =
         const json = JSON.stringify({ operations: [], storyEntries: [{ chapterNumber: 1, text: '完整的新概要' }] });
         const output = failure ? json.slice(0, -12) : json;
         if (!body.stream) return new Response(JSON.stringify({ choices: [{ message: { content: output }, finish_reason: failure ? 'length' : 'stop' }] }), { headers: { 'content-type': 'application/json' } });
+        if (failure === 'provider') return new Response(': keep-alive\n\n'.repeat(64)
+            + 'data: {"error":{"message":"upstream gemini 503: model overloaded token=fixture-secret"}}\n\n',
+            { headers: { 'content-type': 'text/event-stream' } });
         if (failure === 'protocol') return new Response(': keep-alive\n\n'.repeat(251)
             + 'data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":"length"}]}\n\ndata: [DONE]\n\n',
             { headers: { 'content-type': 'text/event-stream' } });
@@ -73,7 +76,7 @@ async function exercise(kind, { tokens, stream, failure = false, config = {} } =
         runtime, normalizeMaxTokens, LONG_DREAM_MEMORY_STATUS, setLongDreamMemoryStatus, applyLongDreamMemoryPatch,
         buildLongDreamMemoryPayload, parseLongDreamMemoryResponse, shouldWeaveLongDreamMemory, DEFAULT_LONG_DREAM_MEMORY_PRESET,
         applySeriesStoryBatch, refreshLongDreamSummary, refreshSeriesStorySummary, hasPendingManualSummary,
-        REQUEST_DIAGNOSTIC_SIGNAL, diagnosticSignalInfo, AbortController, setTimeout, clearTimeout,
+        classifyRequestFailure, REQUEST_DIAGNOSTIC_SIGNAL, diagnosticSignalInfo, AbortController, setTimeout, clearTimeout,
         syncLongDreamSummaryButton() {},
         toastr: { info() {}, success() {}, warning(value) { warnings.push(value); } },
         requestCustomApi: request,
@@ -87,11 +90,20 @@ async function exercise(kind, { tokens, stream, failure = false, config = {} } =
         runInNewContext(entry('refreshLongDreamSummaryNow'), scope);
         await scope.refreshLongDreamSummaryNow(current.id, { fillMissing: kind === 'series' });
     }
+    if (failure === 'provider') {
+        assert.equal(runtime.lastRequestIssue.signal, 'T-API-PROVIDER-ERROR');
+        assert.equal(runtime.lastRequestIssue.httpStatus, 200);
+        assert.equal(runtime.lastRequestIssue.heartbeats, 64);
+        assert.equal(runtime.lastRequestIssue.transport, 'stream');
+        assert.match(runtime.lastRequestIssue.providerMessage.zh, /负载过高/);
+        assert.match(runtime.lastRequestIssue.providerMessage.original, /token=\*{4}/);
+        assert.doesNotMatch(JSON.stringify(runtime.lastRequestIssue), /fixture-secret/);
+    }
     assert.equal(requests.length, 1);
     assert.equal(JSON.stringify(preset), beforePreset);
     assert.equal(JSON.stringify(current.chapters), beforeChapters);
     assert.equal(runtime.refreshingLongDreamSummaries.size, 0);
-    if (stream !== false) assert.equal(chunksObserved, failure === 'protocol' ? 0 : failure === 'interrupted' ? 1 : 2);
+    if (stream !== false) assert.equal(chunksObserved, ['protocol', 'provider'].includes(failure) ? 0 : failure === 'interrupted' ? 1 : 2);
     if (failure) {
         assert.equal(current.memory.currentState, '保留的旧概要');
         assert.equal(JSON.stringify(current.memory.storyEntries), beforeEntries);
@@ -129,3 +141,7 @@ for (const kind of ['weave', 'summary', 'series']) {
         }
     });
 }
+
+test('长梦概要的入口保留中转说明和响应摘要，旧概要和章节保持原样', async () => {
+    await exercise('summary', { tokens: 8192, stream: true, failure: 'provider' });
+});

@@ -6,12 +6,45 @@ import { bindSettingsEvents } from '../theater-events-settings.js';
 const origin = 'http://192.0.2.10:8000';
 const rows = count => Array.from({ length: count }, (_, id) => ({ id }));
 function setup(settings = { archiveFingerprints: { [origin]: { history: 10, dreams: 3, chapters: 9 } } }) {
-    const warnings = [], info = [];
+    const warnings = [], info = [], logs = [];
     const runtime = { settings, idb: {}, historyCache: [], longDreamCache: [], saves: 0,
-        save() { this.saves++; }, runtimeLog() {} };
+        VERSION: '4.4.8d', save() { this.saves++; }, runtimeLog(...args) { logs.push(args); } };
     createTheaterStorage(runtime, { origin, toast: { warning: (...args) => warnings.push(args), info: message => info.push(message) } });
-    return { runtime, safety: runtime.archiveSafety, warnings, info };
+    return { runtime, safety: runtime.archiveSafety, warnings, info, logs };
 }
+
+test('旧告警按两类数量恢复，启动核对与正常保存均可解除', () => {
+    for (const action of ['inspect', 'record']) {
+        const expected = { history: 460, dreams: 48 };
+        const { runtime, safety, logs, warnings } = setup({ archiveFingerprints: {
+            [origin]: { ...expected, lossSuspected: { expected, found: { history: 0, dreams: 48 } } },
+        } });
+        runtime.historyCache = rows(400);
+        runtime.longDreamCache = rows(51);
+        safety.inspect();
+        assert.match(warnings[0][0], /普通历史从 460 条变成了 400 条/);
+        assert.doesNotMatch(warnings[0][0], /长梦/);
+        runtime.historyCache = rows(460);
+        safety[action]();
+        assert.equal(runtime.archiveLossSuspected, null);
+        assert.equal(runtime.settings.archiveFingerprints[origin].lossSuspected, undefined);
+        assert.deepEqual(logs.at(-1), ['info', '存档数量已恢复，解除疑似丢失告警', {
+            expected, found: { history: 460, dreams: 51 },
+        }]);
+    }
+});
+
+test('新告警按原有触发条件记录原因和版本', () => {
+    for (const [history, dreams, reason] of [[0, 10, 'history-zero'], [100, 0, 'dreams-zero'], [20, 10, 'large-drop']]) {
+        const { runtime, safety, logs } = setup({ archiveFingerprints: { [origin]: { history: 100, dreams: 10 } } });
+        runtime.historyCache = rows(history);
+        runtime.longDreamCache = rows(dreams);
+        safety.inspect();
+        assert.equal(runtime.settings.archiveFingerprints[origin].lossSuspected.reason, reason);
+        assert.equal(runtime.settings.archiveFingerprints[origin].lossSuspected.version, '4.4.8d');
+        assert.equal(logs.at(-1)[2].reason, reason);
+    }
+});
 
 test('诊断确认按钮使用酒馆的 Popup，取消保留告警，确认后才清除', async t => {
     const { runtime, safety } = setup();
