@@ -617,7 +617,8 @@ test('三个 HTML 规则保持紧凑预算，不给正文新增长度上限', ()
         assert.match(profile.rules, /原样保留/);
         assert.match(profile.rules, /主线按原顺序/);
         assert.match(profile.rules, /长文\/短屏均可滚动到底/);
-        assert.match(profile.rules, /首次操作手势内创建AudioContext并调用resume/);
+        assert.match(profile.rules, /首次点击时new AudioContext\(\)并resume\(\)/);
+        assert.doesNotMatch(profile.rules, /\d+\s*字以内|不超过\s*\d+\s*字/);
     }
 });
 
@@ -679,31 +680,86 @@ test('延迟进入历史会加载一次，批量恢复与刷新不显示全部�
     assert.equal(visible.get('#theater-hist-batch-enter'), true);
 });
 
-test('模板以具体代码约定动作音效、状态推进、绘画范围与失败阅读', () => {
+test('模板以具体代码约定沙盒环境、出错可读、动作音效与绘画范围', () => {
     for (const profile of adaptiveRenderProfiles()) {
         assert.match(profile.rules, /禁止外部资源\/网络请求、赛博朋克元素/);
-        assert.match(profile.rules, /物件click就是发声入口/);
-        assert.match(profile.rules, /响完回到安静/);
-        assert.match(profile.rules, /OscillatorNode.*GainNode.*destination/);
-        assert.match(profile.rules, /source\.stop\(ctx\.currentTime\+duration\)/);
-        assert.match(profile.rules, /onended释放连接/);
-        assert.match(profile.rules, /静音并停止现有声源/);
-        assert.match(profile.rules, /禁止背景音乐、循环声及独立播放\/开启声音按钮/);
-        assert.match(profile.rules, /视图推进独立于音频Promise/);
+        assert.match(profile.rules, /【运行环境】页面在只允许脚本的沙盒中显示/);
+        assert.match(profile.rules, /localStorage\/sessionStorage\/cookie、alert\/confirm\/prompt、表单提交、全屏、新窗口均不可用/);
+        assert.match(profile.rules, /正文默认全部可见/);
+        assert.match(profile.rules, /\.js \.wait\{display:none\}/);
+        assert.match(profile.rules, /catch\(_\)\{reveal\(\)\}/);
+        assert.match(profile.rules, /data-show="#该id"/);
+        assert.match(profile.rules, /script不运行也能读全文/);
+        assert.match(profile.rules, /不写内联onclick/);
+        assert.match(profile.rules, /封面\/遮罩关闭用hidden或remove\(\)/);
+        assert.match(profile.rules, /拖动元素加touch-action:none，并提供点击替代/);
+        assert.match(profile.rules, /OscillatorNode→GainNode→destination/);
+        assert.match(profile.rules, /先更新画面再发声，声音放进try/);
+        assert.match(profile.rules, /禁止背景音乐、循环声及独立声音开关/);
         assert.match(profile.rules, /说明text-align:left/);
-        assert.match(profile.rules, /初始化失败保留正常阅读/);
         assert.match(profile.rules, /装饰层pointer-events:none/);
         assert.match(profile.rules, /重复点击同一完成动作保持当前状态/);
         if (profile.id === ADAPTIVE_RENDER_SELECTIONS.lively) {
             assert.doesNotMatch(profile.rules, /CSS绘画/);
             assert.match(profile.rules, /默认无声/);
+            assert.match(profile.rules, /主线正文不用wait隐藏/);
         } else {
             assert.match(profile.rules, /优先用CSS绘画/);
             assert.match(profile.rules, /::before\/::after/);
-            assert.match(profile.rules, /state/);
-            assert.match(profile.rules, /短音效回应动作/);
+            assert.match(profile.rules, /data-show指向/);
+            assert.match(profile.rules, /可配短音效/);
         }
     }
+    assert.match(adaptiveRenderProfile(ADAPTIVE_RENDER_SELECTIONS.experimental).rules, /本阶段未发现的段落一并展开，保证全文完整/);
+    assert.match(adaptiveRenderProfile(ADAPTIVE_RENDER_SELECTIONS.experimental).rules, /用点选代替文字输入/);
+});
+
+test('规则里的互动骨架：正常时逐段揭示，任何出错、缺按钮或缺目标都让全部正文露出', () => {
+    const rules = adaptiveRenderProfiles()[0].rules;
+    const skeleton = rules.split('2. script照此骨架：\n')[1]?.split('\n任何出错')[0] || '';
+    assert.match(skeleton, /addEventListener\('error',reveal\);addEventListener\('unhandledrejection',reveal\)/);
+    const run = ({ waits = ['s2'], triggers = { s2: '#s2' }, handler = '', after = null } = {}) => {
+        const rootClasses = new Set();
+        const windowListeners = {};
+        const make = (id, attrs = {}) => {
+            const classes = new Set(attrs.wait ? ['wait'] : []);
+            const listeners = [];
+            return {
+                id, dataset: attrs.dataset || {}, listeners, classes,
+                classList: { add: name => classes.add(name), remove: name => classes.delete(name) },
+                scrollIntoView() {},
+                addEventListener: (type, fn) => listeners.push(fn),
+            };
+        };
+        const waitEls = waits.map(id => make(id, { wait: true }));
+        const buttons = Object.entries(triggers).map(([id, target]) => make('btn-' + id, { dataset: { show: target } }));
+        const all = [...waitEls, ...buttons];
+        const context = {
+            addEventListener: (type, fn) => { windowListeners[type] = fn; },
+            document: {
+                documentElement: { classList: { add: name => rootClasses.add(name), remove: name => rootClasses.delete(name) } },
+                querySelectorAll: sel => sel === '.wait' ? waitEls : sel === '[data-show]' ? buttons : sel === '#door' ? buttons.slice(0, 1) : [],
+                querySelector: sel => {
+                    const show = sel.match(/^\[data-show="(.+)"\]$/);
+                    if (show) return buttons.find(button => button.dataset.show === show[1]) || null;
+                    return all.find(el => '#' + el.id === sel) || null;
+                },
+            },
+        };
+        runInNewContext(skeleton.replace('/*其余互动用on绑定*/', handler), context);
+        const ready = rootClasses.has('js');
+        buttons.forEach(button => button.listeners.forEach(fn => fn({})));
+        if (after) after(windowListeners);
+        return { ready, afterClick: rootClasses.has('js'), shown: waitEls.every(el => !el.classes.has('wait')) };
+    };
+    assert.deepEqual(run(), { ready: true, afterClick: true, shown: true }, '正常：点击后揭示');
+    const broken = run({ handler: "on('#door',()=>missingSound());" });
+    assert.equal(broken.ready, true);
+    assert.equal(broken.afterClick, false, '点击处理函数出错：去掉 js，全部露出');
+    assert.equal(run({ waits: ['s2', 's3'] }).ready, false, '有 wait 段落没有对应按钮：启动时就不隐藏');
+    assert.equal(run({ triggers: { s2: '#nowhere' }, waits: [] }).afterClick, false, '按钮指向不存在的段落：点击后全部露出');
+    assert.equal(run({ after: listeners => listeners.unhandledrejection?.({}) }).afterClick, false, '异步操作报错：全部露出');
+    assert.equal(run({ after: listeners => listeners.error?.({}) }).afterClick, false, '定时器里报错：全部露出');
 });
 
 test('删除或改名旧分类标签后，多次初始化不再把旧分组名补回', () => {
@@ -3877,8 +3933,9 @@ test('长梦参考稿样式只作用于长梦面板，不改坏其他页面按�
 
 test('长梦章节阅读走独立沉浸阅读器，不覆写普通生成结果', () => {
     const source = readTheaterImplementation();
-    const reader = source.match(/function (?:runtime\.)?readLongDreamChapter\(chapter\) \{[\s\S]*?\n\}/)?.[0] || '';
+    const reader = source.match(/function (?:runtime\.)?readLongDreamChapter\(chapter, \{ startPlain = false \} = \{\}\) \{[\s\S]*?\n\}/)?.[0] || '';
     assert.match(reader, /(?:runtime\.)?openFullscreenReader\(\{/);
+    assert.match(reader, /\bstartPlain,/);
     assert.doesNotMatch(reader, /lastGenerated(Text|Html)|(?:runtime\.)?currentOutputMode|(?:runtime\.)?showInIframe/);
     assert.match(source, /function (?:runtime\.)?openFullscreenReader\(overridePayload = null\)/);
 });
@@ -4078,7 +4135,7 @@ test('三份 HTML 规则按阅读、参与、探索区分，不要求插件标�
         assert.equal(isAdaptiveRenderSelection(profile.id), true);
         assert.match(profile.rules, /主线按原顺序推进/);
         assert.match(profile.rules, /不设置跳过整套体验/);
-        assert.match(profile.rules, /首次操作手势内创建AudioContext并调用resume/);
+        assert.match(profile.rules, /首次点击时new AudioContext\(\)并resume\(\)/);
         assert.match(profile.rules, /如果提供了待排版正文，必须原样保留/);
         assert.doesNotMatch(profile.rules, /data-theater-|THEATER_P\d|只设计一个|两到三个/);
     }

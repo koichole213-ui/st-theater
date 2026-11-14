@@ -5,13 +5,28 @@ export const ADAPTIVE_RENDER_SELECTIONS = Object.freeze({
     experimental: '__adaptive_experimental__',
 });
 
-const SHARED_ADAPTIVE_RULES = `【成品与实现】
-输出独立完整HTML：<!doctype html>，html内含head/style、body/内容/script；直接交付代码。视觉取自本篇物件、空间与情绪，三模式保持同等精致。
-正文：创作遵循原任务；如果提供了待排版正文，必须原样保留。主线按原顺序推进，探索限当前阶段，回看限已读内容；长段连续阅读。交互新增内容限操作/状态提示，剧情由原任务决定，不另添台词、线索或结局。不设置跳过整套体验的直接阅读全文入口。
-布局：body{margin:0;background:transparent;height:auto;overflow:auto}；容器width:100%;max-width按场景选择；全局box-sizing:border-box。正文font-size>=16px;line-height>=1.6;overflow-wrap:anywhere；说明text-align:left；操作区min-height/min-width>=44px。用弹性布局让长文/短屏均可滚动到底。
-操作：物件用button type="button"绑定click；script置正文后，先检查目标存在、绑定事件，成功后启用入口并隐藏待进入内容。初始化失败保留正常阅读。装饰层pointer-events:none；状态保存在JS对象，用classList/hidden/aria-expanded同步外观与可见正文。单次操作先更新状态和视图，再独立触发反馈；重复点击同一完成动作保持当前状态。拖动提供点击等价操作。
-音效（按需）：物件click就是发声入口；一次动作对应一次短声，响完回到安静。首次操作手势内创建AudioContext并调用resume()；恢复成功后播放，catch处理失败，视图推进独立于音频Promise。Web Audio连接：OscillatorNode或短噪声AudioBufferSourceNode → GainNode → destination；按材质设置音色，增益短暂起伏后降至0，source.stop(ctx.currentTime+duration)，onended释放连接。duration按动作选择短时值；用状态检查丢弃已过时的播放。辅助设置可静音并停止现有声源，离场也清理声源。声音入口属于故事物件，禁止背景音乐、循环声及独立播放/开启声音按钮。
-检查：逐个验证click→状态变化→对应正文可见；静音/音频异常仍能完成。用prefers-reduced-motion减少动效，反馈及时，关闭清理定时器；返回与连点保持正文完整。资源限本页HTML/CSS/JS、内联SVG与合成音效；禁止外部资源/网络请求、赛博朋克元素。检查过程不输出。`;
+const SHARED_ADAPTIVE_RULES = `【成品】输出完整HTML：<!doctype html>→head内style→body正文→正文后唯一的script。图形用CSS或内联SVG，禁止外部资源/网络请求、赛博朋克元素。视觉取自本篇物件、空间与情绪。
+【正文】创作遵循原任务；如果提供了待排版正文，必须原样保留。主线按原顺序推进，长段连续排列；互动只添加操作提示与状态文字，不另添台词、线索或结局。
+【版式】body{margin:0;background:transparent}；*{box-sizing:border-box}；容器width:100%，max-width按场景选。正文font-size>=16px;line-height>=1.6;overflow-wrap:anywhere；说明text-align:left；可点区域>=44px。长文/短屏均可滚动到底，不用100vh锁高或锁body滚动。
+【运行环境】页面在只允许脚本的沙盒中显示：localStorage/sessionStorage/cookie、alert/confirm/prompt、表单提交、全屏、新窗口均不可用。确认、提交、答题都用页内button。
+【互动写法：出错也能读完】
+1. 正文默认全部可见。操作后才出现的段落加class="wait"和唯一id，隐藏只写在 .js .wait{display:none}；揭示它的button写data-show="#该id"。
+2. script照此骨架：
+const root=document.documentElement,reveal=()=>root.classList.remove('js');
+addEventListener('error',reveal);addEventListener('unhandledrejection',reveal);
+const on=(sel,fn)=>document.querySelectorAll(sel).forEach(el=>el.addEventListener('click',e=>{try{fn(el,e)}catch(_){reveal()}}));
+const show=el=>{if(!el)return reveal();el.classList.remove('wait');el.scrollIntoView({behavior:'smooth',block:'nearest'})};
+try{on('[data-show]',el=>show(document.querySelector(el.dataset.show)));
+/*其余互动用on绑定*/
+for(const w of document.querySelectorAll('.wait'))if(!document.querySelector('[data-show="#'+w.id+'"]'))throw w;
+root.classList.add('js')}catch(_){reveal()}
+任何出错都会去掉js，正文全部露出。
+3. button type="button"，用data-show或on()绑定，不写内联onclick；读过的内容不收回；重复点击同一完成动作保持当前状态。
+4. 装饰层pointer-events:none；封面/遮罩关闭用hidden或remove()，不只调透明度。
+5. 拖动元素加touch-action:none，并提供点击替代。
+6. 不设置跳过整套体验的直接阅读全文入口；走完互动后全文连贯可读。
+【音效（按需）】点物件时发一声短音：首次点击时new AudioContext()并resume()；OscillatorNode→GainNode→destination，增益淡出到0后stop()。先更新画面再发声，声音放进try。禁止背景音乐、循环声及独立声音开关。
+【自检，不输出】逐个点：每次有可见变化；点完后全部正文可见；script不运行也能读全文。prefers-reduced-motion时减少动效。`;
 
 const PROFILES = Object.freeze([
     Object.freeze({
@@ -21,7 +36,7 @@ const PROFILES = Object.freeze([
         icon: 'fa-wand-magic-sparkles',
         description: '偏阅读：贴合故事的精致排版与轻巧反馈，顺畅读完。',
         rules: `${SHARED_ADAPTIVE_RULES}\n\n【灵动排版｜阅读为主，细节灵巧】
-默认无声，主线以自然滚动/简单翻页直接可读。用字体层级、留白、渐变和材质细节组织阅读；章节定位用页内锚点，补充细节可用details/summary。交互用于局部查看，长段保持连续展示，结尾随正文自然收束。`,
+默认无声。整篇一页往下读：用字体层级、留白、分隔纹样、渐变和材质细节表现场景转换，对白与叙述清楚区分。主线正文不用wait隐藏。互动只做点缀：信件、便笺、回忆等补充细节可用details/summary；章节多时可加页内锚点目录；结尾随正文自然收束。`,
     }),
     Object.freeze({
         id: ADAPTIVE_RENDER_SELECTIONS.immersive,
@@ -30,9 +45,9 @@ const PROFILES = Object.freeze([
         icon: 'fa-compass-drafting',
         description: '偏参与：亲手操作故事中的物件与场景，经历完整过程。',
         rules: `${SHARED_ADAPTIVE_RULES}\n\n【沉浸互动｜参与情境，动作贯穿体验】
-体验：亲手改变故事物件，物件变化带出对应正文。
-实现：优先用CSS绘画，::before/::after、linear-gradient、border-radius、box-shadow、clip-path组合形体，文字和操作区独立保留。以适合本篇的状态名组织state；click更新状态→classList切换物件形态/位置→显示对应section→短音效回应动作。各阶段连续展示相关长段；用材质、动作和情绪组织收束。
-验收：物件变化与正文有明确关系，读者看得懂动作结果；参与感来自物件的变化，而非逐段点“下一段”。状态名与外观按本篇设计。`,
+读者亲手操作故事里的物件（推门、点灯、拆信……），物件变化带出下一段正文。
+做法：按情节节点把正文分成若干section，第一段可见，其余加wait。每个节点末尾放一个与剧情相关的物件button（data-show指向下一段），点击后物件用classList切换形态，可配短音效。物件优先用CSS绘画：::before/::after、渐变、border-radius、box-shadow、clip-path；文字与按钮独立于装饰层。
+每个节点点一次就能继续；参与感来自物件变化，而非逐段点“下一段”。`,
     }),
     Object.freeze({
         id: ADAPTIVE_RENDER_SELECTIONS.experimental,
@@ -41,9 +56,9 @@ const PROFILES = Object.freeze([
         icon: 'fa-flask',
         description: '偏探索：通过空间、物件与分层揭示主动发现故事。',
         rules: `${SHARED_ADAPTIVE_RULES}\n\n【大胆实验｜主动探索，发现有意义的惊喜】
-体验：通过空间、物件组合或层次揭示，发现已有故事内容。
-实现：优先用CSS绘画组合::before/::after、渐变、clip-path与box-shadow构建物件；用Grid/Flex安排可探索位置。以state记录当前选择/已发现内容，事件更新state，再由render(state)同步物件、提示和section；成功发现时短音效回应动作。探索限当前阶段，谜题依据当前内容或中性图形；提供回看、取消、重试和点击替代拖动。
-验收：尝试有可见反馈，发现帮助理解正文；布局与操作随本篇设计，发现后留连续阅读空间。`,
+在空间、物件与层层揭开中主动发现故事。
+做法：正文按主线分阶段，每阶段用Grid/Flex摆出可探索场景（抽屉、星空……）；探索点是button，data-show指向本阶段一段wait正文。state记录并显示“已发现 n/总数”，可配短音效。每阶段末尾放一个收束物件（data-show指向下一阶段或结尾）；点它时本阶段未发现的段落一并展开，保证全文完整。
+谜题依据已读内容，用点选代替文字输入，可重试。物件优先用CSS绘画：::before/::after、渐变、clip-path、box-shadow。`,
     }),
 ]);
 

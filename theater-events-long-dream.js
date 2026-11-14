@@ -327,10 +327,10 @@ export function bindLongDreamEvents(runtime, $d) {
     $d.off('keydown.tdchaptertoolescape').on('keydown.tdchaptertoolescape', function (event) {
         if (event.key === 'Escape') closeLongDreamChapterTools();
     });
-    $d.off('click.tdchapterread').on('click.tdchapterread', '#theater-dream-read-chapter-fullscreen', function () {
+    $d.off('click.tdchapterread').on('click.tdchapterread', '#theater-dream-read-chapter-fullscreen, #theater-dream-read-chapter-plain', function () {
         const dream = runtime.longDreamCache.find(item => String(item.id) === String(runtime.activeLongDreamId));
         const chapter = dream?.chapters?.find(item => String(item.id) === String(runtime.activeLongDreamChapterId));
-        runtime.readLongDreamChapter(chapter);
+        runtime.readLongDreamChapter(chapter, { startPlain: this.id === 'theater-dream-read-chapter-plain' });
     });
     $d.off('click.tdchapterexport').on('click.tdchapterexport', '#theater-dream-export-chapter', function () {
         const dream = runtime.longDreamCache.find(item => String(item.id) === String(runtime.activeLongDreamId));

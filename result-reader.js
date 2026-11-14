@@ -1,6 +1,7 @@
 import { createHtmlTextEdit, readingPosition } from './result-text-edit.js';
 import { readableCharCount } from './text-counter.js';
 import { escapeHistoryText } from './history-collections-ui.js';
+import { mountStoryReading, storyReadingNoticeHTML } from './story-reading.js';
 
 export function readerPaneHTML(lamp = '') {
     const actions = [['save', 'bookmark', '保存'], ['copy', 'copy', '复制HTML'], ['fullscreen', 'expand', '全屏阅读'],
@@ -19,6 +20,8 @@ export function readerPaneHTML(lamp = '') {
             <div class="theater-result-meta-row"><div class="theater-result-toolbox is-inline-menu">
                 <div id="theater-reading-actions" class="theater-btn-row theater-result-actions" role="menu" aria-label="阅读结果操作">
                     ${actions.map(([action, icon, label]) => `<button type="button" data-reader-action="${action}" class="theater-btn${action === 'remove' ? ' danger-soft' : ''}" role="menuitem"><i class="fa-solid fa-${icon}"></i><span>${label}</span></button>`).join('')}
+                    <button type="button" class="theater-btn theater-relayout-menu" data-relayout="read" role="menuitem" hidden>重新排版</button>
+                    <button type="button" class="theater-btn theater-plain-reading-menu" data-reader-plain-reading role="menuitem" hidden>纯文字阅读</button>
                 </div>
                 <button type="button" class="theater-result-actions-toggle" aria-expanded="false" aria-controls="theater-reading-actions" aria-label="阅读结果操作" title="阅读结果操作；可上下拖动并吸附左右页边">
                     <span class="theater-result-bookmark-lamp">${lamp}</span><span class="theater-result-bookmark-label">操作</span>
@@ -26,8 +29,9 @@ export function readerPaneHTML(lamp = '') {
                 </button>
             </div></div>
             <div class="theater-result-character-count" data-reader-characters></div>
-            <button type="button" class="theater-btn theater-reader-relayout" data-relayout="read" hidden>重新排版</button>
+            ${storyReadingNoticeHTML()}
             <iframe class="theater-iframe" data-reader-frame sandbox="" title="已完成的小剧场"></iframe>
+            <div class="theater-output-text-fallback" data-reader-fallback role="document" tabindex="-1" hidden></div>
             <div class="theater-reader-editor" hidden>
                 <p class="theater-hint-inline" data-reader-edit-hint></p>
                 <textarea class="theater-textarea" data-reader-text rows="12" aria-label="编辑阅读页正文"></textarea>
@@ -42,6 +46,7 @@ export function mountResultReader(root, state, options) {
     const controller = new AbortController();
     const find = selector => root.querySelector(selector);
     let renderedItem = null, renderedHtml = null, edit = null, saving = false;
+    let reading;
     const warn = message => options.warn(message);
     function refresh() {
         const recent = options.recent();
@@ -66,14 +71,34 @@ export function mountResultReader(root, state, options) {
         find('[data-reader-empty]').hidden = !!state.reading;
         find('[data-reader-result]').hidden = !state.reading;
         options.syncRelayout?.(!edit && !saving && !collection ? state.reading : null);
-        if (!state.reading || edit) return;
+        if (!state.reading) {
+            reading?.clear();
+            reading = null;
+            renderedItem = renderedHtml = null;
+            return;
+        }
+        if (edit) return;
         const item = state.reading;
         find('[data-reader-action="copy"] span').textContent = options.isText(item.mode) ? '复制文字' : '复制HTML';
         if (renderedItem === item && renderedHtml === item.html) return;
         renderedItem = item; renderedHtml = item.html;
         const sourceText = options.text(item.html);
         find('[data-reader-characters]').textContent = `约 ${readableCharCount(sourceText).toLocaleString('zh-CN')} 字`;
-        options.render(find('[data-reader-frame]'), item.html, { sourceHasText: !!sourceText, fallbackOnNoReport: false, onWorkspaceSwipe: options.swipe });
+        reading?.clear();
+        const fallback = find('[data-reader-fallback]');
+        fallback.classList.toggle('is-dark', item.mode === 'text-dark');
+        reading = mountStoryReading({
+            frame: find('[data-reader-frame]'),
+            fallback,
+            notice: find('[data-story-reading-notice]'),
+            button: find('[data-reader-plain-reading]'),
+            html: item.html,
+            text: item.layoutSource?.text || undefined,
+            canSwitch: !options.isText(item.mode),
+            render: options.render,
+            renderOptions: { onWorkspaceSwipe: options.swipe },
+            onStoryError: options.onStoryError,
+        });
     }
     root.addEventListener('change', event => {
         if (!event.target.matches('[data-reader-version]') || edit || saving) return;
@@ -82,7 +107,7 @@ export function mountResultReader(root, state, options) {
     function leaveEdit() {
         edit = null;
         find('.theater-reader-editor').hidden = true;
-        find('[data-reader-frame]').hidden = false;
+        reading?.setEditing(false);
         find('[data-reader-text]').value = '';
         refresh();
     }
@@ -129,7 +154,7 @@ export function mountResultReader(root, state, options) {
                 edit = { item, htmlEdit };
                 find('[data-reader-text]').value = htmlEdit?.text ?? options.text(item.html);
                 find('[data-reader-edit-hint]').textContent = htmlEdit ? '保留原 HTML 排版；请保持行数，只修改行内文字。' : '修改当前这篇的正文。';
-                find('[data-reader-frame]').hidden = true;
+                reading?.setEditing(true);
                 find('.theater-reader-editor').hidden = false;
                 refresh();
             } else if (action === 'save') await options.save(item);
@@ -144,5 +169,8 @@ export function mountResultReader(root, state, options) {
         } catch (error) { saving = false; warn(error.message); }
     }, { signal: controller.signal });
     refresh();
-    return { refresh, isEditing: () => !!edit || saving, destroy: () => controller.abort() };
+    return { refresh, isEditing: () => !!edit || saving, destroy: () => {
+        reading?.clear();
+        controller.abort();
+    } };
 }

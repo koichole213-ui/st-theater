@@ -3235,6 +3235,29 @@ body dialog.popup:has(.theater-popup.theater-compact-popup:not([data-skin="theat
     font-family: ui-rounded, "Kaiti SC", "STKaiti", "KaiTi", "FangSong", serif;
     letter-spacing: .04em;
 }
+.theater-popup .theater-story-reading-notice,
+.theater-reader-overlay .theater-story-reading-notice {
+    margin: 0 0 8px;
+    font-size: var(--t-text-sm, 13px);
+    line-height: 1.5;
+    text-align: left;
+    overflow-wrap: anywhere;
+}
+.theater-story-reading-notice button {
+    padding: 3px 8px;
+    min-height: 32px;
+    border: 1px solid currentColor;
+    border-radius: 7px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+.theater-popup :is(.theater-iframe, .theater-output-text-fallback, .theater-plain-reading-menu, .theater-story-reading-notice)[hidden],
+.theater-popup :is(.theater-dream-progress-candidate, .theater-dream-review-canvas) iframe[hidden],
+.theater-reader-overlay :is(.theater-reader-frame, .theater-reader-text-fallback, .theater-reader-reading-toggle, .theater-story-reading-notice)[hidden] {
+    display: none !important;
+}
 .theater-recent-nav {
     display: flex;
     align-items: center;
@@ -3335,6 +3358,15 @@ body.theater-reader-open {
     align-items: baseline;
     column-gap: 12px;
 }
+.theater-reader-controls {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 6px;
+}
+.theater-reader-overlay .theater-story-reading-notice {
+    padding: 4px clamp(14px, 4vw, 42px);
+    color: inherit;
+}
 .theater-reader-kicker {
     grid-column: 1 / -1;
     display: inline-flex;
@@ -3404,6 +3436,7 @@ body.theater-reader-open {
 .theater-reader-text-fallback {
     width: 100%;
     height: 100%;
+    box-sizing: border-box;
     overflow: auto;
     padding: clamp(24px, 6vw, 64px) max(20px, calc((100vw - 760px) / 2));
     background: #f4f0e8;
@@ -3485,6 +3518,12 @@ body.theater-reader-open {
         border-radius: 50%;
     }
     .theater-reader-close span { display: none; }
+    .theater-reader-reading-toggle {
+        width: auto;
+        padding: 0 8px;
+        border-radius: 8px;
+        white-space: nowrap;
+    }
     .theater-reader-shortcut { display: none; }
     .theater-reader-text-fallback {
         padding: 26px 20px calc(42px + env(safe-area-inset-bottom));
@@ -7536,12 +7575,12 @@ body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) :is(.popup-content
 @media (max-width: 520px) { .theater-release header { align-items: flex-start; flex-direction: column; gap: 6px; } }
 
 .theater-popup [data-relayout][hidden] { display:none !important; }
+.theater-result-actions .theater-plain-reading-menu:not([hidden]) { grid-column: 1 / -1; }
 .theater-result-actions .theater-relayout-menu { grid-column:1 / -1; }
-.theater-result-toolbox.is-inline-menu.is-open:has([data-relayout]:not([hidden])) .theater-result-actions-toggle {
+.theater-result-toolbox.is-inline-menu.is-open:has(:is([data-relayout], .theater-plain-reading-menu):not([hidden])) .theater-result-actions-toggle {
     position:relative;
     z-index:3;
 }
-.theater-reader-relayout { margin:0 0 8px; }
 .theater-continuation-actions.has-relayout,
 .theater-panel[data-panel="long-dream"] .theater-dream-review .theater-dream-candidate-actions.has-relayout {
     grid-template-columns:repeat(3, minmax(0, 1fr));

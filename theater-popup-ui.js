@@ -11,6 +11,7 @@ import { normalizeManualTarget } from './length-policy.js';
 import { LAMP_SVG_HTML, SKIN_LABELS, SOUND_PRESETS } from './theater-defaults.js';
 import { normalizeBookmarkSide } from './result-bookmark.js';
 import { readerPaneHTML } from './result-reader.js';
+import { storyReadingNoticeHTML } from './story-reading.js';
 import { chatContextSettingsHTML } from './baibai-memory-ui.js';
 import { DEFAULT_LONG_DREAM_MEMORY_PRESET } from './long-dream-memory.js';
 import { normalizeMaxTokens } from './api-client.js';
@@ -141,6 +142,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                         <div id="theater-save-edit-btn" class="theater-btn primary" role="menuitem" style="display:none;"><i class="fa-solid fa-check"></i><span>应用修改</span></div>
                         <div id="theater-cancel-edit-btn" class="theater-btn" role="menuitem" style="display:none;"><i class="fa-solid fa-xmark"></i><span>退出编辑</span></div>
                         <button type="button" data-relayout="generate" class="theater-btn theater-relayout-menu" role="menuitem" hidden>重新排版</button>
+                        <button type="button" id="theater-output-reading-toggle" class="theater-btn theater-plain-reading-menu" role="menuitem" hidden>纯文字阅读</button>
                     </div>
                     <button id="theater-result-actions-toggle" class="theater-result-actions-toggle" type="button" aria-expanded="false" aria-controls="theater-result-actions" title="结果操作；可上下拖动并吸附左右页边">
                         <span class="theater-result-bookmark-lamp">${LAMP_SVG_HTML}</span>
@@ -154,6 +156,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
             <button type="button" id="theater-retry-layout-btn" class="theater-btn" hidden>重试 HTML 排版</button>
             <button type="button" id="theater-stop-layout-btn" class="theater-btn" hidden>停止排版</button>
             <div id="theater-result-characters" class="theater-result-character-count"></div>
+            ${storyReadingNoticeHTML()}
             <div id="theater-continuation-result" hidden>
                 <div class="theater-continuation-versions">
                     <button type="button" class="theater-btn" id="theater-cont-version-prev" aria-label="查看本段上一版">‹</button>
@@ -168,7 +171,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
             </div>
             <div id="theater-output-container">
                 <iframe id="theater-output-frame" sandbox="" class="theater-iframe"></iframe>
-                <div id="theater-output-text-fallback" class="theater-output-text-fallback" role="document" style="display:none;"></div>
+                <div id="theater-output-text-fallback" class="theater-output-text-fallback" role="document" tabindex="-1" hidden></div>
             </div>
             <textarea id="theater-result-text-editor" class="theater-textarea" rows="12" style="display:none;margin-top:8px;" placeholder="编辑小剧场正文…"></textarea>
             <p id="theater-continuation-retention" class="theater-hint-inline theater-continuation-retention" hidden>本段版本临时保留；接写下一段、退出或刷新前，请保存重要版本。</p>

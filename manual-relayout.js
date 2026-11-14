@@ -67,7 +67,7 @@ export function positionRelayoutMenu(toolbox) {
     const menu = toolbox.querySelector('.theater-result-actions');
     if (!menu) return;
     menu.style.removeProperty('translate');
-    if (!menu.querySelector('[data-relayout]:not([hidden])')) return;
+    if (!menu.querySelector(':is([data-relayout], .theater-plain-reading-menu):not([hidden])')) return;
     const rect = menu.getBoundingClientRect();
     const gutter = 8;
     const overflow = window.innerHeight - gutter - rect.bottom;

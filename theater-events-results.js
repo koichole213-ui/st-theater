@@ -39,8 +39,6 @@ export function bindResultEvents(runtime, $d) {
             recentIndex: runtime.displayedRecentIndex(html),
         };
         $('#theater-result-text-editor').val(text).show().trigger('focus');
-        $('#theater-output-frame').hide();
-        $('#theater-output-text-fallback').hide();
         runtime.setResultEditControls(true);
         toastr.info(isTextOutputMode(runtime.currentOutputMode)
             ? '正在编辑纯文字正文；可应用修改或直接退出编辑'

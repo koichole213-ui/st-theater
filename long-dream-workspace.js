@@ -18,7 +18,7 @@ import { normalizeApiPresetList } from './api-presets.js';
 import { normalizeLongDreamMemoryPresetList } from './long-dream-memory-presets.js';
 import { summaryUnavailableReason } from './long-dream-summary-ui.js';
 import { selectRelevantLongDreamMemoryItems, LONG_DREAM_RECENT_CHAPTER_COUNT, selectRelevantLongDreamMemoryCards } from './long-dream-payload.js';
-import { renderSafeIframe } from './safe-renderer.js';
+import { mountStoryReading, storyReadingNoticeHTML } from './story-reading.js';
 
 export function createLongDreamWorkspace(runtime) {
 // @theater-source-begin historyItemHTML
@@ -532,14 +532,15 @@ function importLongDreamBackup() {
 // @theater-source-end importLongDreamBackup
 
 // @theater-source-begin readLongDreamChapter
-function readLongDreamChapter(chapter) {
+function readLongDreamChapter(chapter, { startPlain = false } = {}) {
     if (!chapter) return;
-    const text = chapter.text || runtime.htmlToPlainText(chapter.html || '');
+    const text = chapter.text || undefined;
     runtime.openFullscreenReader({
         title: chapter.title || `第 ${chapter.number} 章`,
         text,
-        html: chapter.html || runtime.textFallbackHtml(text),
+        html: chapter.html || runtime.textFallbackHtml(text || ''),
         mode: chapter.mode || (chapter.html ? 'html' : 'text'),
+        startPlain,
     });
     toastr.info(`已打开${chapter.title || `第 ${chapter.number} 章`}`);
 }
@@ -1589,7 +1590,7 @@ function longDreamDetailHTML(dream) {
             </header>
             ${state.isGeneratingThisDream ? longDreamProgressMetaHTML(state.activeProgress, state.draftText, state.nextTarget) : ''}
             ${state.isGeneratingThisDream ? '<div class="ia-status-track" aria-hidden="true"><span></span></div>' : ''}
-            ${state.isGeneratingThisDream && state.draftCandidates.length ? `<div class="theater-dream-progress-pane" data-dream-progress-pane="candidate" hidden><div class="theater-dream-progress-candidate"><iframe id="theater-dream-progress-candidate-frame" sandbox="" title="已保留的第 ${state.draftCandidates[state.selectedCandidateIndex]?.versionNumber || state.selectedCandidateIndex + 1} 版"></iframe><div id="theater-dream-progress-candidate-fallback" hidden></div></div><div class="theater-dream-progress-candidate-note"><p>生成期间旧版安全保留；未保留候选仅留最新三版，已保留版本不被替换。</p><button type="button" id="theater-dream-progress-candidate-fullscreen" class="theater-dream-icon-button"><i class="fa-solid fa-expand" aria-hidden="true"></i><span>全屏阅读</span></button></div></div>` : ''}
+            ${state.isGeneratingThisDream && state.draftCandidates.length ? `<div class="theater-dream-progress-pane" data-dream-progress-pane="candidate" hidden>${storyReadingNoticeHTML()}<div class="theater-dream-progress-candidate"><iframe id="theater-dream-progress-candidate-frame" sandbox="" title="已保留的第 ${state.draftCandidates[state.selectedCandidateIndex]?.versionNumber || state.selectedCandidateIndex + 1} 版"></iframe><div id="theater-dream-progress-candidate-fallback" tabindex="-1" hidden></div></div><div class="theater-dream-progress-candidate-note"><p>生成期间旧版安全保留；未保留候选仅留最新三版，已保留版本不被替换。</p><button type="button" id="theater-dream-progress-candidate-fullscreen" class="theater-dream-icon-button"><i class="fa-solid fa-expand" aria-hidden="true"></i><span>全屏阅读</span></button></div></div>` : ''}
             <div class="theater-dream-progress-pane active" data-dream-progress-pane="live">
                 <p class="theater-dream-generation-context" title="${state.isGeneratingThisDream ? '这里显示当前版本的实时正文；目标字数只是参考，不代表模型的精确完成百分比。' : '已注入定梦基础包、最近两章全文、旧章索引与当前完整草稿。'}">${state.isGeneratingThisDream ? '实时正文' : '可恢复草稿'}</p>
                 <pre id="theater-dream-generation-text">${runtime.esc(state.draftText || (state.isGeneratingThisDream ? '请求正在准备中，首字返回后会在这里出现……' : '已保存本章方向，尚未生成正文。'))}</pre>
@@ -1612,7 +1613,8 @@ function longDreamDetailHTML(dream) {
             <div class="theater-dream-review-tools"><div class="candidate-switcher theater-dream-candidate-switcher" aria-label="切换待确认候选版本"><button type="button" data-dream-candidate-step="-1" aria-label="上一版" ${state.selectedCandidateIndex <= 0 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i></button><strong aria-live="polite">${state.selectedCandidateIndex + 1}/${state.draftCandidates.length}</strong><button type="button" data-dream-candidate-step="1" aria-label="下一版" ${state.selectedCandidateIndex >= state.draftCandidates.length - 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-right"></i></button></div><button type="button" id="theater-dream-review-fullscreen" class="theater-dream-review-fullscreen" title="全屏阅读当前候选" aria-label="全屏阅读当前候选"><i class="fa-solid fa-expand"></i></button></div>
             <p class="theater-dream-review-count">第 ${state.draftCandidates[state.selectedCandidateIndex]?.versionNumber || state.selectedCandidateIndex + 1} 版 · 正文约 ${readableCharCount(state.draft.text || '')} 字</p>
         </div>
-        <div class="review-canvas theater-dream-review-canvas"><iframe id="theater-dream-review-frame" sandbox="" title="待确认长梦章节"></iframe><div id="theater-dream-review-fallback" class="theater-dream-review-fallback" hidden></div></div>
+        ${storyReadingNoticeHTML()}
+        <div class="review-canvas theater-dream-review-canvas"><iframe id="theater-dream-review-frame" sandbox="" title="待确认长梦章节"></iframe><div id="theater-dream-review-fallback" class="theater-dream-review-fallback" tabindex="-1" hidden></div></div>
         <div class="theater-dream-review-choice">
             <div class="theater-dream-review-actions">
                 <button type="button" id="theater-dream-keep-candidate" class="ui-btn ui-btn-sm" aria-pressed="${relayoutCandidate?.retained === true}"><i class="fa-${relayoutCandidate?.retained ? 'solid' : 'regular'} fa-heart" aria-hidden="true"></i><span>${relayoutCandidate?.retained ? '已保留' : '保留这版'}</span></button>
@@ -1696,6 +1698,7 @@ function longDreamChapterDetailHTML(dream, chapter) {
                 <button type="button" id="theater-dream-export-chapter" class="ui-btn ui-btn-sm" role="menuitem"><i class="fa-solid fa-file-export"></i><span>单章导出</span></button>
                 <button type="button" id="theater-dream-read-chapter-fullscreen" class="ui-btn ui-btn-sm" role="menuitem"><i class="fa-solid fa-book-open"></i><span>阅读原排版</span></button>
                 ${dreamRelayoutButton(chapter, 'chapter')}
+                ${chapter.html && !isTextOutputMode(chapter.mode) ? '<button type="button" id="theater-dream-read-chapter-plain" class="ui-btn ui-btn-sm" role="menuitem">纯文字阅读</button>' : ''}
             </div>
             <label class="ia-field"><span>章节标题</span><input id="theater-dream-chapter-edit-title" class="ui-input theater-input" maxlength="80" value="${runtime.esc(chapter.title)}" ${locked ? 'disabled' : ''}></label>
             <label class="ia-field"><span>章节正文</span><textarea id="theater-dream-chapter-edit-text" class="ui-textarea ia-reader theater-textarea" rows="16" ${locked ? 'disabled' : ''}>${runtime.esc(text)}</textarea></label>
@@ -1813,13 +1816,14 @@ function renderLongDreamProgressCandidate(dream) {
     const candidate = candidates[index];
     if (!candidate) return;
     const fallback = document.getElementById('theater-dream-progress-candidate-fallback');
-    renderSafeIframe(frame, candidate.html, {
-        sourceHasText: !!candidate.text,
-        fallbackOnNoReport: false,
-        onBlank: candidate.text ? () => {
-            $(frame).hide();
-            $(fallback).text(candidate.text).prop('hidden', false);
-        } : null,
+    mountStoryReading({
+        frame, fallback,
+        notice: frame.closest('[data-dream-progress-pane]').querySelector('[data-story-reading-notice]'),
+        html: candidate.html,
+        text: candidate.text || undefined,
+        canSwitch: !isTextOutputMode(candidate.mode),
+        onStoryError: message => runtime.runtimeLog('warn', '小剧场页面脚本出错', { message }),
+        fallbackOnBlank: true,
     });
 }
 // @theater-source-end renderLongDreamProgressCandidate
@@ -1865,14 +1869,15 @@ function renderLongDreamReviewDraft(dream) {
     if (draft?.status !== LONG_DREAM_DRAFT_STATUS.REVIEW || !draft.html) return;
     const frame = document.getElementById('theater-dream-review-frame');
     if (!frame) return;
-    const $fallback = $('#theater-dream-review-fallback');
-    renderSafeIframe(frame, draft.html, {
-        sourceHasText: !!draft.text,
-        fallbackOnNoReport: false,
-        onBlank: draft.text ? () => {
-            $(frame).hide();
-            $fallback.text(draft.text).prop('hidden', false);
-        } : null,
+    mountStoryReading({
+        frame,
+        fallback: document.getElementById('theater-dream-review-fallback'),
+        notice: frame.closest('.theater-dream-review').querySelector('[data-story-reading-notice]'),
+        html: draft.html,
+        text: draft.text || undefined,
+        canSwitch: !isTextOutputMode(draft.mode),
+        onStoryError: message => runtime.runtimeLog('warn', '小剧场页面脚本出错', { message }),
+        fallbackOnBlank: true,
     });
 }
 // @theater-source-end renderLongDreamReviewDraft

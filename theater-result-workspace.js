@@ -6,8 +6,19 @@ import { readableCharCount } from './text-counter.js';
 import { renderSafeIframe } from './safe-renderer.js';
 import { animateResultPage, bindResultSwipe } from './result-swipe.js';
 import { mountResultReader } from './result-reader.js';
+import { mountStoryReading, storyReadingNoticeHTML } from './story-reading.js';
+import { displayedContinuationVersion } from './continuation-session.js';
 
 export function createTheaterResultWorkspace(runtime) {
+let generationReading;
+let fullscreenReading;
+
+function generationReadingText(html) {
+    const version = displayedContinuationVersion(runtime.continuationSession, html);
+    if (version) return version.layoutSource?.text || undefined;
+    const current = runtime.currentGenerationResult;
+    return current?.html === html ? current.layoutSource?.text || undefined : undefined;
+}
 // @theater-source-begin closeResultActions
 function closeResultActions() {
     $('.theater-result-toolbox').removeClass('is-open')
@@ -105,8 +116,8 @@ function showInIframe(html, mode = 'html', allowTextFallback = true) {
     const $textFallback = $('#theater-output-text-fallback');
     const textMode = isTextOutputMode(mode);
     const textTheme = textThemeForOutputMode(mode);
-    $textFallback.hide().empty().toggleClass('is-dark', textTheme === 'dark');
-    $(f).show();
+    generationReading?.clear();
+    $textFallback.toggleClass('is-dark', textTheme === 'dark');
     runtime.currentDisplayHtml = html;
     $('#theater-retry-layout-btn').prop('hidden', !runtime.currentGenerationResult?.layoutRetry || !!manualLayoutSource(runtime.currentGenerationResult) || runtime.currentGenerationResult.html !== html);
     runtime.currentOutputMode = mode;
@@ -116,24 +127,22 @@ function showInIframe(html, mode = 'html', allowTextFallback = true) {
     $('#theater-result-characters').text(`约 ${readableCharCount(sourceText).toLocaleString('zh-CN')} 字`);
     if (textMode) runtime.lastGeneratedText = sourceText;
     $('#theater-copy-html-btn span').text(textMode ? '复制文字' : '复制HTML');
-    renderSafeIframe(f, html, {
-        onWorkspaceSwipe: switchResultWorkspace,
-        sourceHasText: !!sourceText,
+    generationReading = mountStoryReading({
+        frame: f,
+        fallback: $textFallback[0],
+        notice: document.querySelector('#theater-output-section [data-story-reading-notice]'),
+        button: document.getElementById('theater-output-reading-toggle'),
+        html,
+        text: generationReadingText(html),
+        canSwitch: !textMode,
+        renderOptions: { onWorkspaceSwipe: switchResultWorkspace },
+        onStoryError: message => runtime.runtimeLog('warn', '小剧场页面脚本出错', { message }),
         // 没有尺寸回报不等于 HTML 没有渲染；复杂模板启动较慢时继续保留丰富预览。
         // 只有 iframe 明确、持续回报正文为空，才切换到父页面纯文字兜底。
-        fallbackOnNoReport: false,
         onBlank: allowTextFallback && sourceText ? ({ reason } = {}) => {
             const fallbackReason = reason === 'no-report' ? 'iframe 未回报渲染状态' : 'HTML 正文不可见';
             runtime.runtimeLog('warn', '渲染路径', { path: '父页面纯文字兜底', reason: fallbackReason });
             toastr.warning('生成内容无法正常显示，已切换为纯文字兜底展示');
-            runtime.currentOutputMode = textMode ? mode : 'text';
-            runtime.lastGeneratedText = sourceText;
-            $('#theater-copy-html-btn span').text('复制文字');
-            $(f).hide();
-            $textFallback
-                .toggleClass('is-dark', textThemeForOutputMode(runtime.currentOutputMode) === 'dark')
-                .text(sourceText)
-                .show();
         } : null,
     });
 }
@@ -141,6 +150,8 @@ function showInIframe(html, mode = 'html', allowTextFallback = true) {
 
 // @theater-source-begin closeFullscreenReader
 function closeFullscreenReader() {
+    fullscreenReading?.clear();
+    fullscreenReading = null;
     const dialog = document.getElementById('theater-reader-overlay');
     if (dialog?.open && typeof dialog.close === 'function') {
         try { dialog.close(); } catch {}
@@ -169,7 +180,7 @@ function currentReaderPayload() {
     return {
         html,
         mode: runtime.currentOutputMode || 'html',
-        text: runtime.htmlToPlainText(html),
+        text: generationReadingText(html),
     };
 }
 // @theater-source-end currentReaderPayload
@@ -180,7 +191,8 @@ function openFullscreenReader(overridePayload = null) {
         title: String(overridePayload.title || '').trim(),
         html: String(overridePayload.html || ''),
         mode: overridePayload.mode || 'html',
-        text: String(overridePayload.text || runtime.htmlToPlainText(overridePayload.html || '')),
+        text: overridePayload.text || overridePayload.layoutSource?.text || undefined,
+        startPlain: overridePayload.startPlain === true,
     } : null;
     const payload = supplied || currentReaderPayload();
     if (!payload?.html) {
@@ -201,13 +213,17 @@ function openFullscreenReader(overridePayload = null) {
                         <h2 id="theater-reader-title">千夜浮梦</h2>
                         <span class="theater-reader-mode"></span>
                     </div>
-                    <button type="button" class="theater-reader-close" data-theater-reader-close aria-label="退出全屏阅读">
-                        <i class="fa-solid fa-compress"></i><span>退出</span>
-                    </button>
+                    <div class="theater-reader-controls">
+                        <button type="button" class="theater-reader-close theater-reader-reading-toggle" data-theater-reader-reading-toggle hidden>纯文字阅读</button>
+                        <button type="button" class="theater-reader-close" data-theater-reader-close aria-label="退出全屏阅读">
+                            <i class="fa-solid fa-compress"></i><span>退出</span>
+                        </button>
+                    </div>
                 </header>
+                ${storyReadingNoticeHTML()}
                 <div class="theater-reader-canvas">
                     <iframe id="theater-reader-frame" sandbox="" class="theater-reader-frame" title="小剧场全屏阅读内容"></iframe>
-                    <div id="theater-reader-text-fallback" class="theater-reader-text-fallback${isNight ? ' is-dark' : ''}" role="document" style="display:none;"></div>
+                    <div id="theater-reader-text-fallback" class="theater-reader-text-fallback${isNight ? ' is-dark' : ''}" role="document" tabindex="-1" hidden></div>
                 </div>
                 <div class="theater-reader-shortcut">按 Esc 退出阅读</div>
             </section>
@@ -240,20 +256,24 @@ function openFullscreenReader(overridePayload = null) {
         if (event.key === 'Escape') closeFullscreenReader();
     });
 
-    const frame = document.getElementById('theater-reader-frame');
-    const $fallback = $('#theater-reader-text-fallback');
-    renderSafeIframe(frame, payload.html, {
-        sourceHasText: !!payload.text,
-        fixedHeight: true,
+    fullscreenReading = mountStoryReading({
+        frame: readerDialog.querySelector('#theater-reader-frame'),
+        fallback: readerDialog.querySelector('#theater-reader-text-fallback'),
+        notice: readerDialog.querySelector('[data-story-reading-notice]'),
+        button: readerDialog.querySelector('[data-theater-reader-reading-toggle]'),
+        modeLabel: textMode ? null : readerDialog.querySelector('.theater-reader-mode'),
+        html: payload.html,
+        text: payload.text,
+        canSwitch: !textMode,
+        startPlain: payload.startPlain,
+        renderOptions: { fixedHeight: true },
+        onStoryError: message => runtime.runtimeLog('warn', '小剧场页面脚本出错', { message }),
         // 正常阅读区已经验证过同一份 HTML。全屏重载时复杂模板可能来不及在 1 秒内
         // 回报尺寸；不能因此隐藏丰富 HTML。若 iframe 明确回报正文为空，仍会触发兜底。
-        fallbackOnNoReport: false,
-        onBlank: payload.text ? ({ reason } = {}) => {
+        onBlank: ({ reason } = {}) => {
             const fallbackReason = reason === 'no-report' ? 'iframe 未回报渲染状态' : 'HTML 正文不可见';
             runtime.runtimeLog('warn', '全屏阅读兜底', { reason: fallbackReason });
-            $(frame).hide();
-            $fallback.text(payload.text).show();
-        } : null,
+        },
     });
     setTimeout(() => $overlay.addClass('is-open'), 0);
     $overlay.find('.theater-reader-close').trigger('focus');
@@ -289,6 +309,7 @@ function initializeResultWorkspace() {
         chooseVersion: id => runtime.chooseHistoryReadingVersion(id),
         exitCollection: () => { runtime.historyReadingItems = null; runtime.historyReadingFolderId = null; runtime.readingState.reading = runtime.recentCache[0] || null; },
         render: renderSafeIframe,
+        onStoryError: message => runtime.runtimeLog('warn', '小剧场页面脚本出错', { message }),
         swipe: switchResultWorkspace,
         text: runtime.htmlToPlainText,
         isText: isTextOutputMode,
@@ -369,6 +390,7 @@ function showRecentResult(index) {
 
 // @theater-source-begin setResultEditControls
 function setResultEditControls(editing) {
+    generationReading?.setEditing(editing);
     $('#theater-edit-result-btn, #theater-delete-result-btn, #theater-continue-btn').toggle(!editing);
     $('#theater-save-edit-btn, #theater-cancel-edit-btn').toggle(editing);
     runtime.updateContinueHint();
@@ -398,9 +420,8 @@ function clearDisplayedResult() {
     runtime.currentDisplayHtml = '';
     runtime.currentOutputMode = 'html';
     runtime.recentIndex = 0;
-    const frame = document.getElementById('theater-output-frame');
-    if (frame) frame.srcdoc = '';
-    $('#theater-output-text-fallback').hide().empty();
+    generationReading?.clear();
+    generationReading = null;
     $('#theater-result-text-editor').hide().val('');
     $('#theater-output-section').hide();
     runtime.resultEditSnapshot = null;
