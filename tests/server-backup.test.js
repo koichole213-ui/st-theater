@@ -424,15 +424,20 @@ test('本机关着服务器备份但已同步过时，打开面板不会把别�
     assert.equal(host.calls.length, 0);
 });
 
-test('有“自动备份已暂停”提示时，打开面板照常核对，不走“还没到期”的捷径', async t => {
+test('有“数量减少、自动备份已暂停”提示时，打开面板照常核对，不走“还没到期”的捷径', async t => {
     const host = mockHost();
     const first = fixture(t, host);
     await first.backup.runBackup(['server']);
-    first.state.get('backup-state').protection = '合成：自动备份已暂停';
+    first.state.get('backup-state').protection = '普通历史从 400 变为 3。自动备份已暂停，旧备份保留；请先核对数据。';
     const reopened = fixture(t, host, { state: first.state });
     const before = host.calls.length;
     await reopened.backup.onOpen();
     assert.ok(host.calls.length > before);
+    first.state.get('backup-state').protection = '另一窗口正在备份或恢复，请稍后再试';
+    const other = fixture(t, host, { state: first.state });
+    const again = host.calls.length;
+    await other.backup.onOpen();
+    assert.equal(host.calls.length, again, '其他提示不触发每次打开都整份核对');
 });
 
 test('酒馆设置里的服务器备份清单最多留 100 条，完整清单留在目录文件', async t => {

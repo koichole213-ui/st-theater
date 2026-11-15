@@ -319,8 +319,8 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
                     && (!previous?.time || checkAt - previous.time >= every);
                 const server = localServerState();
                 const serverDue = serverRequested && serverOwnerConfirmed() && (timeDue(server) || !!server?.pending?.length);
-                // 有“自动备份已暂停”提示时照常走完整流程，确认之后提示能及时消失。
-                if (!state.protection && !serverDue && !originalKinds.some(kind => timeDue(state[kind]))) return;
+                // 有“数量减少、自动备份已暂停”提示时照常走完整流程，确认之后提示能及时消失。
+                if (!isBackupReduction(state) && !serverDue && !originalKinds.some(kind => timeDue(state[kind]))) return;
             }
             const snapshot=await storage.snapshot();
             stage('packing');
@@ -733,6 +733,7 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
                     const saved = await storage.saveConfiguration(latest => ({
                         ...next, sourceId: latest?.sourceId || next.sourceId, ownerHandle: latest?.ownerHandle,
                         server: serverChanged ? next.server : latest?.server ?? next.server,
+                        serverOffPending: next.server ? undefined : latest?.serverOffPending,
                     }), previous.repository!==next.repository);
                     config = saved.config;
                     if (serverChanged && next.server && origin && runtime.settings) {
