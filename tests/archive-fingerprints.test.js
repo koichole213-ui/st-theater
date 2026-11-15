@@ -9,7 +9,7 @@ function setup(settings = { archiveFingerprints: { [origin]: { history: 10, drea
     const warnings = [], info = [], logs = [];
     const runtime = { settings, idb: {}, historyCache: [], longDreamCache: [], saves: 0,
         VERSION: '4.4.8d', save() { this.saves++; }, runtimeLog(...args) { logs.push(args); } };
-    createTheaterStorage(runtime, { origin, toast: { warning: (...args) => warnings.push(args), info: message => info.push(message) } });
+    createTheaterStorage(runtime, { origin, deviceStorage: null, toast: { warning: (...args) => warnings.push(args), info: message => info.push(message) } });
     return { runtime, safety: runtime.archiveSafety, warnings, info, logs };
 }
 
@@ -205,9 +205,23 @@ test('作品库和浏览器编号一起被清空时，当作新的浏览器存�
     deviceSetup(settings, fakeStorage(), 400).safety.inspect();
     const fresh = deviceSetup(settings, fakeStorage(), 0);
     fresh.safety.inspect();
-    assert.equal(fresh.warnings.length, 0);
-    assert.match(fresh.info[0], new RegExp(`${origin.replace(/[.]/g, '\\.')}：普通历史 400 条`));
-    assert.doesNotMatch(fresh.info[0], /#/);
+    assert.equal(fresh.runtime.archiveLossSuspected, undefined, '不持续告警');
+    assert.match(fresh.warnings[0][0], /同一网址的另一个浏览器：普通历史 400 条/);
+    assert.match(fresh.warnings[0][0], /如果是新设备，忽略就好/);
+    assert.doesNotMatch(fresh.warnings[0][0], /#/);
+});
+
+test('旧的按网址告警被接过去后删掉；作品为 0 的新浏览器不会接走旧告警', () => {
+    const expected = { history: 400, dreams: 0 };
+    const settings = { archiveFingerprints: { [origin]: { ...expected, lossSuspected: { expected, found: { history: 0, dreams: 0 } } } } };
+    const empty = deviceSetup(settings, fakeStorage(), 0);
+    empty.safety.inspect();
+    assert.equal(empty.runtime.archiveLossSuspected, undefined);
+    const partial = { archiveFingerprints: { [origin]: { ...expected, lossSuspected: { expected, found: { history: 20, dreams: 0 } } } } };
+    const adopter = deviceSetup(partial, fakeStorage(), 20);
+    adopter.safety.inspect();
+    assert.ok(adopter.runtime.archiveLossSuspected);
+    assert.equal(partial.archiveFingerprints[origin], undefined, '旧条目删掉，别的浏览器不会再接');
 });
 
 test('读不到 localStorage 时退回只按网址记，和以前一样', () => {

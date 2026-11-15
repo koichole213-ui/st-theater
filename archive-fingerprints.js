@@ -40,7 +40,7 @@ function lossReason(expected, found) {
 }
 
 export function createArchiveSafety(runtime, { origin = globalThis.location?.origin, toast = globalThis.toastr, deviceStorage } = {}) {
-    let lossToast;
+    let lossToast, dropLegacy = false;
     const device = origin ? readDeviceId(deviceStorage) : '';
     const key = device ? `${origin}#${device}` : origin;
     const fingerprints = () => runtime.settings.archiveFingerprints || {};
@@ -53,7 +53,8 @@ export function createArchiveSafety(runtime, { origin = globalThis.location?.ori
     });
     function saveFingerprint(value) {
         const forcedClose = fingerprints()[key]?.forcedClose;
-        const entries = Object.entries(fingerprints()).filter(([name]) => name !== key);
+        // 旧的按网址告警被这个浏览器接过去后就删掉，免得别的浏览器再接一次。
+        const entries = Object.entries(fingerprints()).filter(([name]) => name !== key && !(dropLegacy && name === origin));
         entries.sort(([, a], [, b]) => String(b?.updatedAt || '').localeCompare(String(a?.updatedAt || '')));
         runtime.settings.archiveFingerprints = Object.fromEntries([
             [key, { ...(forcedClose ? { forcedClose } : {}), ...value, updatedAt: new Date().toISOString() }],
@@ -80,12 +81,15 @@ export function createArchiveSafety(runtime, { origin = globalThis.location?.ori
         if (lossToast) toast?.clear?.(lossToast);
         lossToast = toast?.warning?.(archiveLossMessage(incident), '小剧场存档疑似丢失', persistentToast);
     }
-    // 更新前只按网址记的旧告警：只有当时触发告警的那个浏览器（现有数量和告警里记下的完全一致）才接着提醒。
+    // 更新前只按网址记的旧告警：只有当时触发告警的那个浏览器（现有数量和告警里记下的完全一致、且不为 0）才接着提醒。
+    // 数量为 0 时分不清是被清空的那个浏览器还是一台新设备，交给下面“新的浏览器存储”的提醒。
     function legacyAlarm(found) {
-        if (key === origin) return undefined;
+        if (key === origin || total(found) === 0) return undefined;
         const legacy = fingerprints()[origin];
         const seen = legacy?.lossSuspected?.found;
-        return seen && count(seen.history) === found.history && count(seen.dreams) === found.dreams ? legacy : undefined;
+        if (!seen || count(seen.history) !== found.history || count(seen.dreams) !== found.dreams) return undefined;
+        dropLegacy = true;
+        return legacy;
     }
     function inspect() {
         if (!canCount()) return;
@@ -107,10 +111,16 @@ export function createArchiveSafety(runtime, { origin = globalThis.location?.ori
                 return;
             }
         } else if (total(found) === 0) {
-            const others = Object.entries(fingerprints()).filter(([, value]) => value && total(countsFor(value)) > 0);
+            const others = Object.entries(fingerprints()).filter(([name, value]) => name !== key && value && total(countsFor(value)) > 0);
             if (others.length) {
-                const summary = others.map(([name, value]) => `${addressOf(name)}：普通历史 ${count(value.history)} 条、长梦 ${count(value.dreams)} 部`).join('；');
-                toast?.info?.(`其他设备或地址上有作品记录（${summary}），本页是新的浏览器存储。`, '小剧场存档', { escapeHtml: true });
+                const label = name => addressOf(name) === origin ? '同一网址的另一个浏览器' : addressOf(name);
+                const summary = others.map(([name, value]) => `${label(name)}：普通历史 ${count(value.history)} 条、长梦 ${count(value.dreams)} 部`).join('；');
+                if (others.some(([name]) => addressOf(name) === origin)) {
+                    // 有的浏览器清理空间时会连浏览器编号一起清掉，这时分不清“被清空”还是“新设备”，提醒语气加重但不持续告警。
+                    toast?.warning?.(`这个浏览器里还没有作品，但同一网址下记录过作品（${summary}）。如果这是你原来用的浏览器，作品可能被清理了，请从备份恢复；如果是新设备，忽略就好。`, '小剧场存档', { escapeHtml: true });
+                } else {
+                    toast?.info?.(`其他设备或地址上有作品记录（${summary}），本页是新的浏览器存储。`, '小剧场存档', { escapeHtml: true });
+                }
             }
         }
         saveFingerprint(current);
