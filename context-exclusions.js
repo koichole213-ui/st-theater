@@ -127,7 +127,8 @@ export function stripExcludedOutputTags(source, rules = []) {
     for (const tag of tags) {
         const result = excludeTagBlocks(text, tag);
         // 夹在正文中间、自己又有很多字的一整块，多半不是状态栏或思考，而是正文被包住了。
-        for (const [start, end] of suspicious ? [] : result.blocks) {
+        for (const [start, end] of result.blocks) {
+            if (suspicious) break;
             if (readableChars(text.slice(start, end)) > MIDDLE_BLOCK_LIMIT
                 && readableChars(text.slice(0, start)) > 0 && readableChars(text.slice(end)) > 0) suspicious = true;
         }
