@@ -1,4 +1,5 @@
 // 从 core.test.js 拆出：main-ui
+import { readStyles } from './styles.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -9,7 +10,7 @@ import { matchesTagFilter } from '../tag-system.js';
 
 test('全屏阅读使用原生模态弹窗进入浏览器顶层', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     assert.match(source, /<dialog id="theater-reader-overlay"/);
     assert.match(source, /readerDialog\.showModal\(\)/);
     assert.doesNotMatch(source, /<div id="theater-reader-overlay"/);
@@ -63,7 +64,7 @@ test('悬浮球拖动被系统取消时会清理监听，旧浏览器也使用�
 
 test('插件更新成功后只提供需确认的酒馆刷新操作', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     const confirmFlow = source.match(/async function (?:runtime\.)?confirmReloadAfterUpdate\(\) \{[\s\S]*?\n\}/)?.[0] || '';
     const updateFlow = source.match(/async function (?:runtime\.)?updateExtension\(\) \{[\s\S]*?\n\}/)?.[0] || '';
 
@@ -81,7 +82,7 @@ test('插件更新成功后只提供需确认的酒馆刷新操作', () => {
 
 test('常见问题汇总是诊断报告后的独立可折叠界面', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     const signals = readFileSync(new URL('../request-diagnostics.js', import.meta.url), 'utf8');
     const diagnosticsPanel = source.indexOf('data-panel="diagnostics"');
     const reportOutput = source.indexOf('id="theater-diagnostics-output"', diagnosticsPanel);
@@ -101,7 +102,7 @@ test('常见问题汇总是诊断报告后的独立可折叠界面', () => {
 
 test('生成结果使用可关闭的页边书签，并保留安全退出编辑与移除结果', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     const actionsAt = source.indexOf('id="theater-result-actions"');
     const outputAt = source.indexOf('id="theater-output-container"');
     assert.ok(actionsAt >= 0 && actionsAt < outputAt);
@@ -118,7 +119,7 @@ test('生成结果使用可关闭的页边书签，并保留安全退出编辑�
 
 test('手机端主弹窗铺满可用屏幕，保留紧凑圆角关闭键并让内容独立滚动', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     const tabHandler = source.match(/\/\/ Tabs[\s\S]*?\/\/ ---- Generate ----/)?.[0] || '';
     const tabActivator = source.match(/function (?:runtime\.)?activateTheaterTab\([\s\S]*?\n\}/)?.[0] || '';
     const mobileShell = styles.match(/\/\* Mobile fullscreen shell:[\s\S]*?\/\* End mobile fullscreen shell\. \*\//)?.[0] || '';
@@ -147,7 +148,7 @@ test('手机端主弹窗铺满可用屏幕，保留紧凑圆角关闭键并让�
 });
 
 test('默认皮肤的长梦备份按钮保持深色底上的可读对比度', () => {
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     assert.match(styles, /theater-popup:not\(\[data-skin="theater"\]\):not\(\[data-skin="custom"\]\) \.theater-dream-archive-actions \.theater-btn\s*\{[\s\S]*?color:\s*rgba\(255, 249, 237, \.9\)[\s\S]*?background:\s*rgba\(255, 249, 237, \.075\)/);
 });
 
@@ -164,7 +165,7 @@ test('页边书签位置会限制在可见范围并按拖动落点吸附', () =>
 
 test('设置页按七个清晰模块展示全部功能且字号跟随全局设置', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     const popupBuilder = source.match(/function (?:runtime\.)?buildPopupHTML\([\s\S]*?\/\/ Rendering helpers/)?.[0] || '';
     for (const id of [
         'theater-api-mode', 'theater-api-preset-select', 'theater-api-protocol', 'theater-api-url',

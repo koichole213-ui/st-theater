@@ -1,8 +1,8 @@
 // 从 core.test.js 拆出：long-dream-ui
+import { readStyles } from './styles.js';
 import { retainLongDreamDraftCandidate, appendLongDreamDraftCandidate } from '../long-dream.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { readTheaterImplementation, runInNewContext } from './theater-source.js';
 import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, createLongDreamRecord, createLongDreamWorldBookSnapshot, promoteLongDreamDraft, saveLongDreamDraft, updateLongDreamDefinition } from '../long-dream.js';
 
@@ -253,7 +253,7 @@ test('世界书更新期间同一长梦不能保存旧定梦或启动续写，�
 
 test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     assert.match(source, /data-tab="long-dream">长梦<\/div>/);
     assert.match(source, /data-panel="long-dream"/);
     assert.match(source, /indexedDB\.open\('st-theater', 2\)/);
@@ -296,7 +296,7 @@ test('定梦页只保留手写 canon，不再显示 AI 整理建议入口', () =
 
 test('长梦再生成会显示真实版本、等待时间、字数、轮次与旧候选切换', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     const progress = source.match(/<section id="theater-dream-generation-status"[\s\S]*?<section class="ui-card theater-dream-latest">/)?.[0] || '';
     assert.match(source, /第 \$\{state\.activeProgress\?\.candidateNumber/);
     assert.match(source, /正在等待接口返回首字/);
@@ -319,7 +319,7 @@ test('长梦再生成会显示真实版本、等待时间、字数、轮次与�
 
 test('长梦候选切换居中且无方框，三个审阅操作的内容保持居中', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     const reviewFlow = source.match(/const reviewFlow = state\.hasReviewDraft[\s\S]*?return `<div class="theater-dream-detail/)?.[0] || '';
     assert.ok(reviewFlow.indexOf('theater-dream-candidate-switcher') >= 0);
     assert.ok(reviewFlow.indexOf('theater-dream-candidate-switcher') < reviewFlow.indexOf('theater-dream-review-fullscreen'));
@@ -334,7 +334,7 @@ test('长梦候选切换居中且无方框，三个审阅操作的内容保持�
 
 test('长梦待确认页的字数统计按整个标题区居中', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     assert.match(source, /<p class="theater-dream-review-count">[^\n]*正文约 \$\{readableCharCount/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\] \.theater-dream-review-count \{[^}]*grid-column:1 \/ -1;[^}]*width:100%;[^}]*text-align:center;/);
 });
@@ -351,7 +351,7 @@ test('长梦最终排版进度只通过统一状态刷新，避免完成提示�
 
 test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     assert.match(source, /id="theater-dream-import-backup"/);
     assert.match(source, /id="theater-dream-export-all"/);
     assert.match(source, /id="theater-dream-export-current"/);
@@ -448,7 +448,7 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
 
 test('长梦真实工作区只有定梦续写作品三分类，并把审阅梦脉和章节操作归入正确层级', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     const workspace = source.match(/function longDreamWorkspaceHTML\([\s\S]*?\n\}/)?.[0] || '';
     const creation = source.match(/function longDreamCreateHTML\(\) \{[\s\S]*?function (?:runtime\.)?longDreamGenerationStageText/)?.[0] || '';
     const definition = source.match(/function longDreamDefinitionHTML\(dream\) \{[\s\S]*?function longDreamDetailHTML/)?.[0] || '';
@@ -544,7 +544,7 @@ test('放弃长梦草稿保留续写指令，只有独立清空按钮会确认�
 
 test('长梦参考稿样式只作用于长梦面板，不改坏其他页面按钮与插件外壳', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     const parity = styles.split('Long Dream HTML parity')[1] || '';
     assert.doesNotMatch(source, /theater-popup-header ia-header/);
     assert.doesNotMatch(source, /theater-tabs ia-main-tabs/);

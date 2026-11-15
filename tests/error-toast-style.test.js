@@ -1,8 +1,8 @@
+import { readStyles } from './styles.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 
-const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+const css = readStyles();
 
 // 酒馆自带样式下实测（无头 Chromium）：右上角的“×”曾被“生成时出错”那行小字盖住，点在按钮正中关不掉。
 test('报错弹窗的关闭按钮叠在内容上方', () => {

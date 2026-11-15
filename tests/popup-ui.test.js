@@ -1,7 +1,7 @@
 // 从 core.test.js 拆出：popup-ui
+import { readStyles } from './styles.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { readTheaterImplementation } from './theater-source.js';
 
 test('主弹窗不再固定等待，并独立读取预设和世界书列表', () => {
@@ -61,7 +61,7 @@ test('主弹窗事件命名空间不互相覆盖，历史操作保持完整绑�
 
 test('历史卡片紧凑呈现标题标签与时间操作，保留即时触控与连续多选', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     const renderer = source.match(/function (?:runtime\.)?historyItemHTML[\s\S]*?function longDreamSources/)?.[0] || '';
     const bindStart = source.indexOf('function bindEvents() {');
     const bindEnd = source.indexOf('function refreshInstUI', bindStart);
@@ -111,7 +111,7 @@ test('历史卡片紧凑呈现标题标签与时间操作，保留即时触控�
 
 test('模板列表保持单行紧凑布局，手机菜单不被裁切并支持长按扫选', () => {
     const source = readTheaterImplementation();
-    const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const styles = readStyles();
     const renderer = source.match(/function (?:runtime\.)?renderInstList[\s\S]*?function (?:runtime\.)?updateBulkBar/)?.[0] || '';
     const menu = source.match(/function (?:runtime\.)?positionInstructionActionMenu[\s\S]*?function (?:runtime\.)?bindInstructionSweepSelection/)?.[0] || '';
     const gesture = source.match(/function (?:runtime\.)?bindInstructionSweepSelection[\s\S]*?\/\/ ---- World Book/)?.[0] || '';

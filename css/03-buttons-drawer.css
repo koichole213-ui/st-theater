@@ -1,0 +1,810 @@
+/* ============================================================
+ * Buttons
+ * ============================================================ */
+.theater-btn-row {
+    display: flex;
+    gap: var(--t-space-2);
+    margin-top: var(--t-space-3);
+    flex-wrap: wrap;
+}
+.theater-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    padding: var(--t-space-2) var(--t-space-4);
+    min-height: 34px;
+    border-radius: var(--t-radius-pill);
+    font-size: var(--t-text-sm);
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+    border: 1px solid var(--t-border);
+    background: var(--t-surface-1);
+    color: var(--t-fg);
+    font-family: inherit;
+    transition: transform var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease),
+                border-color var(--t-dur-fast) var(--t-ease),
+                box-shadow var(--t-dur-fast) var(--t-ease),
+                color var(--t-dur-fast) var(--t-ease);
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-btn:not(.primary) {
+    background: #FFFFFF;
+}
+.theater-btn:hover {
+    background: var(--t-surface-2);
+    border-color: var(--t-border-strong);
+}
+.theater-btn:active { transform: scale(.97); }
+
+.theater-btn.primary {
+    background: linear-gradient(135deg, var(--t-accent) 0%, var(--t-accent-deep) 100%);
+    color: var(--t-on-accent);
+    border-color: transparent;
+    box-shadow: var(--t-elev-1),
+                inset 0 1px 0 rgba(255, 255, 255, .15);
+    letter-spacing: .4px;
+}
+.theater-btn.primary:hover {
+    background: linear-gradient(135deg, var(--t-accent-soft) 0%, var(--t-accent) 100%);
+    box-shadow: var(--t-elev-2),
+                0 0 0 4px color-mix(in srgb, var(--t-accent) 18%, transparent),
+                inset 0 1px 0 rgba(255, 255, 255, .25);
+    transform: translateY(-1px);
+}
+.theater-btn.primary:active {
+    transform: translateY(0) scale(.98);
+    box-shadow: var(--t-elev-1),
+                inset 0 2px 4px rgba(107, 68, 35, .2);
+}
+.theater-btn.danger {
+    color: var(--t-danger);
+    border-color: color-mix(in srgb, var(--t-danger) 30%, transparent);
+    background: transparent;
+}
+.theater-btn.danger:hover { background: var(--t-danger-soft); }
+.theater-btn.disabled {
+    opacity: .45;
+    pointer-events: none;
+}
+.theater-wb-action-link.disabled {
+    opacity: .45;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+.theater-btn.generate {
+    flex: 1;
+    justify-content: center;
+    min-height: 46px;
+    padding: var(--t-space-3) var(--t-space-5);
+    font-size: var(--t-text-md);
+    font-weight: 600;
+    letter-spacing: .4px;
+}
+.theater-btn.generate i {
+    transition: transform var(--t-dur-base) var(--t-ease);
+}
+.theater-btn.generate:hover i {
+    transform: rotate(-12deg) scale(1.1);
+}
+.theater-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 30%, transparent);
+}
+
+/* ============================================================
+ * Toggle
+ * ============================================================ */
+.theater-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-3);
+    margin: var(--t-space-3) 0 var(--t-space-1);
+    flex-wrap: wrap;
+}
+.theater-toggle-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    font-size: var(--t-text-sm);
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--t-fg);
+}
+.theater-toggle-label input[type="checkbox"] { accent-color: var(--t-accent); }
+.theater-toggle-row.is-template-managed { opacity: .72; }
+.theater-toggle-row.is-template-managed .theater-toggle-label { cursor: default; }
+
+/* 默认皮肤：自绘暖色复选框，覆盖浏览器原生灰色
+   ST 主题（如 SmartTheme）会给 input[type=checkbox] 加 ::before 伪元素画勾
+   和强制 width/height，必须用 !important 才能压住 */
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-toggle-label input[type="checkbox"],
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-wb-entry-header input[type="checkbox"],
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-preset-entry-header input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 18px !important;
+    height: 18px !important;
+    border: 1.5px solid color-mix(in srgb, var(--t-accent) 50%, var(--t-border-strong));
+    border-radius: 5px;
+    background: #FFFFFF;
+    background-image: none;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    transition: border-color var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease),
+                box-shadow var(--t-dur-fast) var(--t-ease);
+    margin: 0;
+    padding: 0;
+}
+/* 关键：清掉 ST 主题给 checkbox 加的 ::before 伪元素勾，
+   它跟自绘的 ::after 重叠就是禾禾看到的"两个图标挤一起" */
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-toggle-label input[type="checkbox"]::before,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-wb-entry-header input[type="checkbox"]::before,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-preset-entry-header input[type="checkbox"]::before {
+    content: none !important;
+    display: none !important;
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-toggle-label input[type="checkbox"]:hover,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-wb-entry-header input[type="checkbox"]:hover,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-preset-entry-header input[type="checkbox"]:hover {
+    border-color: var(--t-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 18%, transparent);
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-toggle-label input[type="checkbox"]:checked,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-wb-entry-header input[type="checkbox"]:checked,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-preset-entry-header input[type="checkbox"]:checked {
+    background: linear-gradient(135deg, var(--t-accent) 0%, var(--t-accent-deep) 100%);
+    border-color: var(--t-accent-deep);
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-toggle-label input[type="checkbox"]:checked::after,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-wb-entry-header input[type="checkbox"]:checked::after,
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-preset-entry-header input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    left: 5px;
+    top: 1px;
+    width: 4px;
+    height: 9px;
+    border: solid var(--t-on-accent);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+/* 默认皮肤：单选钮也同色 */
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-skin-row input[type="radio"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid color-mix(in srgb, var(--t-accent) 50%, var(--t-border-strong));
+    border-radius: 50%;
+    background: #FFFFFF;
+    cursor: pointer;
+    position: relative;
+    transition: border-color var(--t-dur-fast) var(--t-ease);
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-skin-row input[type="radio"]:checked {
+    border-color: var(--t-accent-deep);
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-skin-row input[type="radio"]:checked::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    background: linear-gradient(135deg, var(--t-accent) 0%, var(--t-accent-deep) 100%);
+    border-radius: 50%;
+}
+.theater-hint-inline {
+    font-size: var(--t-text-xs);
+    color: var(--t-fg-mute);
+}
+
+/* ============================================================
+ * Skin selector (in 美化 panel) — list rows inside a drawer
+ * ============================================================ */
+.theater-skin-row {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-3);
+    padding: var(--t-space-3);
+    border-radius: var(--t-radius-sm);
+    margin-bottom: var(--t-space-1);
+    background: var(--t-surface-2);
+    border: 1px solid var(--t-border);
+    cursor: pointer;
+    user-select: none;
+    transition: border-color var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease);
+}
+.theater-skin-row:last-child { margin-bottom: 0; }
+.theater-skin-row:hover { border-color: var(--t-border-strong); }
+.theater-skin-row.active {
+    border-color: var(--t-accent);
+    background: color-mix(in srgb, var(--t-accent) 10%, var(--t-surface-2));
+}
+.theater-skin-row input[type="radio"] {
+    flex-shrink: 0;
+    margin: 0;
+    accent-color: var(--t-accent);
+}
+.theater-skin-row-name {
+    font-weight: 600;
+    font-size: var(--t-text-base);
+    color: var(--t-fg);
+    min-width: 80px;
+}
+.theater-skin-row-desc {
+    font-size: var(--t-text-xs);
+    color: var(--t-fg-mute);
+    flex: 1;
+    line-height: 1.5;
+}
+
+/* ============================================================
+ * Drawer / instruction list
+ * ============================================================ */
+.theater-drawer {
+    border: 1px solid var(--t-border);
+    border-radius: var(--t-radius-md);
+    overflow: hidden;
+    background: var(--t-surface-1);
+}
+.theater-drawer.theater-inst-menu-open { overflow: visible; }
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-drawer {
+    background: #FFFFFF;
+}
+.theater-drawer.empty { opacity: .6; }
+.theater-drawer-toggle {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--t-space-3) var(--t-space-4);
+    cursor: pointer;
+    font-size: var(--t-text-sm);
+    font-weight: 500;
+    user-select: none;
+    color: var(--t-fg);
+    transition: background var(--t-dur-fast) var(--t-ease);
+}
+.theater-drawer-toggle:hover { background: var(--t-surface-2); }
+.theater-drawer-arrow {
+    transition: transform var(--t-dur-base) var(--t-ease);
+    font-size: var(--t-text-xs);
+    color: var(--t-fg-mute);
+}
+.theater-drawer-arrow.open { transform: rotate(180deg); }
+.theater-drawer-body { padding: var(--t-space-2); }
+
+.theater-inst-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--t-space-2);
+    padding: var(--t-space-2) var(--t-space-3);
+    border-radius: var(--t-radius-sm);
+    margin-bottom: var(--t-space-1);
+    background: var(--t-surface-2);
+    border: 1px solid var(--t-border);
+    font-size: var(--t-text-sm);
+    color: var(--t-fg);
+    touch-action: pan-y;
+    user-select: none;
+}
+.theater-inst-item:last-child { margin-bottom: 0; }
+.theater-inst-info {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    overflow: hidden;
+}
+.theater-inst-name {
+    display: block;
+    cursor: pointer;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-right: var(--t-space-2);
+    color: var(--t-fg-soft);
+    transition: color var(--t-dur-fast) var(--t-ease);
+}
+.theater-inst-name i { margin-right: var(--t-space-2); color: var(--t-fg-mute); }
+.theater-inst-name:hover { color: var(--t-fg); }
+.theater-inst-actions {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+}
+.theater-inst-more { display: none; }
+.theater-inst-delete {
+    cursor: pointer;
+    color: var(--t-fg-faint);
+    padding: var(--t-space-1) var(--t-space-2);
+    border-radius: var(--t-radius-sm);
+    flex-shrink: 0;
+    transition: color var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease);
+}
+.theater-inst-delete:hover {
+    color: var(--t-danger);
+    background: var(--t-danger-soft);
+}
+.theater-inst-edit {
+    cursor: pointer;
+    color: var(--t-fg-faint);
+    padding: var(--t-space-1) var(--t-space-2);
+    border-radius: var(--t-radius-sm);
+    flex-shrink: 0;
+    transition: color var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease);
+}
+.theater-inst-edit:hover {
+    color: var(--t-accent);
+    background: color-mix(in srgb, var(--t-accent) 12%, transparent);
+}
+.theater-inst-move,
+.theater-inst-tags {
+    cursor: pointer;
+    color: var(--t-fg-faint);
+    padding: var(--t-space-1) var(--t-space-2);
+    border-radius: var(--t-radius-sm);
+    flex-shrink: 0;
+    transition: color var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease);
+}
+.theater-inst-move:hover,
+.theater-inst-tags:hover {
+    color: var(--t-accent);
+    background: color-mix(in srgb, var(--t-accent) 12%, transparent);
+}
+
+/* 分组工具栏 */
+.theater-inst-toolbar {
+    display: flex;
+    gap: var(--t-space-2);
+    margin-bottom: var(--t-space-2);
+    align-items: center;
+}
+.theater-inst-group-select {
+    flex: 1;
+    min-width: 0;
+}
+.theater-inst-tool-btn {
+    flex: 0 0 auto;
+    width: 36px;
+    padding: 7px 0 !important;
+    justify-content: center;
+}
+.theater-inst-tool-btn span { display: none; }
+
+/* 搜索行：搜索框 + 全选按钮 */
+.theater-inst-search-row {
+    display: flex;
+    gap: var(--t-space-2);
+    margin-bottom: var(--t-space-2);
+    align-items: center;
+}
+.theater-inst-search-input {
+    flex: 1;
+    min-width: 0;
+}
+.theater-inst-select-all-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+/* 批量操作浮条 */
+.theater-inst-bulk-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--t-space-2);
+    padding: 8px 12px;
+    margin-bottom: var(--t-space-2);
+    background: color-mix(in srgb, var(--t-accent) 8%, var(--t-surface-2));
+    border: 1px solid color-mix(in srgb, var(--t-accent) 25%, var(--t-border));
+    border-radius: var(--t-radius-sm);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, .4) inset,
+                0 2px 8px color-mix(in srgb, var(--t-accent) 12%, transparent);
+    flex-wrap: wrap;
+}
+.theater-inst-bulk-label {
+    font-size: var(--t-text-sm);
+    color: var(--t-accent-deep, var(--t-accent));
+    flex-shrink: 0;
+}
+.theater-inst-bulk-label b {
+    color: var(--t-accent);
+    font-weight: 600;
+    padding: 0 2px;
+}
+.theater-inst-bulk-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.theater-inst-bulk-actions .theater-btn {
+    padding: 5px 10px;
+    font-size: 12.5px;
+}
+
+/* 列表里的复选框 */
+.theater-inst-checkbox {
+    flex-shrink: 0;
+    margin: 0 4px 0 0;
+    cursor: pointer;
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-inst-checkbox {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px !important;
+    height: 16px !important;
+    border: 1.5px solid color-mix(in srgb, var(--t-accent) 45%, var(--t-border-strong));
+    border-radius: 4px;
+    background: #FFFFFF;
+    background-image: none;
+    position: relative;
+    box-sizing: border-box;
+    transition: border-color var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease);
+    padding: 0;
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-inst-checkbox::before {
+    content: none !important;
+    display: none !important;
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-inst-checkbox:hover {
+    border-color: var(--t-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--t-accent) 15%, transparent);
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-inst-checkbox:checked {
+    background: linear-gradient(135deg, var(--t-accent) 0%, var(--t-accent-deep) 100%);
+    border-color: var(--t-accent-deep);
+}
+.theater-popup:not([data-skin="theater"]):not([data-skin="custom"]) .theater-inst-checkbox:checked::after {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 5px;
+    height: 9px;
+    border: solid #FFF8EE;
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+}
+
+/* 选中态：项目高亮 */
+.theater-inst-item-selected {
+    background: color-mix(in srgb, var(--t-accent) 10%, var(--t-surface-2)) !important;
+    border-color: color-mix(in srgb, var(--t-accent) 35%, var(--t-border)) !important;
+}
+
+/* 模板项里的分组小标签 */
+.theater-inst-group-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    background: color-mix(in srgb, var(--t-accent) 18%, transparent);
+    color: var(--t-accent-deep, var(--t-accent));
+    flex-shrink: 0;
+    margin-right: var(--t-space-2);
+    max-width: 70px;
+    min-width: 0;
+    cursor: help;
+}
+.theater-inst-group-badge i {
+    font-size: 10px;
+    opacity: .8;
+    flex-shrink: 0;
+}
+.theater-inst-group-badge-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+.theater-inst-item.is-sweep-touched {
+    outline: 2px solid color-mix(in srgb, var(--t-accent) 48%, transparent);
+    outline-offset: -2px;
+}
+#theater-instruction-list.is-sweep-selecting .theater-inst-item { cursor: crosshair; }
+.theater-tag-source-control { flex-basis: 210px; width: min(210px, 58%); }
+.theater-tag-source-control .theater-btn {
+    max-width: 92px;
+    min-width: 64px;
+}
+.theater-tag-source-control .theater-btn span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 多标签沿用插件主题变量，三种皮肤都会跟随原有配色。 */
+.theater-tag-badges {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+.theater-tag-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 110px;
+    padding: 2px 7px;
+    border: 1px solid color-mix(in srgb, var(--t-accent) 20%, var(--t-border));
+    border-radius: var(--t-radius-pill);
+    background: color-mix(in srgb, var(--t-accent) 10%, var(--t-surface-2));
+    color: var(--t-accent-deep, var(--t-accent));
+    font-size: var(--t-text-xs);
+    line-height: 1.35;
+}
+.theater-tag-badge span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.theater-tag-badge i { flex: 0 0 auto; font-size: 9px; opacity: .75; }
+.theater-tag-badge.is-uncategorized {
+    border-style: dashed;
+    background: var(--t-surface-2);
+    color: var(--t-fg-mute);
+}
+.theater-tag-badge.is-count {
+    min-width: 28px;
+    justify-content: center;
+    padding-inline: 6px;
+    color: var(--t-fg-mute);
+}
+.theater-tag-filter-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: flex-start;
+}
+.theater-tag-filter-btn span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.theater-tag-choice-list { display: grid; gap: var(--t-space-2); margin-top: var(--t-space-3); }
+.theater-tag-choice {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-3);
+    min-height: 42px;
+    padding: var(--t-space-2) var(--t-space-3);
+    border: 1px solid var(--t-border);
+    border-radius: var(--t-radius-sm);
+    background: var(--t-surface-2);
+    cursor: pointer;
+}
+.theater-tag-choice:has(input:checked) {
+    border-color: var(--t-accent);
+    background: color-mix(in srgb, var(--t-accent) 10%, var(--t-surface-2));
+}
+.theater-tag-choice input { accent-color: var(--t-accent); }
+.theater-tag-choice > span { display: flex; align-items: center; gap: var(--t-space-2); min-width: 0; }
+.theater-tag-choice > span i { color: var(--t-accent); }
+.theater-tag-choice > span small { color: var(--t-fg-mute); }
+.theater-tag-choice-list.is-compact {
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    align-items: stretch;
+    align-content: flex-start;
+    gap: var(--t-space-2);
+    margin-top: 0;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    padding: 1px 2px 5px 1px;
+}
+.theater-tag-choice-list.is-compact .theater-tag-choice {
+    flex: 0 1 auto;
+    width: auto;
+    max-width: 100%;
+    min-height: 32px;
+    padding: 5px 9px;
+    border-radius: var(--t-radius-sm);
+}
+.theater-tag-choice-list.is-compact .theater-tag-choice > span,
+.theater-tag-choice-list.is-compact .theater-tag-choice > span b {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.theater-tag-choice-list.is-compact .theater-tag-choice:has(input:checked) {
+    border-color: var(--t-accent);
+    background: color-mix(in srgb, var(--t-accent) 16%, var(--t-surface-2));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--t-accent) 24%, transparent);
+}
+.theater-tag-choice-list.is-compact .theater-tag-choice:has(input:focus-visible) {
+    outline: 2px solid color-mix(in srgb, var(--t-accent) 62%, transparent);
+    outline-offset: 2px;
+}
+.theater-tag-template-name-field {
+    display: grid;
+    flex-shrink: 0;
+    gap: var(--t-space-2);
+    margin-bottom: var(--t-space-4);
+}
+.theater-tag-template-name-field label {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    color: var(--t-fg);
+    font-weight: 650;
+}
+.theater-tag-template-name-field label i { color: var(--t-accent); }
+.theater-popup.theater-compact-popup {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 0;
+    border-radius: var(--t-radius-lg);
+    box-shadow: none;
+}
+.theater-compact-popup .theater-popup-header {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: var(--t-space-4) var(--t-space-5) var(--t-space-3);
+    text-align: left;
+    border-bottom: 1px solid var(--t-border);
+}
+.theater-compact-popup .theater-popup-header .theater-title { font-size: var(--t-text-lg); }
+body .popup:has(.theater-compact-popup),
+body dialog.popup:has(.theater-compact-popup) {
+    width: min(430px, calc(100vw - 28px)) !important;
+    max-width: min(430px, calc(100vw - 28px)) !important;
+    height: min(680px, calc(100dvh - 32px)) !important;
+    min-height: 0 !important;
+    max-height: calc(100dvh - 32px) !important;
+    padding: 0 !important;
+    margin: auto !important;
+    border-radius: 18px !important;
+    overflow: hidden !important;
+}
+body .popup:has(.theater-compact-popup) :is(.popup-content, .popup-body),
+body dialog.popup:has(.theater-compact-popup) :is(.popup-content, .popup-body) {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+}
+body .popup:has(.theater-compact-popup) :is(.popup-controls, .popup-buttons),
+body dialog.popup:has(.theater-compact-popup) :is(.popup-controls, .popup-buttons),
+body .popup:has(.theater-popup.theater-compact-popup:not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-controls, .popup-buttons),
+body dialog.popup:has(.theater-popup.theater-compact-popup:not([data-skin="theater"]):not([data-skin="custom"])) :is(.popup-controls, .popup-buttons) {
+    flex: 0 0 auto !important;
+    align-self: stretch !important;
+    justify-content: center !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 10px 16px !important;
+}
+.theater-compact-popup .theater-compact-tag-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-bottom: 0;
+    padding: var(--t-space-4) var(--t-space-5);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+.theater-compact-tag-heading {
+    display: flex;
+    flex-shrink: 0;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--t-space-3);
+    margin: 0 0 var(--t-space-2);
+}
+.theater-compact-tag-heading b { font-size: var(--t-text-sm); }
+.theater-compact-tag-heading small { color: var(--t-fg-mute); font-size: var(--t-text-xs); }
+.theater-tag-create-box {
+    display: grid;
+    flex-shrink: 0;
+    gap: var(--t-space-2);
+    margin-top: var(--t-space-3);
+    padding-top: var(--t-space-3);
+    border-top: 1px dashed var(--t-border-strong);
+}
+.theater-tag-create-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--t-space-2);
+}
+.theater-tag-create-row .theater-btn {
+    min-width: 76px;
+    min-height: 38px;
+    border-radius: var(--t-radius-md);
+}
+.theater-tag-create-box > small { color: var(--t-fg-mute); font-size: var(--t-text-xs); }
+.theater-bulk-tag-mode { margin-bottom: var(--t-space-3); }
+
+/* Keep the action row visible when the phone keyboard leaves little height. */
+@media (max-height: 540px) {
+    body .popup:has(.theater-compact-popup) .popup-content,
+    body dialog.popup:has(.theater-compact-popup) .popup-content {
+        overflow-y: auto !important;
+    }
+    .theater-popup.theater-compact-popup {
+        flex: 0 0 auto;
+        min-height: 100%;
+    }
+    .theater-compact-popup .theater-tag-choice-list.is-compact {
+        flex: 0 0 auto;
+        min-height: 80px;
+        max-height: 35dvh;
+    }
+}
+
+/* 管理分组弹窗每一行 */
+.theater-group-mgmt-row {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    padding: var(--t-space-2) var(--t-space-3);
+    border-radius: var(--t-radius-sm);
+    margin-bottom: var(--t-space-1);
+    background: var(--t-surface-2);
+    border: 1px solid var(--t-border);
+}
+.theater-group-mgmt-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--t-fg);
+    font-size: var(--t-text-sm);
+}
+.theater-group-mgmt-name i {
+    margin-right: 6px;
+    color: var(--t-accent);
+}
+
+/* 选分组弹窗里的可点击行 */
+.theater-group-pick-row {
+    display: flex;
+    align-items: center;
+    gap: var(--t-space-2);
+    padding: var(--t-space-2) var(--t-space-3);
+    border-radius: var(--t-radius-sm);
+    margin-bottom: var(--t-space-1);
+    background: var(--t-surface-2);
+    border: 1px solid var(--t-border);
+    cursor: pointer;
+    color: var(--t-fg);
+    font-size: var(--t-text-sm);
+    transition: border-color var(--t-dur-fast) var(--t-ease),
+                background var(--t-dur-fast) var(--t-ease);
+}
+.theater-group-pick-row i { color: var(--t-accent); flex-shrink: 0; }
+.theater-group-pick-row:hover {
+    border-color: var(--t-accent);
+    background: color-mix(in srgb, var(--t-accent) 8%, var(--t-surface-2));
+}
+.theater-group-pick-row.theater-group-pick-new {
+    border-style: dashed;
+    color: var(--t-fg-soft);
+}
+

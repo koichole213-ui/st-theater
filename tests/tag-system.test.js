@@ -1,4 +1,5 @@
 // 从 core.test.js 拆出：tag-system
+import { readStyles } from './styles.js';
 import { planHistorySave } from '../history-collections.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -160,7 +161,7 @@ test('导入目标标签会追加到原标签并按现有标签名称归一', ()
 
 test('标签界面、历史未分类、数字触发间隔和渲染模板删除入口都接入主面板', () => {
     const source = readTheaterImplementation();
-    const style = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    const style = readStyles();
     assert.match(source, /id="theater-inst-tag-filter"/);
     assert.match(readFileSync(new URL('../history-ui.js', import.meta.url), 'utf8'), /id="theater-history-tag-filter"/);
     assert.match(source, /class="theater-history-tags">\$\{badges\}/);
