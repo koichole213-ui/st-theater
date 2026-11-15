@@ -357,3 +357,30 @@ test('复制服务器清单时保留同浏览器另一标签页刚保存的关�
     assert.equal(runtime.settings.serverBackupOff[origin], true);
     assert.equal(runtime.settings.serverBackups.length, 1);
 });
+
+test('大备份上传和读回按大小放宽等待时间，小请求仍按原来的时限', async () => {
+    const timers = [];
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn, ms) => { timers.push(ms); return realSetTimeout(() => {}, 0); };
+    try {
+        const bytes = new Uint8Array(6_000_000);
+        const stored = new Map();
+        const client = createServerBackupClient({
+            timeout: 45000,
+            getHeaders: () => ({}),
+            request: async (path, options) => {
+                const body = options.body ? JSON.parse(options.body) : null;
+                if (path === '/api/files/upload') { stored.set(body.name, Buffer.from(body.data, 'base64')); return json({ path: 'user/files/' + body.name }); }
+                if (path === '/api/files/verify') return json({ [body.urls[0]]: true });
+                return new Response(stored.get(path.slice(filesPrefix.length)));
+            },
+        });
+        await client.upload(bytes, backupName);
+        const [upload, verify, read] = timers;
+        assert.ok(upload >= 160000, `上传 8 MB base64 至少给 160 秒，实际 ${upload}`);
+        assert.equal(verify, 45000);
+        assert.ok(read >= 120000, `读回 6 MB 至少给 120 秒，实际 ${read}`);
+    } finally {
+        globalThis.setTimeout = realSetTimeout;
+    }
+});
