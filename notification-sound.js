@@ -1,4 +1,6 @@
-const SOUNDS_BASE_URL = '/scripts/extensions/third-party/st-theater/sounds/';
+import { EXTENSION_BASE_URL } from './extension-location.js';
+
+const SOUNDS_BASE_URL = `${EXTENSION_BASE_URL}sounds/`;
 
 let notifyAudio = null;
 
