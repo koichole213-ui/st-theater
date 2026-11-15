@@ -579,4 +579,3 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
 .theater-popup[data-skin="theater"] .theater-wb-group-arrow {
     color: var(--SmartThemeEmColor, var(--SmartThemeBodyColor, #2a2a2a)) !important;
 }
-

@@ -506,4 +506,3 @@ body :is(.popup,dialog.popup):has(.theater-filter-tags-popup) :is(.popup-content
 .theater-dream-summary-manual-editor p { margin:8px 0; text-align:left; font-size:12px; line-height:1.6; }
 .theater-dream-summary-editor-message { color:var(--t-warning); overflow-wrap:anywhere; }
 .theater-dream-summary-editor-message:empty { display:none; }
-

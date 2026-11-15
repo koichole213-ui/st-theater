@@ -527,4 +527,3 @@
 @media (prefers-reduced-motion:reduce) {
     .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions { animation:none; }
 }
-
