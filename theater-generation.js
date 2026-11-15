@@ -638,6 +638,13 @@ async function requestFinalRenderedHtml({
             markCompleted(runtime.lastRequestMetrics);
             runtime.recordRequestMetrics(runtime.lastRequestMetrics);
             const validated = validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText);
+            // “内容排除”里的标签，排版模型自己加的也去掉（正文已转义，不会被误伤）；去掉后正文少于九成五就不冒险，保留原排版。
+            const excluded = stripExcludedOutputTags(validated.finalHtml, runtime.settings?.contextExclusionRules);
+            if (excluded.removed) {
+                const keptChars = readableCharCount(htmlToPlainText(excluded.text));
+                if (keptChars >= Math.floor(validated.sourceChars * 0.95)) validated.finalHtml = excluded.text;
+                else runtime.runtimeLog('warn', '排版结果里的排除标签包住了正文，已保留原排版', { scope: metricScope, kept_chars: keptChars, source_chars: validated.sourceChars });
+            }
             runtime.runtimeLog(result?.stopReason === 'length' ? 'warn' : 'info', '最终 HTML 渲染完成', {
                 scope: metricScope,
                 attempt: renderAttempt,

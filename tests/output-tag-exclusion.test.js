@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { outputExclusionTags, stripExcludedOutputTags } from '../context-exclusions.js';
+import { createTheaterApi } from '../theater-api.js';
+import { createTheaterGeneration } from '../theater-generation.js';
 import { finalStoryOutput } from '../story-output.js';
 
 const body = '她推开门，雨还在下，街灯一盏一盏亮起来。'.repeat(5);
@@ -48,7 +50,7 @@ test('没有规则或规则读不到时原样返回', () => {
 test('普通生成（出字过程和最终结果）和长梦都接上了排除', () => {
     const generation = readFileSync(new URL('../theater-generation.js', import.meta.url), 'utf8');
     const dream = readFileSync(new URL('../long-dream-runtime.js', import.meta.url), 'utf8');
-    assert.equal(generation.match(/stripExcludedOutputTags\(/g)?.length, 2);
+    assert.equal(generation.match(/stripExcludedOutputTags\(/g)?.length, 3, '正文两处 + 排版一处');
     assert.match(generation, /excluded\.unwrapped\) formatRecovered = 'extra-wrapper'/);
     assert.equal(dream.match(/stripExcludedOutputTags\(/g)?.length, 2);
 });
@@ -111,4 +113,39 @@ test('开头的长思考块照常去掉；保留原文时不动脚本里的同�
     const kept = stripExcludedOutputTags(scripted, rules);
     assert.equal(kept.unwrapped, true);
     assert.match(kept.text, /const s = "<status>"/);
+});
+
+// 排版那一步（独立排版 API、手动重新排版、排版重试、长梦最终排版）都走 requestFinalRenderedHtml。
+async function layoutWith(responseHtml, rules) {
+    const previousDocument = globalThis.document;
+    globalThis.document = { createElement: () => ({ set innerHTML(v) { this.textContent = v.replace(/<[^>]*>/g, ''); }, querySelectorAll: () => [] }) };
+    const logs = [];
+    try {
+        const config = { apiMode: 'custom', apiUrl: 'https://body.example/v1', apiModel: 'body-model', contextExclusionRules: rules };
+        const runtime = { settings: config, extractHtml: v => v, runtimeLog: (level, message) => logs.push([level, message]), recordRequestMetrics() {},
+            requestConfiguredGenerationApi: async () => ({ text: responseHtml }) };
+        const apiRoute = createTheaterApi({ settings: config }).captureGenerationApiRoute({});
+        const result = await createTheaterGeneration(runtime).requestFinalRenderedHtml({ sourceText: '第一段正文写得很长，雨下了一整夜。\n\n第二段正文，天亮了她推开门。', rules: '样式', apiRoute, ctx: {} });
+        return { html: result.html, logs };
+    } finally { globalThis.document = previousDocument; }
+}
+const STATUS_RULE = [{ type: 'tag', value: 'status', enabled: true }];
+
+test('排版模型自己加的排除标签也会去掉，正文不受影响', async () => {
+    const { html } = await layoutWith('<html><body><status>好感度 +5｜天气：雨</status><p>{{THEATER_P0001}}</p><p>{{THEATER_P0002}}</p></body></html>', STATUS_RULE);
+    assert.doesNotMatch(html, /status|好感度/);
+    assert.match(html, /第一段正文/);
+    assert.match(html, /第二段正文/);
+});
+
+test('排版结果里排除标签包住了正文时不删正文', async () => {
+    const { html } = await layoutWith('<html><body><status><p>{{THEATER_P0001}}</p><p>{{THEATER_P0002}}</p></status></body></html>', STATUS_RULE);
+    assert.match(html, /第一段正文/);
+    assert.match(html, /第二段正文/);
+});
+
+test('没有排除规则时，排版结果原样保留', async () => {
+    const raw = '<html><body><status>好感度 +5</status><p>{{THEATER_P0001}}</p><p>{{THEATER_P0002}}</p></body></html>';
+    const { html } = await layoutWith(raw, []);
+    assert.match(html, /<status>好感度 \+5<\/status>/);
 });
