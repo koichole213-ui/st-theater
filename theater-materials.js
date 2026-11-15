@@ -37,8 +37,8 @@ function historyTagFilterLabel() {
 function contextExclusionSettingsHTML() {
     return `<div class="theater-section theater-context-exclusions">
         <details class="theater-addon-details theater-exclusion-panel" id="theater-context-exclusions">
-            <summary class="theater-addon-summary"><i class="fa-solid fa-filter" aria-hidden="true"></i><span class="theater-exclusion-heading"><b>前文排除</b><small>让小剧场不读取状态栏、尾注等内容</small></span><span id="theater-exclusion-count">${normalizeContextExclusionRules(runtime.settings.contextExclusionRules).filter(rule => rule.enabled).length} 条启用</span></summary>
-            <div class="theater-exclusion-body"><section class="theater-exclusion-rules-box"><p class="theater-hint">过滤聊天前文中的状态栏、固定尾注等内容。<br><span>只影响小剧场读取，聊天原文不会改变。</span></p>
+            <summary class="theater-addon-summary"><i class="fa-solid fa-filter" aria-hidden="true"></i><span class="theater-exclusion-heading"><b>内容排除</b><small>状态栏、思考标签等不读入前文，也不留在生成的正文里</small></span><span id="theater-exclusion-count">${normalizeContextExclusionRules(runtime.settings.contextExclusionRules).filter(rule => rule.enabled).length} 条启用</span></summary>
+            <div class="theater-exclusion-body"><section class="theater-exclusion-rules-box"><p class="theater-hint">过滤聊天前文中的状态栏、固定尾注等内容；按标签排除的规则，生成的正文里也会去掉同样的标签。<br><span>聊天原文不会改变。按原文精确排除的固定内容只影响前文。</span></p>
             <div class="theater-exclusion-group-heading"><b>已添加的排除规则</b><small>添加或切换后自动生效</small></div>
             <div id="theater-exclusion-list">${contextExclusionRulesHTML()}</div></section>
             <section class="theater-exclusion-add-box"><b class="theater-exclusion-step">① 选择排除方式</b>

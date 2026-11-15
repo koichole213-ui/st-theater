@@ -95,7 +95,7 @@ export function createChatContextReader(rules = []) {
     return source => previewWithRules(source, snapshot).text;
 }
 
-// 生成的正文也去掉“前文排除”里填的标签（只用“标签”类规则，固定内容类规则不动正文）。
+// 生成的正文也去掉“内容排除”（原名“前文排除”）里填的标签（只用“标签”类规则，固定内容类规则不动正文）。
 // 正文本身的 HTML 标签（div、p、style……）和正文信封 content 不会被拿来删正文，免得把整篇排版删掉。
 const STORY_HTML_TAGS = new Set(('a abbr address area article aside audio b base bdi bdo blockquote body br button canvas caption cite code col colgroup '
     + 'content data datalist dd del details dfn dialog div dl dt em embed fieldset figcaption figure font footer form h1 h2 h3 h4 h5 h6 head header hgroup hr '

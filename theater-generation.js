@@ -918,7 +918,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 requestOptions,
             });
             if (generationAbortController.signal.aborted || !ownsGeneration()) throw new DOMException('Aborted', 'AbortError');
-            // “前文排除”里的标签，生成的正文里也去掉；正文被整段包在这种标签里时只去掉标签、保留文字并提示。
+            // “内容排除”里的标签，生成的正文里也去掉；正文被整段包在这种标签里时只去掉标签、保留文字并提示。
             const excluded = stripExcludedOutputTags(typeof result === 'string' ? result : result?.text, runtime.settings?.contextExclusionRules);
             const output = finalStoryOutput(excluded.text, {
                 plainText: round !== 1 || isPlainTextRender, formatRecovered: result?.formatRecovered,
