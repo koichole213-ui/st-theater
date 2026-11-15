@@ -52,3 +52,55 @@ test('普通生成（出字过程和最终结果）和长梦都接上了排除',
     assert.match(generation, /excluded\.unwrapped\) formatRecovered = 'extra-wrapper'/);
     assert.equal(dream.match(/stripExcludedOutputTags\(/g)?.length, 2);
 });
+
+import { reasoningSafeContent } from '../reasoning-filter.js';
+
+const longStory = '<p>' + '城里下了一夜的雨，她把伞收起来，推门进了茶馆。'.repeat(80) + '</p>';
+
+test('只有结束思考标签：前面那段比后面长时整段保留，不丢正文', () => {
+    const tail = '<p>' + '最后一段补充说明的文字内容。'.repeat(5) + '</p>';
+    assert.equal(reasoningSafeContent(longStory + '</think>' + tail), longStory + tail);
+});
+
+test('代码块或脚本里出现的结束思考标签是作品内容，不当作思考结束', () => {
+    const tail = '<p>' + '故事继续往下走，灯火通明。'.repeat(10) + '</p>';
+    for (const inner of ['<pre><code>&lt;/think&gt;</think></code></pre>', '<script>const marker = "</think>"; console.log(marker);</script>']) {
+        const value = longStory + inner + tail;
+        assert.equal(reasoningSafeContent(value), value);
+    }
+});
+
+test('只有结束思考标签、前面是短思考、后面是正文时，仍然去掉前面的思考', () => {
+    const thought = '先想一下这一章要写什么。';
+    assert.equal(reasoningSafeContent(thought + '</think>' + longStory), longStory);
+});
+
+test('数字数时不把样式和脚本代码算成正文：正文被包住时走“保留原文”', () => {
+    const css = '<style>' + '.card{color:red;background:white;padding:12px;}'.repeat(10) + '</style>';
+    const raw = css + '<story><p>' + '她慢慢走到窗边，看着楼下的人群。'.repeat(25) + '</p></story><button>继续</button>';
+    const result = stripExcludedOutputTags(raw, [{ type: 'tag', value: 'story', enabled: true }]);
+    assert.equal(result.unwrapped, true);
+    assert.match(result.text, /她慢慢走到窗边/);
+    assert.doesNotMatch(result.text, /<story>/);
+    assert.match(result.text, /<style>/);
+});
+
+test('正文中间大段被这种标签包住时不删，保留文字并标记', () => {
+    const outside = '<p>' + '开头的一段故事。'.repeat(12) + '</p>';
+    const inside = '<p>' + '被标签包住的大段正文内容。'.repeat(40) + '</p>';
+    const raw = outside + '<plot>' + inside + '</plot>' + outside;
+    const result = stripExcludedOutputTags(raw, [{ type: 'tag', value: 'plot', enabled: true }]);
+    assert.equal(result.unwrapped, true);
+    assert.match(result.text, /被标签包住的大段正文内容/);
+});
+
+test('开头的长思考块照常去掉；保留原文时不动脚本里的同名字样', () => {
+    const thinking = '<reasoning>' + '分析人物动机与场景安排。'.repeat(60) + '</reasoning>';
+    const result = stripExcludedOutputTags(thinking + longStory, rules);
+    assert.equal(result.text, longStory);
+    assert.equal(result.unwrapped, false);
+    const scripted = '<script>const s = "<status>";</script><status><p>' + '整篇正文都在这里面。'.repeat(20) + '</p></status>';
+    const kept = stripExcludedOutputTags(scripted, rules);
+    assert.equal(kept.unwrapped, true);
+    assert.match(kept.text, /const s = "<status>"/);
+});

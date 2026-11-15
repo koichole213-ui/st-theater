@@ -1,3 +1,6 @@
+import { recoverHtmlText } from './html-integrity.js';
+import { readableCharCount } from './text-counter.js';
+
 export const MAX_CONTEXT_EXCLUSION_RULES = 30;
 export const MAX_CONTEXT_EXCLUSION_LENGTH = 16000;
 
@@ -35,6 +38,7 @@ function excludeTagBlocks(source, tagName) {
     let removed = 0;
     let text = '';
     let rawTextTag = '';
+    const blocks = [];
     for (const token of source.matchAll(tokens)) {
         const name = token[1]?.toLowerCase();
         if (!name) continue;
@@ -48,6 +52,7 @@ function excludeTagBlocks(source, tagName) {
         if (!closing && /\/\s*>$/.test(token[0])) {
             if (depth === 0) {
                 text += source.slice(cursor, token.index);
+                blocks.push([token.index, end]);
                 cursor = end;
                 removed++;
             }
@@ -56,12 +61,13 @@ function excludeTagBlocks(source, tagName) {
             depth++;
         } else if (depth > 0 && --depth === 0) {
             text += source.slice(cursor, start);
+            blocks.push([start, end]);
             cursor = end;
             removed++;
         }
     }
     // 缺失闭合标签时保留该区块，不能猜测删除范围而吞掉后续故事。
-    return { text: text + source.slice(cursor), removed, unclosed: depth > 0 ? 1 : 0 };
+    return { text: text + source.slice(cursor), removed, unclosed: depth > 0 ? 1 : 0, blocks };
 }
 
 function previewWithRules(source, rules) {
@@ -103,7 +109,9 @@ const STORY_HTML_TAGS = new Set(('a abbr address area article aside audio b base
     + 'picture pre progress q rp rt ruby s samp script search section select slot small source span strong style sub summary sup svg table tbody td '
     + 'template textarea tfoot th thead time title tr track u ul var video wbr center big tt strike font math g path circle rect line polyline polygon '
     + 'ellipse text tspan defs use symbol lineargradient radialgradient stop clippath mask pattern filter image foreignobject').split(' '));
-const readableChars = value => String(value || '').replace(/<[^>]*>/g, '').match(/[\p{Script=Han}\p{L}\p{N}]/gu)?.length || 0;
+// 只数读者看得到的字：样式、脚本里的代码不算。
+const readableChars = value => readableCharCount(recoverHtmlText(value));
+const MIDDLE_BLOCK_LIMIT = 200;
 
 export function outputExclusionTags(rules = []) {
     return [...new Set(normalizeContextExclusionRules(rules)
@@ -115,17 +123,28 @@ export function stripExcludedOutputTags(source, rules = []) {
     const original = String(source ?? '');
     const tags = outputExclusionTags(rules);
     if (!tags.length || !original) return { text: original, removed: 0, unwrapped: false };
-    let text = original, removed = 0;
+    let text = original, removed = 0, suspicious = false;
     for (const tag of tags) {
         const result = excludeTagBlocks(text, tag);
+        // 夹在正文中间、自己又有很多字的一整块，多半不是状态栏或思考，而是正文被包住了。
+        for (const [start, end] of result.blocks) {
+            if (readableChars(text.slice(start, end)) > MIDDLE_BLOCK_LIMIT
+                && readableChars(text.slice(0, start)) > 0 && readableChars(text.slice(end)) > 0) suspicious = true;
+        }
         text = result.text;
         removed += result.removed;
     }
     const before = readableChars(original);
-    // 去掉后几乎什么都不剩、原文又有不少文字：多半是正文被包在这个标签里了。只去掉标签本身，保留文字。
-    if (removed && before >= 50 && readableChars(text) < before / 5) {
+    // 去掉后剩下不到三分之一，或者正文中间有大段被去掉：不冒险删，只去掉标签本身、保留文字，并标记让界面提示“格式异常，已保留原文”。
+    if (removed && before >= 50 && (suspicious || readableChars(text) < before / 3)) {
         const marker = new RegExp(`<\\s*\\/?\\s*(?:${tags.map(tag => tag.replace(/[.]/g, '\\.')).join('|')})(?=[\\s/>])[^>]*>`, 'gi');
-        return { text: original.replace(marker, ''), removed, unwrapped: true };
+        const code = /<(script|style)(?=[\s/>])[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+        let unwrapped = '', cursor = 0;
+        for (const match of original.matchAll(code)) {
+            unwrapped += original.slice(cursor, match.index).replace(marker, '') + match[0];
+            cursor = match.index + match[0].length;
+        }
+        return { text: unwrapped + original.slice(cursor).replace(marker, ''), removed, unwrapped: true };
     }
     return { text, removed, unwrapped: false };
 }

@@ -11,7 +11,16 @@ const TAG_PREFIXES = Object.freeze([
     '</electric>',
 ]);
 
-const readableLength = value => String(value || '').replace(/<[^>]*>/g, '').match(/[\p{Script=Han}\p{L}\p{N}]/gu)?.length || 0;
+import { recoverHtmlText } from './html-integrity.js';
+import { readableCharCount } from './text-counter.js';
+
+// 只数读者看得到的字：样式、脚本里的代码不算。
+const readableLength = value => readableCharCount(recoverHtmlText(value));
+// 代码、脚本、样式里出现的 </think> 是作品内容，不当作思考结束标签。
+const RAW_REGION = /<(script|style|pre|code|textarea)(?=[\s/>])[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+function rawRegions(text) {
+    return [...text.matchAll(new RegExp(RAW_REGION))].map(match => [match.index, match.index + match[0].length]);
+}
 
 function trailingPartialTagLength(value) {
     const text = String(value || '');
@@ -37,12 +46,21 @@ export function filterTaggedReasoning(value) {
     let depth = 0;
     let hadReasoning = false;
     let loneClose = -1;
+    let regions = null;
     COMPLETE_TAG_PATTERN.lastIndex = 0;
 
     let match;
     while ((match = COMPLETE_TAG_PATTERN.exec(text)) !== null) {
         const segment = text.slice(cursor, match.index);
         if (depth === 0) content += segment;
+        cursor = COMPLETE_TAG_PATTERN.lastIndex;
+        regions ??= rawRegions(text);
+        const at = match.index;
+        if (regions.some(([start, end]) => at > start && at < end)) {
+            // 代码、脚本、样式里的这类字样是作品内容，原样保留。
+            if (depth === 0) content += match[0];
+            continue;
+        }
 
         const closing = match[1] === '/';
         const name = String(match[2] || '').toLocaleLowerCase();
@@ -52,7 +70,6 @@ export function filterTaggedReasoning(value) {
             else if (closing) depth--;
             else depth++;
         }
-        cursor = COMPLETE_TAG_PATTERN.lastIndex;
     }
 
     if (depth === 0) {
@@ -63,9 +80,12 @@ export function filterTaggedReasoning(value) {
             tail = tail.slice(0, -partialLength);
         }
         content += tail;
-        // 只有结束标签、没有开始标签：结束标签之前多半是没包起来的思考。结束标签之后有足够正文（至少 50 个字）时，
-        // 只保留之后的部分；正文太少时整段保留，宁可多留也不丢正文。
-        if (loneClose >= 0 && readableLength(content.slice(loneClose)) >= 50) content = content.slice(loneClose);
+        // 只有结束标签、没有开始标签：结束标签之前多半是没包起来的思考。只有当后面有足够正文（至少 50 个字），
+        // 而且前面那段不比后面长时，才只保留后面；否则整段保留，宁可多留也不丢正文。
+        if (loneClose >= 0) {
+            const after = readableLength(content.slice(loneClose));
+            if (after >= 50 && readableLength(content.slice(0, loneClose)) <= after) content = content.slice(loneClose);
+        }
     }
 
     return {
