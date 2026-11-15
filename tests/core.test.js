@@ -3798,6 +3798,8 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /class="theater-dream-chapter-editor-tools"/);
     assert.match(source, /class="ui-btn ui-btn-sm theater-dream-chapter-open/);
     assert.match(styles, /\.theater-dream-chapter-tools-toggle\s*\{[\s\S]*?width:44px;[\s\S]*?height:44px/);
+    // 手机上点过的按钮会一直保持 :hover；通用的 options-trigger:hover 会把 44px 外框涂成直角色块，手机端要在其后压回透明。
+    assert.match(styles, /@media \(max-width:520px\)[\s\S]*?\.theater-dream-chapter-tools-toggle\[aria-expanded="true"\] > i\s*\{[^}]*\}\s*\.theater-panel\[data-panel="long-dream"\] \.theater-dream-chapter-tools-toggle:hover\s*\{[^}]*background:transparent/);
     assert.match(styles, /\.theater-dream-chapter-editor-actions\s*\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
     assert.match(styles, /@media \(max-width:520px\)[\s\S]*?\.theater-dream-chapter-editor-actions\s*\{[\s\S]*?grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
     assert.match(styles, /#theater-dream-read-chapter-fullscreen\s*\{\s*grid-column:1 \/ -1/);

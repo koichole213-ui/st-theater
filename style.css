@@ -6982,6 +6982,7 @@ body dialog.popup:has(.theater-popup:not([data-skin="theater"]):not([data-skin="
     .theater-panel[data-panel="long-dream"] .theater-dream-chapter-tools-toggle:focus-visible { outline:2px solid var(--t-accent); outline-offset:2px; }
     .theater-panel[data-panel="long-dream"] .theater-dream-chapter-tools-toggle[aria-expanded="true"] { background:transparent; box-shadow:none; transform:translateY(-1px); }
     .theater-panel[data-panel="long-dream"] .theater-dream-chapter-tools-toggle[aria-expanded="true"] > i { color:var(--t-on-accent); background:var(--t-accent); }
+    .theater-panel[data-panel="long-dream"] .theater-dream-chapter-tools-toggle:hover { color:transparent; background:transparent; box-shadow:none; transform:none; }
     .theater-panel[data-panel="long-dream"] .theater-dream-chapter-editor-actions {
         position:absolute;
         z-index:20;
