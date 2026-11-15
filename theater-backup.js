@@ -20,6 +20,7 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
     let config = { enabled:false, local:true, github:false, server:true, days:1, repository:'', token:'', deviceName:'本机' };
     let state = {}, ready = null, busy = false, recoveredCount = 0;
     let catalog = [], indexPaths = new Set();
+    const SERVER_SETTINGS_LIMIT = 100;
     let serverAccount = null, accountReady;
     let progress = null;
     const progressLabels = {
@@ -176,7 +177,8 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
                 } catch { /* Keep the server mirror available when the local database is unavailable. */ }
             }
             await checkServerSession();
-            runtime.settings.serverBackups = mergeServerBackups(runtime.settings.serverBackups, catalog);
+            // 酒馆设置每次保存都整份上传，这里只留最近 100 条；完整清单在服务器的目录文件里。
+            runtime.settings.serverBackups = mergeServerBackups(runtime.settings.serverBackups, catalog).slice(0, SERVER_SETTINGS_LIMIT);
             try { runtime.save?.(); } catch (error) {
                 runtime.runtimeLog('warn', '酒馆备份清单保存失败', { reason: safeError(error) });
             }
@@ -190,6 +192,19 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
             return true;
         } catch (error) {
             runtime.runtimeLog('warn', '酒馆服务器备份目录补写未完成', { reason: safeError(error) });
+            return false;
+        }
+    }
+    // 关闭服务器备份时，同时记到酒馆设置里（浏览器被清后仍保持关闭）。账号一时核对不了就先只关本机，下次打开面板再补记。
+    async function syncServerOff() {
+        if (config.server !== false || !origin || !runtime.settings || runtime.settings.serverBackupOff?.[origin] === true) return true;
+        try {
+            await checkServerSession();
+            runtime.settings.serverBackupOff = { ...runtime.settings.serverBackupOff, [origin]: true };
+            runtime.save?.();
+            return true;
+        } catch (error) {
+            runtime.runtimeLog('warn', '关闭酒馆服务器备份的选择暂未同步到酒馆设置', { reason: safeError(error) });
             return false;
         }
     }
@@ -209,8 +224,8 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
         config = result.config;
         return true;
     }
-    async function uploadServerPacket(packet, bytes, now, { reduced, rescue, onVerifying } = {}) {
-        const path = await serverClient.upload(bytes, serverBackupName(packet, now, rescue), { onVerifying, checkSession: checkServerSession });
+    async function uploadServerPacket(packet, bytes, now, { reduced, rescue, onVerifying, name = serverBackupName(packet, now, rescue) } = {}) {
+        const path = await serverClient.upload(bytes, name, { onVerifying, checkSession: checkServerSession });
         return { path, origin, sourceId: packet.sourceId, device: packet.deviceName, time: now,
             counts: packet.counts, checksum: packet.checksum, bytes: bytes.length, ...(reduced ? { reduced: true } : {}) };
     }
@@ -286,6 +301,15 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
             const serverRequested = kinds.includes('server') && canRescueToServer();
             const originalKinds = kinds.filter(kind => kind !== 'server');
             if ((!serverRequested || (!serverOwnerConfirmed() && action !== 'save-server')) && !originalKinds.length) return;
+            if (automatic) {
+                // 自动备份先只看时间：都还没到期时，不读存档、不打包、不请求服务器，打开面板不会每次都卡一下。
+                const checkAt = Date.now(), every = config.days * 86400000;
+                const timeDue = previous => (!previous?.lastAttempt || checkAt - previous.lastAttempt > 300000)
+                    && (!previous?.time || checkAt - previous.time >= every);
+                const server = localServerState();
+                const serverDue = serverRequested && serverOwnerConfirmed() && (timeDue(server) || !!server?.pending?.length);
+                if (!serverDue && !originalKinds.some(kind => timeDue(state[kind]))) return;
+            }
             const snapshot=await storage.snapshot();
             stage('packing');
             const packet=await createCompleteBackup(snapshot.data,config);
@@ -328,10 +352,14 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
                 try {
                     stage(kind === 'local' ? 'downloading' : 'uploading', [kind]);
                     if (kind === 'server') {
-                        const entry = await uploadServerPacket(packet, bytes, now, { reduced: comparison.reduced,
+                        // 同样内容上次没传成功时沿用上次的文件名，重试会覆盖那份没校验过的文件，不在服务器上越堆越多。
+                        const retry = previous.failedUpload?.checksum === packet.checksum ? previous.failedUpload.name : '';
+                        const name = retry || serverBackupName(packet, now);
+                        state.server.failedUpload = { name, checksum: packet.checksum };
+                        const entry = await uploadServerPacket(packet, bytes, now, { reduced: comparison.reduced, name,
                             onVerifying: () => stage('verifying', [kind]) });
                         const pending = mergeServerBackups(previous.pending, previous.entry ? [previous.entry] : [], [entry]);
-                        state.server = { ...state.server, time: now, lastAttempt: now, entry, pending, error: undefined };
+                        state.server = { ...state.server, time: now, lastAttempt: now, entry, pending, error: undefined, failedUpload: undefined };
                         const [indexed] = await Promise.all([rememberServerEntries(pending), saveServerState()]);
                         if (indexed) state.server.pending = [];
                         Object.assign(state.server, serverUploadNotices(comparison, packet, previous));
@@ -375,6 +403,7 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
     async function onOpen() {
         if (runtime.archiveClosed) return;
         await initialize(); refresh();
+        await syncServerOff();
         if (busy) return;
         const kinds=[...(config.enabled && config.local?['local']:[]),...(config.enabled && config.github?['github']:[]),...(canRescueToServer()?['server']:[])];
         if (!kinds.length) return;
@@ -688,20 +717,19 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
                     const serverChanged = next.server !== serverWasEnabled;
                     if(next.enabled&&!next.local&&!next.github)throw new Error('请至少开启一种保存方式');
                     if(next.github){validateBackupRepository(next.repository);if(!next.token)throw new Error('请先填写 GitHub 访问密钥');}
-                    if (serverChanged) await checkServerSession();
+                    if (serverChanged && next.server) await checkServerSession();
                     const saved = await storage.saveConfiguration(latest => ({
                         ...next, sourceId: latest?.sourceId || next.sourceId, ownerHandle: latest?.ownerHandle,
                         server: serverChanged ? next.server : latest?.server ?? next.server,
                     }), previous.repository!==next.repository);
                     config = saved.config;
-                    if (serverChanged && origin && runtime.settings) {
+                    if (serverChanged && next.server && origin && runtime.settings) {
                         await checkServerSession();
                         const off = { ...runtime.settings.serverBackupOff };
-                        if (next.server) delete off[origin];
-                        else off[origin] = true;
+                        delete off[origin];
                         runtime.settings.serverBackupOff = off;
                         runtime.save?.();
-                    }
+                    } else if (serverChanged && !next.server) await syncServerOff();
                     if(saved.state)state=saved.state;
                     const serverToggle = document.getElementById('theater-backup-server');
                     if (serverToggle) serverToggle.checked = canRescueToServer();
