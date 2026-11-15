@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { extractPresetEntries } from '../preset-layout.js';
 import { resolveTheaterPreset } from '../preset-compat.js';
-import { composePresetMessages, composeGenerationContinuationMessages, insertMessagesAtDepth, dialogueExampleMessages } from '../request-layout.js';
+import { THEATER_TASK_PREAMBLE, composePresetMessages, composeGenerationContinuationMessages, insertMessagesAtDepth, dialogueExampleMessages } from '../request-layout.js';
 import { createTheaterGeneration } from '../theater-generation.js';
 import { buildLongDreamChapterMessages, buildLongDreamChapterPayload } from '../long-dream-payload.js';
 import { createLongDreamRecord } from '../long-dream.js';
@@ -63,7 +63,7 @@ test('two preset layouts keep their different identities order and put task befo
         assert.deepEqual(messages.filter(message => order.includes(message.sourceId)).map(message => message.sourceId), order);
         const current = messages.find(message => message.sourceId === 'theater-task');
         assert.equal(current.role, 'user');
-        assert.equal(current.content, 'PREVIOUS-STORY\n\nENHANCEMENT\n\nCURRENT\n\nFORMAT');
+        assert.equal(current.content, THEATER_TASK_PREAMBLE + '\n\nPREVIOUS-STORY\n\nENHANCEMENT\n\nCURRENT\n\nFORMAT');
         assert.ok(messages.indexOf(current) < messages.findIndex(message => message.content === 'TAIL'));
         assert.equal(messages.at(-1).content, 'PREFILL');
     }
@@ -72,7 +72,7 @@ test('two preset layouts keep their different identities order and put task befo
 test('depth counts combined current task once, and never counts preamble or preset tail', () => {
     const messages = composePresetMessages({ presetEntries: [marker('chatHistory'), { id: 'd1', content: 'DEPTH1', injectionPosition: 1, injectionDepth: 1 }, { id: 'd0', content: 'DEPTH0', injectionPosition: 1, injectionDepth: 0 }, { id: 'tail', content: 'TAIL' }],
         chatMessages: history, taskMessages: [task('FIRST'), task('SECOND')] });
-    assert.deepEqual(messages.slice(1).map(message => message.content), ['CHAT-OLD', 'CHAT-NEW', 'DEPTH1', 'FIRST\n\nSECOND', 'DEPTH0', 'TAIL']);
+    assert.deepEqual(messages.map(message => message.content), ['CHAT-OLD', 'CHAT-NEW', 'DEPTH1', THEATER_TASK_PREAMBLE + '\n\nFIRST\n\nSECOND', 'DEPTH0', 'TAIL']);
 });
 
 test('explicitly disabled dynamic anchors do not reappear as fallback', () => {

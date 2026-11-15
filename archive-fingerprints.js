@@ -21,7 +21,7 @@ function lossReason(expected, found) {
 export function createArchiveSafety(runtime, { origin = globalThis.location?.origin, toast = globalThis.toastr } = {}) {
     let lossToast;
     const fingerprints = () => runtime.settings.archiveFingerprints || {};
-    const canCount = () => !!origin && !!runtime.idb && !runtime.archiveStale
+    const canCount = () => !!origin && !!runtime.idb && !runtime.archiveStale && !runtime.archiveClosed
         && !Object.values(runtime.storageReadErrors || {}).some(Boolean);
     const measure = () => ({
         history: runtime.historyCache.length,
@@ -29,10 +29,11 @@ export function createArchiveSafety(runtime, { origin = globalThis.location?.ori
         chapters: runtime.longDreamCache.reduce((sum, dream) => sum + (dream.chapters?.length || 0), 0),
     });
     function saveFingerprint(value) {
+        const forcedClose = fingerprints()[origin]?.forcedClose;
         const entries = Object.entries(fingerprints()).filter(([key]) => key !== origin);
         entries.sort(([, a], [, b]) => String(b?.updatedAt || '').localeCompare(String(a?.updatedAt || '')));
         runtime.settings.archiveFingerprints = Object.fromEntries([
-            [origin, { ...value, updatedAt: new Date().toISOString() }],
+            [origin, { ...(forcedClose ? { forcedClose } : {}), ...value, updatedAt: new Date().toISOString() }],
             ...entries.slice(0, 19),
         ]);
         runtime.save();
@@ -131,5 +132,11 @@ export function createArchiveSafety(runtime, { origin = globalThis.location?.ori
             + (runtime.backup?.hasAutomaticGithub?.() ? '' : '当前作品没有任何自动的异地备份。');
         return { status: 'warn', detail };
     }
-    return { inspect, record, confirmCurrent, inspectProtection, protectionDiagnostic, lossMessage: archiveLossMessage };
+    function recordForcedClose(forcedClose) {
+        if (!origin) return;
+        const known = fingerprints()[origin];
+        saveFingerprint({ ...(known || forcedClose), forcedClose });
+    }
+    return { inspect, record, confirmCurrent, inspectProtection, protectionDiagnostic, lossMessage: archiveLossMessage,
+        recordForcedClose, lastForcedClose: () => fingerprints()[origin]?.forcedClose };
 }

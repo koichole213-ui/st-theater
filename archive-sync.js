@@ -8,7 +8,7 @@ export const archiveRevision = record => Number.isSafeInteger(record?.revision) 
 export function createArchiveSync(runtime, { Channel = globalThis.window?.BroadcastChannel, toast = globalThis.toastr } = {}) {
     let channel, tabId;
     function markStale() {
-        if (runtime.archiveStale) return;
+        if (runtime.archiveStale || runtime.archiveClosed) return;
         runtime.archiveStale = true;
         toast?.warning?.(message, '小剧场存档已更新', { timeOut: 0, extendedTimeOut: 0, closeButton: true });
     }
@@ -39,6 +39,7 @@ export function createArchiveSync(runtime, { Channel = globalThis.window?.Broadc
         } catch { /* Notifications can be disabled. */ }
     }
     function allowWrite() {
+        if (runtime.archiveRescue?.reportWriteFailure()) return false;
         if (!runtime.archiveStale) return true;
         toast?.warning?.('请刷新本页后再保存；如有新正文，请先复制。');
         return false;

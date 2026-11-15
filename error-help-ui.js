@@ -16,6 +16,7 @@ const stepsHTML = steps => '<ol>' + steps.map(step => '<li>' + esc(step) + '</li
 const sideHTML = side => `<span class="teh-side teh-side-${side}">${sides[side]}</span>`;
 
 function workStatus(issue, retained) {
+    if (issue.archiveClosed) return ['danger', '浏览器已关闭本地存档，这次没有保存。请先下载抢救备份，再刷新页面。'];
     const connectionCheck = /连接测试|测试连接|获取模型|模型列表|排版\s*API\s*连接/.test(issue.stage || '');
     if (issue.contextNote) return ['kept', issue.contextNote];
     if (issue.signal === 'T-STORAGE-WRITE') return ['danger', '这次的内容还没存进浏览器，请先复制或导出。'];

@@ -5,13 +5,16 @@ import { normalizeTagList, itemTags } from './tag-system.js';
 import { previousResults } from './result-text-edit.js';
 import { createArchiveSafety } from './archive-fingerprints.js';
 import { archiveRevision, createArchiveSync } from './archive-sync.js';
+import { archiveWriteFailureDetail, createArchiveRescue } from './archive-rescue.js';
 
 export function createTheaterStorage(runtime, archiveOptions) {
 runtime.archiveSafety = createArchiveSafety(runtime, archiveOptions);
 runtime.archiveSync = createArchiveSync(runtime, archiveOptions);
+runtime.archiveRescue = createArchiveRescue(runtime, archiveOptions);
 const longDreamWrites = new Map();
 
 function queueLongDreamWrite(id, operation) {
+    if (runtime.archiveRescue?.reportWriteFailure()) return Promise.resolve(false);
     const key = String(id);
     const pending = longDreamWrites.get(key) || Promise.resolve();
     const task = pending.then(operation);
@@ -46,6 +49,7 @@ function idbTransactionDone(transaction) {
 
 // @theater-source-begin storageInit
 async function storageInit() {
+    if (runtime.archiveClosed) return;
     if (runtime.historyMigrationPreview) {
         const previous = runtime.historyMigrationPreview;
         runtime.historyCache = runtime.historyCache.filter(item => !previous.items.includes(item));
@@ -109,6 +113,7 @@ async function storageInit() {
     }
 
     const opened = runtime.idb;
+    opened.onclose = () => runtime.archiveRescue?.forcedClose(opened);
     if (runtime.archiveSync) {
         runtime.archiveSync.open();
         opened.onversionchange = () => {
@@ -311,8 +316,9 @@ async function histAddStorage(item) {
         runtime.archiveSync?.publish('history-add');
         return true;
     } catch (e) {
+        if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 保存历史失败:', e);
-        toastr.error('保存失败（本地数据库写入出错）：' + (e?.message || e));
+        toastr.error('保存失败（本地数据库写入出错）：' + archiveWriteFailureDetail(e));
         return false;
     }
 }
@@ -354,8 +360,9 @@ async function histDeleteStorage(ids) {
         runtime.archiveSync?.publish('history-delete');
         return true;
     } catch (e) {
+        if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 删除历史失败:', e);
-        toastr.error('删除失败（本地数据库出错）：' + (e?.message || e));
+        toastr.error('删除失败（本地数据库出错）：' + archiveWriteFailureDetail(e));
         return false;
     }
 }
@@ -386,6 +393,7 @@ async function recentPersist(recent = runtime.recentCache, current = runtime.cur
         runtime.archiveSync?.publish('recent');
         return true;
     } catch (e) {
+        if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 保存最近生成失败:', e);
         toastr.error('本地保存失败，原有结果已保留，请先保存重要作品');
         return false;
@@ -395,6 +403,7 @@ async function recentPersist(recent = runtime.recentCache, current = runtime.cur
 
 // @theater-source-begin queueResultStorage
 function queueResultStorage(operation) {
+    if (runtime.archiveRescue?.reportWriteFailure()) return Promise.resolve(false);
     const task = runtime.resultStorageQueue.then(operation);
     runtime.resultStorageQueue = task.catch(() => {});
     return task;
@@ -458,6 +467,7 @@ async function persistResultLayout(item, updated, canCommit) {
         else runtime.archiveSync?.publish('result-layout');
         return changed;
     } catch (error) {
+        if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 保存结果排版失败:', error);
         toastr.error('本地保存失败，原有排版已保留');
         return false;
@@ -523,8 +533,9 @@ async function longDreamAdd(record) {
         runtime.archiveSync?.publish('dream-add');
         return copy;
     } catch (e) {
+        if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 保存长梦失败:', e);
-        toastr.error('保存长梦失败（本地数据库写入出错）：' + (e?.message || e));
+        toastr.error('保存长梦失败（本地数据库写入出错）：' + archiveWriteFailureDetail(e));
         return false;
     }
 }
@@ -584,8 +595,9 @@ async function longDreamPutStorage(record, { onConflict, applyToLatest } = {}) {
         runtime.archiveSync?.publish('dream-put');
         return normalized;
     } catch (e) {
+        if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 更新长梦失败:', e);
-        if (!runtime.archiveStale) toastr.error('更新长梦失败（本地数据库写入出错）：' + (e?.message || e));
+        if (!runtime.archiveStale) toastr.error('更新长梦失败（本地数据库写入出错）：' + archiveWriteFailureDetail(e));
         return false;
     }
 }
@@ -635,6 +647,7 @@ async function updateLongDreamLayoutStorage(id, changeLayout) {
         runtime.archiveSync?.publish('dream-layout');
         return true;
     } catch (error) {
+        if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 保存长梦排版失败:', error);
         toastr.error('本地保存失败，原有排版已保留');
         return false;
@@ -666,8 +679,9 @@ async function longDreamDeleteStorage(id) {
         runtime.archiveSync?.publish('dream-delete');
         return true;
     } catch (e) {
+        if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 删除长梦失败:', e);
-        toastr.error('删除长梦失败（本地数据库写入出错）：' + (e?.message || e));
+        toastr.error('删除长梦失败（本地数据库写入出错）：' + archiveWriteFailureDetail(e));
         return false;
     }
 }
@@ -701,8 +715,9 @@ async function histPutStorage(item) {
         runtime.archiveSync?.publish('history-put');
         return true;
     } catch (e) {
+        if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 更新历史失败:', e);
-        toastr.error('更新历史失败（本地数据库写入出错）：' + (e?.message || e));
+        toastr.error('更新历史失败（本地数据库写入出错）：' + archiveWriteFailureDetail(e));
         return false;
     }
 }
@@ -710,6 +725,7 @@ async function histPutStorage(item) {
 
 // @theater-source-begin queueHistoryWrite
 function queueHistoryWrite(operation) {
+    if (runtime.archiveRescue?.reportWriteFailure()) return Promise.resolve(false);
     const next = runtime.historyWriteQueue.then(operation, operation);
     runtime.historyWriteQueue = next.catch(() => {});
     return next;

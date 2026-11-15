@@ -6,7 +6,7 @@ export const BACKUP_IMPORT_STAGES = Object.freeze({
     remoteList:'正在读取远端备份列表…', remoteDownload:'正在下载所选备份…', writing:'正在恢复所选内容…',
 });
 const scopes = new Set(['all','instructions','history','dreams','recent']);
-const sources = new Set(['local','github']);
+const sources = new Set(['local','github','server']);
 let sequence=0;
 export function backupFileMetadata(files) {
     return { files:files.length, bytes:files.reduce((sum,file)=>sum+(Number(file.size)||0),0),

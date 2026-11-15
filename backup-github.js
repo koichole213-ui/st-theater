@@ -53,12 +53,13 @@ export function createGithubBackupClient(config, { request = globalThis.fetch, t
     }
     return {
         test: repositoryInfo,
-        async upload(bytes, { sourceId, deviceName, counts, timestamp = Date.now() }) {
+        async upload(bytes, { sourceId, deviceName, counts, timestamp = Date.now(), onVerifying }) {
             if (bytes.length > MAX_GITHUB_BACKUP_BYTES) throw new Error('备份压缩后仍超过 48 MB，请先下载到本机保留');
             const info = await repositoryInfo();
             const folder = `${String(deviceName || '本机').replace(/[\\/<>:"|?*\u0000-\u001f]/g, '_').slice(0, 30)}-${sourceId}`;
             const path = `backups/${folder}/${timestamp}--h${counts.history}-d${counts.dreams}-i${counts.instructions}--${newHistoryKey()}.zip`;
             const result = await call(`/contents/${encodePath(path)}`, { method: 'PUT', body: { message: 'Save st-theater backup', branch: info.default_branch || 'main', content: bytesToBase64(bytes) } });
+            onVerifying?.();
             const header = new TextEncoder().encode(`blob ${bytes.length}\0`);
             const blob = new Uint8Array(header.length + bytes.length); blob.set(header); blob.set(bytes, header.length);
             if (!result.commit?.sha || result.content?.sha !== await digest(blob, 'SHA-1')) throw new Error('上传结果校验未通过，请核对远端文件');

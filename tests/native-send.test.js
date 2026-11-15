@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyPromptPostProcessing, composeGenerationContinuationMessages } from '../request-layout.js';
+import { THEATER_TASK_PREAMBLE, applyPromptPostProcessing, composeGenerationContinuationMessages } from '../request-layout.js';
 import { buildApiRequest } from '../api-client.js';
 import { createIndependentRequest } from '../independent-request.js';
 import { requestCustomApi, requestMainApi } from '../api-runtime.js';
@@ -169,6 +169,14 @@ test('ordinary first round, continuation and long-dream composition stay intact 
             assert.deepEqual(actual, pair(nativeStrict(messages)));
             assert.deepEqual(actual.at(-1), { role: 'user', content: 'VIRTUAL_TAIL' });
             assert.ok(actual.some(m => m.content.includes('VIRTUAL_ASSISTANT')));
+            const instructions = actual.filter(message => message.content.includes(THEATER_TASK_PREAMBLE));
+            assert.equal(instructions.length, 1);
+            assert.equal(instructions[0].role, 'user');
+            assert.equal(actual[0].content.split('\n')[0], 'VIRTUAL_PRESET');
+            let main;
+            await requestMainApi({ ctx: host, messages, postProcessing: 'strict', shouldStream: false,
+                chatCompletionService: { async processRequest(request) { main = request.messages; return { text: 'VIRTUAL_REPLY' }; } } });
+            assert.deepEqual(main, actual);
         }
     } finally { globalThis.SillyTavern = previous; }
 });

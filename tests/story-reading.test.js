@@ -42,7 +42,8 @@ test('手动纯文字阅读可恢复原排版，跳过过期或外部窗口的�
     };
     const frame = { contentWindow: {}, isConnected: true, style: {}, getClientRects: () => [1], setAttribute() {} };
     const fallback = { focus() { this.focused = true; } };
-    const button = {};
+    const label = {}, icon = {};
+    const button = { querySelector: selector => selector === 'span' ? label : icon };
     const noticeButton = {};
     const notice = { querySelector: () => noticeButton };
     const errors = [], swipes = [];
@@ -75,14 +76,16 @@ test('手动纯文字阅读可恢复原排版，跳过过期或外部窗口的�
         assert.equal(frame.srcdoc, '');
         assert.equal(fallback.textContent, '开头\n结尾');
         assert.equal(fallback.focused, true);
-        assert.equal(button.textContent, '恢复原排版');
+        assert.equal(label.textContent, '恢复原排版');
+        assert.equal(icon.className, 'fa-solid fa-rotate-left');
         reading.setEditing(true);
         assert.equal(fallback.hidden, true);
         assert.equal(button.hidden, true);
         reading.setEditing(false);
         assert.equal(fallback.hidden, false);
         button.onclick();
-        assert.equal(button.textContent, '纯文字阅读');
+        assert.equal(label.textContent, '纯文字阅读');
+        assert.equal(icon.className, 'fa-solid fa-align-left');
         assert.equal(frame.hidden, false);
         assert.match(frame.srcdoc, /throw new Error\("story"\)/);
         assert.notEqual(getRenderId(), firstId);
@@ -105,5 +108,7 @@ test('阅读页的重新排版和纯文字阅读同在已有操作菜单内', ()
     const menu = html.match(/<div id="theater-reading-actions"[\s\S]*?<\/div>/)?.[0];
     assert.match(menu, /data-relayout="read"[^>]*role="menuitem"/);
     assert.match(menu, /data-reader-plain-reading[^>]*role="menuitem"/);
+    assert.deepEqual([...menu.matchAll(/<span>([^<]+)<\/span>/g)].map(match => match[1]),
+        ['保存', '全屏阅读', '复制HTML', '续写', '编辑文字', '重新排版', '纯文字阅读', '移除结果']);
     assert.equal((html.match(/data-relayout="read"/g) || []).length, 1);
 });

@@ -63,6 +63,7 @@ function diagnosticCatalogHTML({ recent = false } = {}) {
 function buildDiagnostics() {
     const protection = runtime.archiveSafety?.protectionDiagnostic();
     const loss = runtime.archiveLossSuspected;
+    const forcedClose = runtime.archiveSafety?.lastForcedClose?.();
     const lossTrigger = loss?.reason ? ` · 触发：${loss.reason}${loss.version ? `（v${loss.version}）` : ''}` : '';
     const provider = runtime.lastRequestIssue?.providerMessage;
     const providerNote = provider?.zh ? ` · 服务商说明：${provider.zh}` : '';
@@ -99,9 +100,10 @@ function buildDiagnostics() {
         diagnosticLine(timingStatus, '最近请求计时', timingDetail),
         diagnosticLine(apiMode === 'main' || !channelIssue ? 'ok' : 'bad', 'API 配置', apiMode === 'main' ? '使用酒馆当前 API 设置' : (channelIssue || (channel === 'vertex' ? `已保存酒馆凭证引用，Gemini 模型：${apiModel}` : `已填写，模型：${apiModel}${apiKey ? '，已填写 Key' : '，未填写 Key（OpenAI 兼容本地服务可为空）'}`))),
         diagnosticLine(typeof fetch === 'function' && typeof AbortController === 'function' ? 'ok' : 'bad', '请求能力', 'fetch / AbortController ' + (typeof fetch === 'function' && typeof AbortController === 'function' ? '可用' : '不可用')),
-        diagnosticLine(window.indexedDB ? (runtime.idb ? 'ok' : 'warn') : 'bad', '本地存档库', window.indexedDB ? (runtime.idb ? 'IndexedDB 已打开' : 'IndexedDB 存在，但当前未打开，可能会回退到 settings') : '浏览器不支持 IndexedDB'),
+        diagnosticLine(runtime.archiveClosed ? 'bad' : (window.indexedDB ? (runtime.idb ? 'ok' : 'warn') : 'bad'), '本地存档库', runtime.archiveClosed ? '浏览器已关闭本地存档，请先下载抢救备份，再刷新页面。' : (window.indexedDB ? (runtime.idb ? 'IndexedDB 已打开' : 'IndexedDB 存在，但当前未打开，可能会回退到 settings') : '浏览器不支持 IndexedDB')),
         ...(protection ? [diagnosticLine(protection.status, '站点数据保护', protection.detail)] : []),
         ...(runtime.archiveLossSuspected ? [diagnosticLine('warn', '存档疑似丢失', runtime.archiveSafety.lossMessage(loss) + lossTrigger)] : []),
+        ...(forcedClose ? [diagnosticLine('warn', '存档连接异常关闭', `存档连接曾于 ${new Date(forcedClose.at).toLocaleString('zh-CN', { hour12: false })} 被浏览器关闭（当时页面里有普通历史 ${forcedClose.history} 条、长梦 ${forcedClose.dreams} 部）。`)] : []),
         ...(runtime.backup ? [diagnosticLine(runtime.backup.diagnosticLevel(), '定期备份', runtime.backup.diagnosticText())] : []),
         diagnosticLine('warn', '历史存储提示', '历史存在浏览器本地存储里。夸克等手机浏览器崩溃或清理后可能丢失，建议定期批量导出备份'),
         diagnosticLine(customRenderOk ? 'ok' : 'bad', '渲染模板', customRenderOk ? `当前模板：${runtime.renderSelectionMeta(selectedRender, runtime.settings.renderTemplates).name}` : `当前选择 ${selectedRender} 找不到对应模板`),

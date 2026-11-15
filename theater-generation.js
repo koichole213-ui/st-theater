@@ -29,7 +29,10 @@ import { itemTags } from './tag-system.js';
 export function createTheaterGeneration(runtime) {
 // @theater-source-begin htmlToPlainText
 function htmlToPlainText(html) {
-    const div = document.createElement('div');
+    // 放进一个不显示、不加载图片、不运行事件代码的空白文档里解析。
+    // 直接用酒馆页面的 document 解析时，作品里 <img onerror/onload> 的代码会在酒馆页面上运行。
+    const doc = document.implementation?.createHTMLDocument?.('') || document;
+    const div = doc.createElement('div');
     // 先用正则预清理完整 HTML 文档结构，避免某些浏览器 innerHTML 解析不彻底
     let cleaned = html
         .replace(/<!(DOCTYPE|doctype)[^>]*>/gi, '')

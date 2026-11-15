@@ -3826,7 +3826,7 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.match(styles, /@media \(max-width:520px\)[\s\S]*?\.theater-dream-chapter-tools-toggle\[aria-expanded="true"\] > i\s*\{[^}]*\}\s*\.theater-panel\[data-panel="long-dream"\] \.theater-dream-chapter-tools-toggle:hover\s*\{[^}]*background:transparent/);
     assert.match(styles, /\.theater-dream-chapter-editor-actions\s*\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
     assert.match(styles, /@media \(max-width:520px\)[\s\S]*?\.theater-dream-chapter-editor-actions\s*\{[\s\S]*?grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
-    assert.match(styles, /#theater-dream-read-chapter-fullscreen\s*\{\s*grid-column:1 \/ -1/);
+    assert.doesNotMatch(styles, /#theater-dream-read-chapter-fullscreen\s*\{\s*grid-column:1 \/ -1/);
     assert.match(styles, /@media \(min-width:521px\)[\s\S]*?\.theater-dream-chapter-editor-actions\[hidden\]\s*\{\s*display:grid/);
     assert.match(styles, /\.theater-panel\[data-panel="long-dream"\]\s*\{\s*font-size:var\(--t-text-base\)/);
     assert.match(styles, /dialog\.theater-export-format-dialog/);
@@ -3835,13 +3835,13 @@ test('长梦提供逐章目录、完卷恢复和独立备份入口', () => {
     assert.doesNotMatch(source, /注意：本地 \$\{reference\.toLocaleString\(\)\} 字符参考线已超出/);
 });
 
-test('v4.4.8d 版本号在代码、清单、样式头和设置页保持一致', () => {
+test('v4.4.8e 版本号在代码、清单、样式头和设置页保持一致', () => {
     const source = readTheaterImplementation();
     const styles = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
     const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
-    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.8d'/);
-    assert.equal(manifest.version, '4.4.8d');
-    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.8d\b/);
+    assert.match(source, /const (?:runtime\.)?VERSION = '4\.4\.8e'/);
+    assert.equal(manifest.version, '4.4.8e');
+    assert.match(styles, /^\/\* 千夜浮梦 · 小剧场生成器 v4\.4\.8e\b/);
     assert.match(source, /当前版本 v\$\{(?:runtime\.)?VERSION\}/);
 });
 

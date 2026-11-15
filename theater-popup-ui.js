@@ -70,6 +70,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
         <div class="theater-tab${activeTabClass('diagnostics')}" data-tab="diagnostics">诊断</div>
         <div class="theater-tab${activeTabClass('config')}" data-tab="config">设置${runtime.hasRemoteUpdate() ? runtime.updateBadgeHTML() : ''}</div>
     </div>
+    <div data-archive-rescue-slot></div>
     <div class="theater-panels-wrapper">
 
     <!-- ===== 1. 生成 ===== -->
@@ -134,15 +135,15 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                 <div class="theater-result-toolbox ${runtime.settings.resultBookmarkEnabled !== false ? `is-bookmark is-${normalizeBookmarkSide(runtime.settings.resultBookmarkSide)}` : 'is-inline-menu'}">
                     <div id="theater-result-actions" class="theater-btn-row theater-result-actions" role="menu" aria-label="生成结果操作">
                         <div id="theater-save-history-btn" class="theater-btn" role="menuitem"><i class="fa-solid fa-bookmark"></i><span>保存</span></div>
-                        <div id="theater-copy-html-btn" class="theater-btn" role="menuitem"><i class="fa-solid fa-copy"></i><span>复制文字</span></div>
                         <div id="theater-fullscreen-btn" class="theater-btn" role="menuitem"><i class="fa-solid fa-expand"></i><span>全屏阅读</span></div>
+                        <div id="theater-copy-html-btn" class="theater-btn" role="menuitem"><i class="fa-solid fa-copy"></i><span>复制文字</span></div>
                         <div id="theater-continue-btn" class="theater-btn" role="menuitem"><i class="fa-solid fa-forward"></i><span>续写</span></div>
                         <div id="theater-edit-result-btn" class="theater-btn" role="menuitem"><i class="fa-solid fa-pen-to-square"></i><span>编辑文字</span></div>
-                        <div id="theater-delete-result-btn" class="theater-btn danger-soft" role="menuitem"><i class="fa-solid fa-trash-can"></i><span>移除结果</span></div>
                         <div id="theater-save-edit-btn" class="theater-btn primary" role="menuitem" style="display:none;"><i class="fa-solid fa-check"></i><span>应用修改</span></div>
                         <div id="theater-cancel-edit-btn" class="theater-btn" role="menuitem" style="display:none;"><i class="fa-solid fa-xmark"></i><span>退出编辑</span></div>
-                        <button type="button" data-relayout="generate" class="theater-btn theater-relayout-menu" role="menuitem" hidden>重新排版</button>
-                        <button type="button" id="theater-output-reading-toggle" class="theater-btn theater-plain-reading-menu" role="menuitem" hidden>纯文字阅读</button>
+                        <button type="button" data-relayout="generate" class="theater-btn theater-relayout-menu" role="menuitem" hidden><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>重新排版</span></button>
+                        <button type="button" id="theater-output-reading-toggle" class="theater-btn theater-plain-reading-menu" role="menuitem" hidden><i class="fa-solid fa-align-left" aria-hidden="true"></i><span>纯文字阅读</span></button>
+                        <div id="theater-delete-result-btn" class="theater-btn danger-soft" role="menuitem"><i class="fa-solid fa-trash-can"></i><span>移除结果</span></div>
                     </div>
                     <button id="theater-result-actions-toggle" class="theater-result-actions-toggle" type="button" aria-expanded="false" aria-controls="theater-result-actions" title="结果操作；可上下拖动并吸附左右页边">
                         <span class="theater-result-bookmark-lamp">${LAMP_SVG_HTML}</span>
@@ -166,7 +167,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                 <div class="theater-continuation-actions">
                     <button type="button" class="theater-btn" id="theater-cont-rewrite">重写本段</button>
                     <button type="button" class="theater-btn primary" id="theater-cont-next">接着这一版续写</button>
-                    <button type="button" class="theater-btn" data-relayout="continuation" hidden>重新排版</button>
+                    <button type="button" class="theater-btn" data-relayout="continuation" hidden><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>重新排版</span></button>
                 </div>
             </div>
             <div id="theater-output-container">

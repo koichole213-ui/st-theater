@@ -269,8 +269,13 @@ export function composePresetMessages({
     const entries = activePresetEntries(selected, layoutContext.generationType || 'normal');
     const disabled = new Set([...(layoutContext.disabledSlotIds || []), ...selected.filter(entry => !entries.includes(entry)).map(entry => entry.id)]);
     const taskParts = normalizeRequestMessages(taskMessages);
-    const task = taskParts.length ? [{ role: 'user', content: taskParts.map(message => message.content).join('\n\n'), source: 'theater-task', sourceId: 'theater-task' }] : [];
-    const messages = task.length ? [{ role: 'system', content: THEATER_TASK_PREAMBLE, source: 'theater-task', sourceId: 'task-preamble' }] : [];
+    const task = taskParts.length ? [{
+        role: 'user',
+        content: [THEATER_TASK_PREAMBLE, ...taskParts.map(message => message.content)].join('\n\n'),
+        source: 'theater-task',
+        sourceId: 'theater-task',
+    }] : [];
+    const messages = [];
     const structural = entry => ['chatHistory', 'dialogueExamples'].includes(entry.id);
     const relativeEntries = entries.filter(entry => structural(entry) || Number(entry?.injectionPosition) !== 1);
     const absoluteEntries = entries.filter(entry => !structural(entry) && Number(entry?.injectionPosition) === 1);
