@@ -36,6 +36,7 @@ import { listPage, listPaginationHTML, requestedListPage } from './pagination.js
 import { playSoundFile } from './notification-sound.js';
 import { bindPersonaFollowRefresh, syncPersonaToSettings, readPromptPlacement } from './persona-follow.js';
 import { compareVersion, fetchInstalledExtensionStatus, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
+import { EXTENSION_TEMPLATE_PATH } from './extension-location.js';
 import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
 import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
@@ -380,7 +381,7 @@ async function init() {
     await migrateHistoryTags();
     applyUIFontSize();
 
-    const html = await renderExtensionTemplateAsync('third-party/st-theater', 'settings');
+    const html = await renderExtensionTemplateAsync(EXTENSION_TEMPLATE_PATH, 'settings');
     $('#extensions_settings2').append(html);
     $('#theater-settings-version').text(`v${VERSION}`);
     $('#theater-open-btn').on('click', openTheaterPopup);

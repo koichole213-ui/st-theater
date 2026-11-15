@@ -1,5 +1,6 @@
 // theater-update: receives live state and cross-feature callbacks from index.js.
 import { fetchInstalledExtensionStatus, formatVersionCheckError, fetchLatestRemoteVersion, compareVersion } from './version-check.js';
+import { EXTENSION_FOLDER, extensionScopeAttempts, resolveExtensionScope } from './extension-location.js';
 
 export function createTheaterUpdate(runtime) {
 // @theater-source-begin checkRemoteVersion
@@ -121,16 +122,19 @@ async function updateExtension() {
         const headers = ctx.getRequestHeaders
             ? ctx.getRequestHeaders()
             : { 'Content-Type': 'application/json' };
-        // 先试 user 范围（默认），失败再试 global —— 用户可能装在 system-wide
+        // 先问酒馆插件装在“当前用户”还是“所有用户”，只按那个范围更新；问不到时才先 user 再 global。
+        // （TT 酒馆会把失败的后台命令弹成“后端错误”，所以不能每次都先试错。）
         const tryUpdate = async (global) => fetch('/api/extensions/update', {
             method: 'POST',
             headers,
-            body: JSON.stringify({ extensionName: 'st-theater', global }),
+            body: JSON.stringify({ extensionName: EXTENSION_FOLDER, global }),
         }).catch(err => ({ ok: false, status: 0, _err: err }));
 
-        let resp = await tryUpdate(false);
-        if (!resp.ok && (resp.status === 404 || resp.status === 400)) {
-            resp = await tryUpdate(true);
+        const attempts = extensionScopeAttempts(await resolveExtensionScope());
+        let resp;
+        for (let i = 0; i < attempts.length; i++) {
+            resp = await tryUpdate(attempts[i]);
+            if (resp.ok || !(resp.status === 404 || resp.status === 400)) break;
         }
 
         if (resp.ok) {
