@@ -167,3 +167,65 @@ test('站点保护只相信 persisted，HTTP 环境不读取 StorageManager', as
     } }), 'unknown');
     assert.equal(safety.protectionDiagnostic().status, 'warn');
 });
+
+function fakeStorage() {
+    const data = new Map();
+    return { getItem: name => data.get(name) ?? null, setItem: (name, value) => data.set(name, String(value)) };
+}
+function deviceSetup(settings, deviceStorage, count) {
+    const warnings = [], info = [];
+    const runtime = { settings, idb: {}, historyCache: rows(count), longDreamCache: [], VERSION: '4.4.8f', save() {}, runtimeLog() {} };
+    createTheaterStorage(runtime, { origin, deviceStorage, toast: { warning: (...args) => warnings.push(args), info: message => info.push(message), clear() {} } });
+    return { runtime, safety: runtime.archiveSafety, warnings, info };
+}
+
+test('同一网址的电脑和手机各记各的数量，不会互相误报', () => {
+    const settings = {};
+    const pcStorage = fakeStorage(), phoneStorage = fakeStorage();
+    const pc = deviceSetup(settings, pcStorage, 400);
+    pc.safety.inspect();
+    const phone = deviceSetup(settings, phoneStorage, 20);
+    phone.safety.inspect();
+    assert.equal(phone.runtime.archiveLossSuspected, undefined);
+    assert.equal(phone.warnings.length, 0);
+    phone.runtime.historyCache = rows(21);
+    phone.safety.record();
+    const pcAgain = deviceSetup(settings, pcStorage, 400);
+    pcAgain.safety.inspect();
+    assert.equal(pcAgain.warnings.length, 0);
+    // 电脑的作品库被浏览器回收（localStorage 还在）：仍按这台电脑自己的基准报疑似丢失。
+    const pcWiped = deviceSetup(settings, pcStorage, 0);
+    pcWiped.safety.inspect();
+    assert.match(pcWiped.warnings[0][0], /这个浏览器里的普通历史从 400 条变成了 0 条/);
+    assert.equal(Object.keys(settings.archiveFingerprints).filter(name => name.startsWith(origin + '#')).length, 2);
+});
+
+test('作品库和浏览器编号一起被清空时，当作新的浏览器存储并列出其他记录', () => {
+    const settings = {};
+    deviceSetup(settings, fakeStorage(), 400).safety.inspect();
+    const fresh = deviceSetup(settings, fakeStorage(), 0);
+    fresh.safety.inspect();
+    assert.equal(fresh.warnings.length, 0);
+    assert.match(fresh.info[0], new RegExp(`${origin.replace(/[.]/g, '\\.')}：普通历史 400 条`));
+    assert.doesNotMatch(fresh.info[0], /#/);
+});
+
+test('读不到 localStorage 时退回只按网址记，和以前一样', () => {
+    for (const deviceStorage of [null, { getItem() { throw new Error('SecurityError'); }, setItem() {} }]) {
+        const settings = {};
+        deviceSetup(settings, deviceStorage, 3).safety.inspect();
+        assert.deepEqual(Object.keys(settings.archiveFingerprints), [origin]);
+    }
+});
+
+test('更新前按网址记的旧告警，只在触发它的那个浏览器上接着提醒', () => {
+    const expected = { history: 400, dreams: 0 };
+    const legacy = () => ({ archiveFingerprints: { [origin]: { ...expected, lossSuspected: { expected, found: { history: 20, dreams: 0 } } } } });
+    const same = deviceSetup(legacy(), fakeStorage(), 20);
+    same.safety.inspect();
+    assert.match(same.warnings[0][0], /从 400 条变成了 20 条/);
+    const other = deviceSetup(legacy(), fakeStorage(), 400);
+    other.safety.inspect();
+    assert.equal(other.warnings.length, 0);
+    assert.equal(other.runtime.archiveLossSuspected, undefined);
+});
