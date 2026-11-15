@@ -1,3 +1,5 @@
+import { EXTENSION_FOLDER, extensionScopeAttempts, resolveExtensionScope } from './extension-location.js';
+
 const REMOTE_MANIFEST_URLS = [
     'https://cdn.jsdelivr.net/gh/koichole213-ui/st-theater@main/manifest.json',
     'https://ghproxy.net/https://raw.githubusercontent.com/koichole213-ui/st-theater/main/manifest.json',
@@ -60,10 +62,11 @@ export async function fetchLatestRemoteVersion() {
 }
 
 export async function fetchInstalledExtensionStatus({
-    extensionName = 'st-theater',
+    extensionName = EXTENSION_FOLDER,
     headers = { 'Content-Type': 'application/json' },
     fetchImpl = fetch,
     timeoutMs = 7000,
+    resolveScope = resolveExtensionScope,
 } = {}) {
     const controller = new AbortController();
     let timeoutId;
@@ -81,9 +84,12 @@ export async function fetchInstalledExtensionStatus({
             signal: controller.signal,
         });
 
-        let response = await request(false);
-        if (!response.ok && (response.status === 400 || response.status === 404)) {
-            response = await request(true);
+        // Ask only the scope SillyTavern reports; fall back to local-then-global when unknown.
+        const attempts = extensionScopeAttempts(await resolveScope());
+        let response;
+        for (let i = 0; i < attempts.length; i++) {
+            response = await request(attempts[i]);
+            if (response.ok || !(response.status === 400 || response.status === 404)) break;
         }
         if (!response.ok) {
             let detail = '';
