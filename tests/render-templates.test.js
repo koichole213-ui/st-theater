@@ -14,7 +14,7 @@ import { itemTags } from '../tag-system.js';
 
 test('三个 HTML 规则保持紧凑预算，不给正文新增长度上限', () => {
     for (const profile of adaptiveRenderProfiles()) {
-        assert.ok(estimateTokenCount(profile.rules) <= 1900, profile.name);
+        assert.ok(estimateTokenCount(profile.rules) <= 2100, profile.name);
         assert.match(profile.rules, /原样保留/);
         assert.match(profile.rules, /主线按原顺序/);
         assert.match(profile.rules, /长文\/短屏均可滚动到底/);
@@ -68,7 +68,7 @@ test('规则里的互动骨架：露出、开合、切换都在原地生效，�
         const nodes = els.map(spec => {
             const classes = new Set(spec.wait ? ['wait'] : []), listeners = [], attrs = {};
             return {
-                id: spec.id || '', dataset: { ...(spec.data || {}) }, classes, listeners, attrs,
+                id: spec.id || '', dataset: { ...(spec.data || {}) }, classes, listeners, attrs, hidden: !!spec.hidden,
                 classList: { add: n => classes.add(n), remove: n => classes.delete(n),
                     toggle: n => (classes.has(n) ? (classes.delete(n), false) : (classes.add(n), true)) },
                 setAttribute: (k, v) => { attrs[k] = String(v); },
@@ -76,13 +76,16 @@ test('规则里的互动骨架：露出、开合、切换都在原地生效，�
             };
         });
         const matches = (el, sel) => {
+            if (sel.includes(',')) return sel.split(',').some(part => matches(el, part));
             if (sel === '.wait') return el.classes.has('wait');
             if (sel === 'button') return Object.keys(el.dataset).some(k => k !== 'pane');
             if (sel.startsWith('#')) return '#' + el.id === sel;
             const m = sel.match(/^\[data-(\w+)(?:="(.*)")?\]$/);
             return !!m && (m[2] === undefined ? m[1] in el.dataset : el.dataset[m[1]] === m[2]);
         };
+        const timers = [];
         const context = {
+            setTimeout: fn => timers.push(fn),
             addEventListener: (type, fn) => { windowListeners[type] = fn; },
             document: {
                 documentElement: { classList: { add: n => rootClasses.add(n), remove: n => rootClasses.delete(n) } },
@@ -94,8 +97,10 @@ test('规则里的互动骨架：露出、开合、切换都在原地生效，�
         const ready = rootClasses.has('js');
         const byId = id => nodes.find(el => el.id === id);
         for (const id of clicks || nodes.filter(el => el.listeners.length).map(el => el.id)) byId(id).listeners.forEach(fn => fn({}));
+        const typingShown = nodes.filter(el => el.hidden === false && els.find(spec => spec.id === el.id)?.hidden).map(el => el.id);
+        timers.splice(0).forEach(fn => fn());
         if (after) after(windowListeners);
-        return { ready, js: rootClasses.has('js'), hidden: id => byId(id).classes.has('wait'), attr: (id, k) => byId(id).attrs[k] };
+        return { ready, js: rootClasses.has('js'), typingShown, hidden: id => byId(id).classes.has('wait'), attr: (id, k) => byId(id).attrs[k], prop: (id, k) => byId(id)[k] };
     };
     const story = [{ id: 's2', wait: true }, { id: 'b2', data: { show: '#s2' } }];
     let r = run({ els: story });
@@ -108,6 +113,13 @@ test('规则里的互动骨架：露出、开合、切换都在原地生效，�
     assert.equal(r.hidden('note'), true, '开合：再点合上');
     assert.equal(r.attr('bn', 'aria-expanded'), 'false');
     assert.equal(r.js, true);
+    assert.equal(run({ els: [{ id: 'chat', data: { pane: 'app' } }, { id: 'wallet', wait: true, data: { pane: 'app' } }, { id: 'tw', data: { tab: '#wallet' } }] }).ready, false,
+        '默认面板没有自己的切换按钮：切走就回不来，所以一开始就不隐藏任何内容');
+    r = run({ els: [{ id: 'r1', wait: true }, { id: 'typing', hidden: true }, { id: 'pick', data: { reply: '#r1', typing: '#typing' } }] });
+    assert.equal(r.ready, true);
+    assert.deepEqual(r.typingShown, ['typing'], '先显示“正在输入…”');
+    assert.equal(r.hidden('r1'), false, '稍停后露出回应');
+    assert.equal(r.prop('typing', 'hidden'), true, '回应出现后“正在输入…”收起');
     const tabs = [{ id: 'chat', data: { pane: 'app' } }, { id: 'wallet', wait: true, data: { pane: 'app' } },
         { id: 'tc', data: { tab: '#chat' } }, { id: 'tw', data: { tab: '#wallet' } }];
     r = run({ els: tabs, clicks: ['tw'] });
@@ -136,7 +148,9 @@ test('三档规则：点哪看哪，后两档给读者身份、几处回响和�
         assert.match(profile.rules, /data-open="#该id"开合/);
         assert.match(profile.rules, /data-tab="#该id"切换/);
         assert.match(profile.rules, /自定义互动也把目标写进button的data-\*/);
-        assert.match(profile.rules, /如果提供了待排版正文，必须原样保留，只加物件文字与状态提示/);
+        assert.match(profile.rules, /如果提供了待排版正文，必须原样保留，只加物件文字与状态提示，不写新台词、回应或彩蛋，选择只决定先读哪段、其余随后也露出/);
+        assert.match(profile.rules, /各有一个data-tab按钮/);
+        assert.match(profile.rules, /不要在html标签上预写js类/);
         assert.doesNotMatch(profile.rules, /不另添台词/);
     }
     const [lively, immersive, experimental] = adaptiveRenderProfiles();
@@ -148,7 +162,8 @@ test('三档规则：点哪看哪，后两档给读者身份、几处回响和�
     }
     assert.match(immersive.rules, /至少用两种动作/);
     assert.match(experimental.rules, /至少用三种动作/);
-    assert.match(experimental.rules, /不点也能读完的彩蛋/);
+    assert.match(experimental.rules, /没有待排版正文时，主线外放两三个不点也能读完的彩蛋/);
+    assert.match(experimental.rules, /主线不放进选项分支/);
     assert.doesNotMatch(experimental.rules, /已发现 n\/总数/, '不再写死同一个套路');
 });
 
@@ -179,7 +194,7 @@ test('HTML 模板统一覆盖 Markdown 输出并检查配色，保留代码要�
     assert.match(guardrails, /浅底深字、深底浅字/);
     assert.match(guardrails, /禁止文字与背景明度相近/);
     for (const profile of adaptiveRenderProfiles()) {
-        assert.ok(estimateTokenCount(`${profile.rules}\n\n${guardrails}`) <= 2175, `${profile.name} 含兜底规则后明显过长`);
+        assert.ok(estimateTokenCount(`${profile.rules}\n\n${guardrails}`) <= 2375, `${profile.name} 含兜底规则后明显过长`);
         for (const interactiveMode of [false, true]) {
             const settings = {
                 selectedRenderIndex: profile.id, interactiveMode,
