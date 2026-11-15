@@ -1,3 +1,4 @@
+import { stripExcludedOutputTags } from '../context-exclusions.js';
 import { assertHtmlIntegrity, recoverHtmlText } from '../html-integrity.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +33,7 @@ function generationHarness({ honorAbort = true, htmlMode = false } = {}) {
         resolveTargetWordCount: () => htmlMode ? 0 : 6000, isStagedRenderTarget: () => !htmlMode, resolveRenderSelection: () => ({ label: 'synthetic', rules: 'VIRTUAL_INTERACTIVE_RULE', isPlainTextRender: false }), updateContinueHint() {}, updateLengthHint() {},
         assembleGenerationPayload: async () => ({ ctx: {}, targetWordCount: htmlMode ? 0 : 6000, isPlainTextRender: !htmlMode }), textOutputModeForTheme: () => 'text', normalizeContextRange: value => value,
         itemTags: () => [], classifyLengthTier: () => 'long', createGenerationJob, abortGenerationJob, generationTextWithLiveSegment, filterStoryOutput, readableCharCount,
-        assertHtmlIntegrity, recoverHtmlText, finalStoryOutput, FORMAT_RECOVERY_NOTICE, addGenerationSegment, shouldContinueJob: () => false, markCompleted() {},
+        assertHtmlIntegrity, recoverHtmlText, finalStoryOutput, stripExcludedOutputTags, FORMAT_RECOVERY_NOTICE, addGenerationSegment, shouldContinueJob: () => false, markCompleted() {},
         htmlToPlainText: htmlMode ? recoverHtmlText : text => text, continuationRoundHistory: () => [], prepareContinuationContext: text => text, newHistoryKey: () => 'synthetic-id', markFirstToken() {},
     };
     const api = runInNewContext(productionFunction('runGeneration') + '\n' + productionFunction('stopGeneration') + '\n({run:runGeneration,stop:stopGeneration})', sandbox);

@@ -94,3 +94,38 @@ export function createChatContextReader(rules = []) {
     const snapshot = normalizeContextExclusionRules(rules);
     return source => previewWithRules(source, snapshot).text;
 }
+
+// 生成的正文也去掉“前文排除”里填的标签（只用“标签”类规则，固定内容类规则不动正文）。
+// 正文本身的 HTML 标签（div、p、style……）和正文信封 content 不会被拿来删正文，免得把整篇排版删掉。
+const STORY_HTML_TAGS = new Set(('a abbr address area article aside audio b base bdi bdo blockquote body br button canvas caption cite code col colgroup '
+    + 'content data datalist dd del details dfn dialog div dl dt em embed fieldset figcaption figure font footer form h1 h2 h3 h4 h5 h6 head header hgroup hr '
+    + 'html i iframe img input ins kbd label legend li link main map mark marquee menu meta meter nav noscript object ol optgroup option output p param '
+    + 'picture pre progress q rp rt ruby s samp script search section select slot small source span strong style sub summary sup svg table tbody td '
+    + 'template textarea tfoot th thead time title tr track u ul var video wbr center big tt strike font math g path circle rect line polyline polygon '
+    + 'ellipse text tspan defs use symbol lineargradient radialgradient stop clippath mask pattern filter image foreignobject').split(' '));
+const readableChars = value => String(value || '').replace(/<[^>]*>/g, '').match(/[\p{Script=Han}\p{L}\p{N}]/gu)?.length || 0;
+
+export function outputExclusionTags(rules = []) {
+    return [...new Set(normalizeContextExclusionRules(rules)
+        .filter(rule => rule.enabled && rule.type === 'tag' && !STORY_HTML_TAGS.has(rule.value))
+        .map(rule => rule.value))];
+}
+
+export function stripExcludedOutputTags(source, rules = []) {
+    const original = String(source ?? '');
+    const tags = outputExclusionTags(rules);
+    if (!tags.length || !original) return { text: original, removed: 0, unwrapped: false };
+    let text = original, removed = 0;
+    for (const tag of tags) {
+        const result = excludeTagBlocks(text, tag);
+        text = result.text;
+        removed += result.removed;
+    }
+    const before = readableChars(original);
+    // 去掉后几乎什么都不剩、原文又有不少文字：多半是正文被包在这个标签里了。只去掉标签本身，保留文字。
+    if (removed && before >= 50 && readableChars(text) < before / 5) {
+        const marker = new RegExp(`<\\s*\\/?\\s*(?:${tags.map(tag => tag.replace(/[.]/g, '\\.')).join('|')})(?=[\\s/>])[^>]*>`, 'gi');
+        return { text: original.replace(marker, ''), removed, unwrapped: true };
+    }
+    return { text, removed, unwrapped: false };
+}

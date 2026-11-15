@@ -1,3 +1,4 @@
+import { stripExcludedOutputTags } from '../context-exclusions.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -113,7 +114,7 @@ test('一轮真实生成循环只计过滤后的正文，未达目标也不额�
             requestConfiguredGenerationApi: async () => { requests++; return { text: raw, stopReason: 'stop' }; } },
         payload: { systemPrompt: '系统', userPrompt: '任务' }, isPlainTextRender: true,
         popupAlive: () => false, apiRoute: {}, targetWordCount: 10000, onChunk: value => { chunkBody = value; },
-        filterStoryOutput, finalStoryOutput, generationJob: job, ownsGeneration: () => true, generationAbortController: new AbortController(),
+        filterStoryOutput, finalStoryOutput, stripExcludedOutputTags, generationJob: job, ownsGeneration: () => true, generationAbortController: new AbortController(),
         htmlToPlainText: value => value, markCompleted() {}, addGenerationSegment, readableCharCount,
         activeRound: 0, progressLogged: false, nextProgressAt: 0, retainStreamAsBody: false,
         shouldContinueJob, currentRoundStreamText: '', stagedMultiRoundMode: false, contCtx: '',

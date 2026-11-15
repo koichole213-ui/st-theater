@@ -3,6 +3,7 @@ import { assertHtmlIntegrity, recoverHtmlText } from './html-integrity.js';
 import { estimateTavernTexts } from './tavern-token-counter.js';
 import { resolveTheaterPreset } from './preset-compat.js';
 import { filterStoryOutput, finalStoryOutput, FORMAT_RECOVERY_NOTICE, STORY_OUTPUT_RULE } from './story-output.js';
+import { stripExcludedOutputTags } from './context-exclusions.js';
 import { resolveLayoutApiRoute } from './layout-api.js';
 import { creativeEnhancementPrompt } from './creative-enhancement.js';
 // theater-generation: receives live state and cross-feature callbacks from index.js.
@@ -846,7 +847,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
     const onChunk = (value) => {
         if (generationFinished || generationAbortController.signal.aborted || !ownsGeneration()) return;
         const text = retainStreamAsBody
-            ? filterStoryOutput(value, { plainText: activeRound !== 1 || isPlainTextRender }) : value;
+            ? filterStoryOutput(stripExcludedOutputTags(value, runtime.settings?.contextExclusionRules).text, { plainText: activeRound !== 1 || isPlainTextRender }) : value;
         runtime.bgStreamText = text;
         if (retainStreamAsBody) currentRoundStreamText = String(text || '');
         const cumulativeChars = String(text || '').length;
@@ -917,11 +918,14 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
                 requestOptions,
             });
             if (generationAbortController.signal.aborted || !ownsGeneration()) throw new DOMException('Aborted', 'AbortError');
-            const output = finalStoryOutput(typeof result === 'string' ? result : result?.text, {
+            // “前文排除”里的标签，生成的正文里也去掉；正文被整段包在这种标签里时只去掉标签、保留文字并提示。
+            const excluded = stripExcludedOutputTags(typeof result === 'string' ? result : result?.text, runtime.settings?.contextExclusionRules);
+            const output = finalStoryOutput(excluded.text, {
                 plainText: round !== 1 || isPlainTextRender, formatRecovered: result?.formatRecovered,
             });
             const responseText = output.text;
             if (output.formatRecovered) formatRecovered = output.formatRecovered;
+            else if (excluded.unwrapped) formatRecovered = 'extra-wrapper';
             if (formatRecovered && formatRecovered !== 'custom-tag') {
                 const error = new Error(FORMAT_RECOVERY_NOTICE);
                 error.formatRecovered = formatRecovered;

@@ -27,6 +27,7 @@ import { summaryEditorHTML, bindSummaryEditor } from '../long-dream-summary-edit
 import { isHistoryItemExpanded, historyFiltersHTML } from '../history-ui.js';
 import { normalizeRoleSources, captureHistoryRoles, matchesRoleFilter, historyRoleOptions, ROLE_UNASSIGNED } from '../history-roles.js';
 import { closeHistoryMenus } from '../history-menus.js';
+import { stripExcludedOutputTags } from '../context-exclusions.js';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
@@ -63,7 +64,7 @@ export function readTheaterImplementation() {
 // A factory receives live bindings to the same sandbox state used by the older
 // fixtures. This preserves their assertions about writes, identity and failures.
 export function runInNewContext(code, sandbox = {}, options) {
-    Object.assign(sandbox, { finalStoryOutput, FORMAT_RECOVERY_NOTICE });
+    Object.assign(sandbox, { finalStoryOutput, FORMAT_RECOVERY_NOTICE, stripExcludedOutputTags });
     sandbox.lastRequestIssue ??= null; sandbox.lastRequestMetrics ??= null; sandbox.isGenerating ??= false;
     Object.assign(sandbox, { errorHelpHTML, errorCatalogHTML, bindErrorLibrary, statusError, assertHtmlIntegrity, recoverHtmlText });
     // Real imported helpers used by relocated production bodies. Fixtures remain synthetic.

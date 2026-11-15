@@ -21,6 +21,7 @@ import { refreshLongDreamSummary } from './long-dream-summary.js';
 import { requestCustomApi } from './api-runtime.js';
 import { classifyRequestFailure, createDiagnosticError, diagnosticSignalInfo } from './request-diagnostics.js';
 import { finalStoryOutput, FORMAT_RECOVERY_NOTICE } from './story-output.js';
+import { stripExcludedOutputTags } from './context-exclusions.js';
 import { recoverHtmlText } from './html-integrity.js';
 import { shouldWeaveLongDreamMemory, buildLongDreamMemoryPayload, DEFAULT_LONG_DREAM_MEMORY_PRESET, parseLongDreamMemoryResponse } from './long-dream-memory.js';
 
@@ -41,7 +42,7 @@ async function requestLongDreamChapter({
     try {
         let firstChunkSeen = false;
         const onSafeChunk = cumulativeText => {
-            const normalized = runtime.normalizeLongDreamResponseText(cumulativeText);
+            const normalized = runtime.normalizeLongDreamResponseText(stripExcludedOutputTags(cumulativeText, runtime.settings?.contextExclusionRules).text);
             if (!firstChunkSeen && normalized.trim()) {
                 firstChunkSeen = true;
                 markFirstToken(runtime.lastRequestMetrics);
@@ -66,9 +67,10 @@ async function requestLongDreamChapter({
             requestOptions,
             metricScope: 'long-dream',
         });
-        const rawText = typeof result === 'string' ? result : result?.text;
+        const excluded = stripExcludedOutputTags(typeof result === 'string' ? result : result?.text, runtime.settings?.contextExclusionRules);
+        const rawText = excluded.text;
         const output = finalStoryOutput(rawText, { plainText: true,
-            normalText: runtime.normalizeLongDreamResponseText(rawText), formatRecovered: result?.formatRecovered });
+            normalText: runtime.normalizeLongDreamResponseText(rawText), formatRecovered: result?.formatRecovered || (excluded.unwrapped ? 'extra-wrapper' : undefined) });
         const text = output.formatRecovered && output.formatRecovered !== 'custom-tag'
             ? recoverHtmlText(output.text) : output.text;
         if (!String(text || '').trim()) throw new Error('长梦正文请求没有返回内容');
