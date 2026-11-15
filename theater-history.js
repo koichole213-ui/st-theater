@@ -390,7 +390,11 @@ function commitHistoryCollection(change) {
             else runtime.archiveSafety?.record();
             return true;
         } catch (error) {
-            if (!runtime.archiveStale) toastr.error('收纳保存失败，原作品保留：' + (error?.message || error));
+            if (runtime.archiveRescue?.reportWriteFailure()) return false;
+            if (!runtime.archiveStale) {
+                const detail = runtime.archiveRescue?.writeFailureDetail(error) ?? error?.message ?? error;
+                toastr.error('收纳保存失败，原作品保留：' + detail);
+            }
             return false;
         }
     });
@@ -489,6 +493,7 @@ function chooseHistoryReadingVersion(id) {
 
 // @theater-source-begin saveToHistory
 async function saveToHistory(sourceOverride = null) {
+    if (runtime.archiveRescue?.reportWriteFailure()) return;
     const supplied = sourceOverride?.html ? { ...sourceOverride } : null;
     if (!supplied && runtime.resultEditSnapshot) { toastr.warning('请先应用修改或退出编辑，再保存'); return; }
     const html = supplied?.html || runtime.lastGeneratedHtml || runtime.currentDisplayHtml;

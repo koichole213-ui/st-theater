@@ -40,7 +40,12 @@ function syncButton(runtime, scope, visible) {
     const active = job?.scope === scope;
     button.hidden = !visible;
     button.disabled = active ? job.saving || job.controller.signal.aborted : !!job;
-    button.textContent = active ? (job.saving ? '保存排版中…' : job.controller.signal.aborted ? '正在停止…' : '停止排版') : '重新排版';
+    const stopping = active && job.controller.signal.aborted;
+    const saving = active && job.saving;
+    const label = button.querySelector?.('span') || button;
+    label.textContent = saving ? '保存排版中…' : stopping ? '正在停止…' : active ? '停止排版' : '重新排版';
+    const icon = button.querySelector?.('i');
+    if (icon) icon.className = `fa-solid ${saving || stopping ? 'fa-spinner fa-spin' : active ? 'fa-stop' : 'fa-wand-magic-sparkles'}`;
     return button;
 }
 
@@ -53,7 +58,7 @@ export function syncResultRelayout(runtime, scope, item) {
 export function dreamRelayoutButton(item, scope) {
     if (!manualLayoutSource(item, true)) return '';
     const role = scope === 'chapter' ? ' role="menuitem"' : '';
-    return `<button type="button" class="ui-btn ui-btn-sm" data-relayout="${scope}"${role}>重新排版</button>`;
+    return `<button type="button" class="ui-btn ui-btn-sm" data-relayout="${scope}"${role}><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>重新排版</span></button>`;
 }
 
 export function syncDreamRelayout(runtime) {

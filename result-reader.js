@@ -4,8 +4,8 @@ import { escapeHistoryText } from './history-collections-ui.js';
 import { mountStoryReading, storyReadingNoticeHTML } from './story-reading.js';
 
 export function readerPaneHTML(lamp = '') {
-    const actions = [['save', 'bookmark', '保存'], ['copy', 'copy', '复制HTML'], ['fullscreen', 'expand', '全屏阅读'],
-        ['continue', 'forward', '续写'], ['edit', 'pen-to-square', '编辑文字'], ['remove', 'trash-can', '移除结果']];
+    const actions = [['save', 'bookmark', '保存'], ['fullscreen', 'expand', '全屏阅读'], ['copy', 'copy', '复制HTML'],
+        ['continue', 'forward', '续写'], ['edit', 'pen-to-square', '编辑文字']];
     return `<section class="theater-workspace-page" data-result-page="read" hidden>
         <div class="theater-reader-collection" data-reader-collection hidden><button type="button" class="theater-btn" data-reader-exit-collection>返回最近生成</button><span data-reader-collection-title></span><label data-reader-version-label hidden>本篇版本 <select class="theater-input" data-reader-version></select></label></div>
         <div class="theater-reader-recent-nav" aria-label="最近生成翻篇">
@@ -19,9 +19,10 @@ export function readerPaneHTML(lamp = '') {
             <div class="theater-result-head"><label class="theater-label">阅读</label></div>
             <div class="theater-result-meta-row"><div class="theater-result-toolbox is-inline-menu">
                 <div id="theater-reading-actions" class="theater-btn-row theater-result-actions" role="menu" aria-label="阅读结果操作">
-                    ${actions.map(([action, icon, label]) => `<button type="button" data-reader-action="${action}" class="theater-btn${action === 'remove' ? ' danger-soft' : ''}" role="menuitem"><i class="fa-solid fa-${icon}"></i><span>${label}</span></button>`).join('')}
-                    <button type="button" class="theater-btn theater-relayout-menu" data-relayout="read" role="menuitem" hidden>重新排版</button>
-                    <button type="button" class="theater-btn theater-plain-reading-menu" data-reader-plain-reading role="menuitem" hidden>纯文字阅读</button>
+                    ${actions.map(([action, icon, label]) => `<button type="button" data-reader-action="${action}" class="theater-btn" role="menuitem"><i class="fa-solid fa-${icon}"></i><span>${label}</span></button>`).join('')}
+                    <button type="button" class="theater-btn theater-relayout-menu" data-relayout="read" role="menuitem" hidden><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>重新排版</span></button>
+                    <button type="button" class="theater-btn theater-plain-reading-menu" data-reader-plain-reading role="menuitem" hidden><i class="fa-solid fa-align-left" aria-hidden="true"></i><span>纯文字阅读</span></button>
+                    <button type="button" data-reader-action="remove" class="theater-btn danger-soft" role="menuitem"><i class="fa-solid fa-trash-can"></i><span>移除结果</span></button>
                 </div>
                 <button type="button" class="theater-result-actions-toggle" aria-expanded="false" aria-controls="theater-reading-actions" aria-label="阅读结果操作" title="阅读结果操作；可上下拖动并吸附左右页边">
                     <span class="theater-result-bookmark-lamp">${lamp}</span><span class="theater-result-bookmark-label">操作</span>

@@ -1,5 +1,6 @@
 import { normalizeBackupData, stableJson, planBackupRestore } from './backup-data.js';
 import { orderedHistory, newHistoryKey } from './history-collections.js';
+import { archiveClosedError } from './archive-rescue.js';
 
 export function createBackupStorage(runtime) {
     const request = req => new Promise((resolve, reject) => { req.onsuccess = () => resolve(req.result); req.onerror = () => reject(new Error('本地备份存储读取失败')); });
@@ -9,9 +10,13 @@ export function createBackupStorage(runtime) {
         // rejection handled even when the caller has already left its read/error path.
         void completion.catch(()=>{});return completion;
     };
-    const db = () => { if (!runtime.idb) throw new Error('本地数据库未就绪，请保留站点数据并重新加载'); return runtime.idb; };
+    const db = () => {
+        if (runtime.archiveClosed) throw archiveClosedError();
+        if (!runtime.idb) throw new Error('本地数据库未就绪，请保留站点数据并重新加载');
+        return runtime.idb;
+    };
     const instructionState = () => ({ templates: runtime.settings.instructionTemplates || [], tags: runtime.settings.instructionTags || [],composers:runtime.settings.longDreamComposerDrafts || {} });
-    let journal = null, applying = false;
+    let journal = null, applying = false, recoveredCache = [];
     async function get(key) { const tx = db().transaction('kv'); const completed = done(tx); const value = await request(tx.objectStore('kv').get(key)); await completed; return value; }
     async function put(key, value) { const tx = db().transaction('kv', 'readwrite'), completed = done(tx); tx.objectStore('kv').put(value, key); await completed; }
     async function removeJournal() { const tx = db().transaction('kv', 'readwrite'), completed = done(tx); tx.objectStore('kv').delete('backup-restore-journal'); await completed; journal = null; }
@@ -37,21 +42,43 @@ export function createBackupStorage(runtime) {
         await Promise.all([runtime.historyWriteQueue, runtime.resultStorageQueue]);
         const tx = db().transaction(['history', 'dreams', 'kv']), completed = done(tx);
         const raw = await rawRead(tx); await completed;
+        recoveredCache = raw.recovered;
         const instructions = instructionState();
-        return { raw, instructionSignature: stableJson(instructions), data: normalizeBackupData({ ...raw,dreams:raw.dreams.map(d=>({...d,composerDraft:instructions.composers[d.id] || d.composerDraft})), instructions: instructions.templates, instructionTags: instructions.tags }) };
+        return { raw, instructionSignature: stableJson(instructions), data: snapshotData(raw, instructions) };
+    }
+    function snapshotData(raw, instructions) {
+        return normalizeBackupData({ ...raw, dreams: raw.dreams.map(d => ({
+            ...d, composerDraft: instructions.composers[d.id] || d.composerDraft,
+        })), instructions: instructions.templates, instructionTags: instructions.tags });
+    }
+    function rescueSnapshot() {
+        return snapshotData({
+            history: runtime.historyCache || [],
+            dreams: runtime.longDreamCache || [],
+            folders: runtime.historyCollections || [],
+            current: runtime.currentGenerationResult,
+            recent: runtime.recentCache || [],
+            recovered: recoveredCache,
+        }, instructionState());
     }
     function idle() {
         if (runtime.isGenerating || runtime.longDreamGenerationController?.active || runtime.longDreamChapterEditController) throw new Error('请先完成或停止生成与章节编辑，再恢复备份');
     }
     return {
-        get, put, snapshot,
-        async saveConfiguration(config, resetGithub = false) {
+        get, put, snapshot, rescueSnapshot,
+        async getRecovered() {
+            recoveredCache = await get('backup-recovered-results') || [];
+            return recoveredCache;
+        },
+        async saveConfiguration(update, resetGithub = false) {
             const tx=db().transaction('kv','readwrite'),completed=done(tx),kv=tx.objectStore('kv');let nextState=null;
+            let config;
             try{
+                config = update(await request(kv.get('backup-config')));
                 if(resetGithub){nextState=await request(kv.get('backup-state'))||{};delete nextState.github;kv.put(nextState,'backup-state');}
                 kv.put(config,'backup-config');
             }catch(error){try{tx.abort();}catch{}await completed.catch(()=>{});throw new Error('备份设置保存失败，原有配置已保留');}
-            await completed;return nextState;
+            await completed;return { config, state: nextState };
         },
         async withLease(operation) {
             const owner=newHistoryKey(), tx=db().transaction('kv','readwrite'), completed=done(tx), kv=tx.objectStore('kv');
@@ -63,9 +90,11 @@ export function createBackupStorage(runtime) {
             await completed;
             try{return await operation();}
             finally{
-                const release=db().transaction('kv','readwrite'), finished=done(release), store=release.objectStore('kv');
-                try { const current=await request(store.get('backup-operation-lease'));if(current?.owner===owner)store.delete('backup-operation-lease');await finished; }
-                catch { await finished.catch(()=>{}); }
+                if (!runtime.archiveClosed) {
+                    const release=db().transaction('kv','readwrite'), finished=done(release), store=release.objectStore('kv');
+                    try { const current=await request(store.get('backup-operation-lease'));if(current?.owner===owner)store.delete('backup-operation-lease');await finished; }
+                    catch { await finished.catch(()=>{}); }
+                }
             }
         },
         async recoverJournal() {
@@ -119,6 +148,7 @@ export function createBackupStorage(runtime) {
                 runtime.historyCollectionsStoredJson = runtime.archiveSync?.folderSignature(plan.next.folders);
             }
             if (selected.includes('dreams')) runtime.longDreamCache = [...plan.additions.dreams, ...runtime.longDreamCache];
+            if (selected.includes('recent')) recoveredCache = plan.next.recovered;
             if (restoreSettings) { journal = { before: before.instructionSignature, after:settingsAfter }; applyInstructions(journal.after); }
             runtime.archiveSafety?.record({ restored: true });
             runtime.archiveSync?.publish('backup-restore');

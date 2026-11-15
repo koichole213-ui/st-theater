@@ -1697,8 +1697,8 @@ function longDreamChapterDetailHTML(dream, chapter) {
                 <button type="button" id="theater-dream-save-chapter" class="ui-btn ui-btn-sm ui-btn-primary" role="menuitem" ${locked ? 'disabled' : ''}><i class="fa-solid fa-check"></i><span>保存编辑</span></button>
                 <button type="button" id="theater-dream-export-chapter" class="ui-btn ui-btn-sm" role="menuitem"><i class="fa-solid fa-file-export"></i><span>单章导出</span></button>
                 <button type="button" id="theater-dream-read-chapter-fullscreen" class="ui-btn ui-btn-sm" role="menuitem"><i class="fa-solid fa-book-open"></i><span>阅读原排版</span></button>
+                ${chapter.html && !isTextOutputMode(chapter.mode) ? '<button type="button" id="theater-dream-read-chapter-plain" class="ui-btn ui-btn-sm" role="menuitem"><i class="fa-solid fa-align-left" aria-hidden="true"></i><span>纯文字阅读</span></button>' : ''}
                 ${dreamRelayoutButton(chapter, 'chapter')}
-                ${chapter.html && !isTextOutputMode(chapter.mode) ? '<button type="button" id="theater-dream-read-chapter-plain" class="ui-btn ui-btn-sm" role="menuitem">纯文字阅读</button>' : ''}
             </div>
             <label class="ia-field"><span>章节标题</span><input id="theater-dream-chapter-edit-title" class="ui-input theater-input" maxlength="80" value="${runtime.esc(chapter.title)}" ${locked ? 'disabled' : ''}></label>
             <label class="ia-field"><span>章节正文</span><textarea id="theater-dream-chapter-edit-text" class="ui-textarea ia-reader theater-textarea" rows="16" ${locked ? 'disabled' : ''}>${runtime.esc(text)}</textarea></label>

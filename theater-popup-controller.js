@@ -89,6 +89,7 @@ async function openTheaterPopup(initialTabOverride = '') {
     runtime.applyResultToolboxMode();
     runtime.renderRuntimeLog();
     runtime.syncLongDreamPanel();
+    runtime.archiveRescue?.addNotice();
     void runtime.backup?.onOpen();
     const [worldBookListResult, presetListResult] = await Promise.allSettled([
         runtime.loadWorldBookList(),

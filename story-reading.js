@@ -34,7 +34,10 @@ export function mountStoryReading({
         if (notice) notice.hidden = editing || plain || !hasError;
         if (modeLabel) modeLabel.textContent = plain ? '纯文字' : originalMode;
         if (button) {
-            button.textContent = plain ? '恢复原排版' : '纯文字阅读';
+            const label = button.querySelector?.('span') || button;
+            label.textContent = plain ? '恢复原排版' : '纯文字阅读';
+            const icon = button.querySelector?.('i');
+            if (icon) icon.className = `fa-solid ${plain ? 'fa-rotate-left' : 'fa-align-left'}`;
             button.hidden = editing || !canRead || !canSwitch;
         }
     }
