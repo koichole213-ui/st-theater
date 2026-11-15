@@ -195,17 +195,28 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
             return false;
         }
     }
-    // 关闭服务器备份时，同时记到酒馆设置里（浏览器被清后仍保持关闭）。账号一时核对不了就先只关本机，下次打开面板再补记。
-    async function syncServerOff() {
-        if (config.server !== false || !origin || !runtime.settings || runtime.settings.serverBackupOff?.[origin] === true) return true;
+    // 关闭服务器备份时，同时记到酒馆设置里（浏览器被清后仍保持关闭）。
+    // 账号一时核对不了就先只关本机，并记下“还没补记”，只在这种情况下、同一账号再次打开面板时补记一次；
+    // 不会反复改写酒馆设置，所以别的设备重新打开后不会被这里关回去。
+    async function syncServerOff(justTurnedOff = false) {
+        const account = serverAccount?.handle || 'single';
+        if (!justTurnedOff && config.serverOffPending !== account) return;
+        if (config.server !== false || !origin || !runtime.settings) return;
+        let synced = false;
         try {
             await checkServerSession();
             runtime.settings.serverBackupOff = { ...runtime.settings.serverBackupOff, [origin]: true };
             runtime.save?.();
-            return true;
+            synced = true;
         } catch (error) {
             runtime.runtimeLog('warn', '关闭酒馆服务器备份的选择暂未同步到酒馆设置', { reason: safeError(error) });
-            return false;
+        }
+        const pending = synced ? undefined : account;
+        if (config.serverOffPending === pending) return;
+        try {
+            config = (await storage.saveConfiguration(latest => ({ ...config, ...latest, serverOffPending: pending }))).config;
+        } catch (error) {
+            runtime.runtimeLog('warn', '酒馆服务器备份的关闭状态未能记录', { reason: safeError(error) });
         }
     }
     async function checkServerSession() {
@@ -308,7 +319,8 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
                     && (!previous?.time || checkAt - previous.time >= every);
                 const server = localServerState();
                 const serverDue = serverRequested && serverOwnerConfirmed() && (timeDue(server) || !!server?.pending?.length);
-                if (!serverDue && !originalKinds.some(kind => timeDue(state[kind]))) return;
+                // 有“自动备份已暂停”提示时照常走完整流程，确认之后提示能及时消失。
+                if (!state.protection && !serverDue && !originalKinds.some(kind => timeDue(state[kind]))) return;
             }
             const snapshot=await storage.snapshot();
             stage('packing');
@@ -729,7 +741,7 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
                         delete off[origin];
                         runtime.settings.serverBackupOff = off;
                         runtime.save?.();
-                    } else if (serverChanged && !next.server) await syncServerOff();
+                    } else if (serverChanged && !next.server) await syncServerOff(true);
                     if(saved.state)state=saved.state;
                     const serverToggle = document.getElementById('theater-backup-server');
                     if (serverToggle) serverToggle.checked = canRescueToServer();

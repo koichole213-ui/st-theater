@@ -404,13 +404,35 @@ test('同样内容上次没校验通过时，重试沿用同一个文件名，�
 
 test('关闭服务器备份的选择在账号暂时核对不了时，下次打开面板补记到酒馆设置', async t => {
     const host = mockHost();
-    const { backup, runtime } = fixture(t, host, { initialOff: true, account: { handle: 'account-a', name: '甲' } });
+    const { backup, runtime, state } = fixture(t, host, { initialOff: true, account: { handle: 'account-a', name: '甲' } });
+    state.get('backup-config').serverOffPending = 'account-a';
     await backup.onOpen();
     assert.equal(runtime.settings.serverBackupOff?.[origin], undefined);
+    assert.equal(state.get('backup-config').serverOffPending, 'account-a');
     host.setAccount('account-a');
     await backup.onOpen();
     assert.equal(runtime.settings.serverBackupOff[origin], true);
+    assert.equal(state.get('backup-config').serverOffPending, undefined);
     assert.equal(host.zipWrites().length, 0);
+});
+
+test('本机关着服务器备份但已同步过时，打开面板不会把别的设备重新打开的开关关回去', async t => {
+    const host = mockHost();
+    const { backup, runtime } = fixture(t, host, { initialOff: true });
+    await backup.onOpen();
+    assert.equal(runtime.settings.serverBackupOff?.[origin], undefined);
+    assert.equal(host.calls.length, 0);
+});
+
+test('有“自动备份已暂停”提示时，打开面板照常核对，不走“还没到期”的捷径', async t => {
+    const host = mockHost();
+    const first = fixture(t, host);
+    await first.backup.runBackup(['server']);
+    first.state.get('backup-state').protection = '合成：自动备份已暂停';
+    const reopened = fixture(t, host, { state: first.state });
+    const before = host.calls.length;
+    await reopened.backup.onOpen();
+    assert.ok(host.calls.length > before);
 });
 
 test('酒馆设置里的服务器备份清单最多留 100 条，完整清单留在目录文件', async t => {
