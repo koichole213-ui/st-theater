@@ -862,7 +862,7 @@ type 相同 + key 相同 + key 不为空
 | 续章时的梦脉检索与近期章节窗口 | `long-dream-payload.js` |
 | 设置页、织录队列、命中预览、卡片编辑界面 | `index.js` |
 | 梦脉 JSON/ZIP 备份白名单 | `long-dream-backup.js`、`long-dream-archive.js` |
-| 回归测试 | `tests/core.test.js` |
+| 回归测试 | `tests/`（按模块分文件，见 `tests/README.md`） |
 
 ---
 
