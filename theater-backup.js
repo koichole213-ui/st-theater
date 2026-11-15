@@ -463,7 +463,7 @@ export function createTheaterBackup(runtime, { storage = createBackupStorage(run
             const current = ++ticket;
             const trace = beginTrace('remoteDownload');
             await checkServerSession();
-            const bytes = await serverClient.readZip(entry.path);
+            const bytes = await serverClient.readZip(entry.path, entry.bytes);
             await checkServerSession();
             if (!view.alive() || current !== ticket) return;
             const next = await decodeFile(new File([bytes], 'backup.zip'), scope, stage => trace.step(stage), true);

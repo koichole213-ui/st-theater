@@ -88,9 +88,11 @@ export function createServerBackupClient({
     wait = () => new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000)),
     timeout = 45000,
 } = {}) {
-    async function call(path, { body, endpoint = '', missing = false, decode = response => response.json() } = {}) {
+    // 大文件按“每秒至少 50 KB”放宽等待时间：14 MB 的备份 base64 后约 19 MB，远程或手机网络 45 秒传不完。
+    const timeoutFor = bytes => Math.max(timeout, Math.ceil((Number(bytes) || 0) / 50000) * 1000);
+    async function call(path, { body, endpoint = '', missing = false, decode = response => response.json(), bytes = 0 } = {}) {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeout);
+        const timer = setTimeout(() => controller.abort(), timeoutFor(bytes));
         try {
             const response = await request(path, {
                 credentials: 'same-origin', redirect: 'error', cache: 'no-store', signal: controller.signal,
@@ -109,16 +111,17 @@ export function createServerBackupClient({
         }
     }
     async function uploadFile(name, bytes) {
+        const data = bytesToBase64(bytes);
         const payload = await call('/api/files/upload', {
-            endpoint: '写入', body: { name, data: bytesToBase64(bytes) },
+            endpoint: '写入', body: { name, data }, bytes: data.length,
         });
         const expected = PREFIX + name;
         if (String(payload?.path || '').replace(/^\//, '') !== expected) throw new Error('酒馆返回的备份文件地址无效');
         return expected;
     }
-    async function readZip(path) {
+    async function readZip(path, expectedBytes = 0) {
         if (!validPath(path)) throw new Error('服务器备份文件名无效');
-        return call('/' + path, { decode: async response => {
+        return call('/' + path, { bytes: expectedBytes, decode: async response => {
             if (Number(response.headers?.get('content-length')) > MAX_BACKUP_BYTES) throw new Error('服务器备份超过 128 MB');
             const bytes = new Uint8Array(await response.arrayBuffer());
             if (bytes.length > MAX_BACKUP_BYTES) throw new Error('服务器备份超过 128 MB');
@@ -150,7 +153,7 @@ export function createServerBackupClient({
             onVerifying?.();
             const verification = await call('/api/files/verify', { endpoint: '校验', body: { urls: [path] } });
             if (verification?.[path] !== true) throw new Error('酒馆服务器未确认备份文件存在');
-            const downloaded = await readZip(path);
+            const downloaded = await readZip(path, bytes.length);
             if (downloaded.length !== bytes.length || await digest(downloaded) !== expected) {
                 throw new Error('酒馆服务器备份读回校验失败');
             }
