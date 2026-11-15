@@ -50,14 +50,16 @@ test('G4 相似前缀的自定义 HTML 元素不会被当成思考或附加标�
     assert.ok(story.finalStoryOutput(value).formatRecovered);
 });
 
-test('正常思考、正文信封、字数报告和只有闭合标签的回复维持原结果', () => {
+test('正常思考、正文信封、字数报告维持原结果；只有结束思考标签时去掉它前面的思考', () => {
     const value = '<think>思考</think><content>' + body + '</content><finish>字数报告 1200 字</finish>';
     assert.deepEqual(story.finalStoryOutput(value, { plainText: true }), { text: body });
     assert.deepEqual(story.finalStoryOutput('<finish>字数报告 1200 字</finish>'), { text: '' });
     assert.deepEqual(reasoningSafeResult('</think>' + body), { text: body });
     const logs = [];
-    assert.deepEqual(reasoningSafeResult('前言</think>' + body, { log: (...args) => logs.push(args) }), { text: '前言' + body });
+    assert.deepEqual(reasoningSafeResult('前言</think>' + body, { log: (...args) => logs.push(args) }), { text: body });
     assert.equal(logs[0][0], 'warn');
+    // 结束标签后面正文太少时整段保留，宁可多留也不丢正文。
+    assert.deepEqual(reasoningSafeResult(body + '</think>完'), { text: body + '完' });
 });
 
 test('长梦第二轮的异常回复连同第一轮保存为可重排草稿，重试不重新生成', async () => {

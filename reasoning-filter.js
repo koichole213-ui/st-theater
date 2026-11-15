@@ -11,6 +11,8 @@ const TAG_PREFIXES = Object.freeze([
     '</electric>',
 ]);
 
+const readableLength = value => String(value || '').replace(/<[^>]*>/g, '').match(/[\p{Script=Han}\p{L}\p{N}]/gu)?.length || 0;
+
 function trailingPartialTagLength(value) {
     const text = String(value || '');
     const start = text.lastIndexOf('<');
@@ -34,6 +36,7 @@ export function filterTaggedReasoning(value) {
     let cursor = 0;
     let depth = 0;
     let hadReasoning = false;
+    let loneClose = -1;
     COMPLETE_TAG_PATTERN.lastIndex = 0;
 
     let match;
@@ -45,7 +48,8 @@ export function filterTaggedReasoning(value) {
         const name = String(match[2] || '').toLocaleLowerCase();
         if (REASONING_TAG_NAMES.has(name)) {
             hadReasoning = true;
-            if (closing) depth = Math.max(0, depth - 1);
+            if (closing && depth === 0) loneClose = content.length;
+            else if (closing) depth--;
             else depth++;
         }
         cursor = COMPLETE_TAG_PATTERN.lastIndex;
@@ -59,6 +63,9 @@ export function filterTaggedReasoning(value) {
             tail = tail.slice(0, -partialLength);
         }
         content += tail;
+        // 只有结束标签、没有开始标签：结束标签之前多半是没包起来的思考。结束标签之后有足够正文（至少 50 个字）时，
+        // 只保留之后的部分；正文太少时整段保留，宁可多留也不丢正文。
+        if (loneClose >= 0 && readableLength(content.slice(loneClose)) >= 50) content = content.slice(loneClose);
     }
 
     return {
