@@ -14,7 +14,7 @@ import { itemTags } from '../tag-system.js';
 
 test('三个 HTML 规则保持紧凑预算，不给正文新增长度上限', () => {
     for (const profile of adaptiveRenderProfiles()) {
-        assert.ok(estimateTokenCount(profile.rules) <= 1250, profile.name);
+        assert.ok(estimateTokenCount(profile.rules) <= 1900, profile.name);
         assert.match(profile.rules, /原样保留/);
         assert.match(profile.rules, /主线按原顺序/);
         assert.match(profile.rules, /长文\/短屏均可滚动到底/);
@@ -57,52 +57,99 @@ test('模板以具体代码约定沙盒环境、出错可读、动作音效与�
     assert.match(adaptiveRenderProfile(ADAPTIVE_RENDER_SELECTIONS.experimental).rules, /用点选代替文字输入/);
 });
 
-test('规则里的互动骨架：正常时逐段揭示，任何出错、缺按钮或缺目标都让全部正文露出', () => {
+test('规则里的互动骨架：露出、开合、切换都在原地生效，任何出错、缺按钮或缺目标都让全部内容露出', () => {
     const rules = adaptiveRenderProfiles()[0].rules;
     const skeleton = rules.split('2. script照此骨架：\n')[1]?.split('\n任何出错')[0] || '';
     assert.match(skeleton, /addEventListener\('error',reveal\);addEventListener\('unhandledrejection',reveal\)/);
-    const run = ({ waits = ['s2'], triggers = { s2: '#s2' }, handler = '', after = null } = {}) => {
-        const rootClasses = new Set();
-        const windowListeners = {};
-        const make = (id, attrs = {}) => {
-            const classes = new Set(attrs.wait ? ['wait'] : []);
-            const listeners = [];
+    assert.doesNotMatch(skeleton, /scrollIntoView/, '不自动滚到远处');
+    // 极简假 DOM：元素 = { id, wait, data }；只支持骨架用到的选择器
+    const run = ({ els, handler = '', after = null, clicks = null }) => {
+        const rootClasses = new Set(), windowListeners = {};
+        const nodes = els.map(spec => {
+            const classes = new Set(spec.wait ? ['wait'] : []), listeners = [], attrs = {};
             return {
-                id, dataset: attrs.dataset || {}, listeners, classes,
-                classList: { add: name => classes.add(name), remove: name => classes.delete(name) },
-                scrollIntoView() {},
+                id: spec.id || '', dataset: { ...(spec.data || {}) }, classes, listeners, attrs,
+                classList: { add: n => classes.add(n), remove: n => classes.delete(n),
+                    toggle: n => (classes.has(n) ? (classes.delete(n), false) : (classes.add(n), true)) },
+                setAttribute: (k, v) => { attrs[k] = String(v); },
                 addEventListener: (type, fn) => listeners.push(fn),
             };
+        });
+        const matches = (el, sel) => {
+            if (sel === '.wait') return el.classes.has('wait');
+            if (sel === 'button') return Object.keys(el.dataset).some(k => k !== 'pane');
+            if (sel.startsWith('#')) return '#' + el.id === sel;
+            const m = sel.match(/^\[data-(\w+)(?:="(.*)")?\]$/);
+            return !!m && (m[2] === undefined ? m[1] in el.dataset : el.dataset[m[1]] === m[2]);
         };
-        const waitEls = waits.map(id => make(id, { wait: true }));
-        const buttons = Object.entries(triggers).map(([id, target]) => make('btn-' + id, { dataset: { show: target } }));
-        const all = [...waitEls, ...buttons];
         const context = {
             addEventListener: (type, fn) => { windowListeners[type] = fn; },
             document: {
-                documentElement: { classList: { add: name => rootClasses.add(name), remove: name => rootClasses.delete(name) } },
-                querySelectorAll: sel => sel === '.wait' ? waitEls : sel === '[data-show]' ? buttons : sel === '#door' ? buttons.slice(0, 1) : [],
-                querySelector: sel => {
-                    const show = sel.match(/^\[data-show="(.+)"\]$/);
-                    if (show) return buttons.find(button => button.dataset.show === show[1]) || null;
-                    return all.find(el => '#' + el.id === sel) || null;
-                },
+                documentElement: { classList: { add: n => rootClasses.add(n), remove: n => rootClasses.delete(n) } },
+                querySelectorAll: sel => nodes.filter(el => matches(el, sel)),
+                querySelector: sel => nodes.find(el => matches(el, sel)) || null,
             },
         };
         runInNewContext(skeleton.replace('/*其余互动用on绑定*/', handler), context);
         const ready = rootClasses.has('js');
-        buttons.forEach(button => button.listeners.forEach(fn => fn({})));
+        const byId = id => nodes.find(el => el.id === id);
+        for (const id of clicks || nodes.filter(el => el.listeners.length).map(el => el.id)) byId(id).listeners.forEach(fn => fn({}));
         if (after) after(windowListeners);
-        return { ready, afterClick: rootClasses.has('js'), shown: waitEls.every(el => !el.classes.has('wait')) };
+        return { ready, js: rootClasses.has('js'), hidden: id => byId(id).classes.has('wait'), attr: (id, k) => byId(id).attrs[k] };
     };
-    assert.deepEqual(run(), { ready: true, afterClick: true, shown: true }, '正常：点击后揭示');
-    const broken = run({ handler: "on('#door',()=>missingSound());" });
-    assert.equal(broken.ready, true);
-    assert.equal(broken.afterClick, false, '点击处理函数出错：去掉 js，全部露出');
-    assert.equal(run({ waits: ['s2', 's3'] }).ready, false, '有 wait 段落没有对应按钮：启动时就不隐藏');
-    assert.equal(run({ triggers: { s2: '#nowhere' }, waits: [] }).afterClick, false, '按钮指向不存在的段落：点击后全部露出');
-    assert.equal(run({ after: listeners => listeners.unhandledrejection?.({}) }).afterClick, false, '异步操作报错：全部露出');
-    assert.equal(run({ after: listeners => listeners.error?.({}) }).afterClick, false, '定时器里报错：全部露出');
+    const story = [{ id: 's2', wait: true }, { id: 'b2', data: { show: '#s2' } }];
+    let r = run({ els: story });
+    assert.equal(r.ready && r.js, true);
+    assert.equal(r.hidden('s2'), false, '露出：点了就出现');
+    r = run({ els: [{ id: 'note', wait: true }, { id: 'bn', data: { open: '#note' } }], clicks: ['bn'] });
+    assert.equal(r.hidden('note'), false, '开合：第一次打开');
+    assert.equal(r.attr('bn', 'aria-expanded'), 'true');
+    r = run({ els: [{ id: 'note', wait: true }, { id: 'bn', data: { open: '#note' } }], clicks: ['bn', 'bn'] });
+    assert.equal(r.hidden('note'), true, '开合：再点合上');
+    assert.equal(r.attr('bn', 'aria-expanded'), 'false');
+    assert.equal(r.js, true);
+    const tabs = [{ id: 'chat', data: { pane: 'app' } }, { id: 'wallet', wait: true, data: { pane: 'app' } },
+        { id: 'tc', data: { tab: '#chat' } }, { id: 'tw', data: { tab: '#wallet' } }];
+    r = run({ els: tabs, clicks: ['tw'] });
+    assert.equal(r.ready, true, '默认面板不加 wait，另一块由切换按钮负责');
+    assert.deepEqual([r.hidden('chat'), r.hidden('wallet')], [true, false], '切换：只显示选中的一块');
+    r = run({ els: tabs, clicks: ['tw', 'tc'] });
+    assert.deepEqual([r.hidden('chat'), r.hidden('wallet')], [false, true], '切换：可以切回去');
+    const reply = [{ id: 'r1', wait: true }, { id: 'pick', data: { reply: '#r1' } }];
+    r = run({ els: reply, handler: "on('[data-reply]',b=>pick(b.dataset.reply).classList.remove('wait'));" });
+    assert.equal(r.ready, true, '自定义互动把目标写在按钮 data-* 里，也算有入口');
+    assert.equal(r.hidden('r1'), false);
+    assert.equal(run({ els: story, handler: "on('#b2',()=>missingSound());" }).js, false, '点击处理函数出错：去掉 js，全部露出');
+    assert.equal(run({ els: [...story, { id: 's3', wait: true }] }).ready, false, '有 wait 内容没有任何按钮：启动时就不隐藏');
+    assert.equal(run({ els: [{ id: 'b', data: { show: '#nowhere' } }] }).js, false, '露出的目标不存在：全部露出');
+    assert.equal(run({ els: [{ id: 'b', data: { open: '#nowhere' } }] }).js, false, '开合的目标不存在：全部露出');
+    assert.equal(run({ els: [{ id: 'b', data: { tab: '#nowhere' } }] }).js, false, '切换的目标不存在：全部露出');
+    assert.equal(run({ els: story, after: l => l.unhandledrejection?.({}) }).js, false, '异步操作报错：全部露出');
+    assert.equal(run({ els: story, after: l => l.error?.({}) }).js, false, '定时器里报错：全部露出');
+});
+
+test('三档规则：点哪看哪，后两档给读者身份、几处回响和多样动作，待排版正文仍一字不动', () => {
+    for (const profile of adaptiveRenderProfiles()) {
+        assert.match(profile.rules, /【点哪看哪】点到的东西原地回应/);
+        assert.match(profile.rules, /不自动滚动/);
+        assert.match(profile.rules, /不做fixed全屏遮罩/);
+        assert.match(profile.rules, /data-open="#该id"开合/);
+        assert.match(profile.rules, /data-tab="#该id"切换/);
+        assert.match(profile.rules, /自定义互动也把目标写进button的data-\*/);
+        assert.match(profile.rules, /如果提供了待排版正文，必须原样保留，只加物件文字与状态提示/);
+        assert.doesNotMatch(profile.rules, /不另添台词/);
+    }
+    const [lively, immersive, experimental] = adaptiveRenderProfiles();
+    assert.doesNotMatch(lively.rules, /【让东西回应你】/);
+    for (const profile of [immersive, experimental]) {
+        assert.match(profile.rules, /【让东西回应你】先定读者在故事里的身份/);
+        assert.match(profile.rules, /一个动作几处回响/);
+        assert.match(profile.rules, /替主角选回复/);
+    }
+    assert.match(immersive.rules, /至少用两种动作/);
+    assert.match(experimental.rules, /至少用三种动作/);
+    assert.match(experimental.rules, /不点也能读完的彩蛋/);
+    assert.doesNotMatch(experimental.rules, /已发现 n\/总数/, '不再写死同一个套路');
 });
 
 test('三份 HTML 规则按阅读、参与、探索区分，不要求插件标记', () => {
@@ -132,7 +179,7 @@ test('HTML 模板统一覆盖 Markdown 输出并检查配色，保留代码要�
     assert.match(guardrails, /浅底深字、深底浅字/);
     assert.match(guardrails, /禁止文字与背景明度相近/);
     for (const profile of adaptiveRenderProfiles()) {
-        assert.ok(estimateTokenCount(`${profile.rules}\n\n${guardrails}`) <= 1525, `${profile.name} 含兜底规则后明显过长`);
+        assert.ok(estimateTokenCount(`${profile.rules}\n\n${guardrails}`) <= 2175, `${profile.name} 含兜底规则后明显过长`);
         for (const interactiveMode of [false, true]) {
             const settings = {
                 selectedRenderIndex: profile.id, interactiveMode,
