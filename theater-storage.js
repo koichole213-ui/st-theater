@@ -316,6 +316,7 @@ async function histAddStorage(item) {
         runtime.archiveSync?.publish('history-add');
         return true;
     } catch (e) {
+        runtime.runtimeLog?.('error', '本地存档：保存历史失败', { name: e?.name, message: e?.message || String(e), archiveClosed: !!runtime.archiveClosed });
         if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 保存历史失败:', e);
         toastr.error('保存失败（本地数据库写入出错）：' + archiveWriteFailureDetail(e));
@@ -360,6 +361,7 @@ async function histDeleteStorage(ids) {
         runtime.archiveSync?.publish('history-delete');
         return true;
     } catch (e) {
+        runtime.runtimeLog?.('error', '本地存档：删除历史失败', { name: e?.name, message: e?.message || String(e), archiveClosed: !!runtime.archiveClosed });
         if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 删除历史失败:', e);
         toastr.error('删除失败（本地数据库出错）：' + archiveWriteFailureDetail(e));
@@ -393,6 +395,7 @@ async function recentPersist(recent = runtime.recentCache, current = runtime.cur
         runtime.archiveSync?.publish('recent');
         return true;
     } catch (e) {
+        runtime.runtimeLog?.('error', '本地存档：保存最近生成失败', { name: e?.name, message: e?.message || String(e), archiveClosed: !!runtime.archiveClosed });
         if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 保存最近生成失败:', e);
         toastr.error('本地保存失败，原有结果已保留，请先保存重要作品');
@@ -467,6 +470,7 @@ async function persistResultLayout(item, updated, canCommit) {
         else runtime.archiveSync?.publish('result-layout');
         return changed;
     } catch (error) {
+        runtime.runtimeLog?.('error', '本地存档：保存结果排版失败', { name: error?.name, message: error?.message || String(error), archiveClosed: !!runtime.archiveClosed });
         if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 保存结果排版失败:', error);
         toastr.error('本地保存失败，原有排版已保留');
@@ -533,6 +537,7 @@ async function longDreamAdd(record) {
         runtime.archiveSync?.publish('dream-add');
         return copy;
     } catch (e) {
+        runtime.runtimeLog?.('error', '本地存档：保存长梦失败', { name: e?.name, message: e?.message || String(e), archiveClosed: !!runtime.archiveClosed });
         if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 保存长梦失败:', e);
         toastr.error('保存长梦失败（本地数据库写入出错）：' + archiveWriteFailureDetail(e));
@@ -595,6 +600,7 @@ async function longDreamPutStorage(record, { onConflict, applyToLatest } = {}) {
         runtime.archiveSync?.publish('dream-put');
         return normalized;
     } catch (e) {
+        runtime.runtimeLog?.('error', '本地存档：更新长梦失败', { name: e?.name, message: e?.message || String(e), archiveClosed: !!runtime.archiveClosed });
         if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 更新长梦失败:', e);
         if (!runtime.archiveStale) toastr.error('更新长梦失败（本地数据库写入出错）：' + archiveWriteFailureDetail(e));
@@ -647,6 +653,7 @@ async function updateLongDreamLayoutStorage(id, changeLayout) {
         runtime.archiveSync?.publish('dream-layout');
         return true;
     } catch (error) {
+        runtime.runtimeLog?.('error', '本地存档：保存长梦排版失败', { name: error?.name, message: error?.message || String(error), archiveClosed: !!runtime.archiveClosed });
         if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 保存长梦排版失败:', error);
         toastr.error('本地保存失败，原有排版已保留');
@@ -679,6 +686,7 @@ async function longDreamDeleteStorage(id) {
         runtime.archiveSync?.publish('dream-delete');
         return true;
     } catch (e) {
+        runtime.runtimeLog?.('error', '本地存档：删除长梦失败', { name: e?.name, message: e?.message || String(e), archiveClosed: !!runtime.archiveClosed });
         if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 删除长梦失败:', e);
         toastr.error('删除长梦失败（本地数据库写入出错）：' + archiveWriteFailureDetail(e));
@@ -715,6 +723,7 @@ async function histPutStorage(item) {
         runtime.archiveSync?.publish('history-put');
         return true;
     } catch (e) {
+        runtime.runtimeLog?.('error', '本地存档：更新历史失败', { name: e?.name, message: e?.message || String(e), archiveClosed: !!runtime.archiveClosed });
         if (runtime.archiveRescue?.reportWriteFailure()) return false;
         console.error('[Theater] 更新历史失败:', e);
         toastr.error('更新历史失败（本地数据库写入出错）：' + archiveWriteFailureDetail(e));

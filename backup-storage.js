@@ -93,7 +93,7 @@ export function createBackupStorage(runtime) {
                 if (!runtime.archiveClosed) {
                     const release=db().transaction('kv','readwrite'), finished=done(release), store=release.objectStore('kv');
                     try { const current=await request(store.get('backup-operation-lease'));if(current?.owner===owner)store.delete('backup-operation-lease');await finished; }
-                    catch { await finished.catch(()=>{}); }
+                    catch (error) { runtime.runtimeLog?.('warn', '备份：释放操作锁失败，10 分钟后会自动失效', { name: error?.name, message: error?.message || String(error) }); await finished.catch(()=>{}); }
                 }
             }
         },
@@ -105,7 +105,7 @@ export function createBackupStorage(runtime) {
             else await removeJournal();
         },
         noteSettingsSave() {
-            if (!applying && journal && stableJson(instructionState()) !== stableJson(journal.after)) void removeJournal().catch(() => {});
+            if (!applying && journal && stableJson(instructionState()) !== stableJson(journal.after)) void removeJournal().catch(error => runtime.runtimeLog?.('warn', '备份：清理已过期的恢复记录失败，下次启动再试', { name: error?.name, message: error?.message || String(error) }));
         },
         async preview(packet, selected, sourceId) { idle(); const before = await snapshot(); return { before, plan: await planBackupRestore(before.data, packet, selected, sourceId) }; },
         async restore(packet, selected, sourceId, expected) {
