@@ -219,10 +219,15 @@ test('目录和设置同时漏掉上一次备份，原设备下次即使内容�
     const [remembered] = await host.client().readIndex();
     host.replaceDirectory([]);
     const restart = fixture(t, host, { state: original.state });
+    const requests = host.calls.length;
     await restart.backup.onOpen();
-    assert.equal(host.zipWrites().length, 1);
-    assert.deepEqual((await host.client().readIndex()).map(file => file.path), [remembered.path]);
-    assert.equal(restart.runtime.settings.serverBackups.length, 1);
+    assert.equal(host.calls.length, requests, '还没到期时打开面板不读存档、不请求服务器');
+    const saved = original.state.get('backup-state');
+    saved.server = { ...saved.server, time: saved.server.time - 2 * 86400000, lastAttempt: saved.server.lastAttempt - 2 * 86400000 };
+    const nextDay = fixture(t, host, { state: original.state });
+    await nextDay.backup.onOpen();
+    assert.ok((await host.client().readIndex()).some(file => file.path === remembered.path), '到期后把漏掉的那份补回目录');
+    assert.ok(nextDay.runtime.settings.serverBackups.some(file => file.path === remembered.path));
 });
 
 test('服务器已校验的 ZIP 不依赖本机状态写入，写入失败仍登记两份清单', async t => {
@@ -383,4 +388,36 @@ test('大备份上传和读回按大小放宽等待时间，小请求仍按原�
     } finally {
         globalThis.setTimeout = realSetTimeout;
     }
+});
+
+test('同样内容上次没校验通过时，重试沿用同一个文件名，不在服务器上越堆越多', async t => {
+    const host = mockHost({ fail: 'verify' });
+    const { backup, state } = fixture(t, host);
+    await backup.runBackup(['server']);
+    await backup.runBackup(['server']);
+    const names = host.zipWrites().map(call => call.name);
+    assert.equal(names.length, 2);
+    assert.equal(new Set(names).size, 1);
+    assert.equal(state.get('backup-state').server.failedUpload.name, names[0]);
+    assert.equal(host.indexWrites().length, 0, '没校验通过的文件不进目录');
+});
+
+test('关闭服务器备份的选择在账号暂时核对不了时，下次打开面板补记到酒馆设置', async t => {
+    const host = mockHost();
+    const { backup, runtime } = fixture(t, host, { initialOff: true, account: { handle: 'account-a', name: '甲' } });
+    await backup.onOpen();
+    assert.equal(runtime.settings.serverBackupOff?.[origin], undefined);
+    host.setAccount('account-a');
+    await backup.onOpen();
+    assert.equal(runtime.settings.serverBackupOff[origin], true);
+    assert.equal(host.zipWrites().length, 0);
+});
+
+test('酒馆设置里的服务器备份清单最多留 100 条，完整清单留在目录文件', async t => {
+    const old = Array.from({ length: 150 }, (_, i) => ({ ...entry, path: serverBackupPath(`st-theater-backup-old-${i}.zip`), time: 1000 + i }));
+    const host = mockHost({ entries: old });
+    const { backup, runtime } = fixture(t, host, { settingsEntries: old });
+    await backup.runBackup(['server']);
+    assert.equal(runtime.settings.serverBackups.length, 100);
+    assert.ok((await host.client().readIndex()).length >= 151);
 });
