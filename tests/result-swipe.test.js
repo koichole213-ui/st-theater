@@ -63,3 +63,23 @@ test('结果页重复选择或无效方向横滑保留滚动位置，换页仍�
     assert.equal(wrapper.scrollTop, 230);
     assert.equal(state.read, 160);
 });
+
+// 无头 Chrome 实测（2026-11-15）：旧作品里写了 cursor:grab 的拖动块，向右一拖就被当成“切回生成页”。
+test('拖动块（grab / grabbing / move 光标）上的横拖不算翻页，普通正文区照常可以翻页', () => {
+    for (const [cursor, swipes] of [['grab', []], ['grabbing', []], ['move', []], ['auto', ['generate']]]) {
+        const handlers = new Map(), pages = [];
+        const root = {
+            ownerDocument: { defaultView: { getSelection: () => '', getComputedStyle: node => ({ cursor: node === target ? cursor : 'auto' }) } },
+            addEventListener(name, handler) { handlers.set(name, handler); },
+            removeEventListener(name) { handlers.delete(name); },
+        };
+        const target = { closest: () => null, nodeType: 1, parentElement: root };
+        bindResultSwipe(root, page => { pages.push(page); return true; });
+        const point = (x, y) => ({ clientX: x, clientY: y });
+        const fire = (name, points) => handlers.get(name)?.({ target, touches: points, changedTouches: points, cancelable: true, preventDefault() {}, stopImmediatePropagation() {} });
+        fire('touchstart', [point(50, 30)]);
+        fire('touchmove', [point(120, 31)]);
+        fire('touchend', [point(190, 32)]);
+        assert.deepEqual(pages, swipes, cursor);
+    }
+});

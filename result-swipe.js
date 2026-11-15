@@ -14,7 +14,7 @@ export function bindResultSwipe(root, onSwipe) {
         if (control && !control.matches('[data-result-tab]')) return true;
         for (let node = target; node && node !== root && node.nodeType === 1; node = node.parentElement) {
             const style = view?.getComputedStyle(node);
-            if (['none', 'pan-x'].includes(style?.touchAction) || style?.cursor === 'pointer' && !control?.matches('[data-result-tab]') || /^(auto|scroll)$/.test(style?.overflowX || '') && node.scrollWidth > node.clientWidth + 2) return true;
+            if (['none', 'pan-x'].includes(style?.touchAction) || /^(pointer|grab|grabbing|move)$/.test(style?.cursor || '') && !control?.matches('[data-result-tab]') || /^(auto|scroll)$/.test(style?.overflowX || '') && node.scrollWidth > node.clientWidth + 2) return true;
         }
         return false;
     }
