@@ -9,6 +9,7 @@ import { readableCharCount } from './text-counter.js';
 export function createLongDreamCreatePage(runtime, ws) {
 // 其他部分的函数：调用时转给 ws（组装完成后才会被调用）。
 const longDreamSources = (...args) => ws.longDreamSources(...args);
+const resolveLongDreamSource = (...args) => ws.resolveLongDreamSource(...args);
 const longDreamDate = (...args) => ws.longDreamDate(...args);
 const longDreamExcerpt = (...args) => ws.longDreamExcerpt(...args);
 const longDreamSourceInstructionState = (...args) => ws.longDreamSourceInstructionState(...args);
