@@ -30,7 +30,7 @@ test('直接定梦保存失败不改现有候选/设定，锁定和准备生成�
  for(const options of [{fail:true},{busy:true},{preparing:true},{changed:true}]){const h=harness(options),before=JSON.stringify(h.before);await h.run();assert.equal(h.writes(),options.fail?1:0);assert.equal(JSON.stringify(h.before),before);if(!options.changed)assert.equal(h.scope.longDreamCache[0].canon,'旧定梦')}
 });
 test('待确认页移除退出按钮，但旧候选暂停/备份辅助函数仍保留兼容',()=>{
- const source=readFileSync(new URL('../long-dream-workspace.js',import.meta.url),'utf8');
+ const source=['','-library','-create','-memory'].map(part=>readFileSync(new URL(`../long-dream-workspace${part}.js`,import.meta.url),'utf8')).join('\n');
  assert.doesNotMatch(source,/id="theater-dream-exit-review"/);
  assert.match(readFileSync(new URL('../long-dream.js',import.meta.url),'utf8'),/export function pauseLongDreamReview/);
 });
