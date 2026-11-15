@@ -53,7 +53,7 @@ test('普通生成（出字过程和最终结果）和长梦都接上了排除',
     assert.equal(dream.match(/stripExcludedOutputTags\(/g)?.length, 2);
 });
 
-import { reasoningSafeContent } from '../reasoning-filter.js';
+import { reasoningSafeContent, filterTaggedReasoning } from '../reasoning-filter.js';
 
 const longStory = '<p>' + '城里下了一夜的雨，她把伞收起来，推门进了茶馆。'.repeat(80) + '</p>';
 
@@ -67,6 +67,14 @@ test('代码块或脚本里出现的结束思考标签是作品内容，不当�
     for (const inner of ['<pre><code>&lt;/think&gt;</think></code></pre>', '<script>const marker = "</think>"; console.log(marker);</script>']) {
         const value = longStory + inner + tail;
         assert.equal(reasoningSafeContent(value), value);
+    }
+});
+
+test('思考里提到 script、pre、code 等标签名时，思考结束标签照样有效，正文不会被藏起来', () => {
+    for (const thought of ['<thinking>我需要加一个<script>按钮脚本，再用<pre>展示</thinking>', '<think>计划用<code>写计数器</think>']) {
+        const result = filterTaggedReasoning(thought + longStory + '<script>var n = 1;</script>');
+        assert.equal(result.incomplete, false);
+        assert.equal(result.content, longStory + '<script>var n = 1;</script>');
     }
 });
 

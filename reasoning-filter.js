@@ -16,11 +16,9 @@ import { readableCharCount } from './text-counter.js';
 
 // 只数读者看得到的字：样式、脚本里的代码不算。
 const readableLength = value => readableCharCount(recoverHtmlText(value));
-// 代码、脚本、样式里出现的 </think> 是作品内容，不当作思考结束标签。
-const RAW_REGION = /<(script|style|pre|code|textarea)(?=[\s/>])[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
-function rawRegions(text) {
-    return [...text.matchAll(new RegExp(RAW_REGION))].map(match => [match.index, match.index + match[0].length]);
-}
+// 思考块之外的代码、脚本、样式（script/style/pre/code/textarea）里出现的思考标签是作品内容，原样保留。
+// 思考块里面提到这些标签名不算，思考块的结束标签永远有效，免得把整篇正文当成思考藏起来。
+const TOKEN_PATTERN = /<\s*(\/?)\s*(think|thinking|electric|ecot)(?=[\s/>])[^>]*>|<(script|style|pre|code|textarea)(?=[\s/>])[^>]*>/gi;
 
 function trailingPartialTagLength(value) {
     const text = String(value || '');
@@ -46,19 +44,22 @@ export function filterTaggedReasoning(value) {
     let depth = 0;
     let hadReasoning = false;
     let loneClose = -1;
-    let regions = null;
-    COMPLETE_TAG_PATTERN.lastIndex = 0;
+    const tokens = new RegExp(TOKEN_PATTERN);
 
     let match;
-    while ((match = COMPLETE_TAG_PATTERN.exec(text)) !== null) {
+    while ((match = tokens.exec(text)) !== null) {
         const segment = text.slice(cursor, match.index);
         if (depth === 0) content += segment;
-        cursor = COMPLETE_TAG_PATTERN.lastIndex;
-        regions ??= rawRegions(text);
-        const at = match.index;
-        if (regions.some(([start, end]) => at > start && at < end)) {
-            // 代码、脚本、样式里的这类字样是作品内容，原样保留。
-            if (depth === 0) content += match[0];
+        cursor = tokens.lastIndex;
+        if (match[3]) {
+            if (depth > 0) continue;
+            // 正文里的代码区：一直到它自己的结束标签（没有就到结尾）都原样保留。
+            const close = new RegExp(`<\\/\\s*${match[3]}\\s*>`, 'gi');
+            close.lastIndex = cursor;
+            const found = close.exec(text);
+            const end = found ? close.lastIndex : text.length;
+            content += text.slice(match.index, end);
+            cursor = tokens.lastIndex = end;
             continue;
         }
 
