@@ -14,7 +14,7 @@ import { itemTags } from '../tag-system.js';
 
 test('三个 HTML 规则保持紧凑预算，不给正文新增长度上限', () => {
     for (const profile of adaptiveRenderProfiles()) {
-        assert.ok(estimateTokenCount(profile.rules) <= 2100, profile.name);
+        assert.ok(estimateTokenCount(profile.rules) <= 2150, profile.name);
         assert.match(profile.rules, /原样保留/);
         assert.match(profile.rules, /主线按原顺序/);
         assert.match(profile.rules, /长文\/短屏均可滚动到底/);
@@ -124,6 +124,12 @@ test('规则里的互动骨架：露出、开合、切换都在原地生效，�
     r = run({ els: [{ id: 'r1', wait: true }, { id: 'typing', hidden: true }, { id: 'pick', data: { reply: '#r1', typing: '#typing' } }], clicks: ['pick', 'pick'] });
     assert.equal(r.prop('typing', 'hidden'), true, '回应已出来后再点，不再重放“正在输入…”');
     assert.equal(run({ els: [{ id: 'chat', data: { pane: 'app' } }, { id: 'tc', data: { tab: '#chat', pane: 'app' } }] }).ready, true, '切换按钮上多写了 data-pane 也不影响');
+    const paneButtons = [{ id: 'chat', data: { pane: 'app' } }, { id: 'wallet', wait: true, data: { pane: 'app' } },
+        { id: 'tc', data: { tab: '#chat', pane: 'app' } }, { id: 'tw', data: { tab: '#wallet', pane: 'app' } }];
+    r = run({ els: paneButtons, clicks: ['tw'] });
+    assert.deepEqual([r.hidden('tc'), r.hidden('tw'), r.hidden('chat'), r.hidden('wallet')], [false, false, true, false], '按钮上写了 data-pane：切换后按钮仍在');
+    r = run({ els: paneButtons, clicks: ['tw', 'tc'] });
+    assert.deepEqual([r.hidden('chat'), r.hidden('wallet')], [false, true], '按钮上写了 data-pane：还能切回去');
     const tabs = [{ id: 'chat', data: { pane: 'app' } }, { id: 'wallet', wait: true, data: { pane: 'app' } },
         { id: 'tc', data: { tab: '#chat' } }, { id: 'tw', data: { tab: '#wallet' } }];
     r = run({ els: tabs, clicks: ['tw'] });
@@ -200,7 +206,7 @@ test('HTML 模板统一覆盖 Markdown 输出并检查配色，保留代码要�
     assert.match(guardrails, /浅底深字、深底浅字/);
     assert.match(guardrails, /禁止文字与背景明度相近/);
     for (const profile of adaptiveRenderProfiles()) {
-        assert.ok(estimateTokenCount(`${profile.rules}\n\n${guardrails}`) <= 2375, `${profile.name} 含兜底规则后明显过长`);
+        assert.ok(estimateTokenCount(`${profile.rules}\n\n${guardrails}`) <= 2425, `${profile.name} 含兜底规则后明显过长`);
         for (const interactiveMode of [false, true]) {
             const settings = {
                 selectedRenderIndex: profile.id, interactiveMode,

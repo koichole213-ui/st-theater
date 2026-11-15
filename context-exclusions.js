@@ -119,7 +119,8 @@ export function outputExclusionTags(rules = []) {
         .map(rule => rule.value))];
 }
 
-export function stripExcludedOutputTags(source, rules = []) {
+// guard: false 时不做“剩太少就只去标签”的保护，交给调用方自己核对（排版那一步用正文段落编号逐段核对）。
+export function stripExcludedOutputTags(source, rules = [], { guard = true } = {}) {
     const original = String(source ?? '');
     const tags = outputExclusionTags(rules);
     if (!tags.length || !original) return { text: original, removed: 0, unwrapped: false };
@@ -137,7 +138,7 @@ export function stripExcludedOutputTags(source, rules = []) {
     }
     const before = readableChars(original);
     // 去掉后剩下不到三分之一，或者正文中间有大段被去掉：不冒险删，只去掉标签本身、保留文字，并标记让界面提示“格式异常，已保留原文”。
-    if (removed && before >= 50 && (suspicious || readableChars(text) < before / 3)) {
+    if (guard && removed && before >= 50 && (suspicious || readableChars(text) < before / 3)) {
         const marker = new RegExp(`<\\s*\\/?\\s*(?:${tags.map(tag => tag.replace(/[.]/g, '\\.')).join('|')})(?=[\\s/>])[^>]*>`, 'gi');
         const code = /<(script|style)(?=[\s/>])[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
         let unwrapped = '', cursor = 0;

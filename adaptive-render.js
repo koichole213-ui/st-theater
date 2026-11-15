@@ -11,7 +11,7 @@ const SHARED_ADAPTIVE_RULES = `【成品】输出完整HTML：<!doctype html>→
 【运行环境】页面在只允许脚本的沙盒中显示：localStorage/sessionStorage/cookie、alert/confirm/prompt、表单提交、全屏、新窗口均不可用。确认、提交、答题都用页内button。左右滑会被外层当翻页，别做滑动手势。
 【点哪看哪】点到的东西原地回应：带出的内容紧跟被点物件，或物件自己展开、翻面；这段末尾就是下一个可点处。按钮不集中到别处，不自动滚动。弹层就地展开成卡片，不做fixed全屏遮罩。
 【互动写法：出错也能读完】
-1. 正文默认全部可见。操作后才出现的内容加class="wait"和唯一id，隐藏只写在 .js .wait{display:none}，另加[hidden]{display:none!important}。四种button：data-show="#该id"露出（不收回，主线用它）；data-open="#该id"开合（补充内容，再点合上）；data-tab="#该id"切换（同组每块面板写id和相同data-pane、各有一个data-tab按钮，默认那块不加wait）；data-reply="#该id"替主角回一句，稍停露出回应（data-typing="#提示id"可指向带hidden的“正在输入…”）。自定义互动也把目标写进button的data-*，用pick()取。不要在html标签上预写js类。
+1. 正文默认全部可见。操作后才出现的内容加class="wait"和唯一id，隐藏只写在 .js .wait{display:none}，另加[hidden]{display:none!important}（正文不用hidden）。四种button：data-show="#该id"露出（不收回，主线用它）；data-open="#该id"开合（补充内容，再点合上）；data-tab="#该id"切换（同组每块面板写id和相同data-pane、各有一个data-tab按钮，默认那块不加wait）；data-reply="#该id"替主角回一句（仅限没有待排版正文时），稍停露出回应（data-typing="#提示id"可指向带hidden的“正在输入…”）。自定义互动也把目标写进button的data-*，用pick()取。不要在html标签上预写js类。
 2. script照此骨架：
 const root=document.documentElement,reveal=()=>root.classList.remove('js');
 addEventListener('error',reveal);addEventListener('unhandledrejection',reveal);
@@ -19,7 +19,7 @@ const $=s=>document.querySelector(s),pick=s=>{const el=$(s);if(!el)throw s;retur
 const on=(sel,fn)=>document.querySelectorAll(sel).forEach(el=>el.addEventListener('click',e=>{try{fn(el,e)}catch(_){reveal()}}));
 try{on('[data-show]',b=>pick(b.dataset.show).classList.remove('wait'));
 on('[data-open]',b=>b.setAttribute('aria-expanded',!pick(b.dataset.open).classList.toggle('wait')));
-on('[data-tab]',b=>{const el=pick(b.dataset.tab);document.querySelectorAll('[data-pane="'+el.dataset.pane+'"]').forEach(p=>p.classList.add('wait'));el.classList.remove('wait')});
+on('[data-tab]',b=>{const el=pick(b.dataset.tab);document.querySelectorAll(':not(button)[data-pane="'+el.dataset.pane+'"]').forEach(p=>p.classList.add('wait'));el.classList.remove('wait')});
 on('[data-reply]',b=>{const r=pick(b.dataset.reply),t=b.dataset.typing&&pick(b.dataset.typing);if(!r.classList.contains('wait'))return;if(t)t.hidden=false;setTimeout(()=>{if(t)t.hidden=true;r.classList.remove('wait')},900)});
 /*其余互动用on绑定*/
 const refs=[...document.querySelectorAll('button')].flatMap(b=>Object.values(b.dataset));

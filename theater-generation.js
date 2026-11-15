@@ -640,7 +640,7 @@ async function requestFinalRenderedHtml({
             let validated = validateFinalRenderedHtml(renderText, finalRenderPayload, sourceText);
             // “内容排除”里的标签，排版模型自己加的也去掉。在填回正文之前、对排版模型的原始输出做：
             // 每个正文段落编号都还在、并且重新通过同样的检查，才采用；少了任何一段就保留原排版。
-            const excluded = stripExcludedOutputTags(renderText, runtime.settings?.contextExclusionRules);
+            const excluded = stripExcludedOutputTags(renderText, runtime.settings?.contextExclusionRules, { guard: false });
             if (excluded.removed) {
                 const missing = finalRenderPayload.placeholderPlan.paragraphs.filter(paragraph => !excluded.text.includes(paragraph.token)).length;
                 let cleaned = null;
@@ -649,7 +649,7 @@ async function requestFinalRenderedHtml({
                     catch (error) { cleaned = null; }
                 }
                 if (cleaned) validated = cleaned;
-                else runtime.runtimeLog('warn', '排版结果里的排除标签包住了正文段落，已保留原排版', { scope: metricScope, missing_paragraphs: missing });
+                else runtime.runtimeLog('warn', missing ? '排版结果里的排除标签包住了正文段落，已保留原排版' : '去掉排除标签后排版没通过检查，已保留原排版', { scope: metricScope, missing_paragraphs: missing });
             }
             runtime.runtimeLog(result?.stopReason === 'length' ? 'warn' : 'info', '最终 HTML 渲染完成', {
                 scope: metricScope,

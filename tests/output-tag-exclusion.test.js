@@ -162,3 +162,20 @@ test('排除标签只包住一两段正文时，一段都不能少，并在运�
         assert.ok(logs.some(([level, message]) => level === 'warn' && /包住了正文段落/.test(message)));
     }
 });
+
+// 第三轮复查复现：草稿里正文只是编号、字很少，原来的“剩太少就只去标签”保护会让短篇里的状态栏文字留下来。
+test('短篇排版里排版模型加的长状态栏也会整块去掉', async () => {
+    const paragraphs = ['第一段：雨夜。', '第二段：她推开门。', '第三段：他在门外。'];
+    const bar = '好感度 +5｜心情：雀跃｜天气：小雨转晴｜地点：旧港码头｜时间：深夜十一点｜'.repeat(3);
+    const tokens = paragraphs.map((_, i) => `<p>{{THEATER_P${String(i + 1).padStart(4, '0')}}}</p>`).join('');
+    const { html } = await layoutWith(`<html><body><status>${bar}</status>${tokens}</body></html>`, STATUS_RULE, paragraphs.join('\n\n'));
+    assert.doesNotMatch(html, /好感度|status/);
+    for (const text of paragraphs) assert.ok(html.includes(text), text);
+});
+
+test('正文里的去标签保护不变：正文被整段包住时仍只去标签、保留文字', () => {
+    const body = '很长的一段正文，'.repeat(20);
+    const result = stripExcludedOutputTags(`<status><p>${body}</p></status>`, STATUS_RULE);
+    assert.equal(result.unwrapped, true);
+    assert.match(result.text, /很长的一段正文/);
+});
