@@ -116,7 +116,7 @@ test('开头的长思考块照常去掉；保留原文时不动脚本里的同�
 });
 
 // 排版那一步（独立排版 API、手动重新排版、排版重试、长梦最终排版）都走 requestFinalRenderedHtml。
-async function layoutWith(responseHtml, rules) {
+async function layoutWith(responseHtml, rules, sourceText = '第一段正文写得很长，雨下了一整夜。\n\n第二段正文，天亮了她推开门。') {
     const previousDocument = globalThis.document;
     globalThis.document = { createElement: () => ({ set innerHTML(v) { this.textContent = v.replace(/<[^>]*>/g, ''); }, querySelectorAll: () => [] }) };
     const logs = [];
@@ -125,7 +125,7 @@ async function layoutWith(responseHtml, rules) {
         const runtime = { settings: config, extractHtml: v => v, runtimeLog: (level, message) => logs.push([level, message]), recordRequestMetrics() {},
             requestConfiguredGenerationApi: async () => ({ text: responseHtml }) };
         const apiRoute = createTheaterApi({ settings: config }).captureGenerationApiRoute({});
-        const result = await createTheaterGeneration(runtime).requestFinalRenderedHtml({ sourceText: '第一段正文写得很长，雨下了一整夜。\n\n第二段正文，天亮了她推开门。', rules: '样式', apiRoute, ctx: {} });
+        const result = await createTheaterGeneration(runtime).requestFinalRenderedHtml({ sourceText, rules: '样式', apiRoute, ctx: {} });
         return { html: result.html, logs };
     } finally { globalThis.document = previousDocument; }
 }
@@ -148,4 +148,17 @@ test('没有排除规则时，排版结果原样保留', async () => {
     const raw = '<html><body><status>好感度 +5</status><p>{{THEATER_P0001}}</p><p>{{THEATER_P0002}}</p></body></html>';
     const { html } = await layoutWith(raw, []);
     assert.match(html, /<status>好感度 \+5<\/status>/);
+});
+
+// 独立复查复现（2026-11-15）：只看“剩下的字数够不够”时，一小段被包住会被悄悄删掉。
+test('排除标签只包住一两段正文时，一段都不能少，并在运行日志里说明', async () => {
+    const paragraphs = Array.from({ length: 20 }, (_, i) => `第${i + 1}段：雨一直下，她把伞往他那边又偏了一点，自己半边肩膀都湿了。`);
+    const source = paragraphs.join('\n\n');
+    const token = i => `{{THEATER_P${String(i + 1).padStart(4, '0')}}}`;
+    const body = (wrap, extra = '') => paragraphs.map((_, i) => wrap.includes(i) ? `<status><p>${token(i)}</p></status>` : `<p>${token(i)}</p>`).join('') + extra;
+    for (const [wrap, extra] of [[[9], ''], [[18, 19], '<status>电量 80%</status>']]) {
+        const { html, logs } = await layoutWith(`<html><body>${body(wrap, extra)}</body></html>`, STATUS_RULE, source);
+        for (const text of paragraphs) assert.ok(html.includes(text), text);
+        assert.ok(logs.some(([level, message]) => level === 'warn' && /包住了正文段落/.test(message)));
+    }
 });

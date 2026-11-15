@@ -10,7 +10,7 @@ const read = file => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'
 // 必须在本文件里有转发，否则运行到那里才报“未定义”。
 test('长梦工作区各部分用到的函数都有定义或转发，包括参数默认值里的', () => {
     const sources = Object.fromEntries(PARTS.map(file => [file, read(file)]));
-    const names = new Set(Object.values(sources).flatMap(src => [...src.matchAll(/^(?:async )?function (\w+)\(/gm)].map(m => m[1])));
+    const names = new Set(Object.values(sources).flatMap(src => [...src.matchAll(/^\s*(?:async )?function (\w+)\(/gm)].map(m => m[1])));
     assert.ok(names.size >= 81);
     for (const [file, src] of Object.entries(sources)) {
         const defined = new Set([
@@ -18,7 +18,8 @@ test('长梦工作区各部分用到的函数都有定义或转发，包括参�
             ...[...src.matchAll(/^const (\w+) = \(\.\.\.args\) => ws\.\1\(\.\.\.args\);$/gm)].map(m => m[1]),
             ...(src.match(/^const \{ ([^}]+) \} = ws;$/m)?.[1].split(', ') || []),
         ]);
-        const code = src.replace(/\/\/.*$/gm, '').replace(/'(?:\\.|[^'\\])*'/g, "''");
+        // 只去掉独占一行或前面有空白的 // 注释（网址里的 // 前面是冒号，不会被当成注释）；字符串不去掉，宁可多报。
+        const code = src.replace(/(^|\s)\/\/.*$/gm, '$1');
         const missing = [...names].filter(name => !defined.has(name) && new RegExp(`\\b${name}\\b`).test(code));
         assert.deepEqual(missing, [], `${file} 缺少转发`);
     }

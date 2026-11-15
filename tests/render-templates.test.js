@@ -69,7 +69,7 @@ test('规则里的互动骨架：露出、开合、切换都在原地生效，�
             const classes = new Set(spec.wait ? ['wait'] : []), listeners = [], attrs = {};
             return {
                 id: spec.id || '', dataset: { ...(spec.data || {}) }, classes, listeners, attrs, hidden: !!spec.hidden,
-                classList: { add: n => classes.add(n), remove: n => classes.delete(n),
+                classList: { add: n => classes.add(n), remove: n => classes.delete(n), contains: n => classes.has(n),
                     toggle: n => (classes.has(n) ? (classes.delete(n), false) : (classes.add(n), true)) },
                 setAttribute: (k, v) => { attrs[k] = String(v); },
                 addEventListener: (type, fn) => listeners.push(fn),
@@ -79,6 +79,7 @@ test('规则里的互动骨架：露出、开合、切换都在原地生效，�
             if (sel.includes(',')) return sel.split(',').some(part => matches(el, part));
             if (sel === '.wait') return el.classes.has('wait');
             if (sel === 'button') return Object.keys(el.dataset).some(k => k !== 'pane');
+            if (sel.startsWith(':not(button)')) return !matches(el, 'button') && matches(el, sel.slice(':not(button)'.length));
             if (sel.startsWith('#')) return '#' + el.id === sel;
             const m = sel.match(/^\[data-(\w+)(?:="(.*)")?\]$/);
             return !!m && (m[2] === undefined ? m[1] in el.dataset : el.dataset[m[1]] === m[2]);
@@ -120,6 +121,9 @@ test('规则里的互动骨架：露出、开合、切换都在原地生效，�
     assert.deepEqual(r.typingShown, ['typing'], '先显示“正在输入…”');
     assert.equal(r.hidden('r1'), false, '稍停后露出回应');
     assert.equal(r.prop('typing', 'hidden'), true, '回应出现后“正在输入…”收起');
+    r = run({ els: [{ id: 'r1', wait: true }, { id: 'typing', hidden: true }, { id: 'pick', data: { reply: '#r1', typing: '#typing' } }], clicks: ['pick', 'pick'] });
+    assert.equal(r.prop('typing', 'hidden'), true, '回应已出来后再点，不再重放“正在输入…”');
+    assert.equal(run({ els: [{ id: 'chat', data: { pane: 'app' } }, { id: 'tc', data: { tab: '#chat', pane: 'app' } }] }).ready, true, '切换按钮上多写了 data-pane 也不影响');
     const tabs = [{ id: 'chat', data: { pane: 'app' } }, { id: 'wallet', wait: true, data: { pane: 'app' } },
         { id: 'tc', data: { tab: '#chat' } }, { id: 'tw', data: { tab: '#wallet' } }];
     r = run({ els: tabs, clicks: ['tw'] });
@@ -148,9 +152,10 @@ test('三档规则：点哪看哪，后两档给读者身份、几处回响和�
         assert.match(profile.rules, /data-open="#该id"开合/);
         assert.match(profile.rules, /data-tab="#该id"切换/);
         assert.match(profile.rules, /自定义互动也把目标写进button的data-\*/);
-        assert.match(profile.rules, /如果提供了待排版正文，必须原样保留，只加物件文字与状态提示，不写新台词、回应或彩蛋，选择只决定先读哪段、其余随后也露出/);
+        assert.match(profile.rules, /如果提供了待排版正文，必须原样保留（即排版请求里的正文数据），只加物件文字与状态提示，不写新台词、回应或彩蛋，选择只决定先读哪段、其余随后也露出/);
         assert.match(profile.rules, /各有一个data-tab按钮/);
         assert.match(profile.rules, /不要在html标签上预写js类/);
+        assert.match(profile.rules, /\[hidden\]\{display:none!important\}/);
         assert.doesNotMatch(profile.rules, /不另添台词/);
     }
     const [lively, immersive, experimental] = adaptiveRenderProfiles();
@@ -164,6 +169,7 @@ test('三档规则：点哪看哪，后两档给读者身份、几处回响和�
     assert.match(experimental.rules, /至少用三种动作/);
     assert.match(experimental.rules, /没有待排版正文时，主线外放两三个不点也能读完的彩蛋/);
     assert.match(experimental.rules, /主线不放进选项分支/);
+    for (const profile of [immersive, experimental]) assert.match(profile.rules, /没有待排版正文时，可让读者用data-reply替主角选回复/);
     assert.doesNotMatch(experimental.rules, /已发现 n\/总数/, '不再写死同一个套路');
 });
 

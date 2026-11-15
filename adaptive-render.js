@@ -6,12 +6,12 @@ export const ADAPTIVE_RENDER_SELECTIONS = Object.freeze({
 });
 
 const SHARED_ADAPTIVE_RULES = `【成品】输出完整HTML：<!doctype html>→head内style→body正文→正文后唯一的script。图形用CSS或内联SVG，禁止外部资源/网络请求、赛博朋克元素。视觉取自本篇物件、空间与情绪。
-【正文】创作遵循原任务；如果提供了待排版正文，必须原样保留，只加物件文字与状态提示，不写新台词、回应或彩蛋，选择只决定先读哪段、其余随后也露出。否则主线外的小角落（物件背面、展开卡片、另一界面、回复的回应）可写与本篇一致的短内容。主线按原顺序推进，长段连续排列。
+【正文】创作遵循原任务；如果提供了待排版正文，必须原样保留（即排版请求里的正文数据），只加物件文字与状态提示，不写新台词、回应或彩蛋，选择只决定先读哪段、其余随后也露出。否则主线外的小角落（物件背面、展开卡片、另一界面、回复的回应）可写与本篇一致的短内容。主线按原顺序推进，长段连续排列。
 【版式】body{margin:0;background:transparent}；*{box-sizing:border-box}；容器width:100%，max-width按场景选。正文font-size>=16px;line-height>=1.6;overflow-wrap:anywhere；说明text-align:left；可点区域>=44px。长文/短屏均可滚动到底，不用100vh或固定高度滚动框锁高，不锁body滚动。
 【运行环境】页面在只允许脚本的沙盒中显示：localStorage/sessionStorage/cookie、alert/confirm/prompt、表单提交、全屏、新窗口均不可用。确认、提交、答题都用页内button。左右滑会被外层当翻页，别做滑动手势。
 【点哪看哪】点到的东西原地回应：带出的内容紧跟被点物件，或物件自己展开、翻面；这段末尾就是下一个可点处。按钮不集中到别处，不自动滚动。弹层就地展开成卡片，不做fixed全屏遮罩。
 【互动写法：出错也能读完】
-1. 正文默认全部可见。操作后才出现的内容加class="wait"和唯一id，隐藏只写在 .js .wait{display:none}。四种button：data-show="#该id"露出（不收回，主线用它）；data-open="#该id"开合（补充内容，再点合上）；data-tab="#该id"切换（同组每块面板写id和相同data-pane、各有一个data-tab按钮，默认那块不加wait）；data-reply="#该id"替主角回一句，稍停露出回应（data-typing="#提示id"可指向带hidden的“正在输入…”）。自定义互动也把目标写进button的data-*，用pick()取。不要在html标签上预写js类。
+1. 正文默认全部可见。操作后才出现的内容加class="wait"和唯一id，隐藏只写在 .js .wait{display:none}，另加[hidden]{display:none!important}。四种button：data-show="#该id"露出（不收回，主线用它）；data-open="#该id"开合（补充内容，再点合上）；data-tab="#该id"切换（同组每块面板写id和相同data-pane、各有一个data-tab按钮，默认那块不加wait）；data-reply="#该id"替主角回一句，稍停露出回应（data-typing="#提示id"可指向带hidden的“正在输入…”）。自定义互动也把目标写进button的data-*，用pick()取。不要在html标签上预写js类。
 2. script照此骨架：
 const root=document.documentElement,reveal=()=>root.classList.remove('js');
 addEventListener('error',reveal);addEventListener('unhandledrejection',reveal);
@@ -20,10 +20,10 @@ const on=(sel,fn)=>document.querySelectorAll(sel).forEach(el=>el.addEventListene
 try{on('[data-show]',b=>pick(b.dataset.show).classList.remove('wait'));
 on('[data-open]',b=>b.setAttribute('aria-expanded',!pick(b.dataset.open).classList.toggle('wait')));
 on('[data-tab]',b=>{const el=pick(b.dataset.tab);document.querySelectorAll('[data-pane="'+el.dataset.pane+'"]').forEach(p=>p.classList.add('wait'));el.classList.remove('wait')});
-on('[data-reply]',b=>{const r=pick(b.dataset.reply),t=b.dataset.typing&&pick(b.dataset.typing);if(t)t.hidden=false;setTimeout(()=>{if(t)t.hidden=true;r.classList.remove('wait')},900)});
+on('[data-reply]',b=>{const r=pick(b.dataset.reply),t=b.dataset.typing&&pick(b.dataset.typing);if(!r.classList.contains('wait'))return;if(t)t.hidden=false;setTimeout(()=>{if(t)t.hidden=true;r.classList.remove('wait')},900)});
 /*其余互动用on绑定*/
 const refs=[...document.querySelectorAll('button')].flatMap(b=>Object.values(b.dataset));
-for(const w of document.querySelectorAll('.wait,[data-pane]'))if(!refs.includes('#'+w.id))throw w;
+for(const w of document.querySelectorAll('.wait,:not(button)[data-pane]'))if(!refs.includes('#'+w.id))throw w;
 root.classList.add('js')}catch(_){reveal()}
 任何出错都会去掉js，内容全部露出。
 3. button type="button"，用上面的data或on()绑定，不写内联onclick；重复点击同一完成动作保持当前状态。装饰层pointer-events:none；封面/遮罩关闭用hidden或remove()，不只调透明度；拖动元素加touch-action:none，并提供点击替代。
@@ -31,7 +31,7 @@ root.classList.add('js')}catch(_){reveal()}
 【音效（按需）】点物件时发一声短音：首次点击时new AudioContext()并resume()；OscillatorNode→GainNode→destination，增益淡出到0后stop()。先更新画面再发声，声音放进try。禁止背景音乐、循环声及独立声音开关。
 【自检，不输出】逐个点：每次就在点的地方有变化；点完后主线正文全部可见；script不运行也能读全文。prefers-reduced-motion时减少动效。`;
 
-const PLAYFUL_RULES = `【让东西回应你】先定读者在故事里的身份（翻他手机的人、收信人、门外的人），可点的就是此人会碰的物件。一个动作几处回响：物件自己变，别处也跟着变（计数、余额、顶栏、另一界面、角色反应）。动作多样：露出、开合、切换、选择、收下、集齐。可让读者用data-reply替主角选回复；回应属于角落，主线不放进选项分支。`;
+const PLAYFUL_RULES = `【让东西回应你】先定读者在故事里的身份（翻他手机的人、收信人、门外的人），可点的就是此人会碰的物件。一个动作几处回响：物件自己变，别处也跟着变（计数、余额、顶栏、另一界面、角色反应）。动作多样：露出、开合、切换、选择、收下、集齐。没有待排版正文时，可让读者用data-reply替主角选回复；回应属于角落，主线不放进选项分支。`;
 
 const PROFILES = Object.freeze([
     Object.freeze({
