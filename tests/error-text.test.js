@@ -115,3 +115,14 @@ test('备用的历史导入路径：坏 JSON 先换成中文说明再带上文�
     assert.doesNotMatch(source, /throw new Error\(`「\$\{file\.name\}」：\$\{error\?\.message/);
     assert.match(source, /throw new Error\(`「\$\{file\.name\}」：\$\{readableErrorText\(error/);
 });
+
+test('运行日志脱敏：后台 JSON 原话里带反斜杠的 token、嵌套的 key，整段值都抹掉', async () => {
+    const { writeRuntimeLog } = await import('../runtime-log.js');
+    clearRuntimeLogs();
+    const raw = JSON.stringify({ error: 'boom', token: 'ab\\cd\\ef-secret', nested: { apiKey: 'k\\1-secret' } });
+    writeRuntimeLog('warn', '更新插件：酒馆返回的原话', { status: 503, message: raw });
+    writeRuntimeLog('warn', '文字', { message: 'token: ab\\cd\\ef-secret' });
+    const text = getRuntimeLogEntries().map(entry => entry.message).join('\n');
+    assert.doesNotMatch(text, /secret|cd|ef-/);
+    assert.match(text, /boom/);
+});
