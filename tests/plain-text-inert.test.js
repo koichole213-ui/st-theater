@@ -55,7 +55,8 @@ class FakeNode {
     insertAt(offset, node) { const siblings = this.parent.children; node.parent = this.parent; siblings.splice(siblings.indexOf(this) + offset, 0, node); }
     before(node) { this.insertAt(0, node); }
     after(node) { this.insertAt(1, node); }
-    replaceWith(node) { this.insertAt(0, node); this.parent.children.splice(this.parent.children.indexOf(this), 1); }
+    replaceWith(node) { this.insertAt(0, node); this.remove(); }
+    remove() { this.parent.children.splice(this.parent.children.indexOf(this), 1); }
 }
 const fakeDoc = { createTextNode: text => new FakeNode('#text', text) };
 const decode = text => text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -85,6 +86,10 @@ test('转纯文字：源码里原有的换行照旧，缩进不再混进正文',
     assert.equal(toText('<p>甲</p>\n\n<p>乙</p>'), '甲\n\n乙');
     assert.equal(toText('<div>\n    <p>甲</p>\n    <p>乙</p>\n</div>'), '甲\n乙');
     assert.equal(toText('<p>甲<br><br>乙</p>'), '甲\n\n乙');
+    assert.equal(toText('<p>第一行<br>\n第二行<br>\n    第三行</p>'), '第一行\n第二行\n第三行', '<br> 后面的源码换行不再多算一行');
+    assert.equal(toText('<p>甲<br>\n</p>\n<p>乙</p>'), '甲\n乙', '段尾的 <br> 不另起一行');
+    assert.equal(toText('<p>甲<br><br></p><p>乙</p>'), '甲\n乙');
+    assert.equal(toText('<p>甲<br><br><br></p><p>乙</p>'), '甲\n\n乙');
     assert.equal(toText('<p>　　段首全角缩进保留</p>'), '　　段首全角缩进保留');
 });
 
@@ -107,4 +112,7 @@ test('转纯文字：正文里写着的尖括号字样不被当成标签删掉',
     const htmlToPlainText = loadHtmlToPlainText({ document });
     assert.equal(htmlToPlainText('<p>他写下 &lt;b&gt;重点&lt;/b&gt; 这几个字。</p>'), '他写下 <b>重点</b> 这几个字。');
     assert.equal(htmlToPlainText('&lt;p&gt;整篇被转义过一次&lt;/p&gt;'), '整篇被转义过一次');
+    assert.equal(htmlToPlainText('&lt;div&gt;&lt;p&gt;段一&lt;/p&gt;&lt;p&gt;段二&lt;/p&gt;&lt;style&gt;.a{color:red}&lt;/style&gt;&lt;/div&gt;'), '段一\n段二', '再解析一遍：分段保留，样式不当正文');
+    assert.equal(parsed.length, 5, '每次最多多解析一层（1 + 2 + 2）');
+    assert.equal(htmlToPlainText('<p>他写下 &lt;/p&gt; 这几个字，又写 1 &lt; 2 且 3 &gt; 2。</p>'), '他写下 </p> 这几个字，又写 1 < 2 且 3 > 2。', '单独一个结束标签字样不算被转义');
 });
