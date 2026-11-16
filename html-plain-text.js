@@ -69,7 +69,8 @@ export function stripTagsKeepText(value) {
         .replace(/<\/?[a-zA-Z][^<>]*>/g, ''));
 }
 
-const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' };
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0', ldquo: '\u201c', rdquo: '\u201d', lsquo: '\u2018',
+    rsquo: '\u2019', mdash: '\u2014', ndash: '\u2013', hellip: '\u2026', middot: '\u00b7', times: '\u00d7', copy: '\u00a9', laquo: '\u00ab', raquo: '\u00bb' };
 // 只去标签字样时，文字里还留着 &amp; &lt; 这样的写法；比字数、或用它当结果时先还原成字。
 export function decodeBasicEntities(value) {
     return String(value ?? '').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, code) => {
@@ -77,7 +78,8 @@ export function decodeBasicEntities(value) {
             const point = code[1] === 'x' || code[1] === 'X' ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
             return Number.isFinite(point) && point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : whole;
         }
-        return ENTITIES[code.toLowerCase()] ?? whole;
+        const name = code.toLowerCase();
+        return Object.hasOwn(ENTITIES, name) ? ENTITIES[name] : whole;
     });
 }
 
@@ -85,7 +87,17 @@ const visibleCount = value => String(value ?? '').replace(/\s+/g, '').length;
 
 // 整篇被转义过一次时会再解析一层。再解析只为拆标签、分段落，不能丢正文：
 // 解析后的字比“只去掉标签字样”还少（例如正文里写着 <!-- … -->、没闭合的 <div），就不用解析的结果。
-export function keepTextAfterReparse(escapedText, reparsed) {
-    const stripped = decodeBasicEntities(stripTagsKeepText(escapedText));
+// decode：有隔离文档时由调用处传入（按浏览器的完整字符表还原），没有就用常见字符表。
+export function keepTextAfterReparse(escapedText, reparsed, decode = decodeBasicEntities) {
+    const stripped = decode(stripTagsKeepText(escapedText));
     return visibleCount(reparsed) >= visibleCount(stripped) ? reparsed : stripped;
+}
+
+// <script>/<style> 块里是不是代码。作品里真正的脚本和样式总有这些符号；
+// 只写着一句话的（例如正文里写出来的 <script>约在东门见</script>）是正文，不删。
+export function looksLikeCode(tag, content) {
+    const text = String(content ?? '');
+    if (!text.trim()) return true;
+    if (String(tag).toLowerCase() === 'style') return /[{}:;]/.test(text);
+    return /[;{}()=<>[\]]|=>|\b(?:function|var|let|const|return|document|window|import|export)\b/.test(text);
 }

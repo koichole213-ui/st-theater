@@ -5,6 +5,7 @@ import { LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION } from './
 import { composePresetMessages } from './request-layout.js';
 import { readableCharCount } from './text-counter.js';
 import { STORY_RELATION_CONTINUITY_RULE } from './generation-payload.js';
+import { looksLikeCode } from './html-plain-text.js';
 
 function cleanText(value) {
     return String(value || '').trim();
@@ -20,7 +21,9 @@ function plainStoryText(value = '') {
     // inject markup, styles, or scripts into a writing request.
     if (!/<\/?[a-z][\w:-]*(?:\s[^>]*)?>/i.test(source)) return source;
     return source
-        .replace(/<(script|style|svg|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+        // 只删像代码的脚本 / 样式块；只写着一句话的是正文里写出来的字样，留下里面的字。
+        .replace(/<(script|style|svg|noscript)\b[^>]*>([\s\S]*?)<\/\1>/gi, (block, tag, content) => (
+            /^(?:script|style)$/i.test(tag) && !looksLikeCode(tag, content) ? ` ${content} ` : ' '))
         .replace(/<br\s*\/?>/gi, '\n')
         .replace(/<\/p>|<\/div>|<\/section>|<\/article>|<\/li>|<\/h[1-6]>/gi, '\n')
         .replace(/<[^>]+>/g, ' ')

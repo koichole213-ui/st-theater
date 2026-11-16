@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
-import { plainTextFromParsedHtml, stripBreakMarks, collapseBlockBreaks, looksLikeEscapedHtml, keepTextAfterReparse, stripTagsKeepText, decodeBasicEntities } from '../html-plain-text.js';
+import { plainTextFromParsedHtml, stripBreakMarks, collapseBlockBreaks, looksLikeEscapedHtml, keepTextAfterReparse, stripTagsKeepText, decodeBasicEntities, looksLikeCode } from '../html-plain-text.js';
 
 // 作品 HTML 转纯文字时，必须在“空白文档”里解析：
 // 用酒馆页面自己的 document 解析，<img onerror/onload> 里的代码会在酒馆页面上运行（Chromium 已复现）。
@@ -12,7 +12,7 @@ function loadHtmlToPlainText(sandbox) {
     const start = source.indexOf(begin) + begin.length;
     const end = source.indexOf('// @theater-source-end htmlToPlainText', start);
     assert.ok(start > begin.length && end > start, '找不到 htmlToPlainText');
-    return runInContext(`${source.slice(start, end)}\nhtmlToPlainText;`, createContext({ plainTextFromParsedHtml, stripBreakMarks, looksLikeEscapedHtml, keepTextAfterReparse, stripTagsKeepText, ...sandbox }));
+    return runInContext(`${source.slice(start, end)}\nhtmlToPlainText;`, createContext({ plainTextFromParsedHtml, stripBreakMarks, looksLikeEscapedHtml, keepTextAfterReparse, stripTagsKeepText, looksLikeCode, ...sandbox }));
 }
 
 function fakeDiv(log) {
@@ -49,6 +49,7 @@ test('没有空白文档能力时不在酒馆页面上解析，只去掉标签�
 const VOID = new Set(['br', 'hr', 'img', 'meta', 'link', 'input']);
 class FakeNode {
     constructor(tag, text = '') { this.tag = tag; this.text = text; this.children = []; this.parent = null; this.ownerDocument = fakeDoc; }
+    get tagName() { return this.tag.toUpperCase(); }
     get textContent() { return this.tag === '#text' ? this.text : this.children.map(child => child.textContent).join(''); }
     append(node) { node.parent = this; this.children.push(node); }
     descendants() { return this.children.flatMap(child => [child, ...child.descendants()]); }
@@ -72,6 +73,20 @@ function parse(html) {
     return root;
 }
 const toText = html => plainTextFromParsedHtml(parse(html));
+
+// 假的“空白文档”：createElement 出来的元素用上面的极简解析器。textarea 用来还原字符（记录时加前缀以便区分）。
+function fakeDocument(parsed) {
+    const doc = {
+        createTextNode: text => new FakeNode('#text', text),
+        createElement: tag => ({
+            set innerHTML(value) { parsed.push(tag === 'textarea' ? `\u0000textarea${value}` : value); this.tree = parse(value); },
+            querySelectorAll(selector) { return this.tree.querySelectorAll(selector); },
+            get ownerDocument() { return fakeDoc; },
+            get textContent() { return this.tree.textContent; },
+        }),
+    };
+    return { implementation: { createHTMLDocument: () => doc } };
+}
 
 test('转纯文字：<br>、挤在一行的段落和卡片、列表都保留分段', () => {
     assert.equal(toText('<p>他推开门。</p><p>她抬起头。</p>'), '他推开门。\n她抬起头。');
@@ -104,18 +119,12 @@ test('转纯文字：没有 DOM 能力时退回 textContent；分段记号不会
 
 test('转纯文字：正文里写着的尖括号字样不被当成标签删掉', () => {
     const parsed = [];
-    const document = { implementation: { createHTMLDocument: () => ({ createElement: () => ({
-        set innerHTML(value) { parsed.push(value); const tree = parse(value); this.tree = tree; },
-        querySelectorAll(selector) { return this.tree.querySelectorAll(selector); },
-        get ownerDocument() { return fakeDoc; },
-        get textContent() { return this.tree.textContent; },
-    }) }) } };
-    const htmlToPlainText = loadHtmlToPlainText({ document });
+    const htmlToPlainText = loadHtmlToPlainText({ document: fakeDocument(parsed) });
     assert.equal(htmlToPlainText('<p>他写下 &lt;b&gt;重点&lt;/b&gt; 这几个字。</p>'), '他写下 <b>重点</b> 这几个字。');
     assert.equal(htmlToPlainText('&lt;p&gt;整篇被转义过一次&lt;/p&gt;'), '整篇被转义过一次');
     assert.equal(htmlToPlainText('&lt;div&gt;&lt;p&gt;段一&lt;/p&gt;&lt;p&gt;段二&lt;/p&gt;&lt;style&gt;.a{color:red}&lt;/style&gt;&lt;/div&gt;'), '段一\n段二\n.a{color:red}', '再解析一遍：分段保留；写出来的样式字样宁可留着也不删字');
     assert.equal(htmlToPlainText('<p>她写下 &lt;p&gt;站名&lt;/p&gt; 和 &lt;script&gt;约在东门见&lt;/script&gt;。</p>'), '她写下\n站名\n和 约在东门见。', '小砚的样例：<script> 字样里的话是正文，不能丢');
-    assert.equal(parsed.length, 7, '每次最多多解析一层（1 + 2 + 2 + 2）');
+    assert.equal(parsed.filter(value => !value.startsWith('\u0000textarea')).length, 7, '每次最多多解析一层（1 + 2 + 2 + 2）');
     assert.equal(htmlToPlainText('<p>他写下 &lt;/p&gt; 这几个字，又写 1 &lt; 2 且 3 &gt; 2。</p>'), '他写下 </p> 这几个字，又写 1 < 2 且 3 > 2。', '单独一个结束标签字样不算被转义');
 });
 
@@ -142,16 +151,33 @@ function loadContinuationPrep(htmlToPlainText) {
     return runInContext(`${source.slice(start, end)}\nprepareContinuationContext;`, createContext({ htmlToPlainText, looksLikeEscapedHtml }));
 }
 
-test('续写前文：已经是纯文字时不再解析，正文里写着的 <script>…</script> 字样里的话不丢', () => {
-    const calls = [];
-    const prepare = loadContinuationPrep(value => { calls.push(value); return '[转过]'; });
-    assert.equal(prepare('她只写了 <script>约在东门见</script>。'), '她只写了 <script>约在东门见</script>。');
-    assert.equal(prepare('1 < 2，<b>重点</b>'), '1 < 2，<b>重点</b>');
-    assert.equal(calls.length, 0);
-    // 真正的 HTML 仍要转成纯文字，不把上一页的代码带给模型
-    for (const html of ['<!DOCTYPE html><p>甲</p>', '<div class="a"><p>甲</p></div>', '正文\n<style>.a{color:red}</style>', '正文<script>alert(1);</script>']) {
-        assert.equal(prepare(html), '[转过]', html);
-    }
+test('续写前文：有标签就清理（引用、列表、脚本、样式都不带给模型）；正文里写出来的 <script>一句话</script> 字样当正文留下', () => {
+    const htmlToPlainText = loadHtmlToPlainText({ document: fakeDocument([]) });
+    const prepare = loadContinuationPrep(htmlToPlainText);
+    assert.equal(prepare('她只写了 <script>约在东门见</script>。'), '她只写了 约在东门见。');
+    assert.equal(prepare('<blockquote>引用</blockquote><ul><li>一</li><li>二</li></ul>'), '引用\n一\n二');
+    assert.equal(prepare('正文<script>if (a<b) go();</script>'), '正文');
+    assert.equal(prepare('正文<style>.a{color:red}</style>'), '正文');
+    assert.equal(prepare('纯文字，没有标签'), '纯文字，没有标签');
+});
+
+test('脚本 / 样式块像不像代码', () => {
+    assert.equal(looksLikeCode('script', '约在东门见'), false);
+    assert.equal(looksLikeCode('script', 'alert(1)'), true);
+    assert.equal(looksLikeCode('script', 'if (a<b) go()'), true);
+    assert.equal(looksLikeCode('script', ''), true);
+    assert.equal(looksLikeCode('style', '.a{color:red}'), true);
+    assert.equal(looksLikeCode('style', '一句话'), false);
+});
+
+test('长梦章节：旧记录里正文写出来的 <script>一句话</script> 字样不丢，真脚本照样清掉', async () => {
+    const source = readFileSync(new URL('../long-dream-payload.js', import.meta.url), 'utf8');
+    assert.match(source, /looksLikeCode\(tag, content\)/);
+});
+
+test('字符还原：&ldquo; 等常见字符能还原；&constructor; 这类不认识的原样保留', () => {
+    assert.equal(decodeBasicEntities('&ldquo;你好&rdquo;&mdash;&hellip;'), '“你好”—…');
+    assert.equal(decodeBasicEntities('&constructor; &toString;'), '&constructor; &toString;');
 });
 
 test('整篇被转义：退回“只去标签字样”时把 &amp; &lt; 还原成字；还原后不算丢字', () => {

@@ -27,7 +27,7 @@ import { captureHistoryRoles, normalizeRoleSources } from './history-roles.js';
 import { continuationHistoryMetadata, newHistoryKey } from './history-collections.js';
 import { itemTags } from './tag-system.js';
 import { readableErrorText } from './error-text.js';
-import { keepTextAfterReparse, looksLikeEscapedHtml, plainTextFromParsedHtml, stripBreakMarks, stripTagsKeepText } from './html-plain-text.js';
+import { keepTextAfterReparse, looksLikeCode, looksLikeEscapedHtml, plainTextFromParsedHtml, stripBreakMarks, stripTagsKeepText } from './html-plain-text.js';
 
 export function createTheaterGeneration(runtime) {
 // @theater-source-begin htmlToPlainText
@@ -48,14 +48,26 @@ function htmlToPlainText(html) {
             .replace(/<!(DOCTYPE|doctype)[^>]*>/gi, '')
             .replace(/<\/?(html|head|body|meta|link)[^>]*>/gi, '');
         div.innerHTML = cleaned;
-        // 第一层去掉作品的脚本和样式；再解析的那一层是正文里写出来的字，<script>…</script> 字样里的话也是正文，不删。
-        if (!nested) div.querySelectorAll('script, style, svg, noscript').forEach(el => el.remove());
+        // 第一层去掉作品的脚本和样式（只删像代码的；只写着一句话的是正文里写出来的字样，留着）；
+        // 再解析的那一层全是正文里写出来的字，不删。
+        if (!nested) div.querySelectorAll('script, style, svg, noscript').forEach(el => {
+            const tag = el.tagName.toLowerCase();
+            if ((tag === 'script' || tag === 'style') && !looksLikeCode(tag, el.textContent)) el.replaceWith(doc.createTextNode(el.textContent));
+            else el.remove();
+        });
         // 块级元素、<br> 处保留分段；只取 textContent 会把挤在一行的段落粘成一整段。
         const text = plainTextFromParsedHtml(div);
         // 兜底：整篇 HTML 被转义过一次时，文字里会留下成对的段落标签。再当 HTML 解析一遍（只一层）拆掉标签、分好段；
         // 解析后少了字就退回“只去掉标签字样”。正文里本来就写着的 <b> 之类字样不动。
-        if (!nested && looksLikeEscapedHtml(text)) return keepTextAfterReparse(text, convert(text, true));
+        if (!nested && looksLikeEscapedHtml(text)) return keepTextAfterReparse(text, convert(text, true), decodeEntities);
         return text;
+
+        // 按浏览器的完整字符表还原 &ldquo; 之类；textarea 里的内容不会被当成标签。
+        function decodeEntities(value) {
+            const box = doc.createElement('textarea');
+            box.innerHTML = String(value ?? '').replace(/</g, '&lt;');
+            return box.value ?? box.textContent ?? String(value ?? '');
+        }
     }
 }
 // @theater-source-end htmlToPlainText
@@ -64,11 +76,10 @@ function htmlToPlainText(html) {
 function prepareContinuationContext(value) {
     const raw = String(value || '').trim();
     if (!raw) return '';
-    // 前情一般已经是转好的纯文字（正文里可能本来就写着 <script>…</script> 这样的字样，那是正文）。
-    // 只有它看起来确实是 HTML（整页结构开头、成对的块标签、里面有 { 的样式块、像代码的脚本块）时才再转一次。
-    const looksLikePage = /^\s*<(?:!doctype|html|head|body)\b/i.test(raw) || looksLikeEscapedHtml(raw)
-        || /<style\b[^>]*>[^<]*\{/i.test(raw) || /<script\b[^>]*>[^<]*[;{}()=]/i.test(raw);
-    const plainText = looksLikePage ? htmlToPlainText(raw) : raw;
+    // 只要有标签就转一遍，不把上一页的 HTML/样式/脚本带给模型；
+    // 正文里写出来的 <script>约在东门见</script> 这类字样，转的时候会当正文留下（见 htmlToPlainText）。
+    const containsHtml = /<(?:!doctype|\/?[a-z][^>]*)>/i.test(raw);
+    const plainText = containsHtml ? htmlToPlainText(raw) : raw;
     return plainText.trim();
 }
 // @theater-source-end prepareContinuationContext
