@@ -36,8 +36,11 @@ function htmlToPlainText(html) {
     function convert(source, nested) {
         // 放进一个不显示、不加载图片、不运行事件代码的空白文档里解析。
         // 直接用酒馆页面的 document 解析时，作品里 <img onerror/onload> 的代码会在酒馆页面上运行。
-        const doc = document.implementation?.createHTMLDocument?.('')
-            || (typeof DOMParser === 'function' ? new DOMParser().parseFromString('', 'text/html') : null);
+        let doc = null;
+        try {
+            doc = document.implementation?.createHTMLDocument?.('')
+                || (typeof DOMParser === 'function' ? new DOMParser().parseFromString('', 'text/html') : null);
+        } catch { doc = null; }
         if (!doc) return stripTagsKeepText(source);
         const div = doc.createElement('div');
         // 先用正则预清理完整 HTML 文档结构，避免某些浏览器 innerHTML 解析不彻底
@@ -61,8 +64,11 @@ function htmlToPlainText(html) {
 function prepareContinuationContext(value) {
     const raw = String(value || '').trim();
     if (!raw) return '';
-    const containsHtml = /<(?:!doctype|\/?[a-z][^>]*)>/i.test(raw);
-    const plainText = containsHtml ? htmlToPlainText(raw) : raw;
+    // 前情一般已经是转好的纯文字（正文里可能本来就写着 <script>…</script> 这样的字样，那是正文）。
+    // 只有它看起来确实是 HTML（整页结构开头、成对的块标签、里面有 { 的样式块、像代码的脚本块）时才再转一次。
+    const looksLikePage = /^\s*<(?:!doctype|html|head|body)\b/i.test(raw) || looksLikeEscapedHtml(raw)
+        || /<style\b[^>]*>[^<]*\{/i.test(raw) || /<script\b[^>]*>[^<]*[;{}()=]/i.test(raw);
+    const plainText = looksLikePage ? htmlToPlainText(raw) : raw;
     return plainText.trim();
 }
 // @theater-source-end prepareContinuationContext

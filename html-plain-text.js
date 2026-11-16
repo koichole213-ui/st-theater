@@ -69,11 +69,23 @@ export function stripTagsKeepText(value) {
         .replace(/<\/?[a-zA-Z][^<>]*>/g, ''));
 }
 
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' };
+// 只去标签字样时，文字里还留着 &amp; &lt; 这样的写法；比字数、或用它当结果时先还原成字。
+export function decodeBasicEntities(value) {
+    return String(value ?? '').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, code) => {
+        if (code[0] === '#') {
+            const point = code[1] === 'x' || code[1] === 'X' ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+            return Number.isFinite(point) && point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : whole;
+        }
+        return ENTITIES[code.toLowerCase()] ?? whole;
+    });
+}
+
 const visibleCount = value => String(value ?? '').replace(/\s+/g, '').length;
 
 // 整篇被转义过一次时会再解析一层。再解析只为拆标签、分段落，不能丢正文：
 // 解析后的字比“只去掉标签字样”还少（例如正文里写着 <!-- … -->、没闭合的 <div），就不用解析的结果。
 export function keepTextAfterReparse(escapedText, reparsed) {
-    const stripped = stripTagsKeepText(escapedText);
+    const stripped = decodeBasicEntities(stripTagsKeepText(escapedText));
     return visibleCount(reparsed) >= visibleCount(stripped) ? reparsed : stripped;
 }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
-import { plainTextFromParsedHtml, stripBreakMarks, collapseBlockBreaks, looksLikeEscapedHtml, keepTextAfterReparse, stripTagsKeepText } from '../html-plain-text.js';
+import { plainTextFromParsedHtml, stripBreakMarks, collapseBlockBreaks, looksLikeEscapedHtml, keepTextAfterReparse, stripTagsKeepText, decodeBasicEntities } from '../html-plain-text.js';
 
 // 作品 HTML 转纯文字时，必须在“空白文档”里解析：
 // 用酒馆页面自己的 document 解析，<img onerror/onload> 里的代码会在酒馆页面上运行（Chromium 已复现）。
@@ -131,4 +131,38 @@ test('整篇被转义的判断：要先有开始标签、后有同名结束标�
     looksLikeEscapedHtml('<p '.repeat(80_000));
     looksLikeEscapedHtml('<p>'.repeat(20_000) + '正文');
     assert.ok(Date.now() - started < 500);
+});
+
+// ---- 续写前文（小砚 4.4.8j 复审） ----
+function loadContinuationPrep(htmlToPlainText) {
+    const source = readFileSync(new URL('../theater-generation.js', import.meta.url), 'utf8');
+    const begin = '// @theater-source-begin prepareContinuationContext\n';
+    const start = source.indexOf(begin) + begin.length;
+    const end = source.indexOf('// @theater-source-end prepareContinuationContext', start);
+    return runInContext(`${source.slice(start, end)}\nprepareContinuationContext;`, createContext({ htmlToPlainText, looksLikeEscapedHtml }));
+}
+
+test('续写前文：已经是纯文字时不再解析，正文里写着的 <script>…</script> 字样里的话不丢', () => {
+    const calls = [];
+    const prepare = loadContinuationPrep(value => { calls.push(value); return '[转过]'; });
+    assert.equal(prepare('她只写了 <script>约在东门见</script>。'), '她只写了 <script>约在东门见</script>。');
+    assert.equal(prepare('1 < 2，<b>重点</b>'), '1 < 2，<b>重点</b>');
+    assert.equal(calls.length, 0);
+    // 真正的 HTML 仍要转成纯文字，不把上一页的代码带给模型
+    for (const html of ['<!DOCTYPE html><p>甲</p>', '<div class="a"><p>甲</p></div>', '正文\n<style>.a{color:red}</style>', '正文<script>alert(1);</script>']) {
+        assert.equal(prepare(html), '[转过]', html);
+    }
+});
+
+test('整篇被转义：退回“只去标签字样”时把 &amp; &lt; 还原成字；还原后不算丢字', () => {
+    assert.equal(keepTextAfterReparse('<p>A &amp; B &lt; C</p>', 'A & B < C'), 'A & B < C');
+    assert.equal(keepTextAfterReparse('<p>甲</p><!-- 留着 --><p>乙 &amp; 丙</p>', '甲\n乙 & 丙'), '甲\n<!-- 留着 -->\n乙 & 丙');
+});
+
+test('DOMParser 存在但抛错时，退回只去标签字样，不中断', () => {
+    const htmlToPlainText = loadHtmlToPlainText({
+        document: { implementation: {} },
+        DOMParser: class { parseFromString() { throw new Error('boom'); } },
+    });
+    assert.equal(htmlToPlainText('<p>甲</p><p>乙</p>'), '甲\n乙');
 });
