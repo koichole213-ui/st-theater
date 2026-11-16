@@ -1,6 +1,6 @@
 // Fold preview iterations into the next published entry.
 export const RELEASE_NOTES = Object.freeze([
-    { version: '4.4.8j', date: '2026.11.16', label: '预览版', changes: [
+    { version: '4.4.8k', date: '2026.11.16', label: '预览版', changes: [
         ['修复', '作品转成文字时保留分段', '续写时带给模型的前文、从历史开卷长梦、「复制文字」里，用换行标签分行或挤在一行的段落、对话卡片、列表不再粘成一整段；正文里写着的标签字样也不会被删掉。字数统计不变。'],
         ['优化', '报错不再弹英文原话', '存储空间不足、连不上酒馆、文件格式不对、HTTP 状态码等都换成中文说明；原话写进运行日志。'],
         ['优化', '选择长梦来源更快', '历史很多时，打开“选择作品”不再把每篇都先转成文字。'],
