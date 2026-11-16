@@ -7,6 +7,7 @@ import { normalizeContextExclusionRules } from './context-exclusions.js';
 import { normalizeApiPresetList, MAX_API_PRESETS, createApiPresetFromConfig } from './api-presets.js';
 import { getRuntimeLogEntries, formatRuntimeLogs, clearRuntimeLogs } from './runtime-log.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL } from './request-diagnostics.js';
+import { readableErrorText } from './error-text.js';
 
 // Event registration order and handler closures are preserved by the coordinator.
 export function bindSettingsEvents(runtime, $d) {
@@ -87,7 +88,7 @@ export function bindSettingsEvents(runtime, $d) {
                 runtime.save();
                 toastr.success(`已导入梦脉预设「${imported?.name || preset.name}」`);
             } catch (error) {
-                toastr.warning(error?.message || String(error));
+                toastr.warning(readableErrorText(error, '操作没有完成，请确认文件后再试。', { context: '梦脉预设' }));
             }
         };
         input.click();
@@ -100,7 +101,7 @@ export function bindSettingsEvents(runtime, $d) {
             runtime.downloadFile(filename, JSON.stringify(data, null, 2), 'application/json');
             toastr.success('梦脉预设已导出；文件不包含 API 或长梦内容');
         } catch (error) {
-            toastr.warning(error?.message || String(error));
+            toastr.warning(readableErrorText(error, '操作没有完成，请确认文件后再试。', { context: '梦脉预设' }));
         }
     });
     $d.off('click.tdmemorypresetdelete').on('click.tdmemorypresetdelete', '#theater-delete-dream-memory-preset', function () {

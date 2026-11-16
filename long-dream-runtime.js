@@ -24,6 +24,7 @@ import { finalStoryOutput, FORMAT_RECOVERY_NOTICE } from './story-output.js';
 import { stripExcludedOutputTags } from './context-exclusions.js';
 import { recoverHtmlText } from './html-integrity.js';
 import { shouldWeaveLongDreamMemory, buildLongDreamMemoryPayload, DEFAULT_LONG_DREAM_MEMORY_PRESET, parseLongDreamMemoryResponse } from './long-dream-memory.js';
+import { readableErrorText } from './error-text.js';
 
 export function createLongDreamRuntime(runtime) {
 // @theater-source-begin requestLongDreamChapter
@@ -486,7 +487,7 @@ async function generateNextLongDreamChapter({ appendCandidate = false, candidate
         foundation = await resolveLongDreamRequestFoundation(dream);
     } catch (error) {
         console.error('[Theater] Long dream preparation failed:', error);
-        toastr.error(error?.message || '长梦生成资料读取失败，请稍后重试');
+        toastr.error(readableErrorText(error, '长梦生成资料读取失败，请稍后重试', { context: '长梦生成准备' }));
         return;
     } finally {
         runtime.isPreparingGeneration = false;
@@ -619,7 +620,7 @@ async function keepLongDreamCandidate() {
         if (!saved) return;
         runtime.renderLongDreamPanel();
         toastr.info(retained ? '已保留这版，继续生成或确认其他版本也会留下' : '已取消保留，这版仍在当前候选中');
-    } catch (error) { runtime.theaterError(`保留版本失败：${error?.message || error}`); }
+    } catch (error) { runtime.theaterError(`保留版本失败：${readableErrorText(error, '请刷新页面后再试。', { context: '保留长梦版本' })}`); }
     finally { runtime.longDreamCandidateSavePending = false; }
 }
 // @theater-source-end keepLongDreamCandidate
@@ -651,7 +652,7 @@ async function confirmLongDreamChapter() {
         toastr.success(`第 ${saved.chapters.length} 章已收入长卷，共保留 ${count} 版`);
         queueLongDreamMemoryWeave(saved.id);
     } catch (error) {
-        runtime.theaterError(`保存长梦章节失败：${error?.message || error}`);
+        runtime.theaterError(`保存长梦章节失败：${readableErrorText(error, '请刷新页面后再试。', { context: '保存长梦章节' })}`);
     } finally { runtime.longDreamCandidateSavePending = false; }
 }
 // @theater-source-end confirmLongDreamChapter
@@ -1066,7 +1067,7 @@ async function changeLongDreamDraftCandidate(step) {
         const saved = await runtime.longDreamPut(selectLongDreamDraftCandidate(dream, next));
         if (!saved) return;
         runtime.renderLongDreamPanel();
-    } catch (error) { runtime.theaterError(`切换版本失败：${error?.message || error}`); }
+    } catch (error) { runtime.theaterError(`切换版本失败：${readableErrorText(error, '请刷新页面后再试。', { context: '切换长梦版本' })}`); }
     finally { runtime.longDreamCandidateSavePending = false; }
 }
 // @theater-source-end changeLongDreamDraftCandidate

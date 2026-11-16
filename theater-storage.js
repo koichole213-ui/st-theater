@@ -6,6 +6,7 @@ import { previousResults } from './result-text-edit.js';
 import { createArchiveSafety } from './archive-fingerprints.js';
 import { archiveRevision, createArchiveSync } from './archive-sync.js';
 import { archiveWriteFailureDetail, createArchiveRescue } from './archive-rescue.js';
+import { readableErrorText } from './error-text.js';
 
 export function createTheaterStorage(runtime, archiveOptions) {
 runtime.archiveSafety = createArchiveSafety(runtime, archiveOptions);
@@ -213,7 +214,7 @@ async function storageInit() {
     } catch (e) {
         console.error('[Theater] 存档迁移失败:', e);
         runtime.runtimeLog('error', '存档迁移失败', { message: e?.message || String(e) });
-        toastr.error('小剧场存档迁移失败，旧数据保留在原位：' + (e?.message || e));
+        toastr.error('小剧场存档迁移失败，旧数据保留在原位：' + readableErrorText(e, '请刷新页面后再试。', { context: '存档迁移' }));
     }
 
     const pendingHistory = Array.isArray(runtime.settings.history) ? runtime.settings.history : [];

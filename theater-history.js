@@ -12,6 +12,7 @@ import { withPreservedPopupViewport } from './popup-lifecycle.js';
 import { displayedContinuationVersion, normalizeContinuationRounds } from './continuation-session.js';
 import { isTextOutputMode } from './plain-text-renderer.js';
 import { createHistoryJsonBackup, createHistoryArchive, HISTORY_ARCHIVE_MANIFEST, historyItemsFromArchive, normalizeHistoryBackup } from './history-backup.js';
+import { readableErrorText } from './error-text.js';
 
 export function createTheaterHistory(runtime) {
 // @theater-source-begin inferHistoryTags
@@ -392,7 +393,7 @@ function commitHistoryCollection(change) {
         } catch (error) {
             if (runtime.archiveRescue?.reportWriteFailure()) return false;
             if (!runtime.archiveStale) {
-                const detail = runtime.archiveRescue?.writeFailureDetail(error) ?? error?.message ?? error;
+                const detail = runtime.archiveRescue?.writeFailureDetail(error) ?? readableErrorText(error, '请刷新页面后再试。', { context: '收纳保存' });
                 toastr.error('收纳保存失败，原作品保留：' + detail);
             }
             return false;
@@ -797,7 +798,7 @@ function importHistoryBackup() {
             if (added) toastr.success(`已导入 ${items.length} 条历史、${folders.length} 个文件夹`);
             else toastr.warning('没有导入任何内容');
         } catch (err) {
-            runtime.theaterError('导入历史备份失败：' + (err?.message || err));
+            runtime.theaterError('导入历史备份失败：' + readableErrorText(err, '文件格式或内容不受支持。', { context: '导入历史备份' }));
         }
     };
     input.click();

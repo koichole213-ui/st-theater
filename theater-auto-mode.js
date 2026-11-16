@@ -2,6 +2,7 @@
 import { resolveAutoInstruction } from './auto-mode.js';
 import { TAG_UNCATEGORIZED } from './tag-system.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL } from './request-diagnostics.js';
+import { readableErrorText } from './error-text.js';
 
 export function createTheaterAutoMode(runtime) {
 // @theater-source-begin currentAutoInstruction
@@ -102,7 +103,7 @@ async function autoTick() {
             runtime.save();
         }
         console.warn('[Theater] Auto generation preparation failed:', error);
-        toastr.warning(`自动模式未发起请求：${error?.message || '生成资料读取失败'}`);
+        toastr.warning(`自动模式未发起请求：${readableErrorText(error, '生成资料读取失败', { context: '自动模式准备' })}`);
     }
 }
 // @theater-source-end autoTick

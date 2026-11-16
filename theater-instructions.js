@@ -5,6 +5,7 @@ import { recognizeInstructionTitle } from './instruction-title.js';
 import { ADAPTIVE_RENDER_SELECTIONS } from './adaptive-render.js';
 import { parseInstructionBackup, createInstructionBackup } from './instruction-backup.js';
 import { splitInstructionTextFile } from './instruction-import.js';
+import { readableErrorText } from './error-text.js';
 
 export function createTheaterInstructions(runtime) {
 // @theater-source-begin itemTagBadgesHTML
@@ -906,7 +907,7 @@ function importInstructionTemplates() {
             runtime.settings.instructionTemplates.push(...imported);
             runtime.save(); runtime.refreshInstUI();
             toastr.success(`导入了 ${imported.length} 条指令${addedTags ? `、${addedTags} 个标签` : ''}${strippedCount ? `，已排除 ${strippedCount} 条标题或署名` : ''}`);
-        } catch (err) { toastr.error('导入失败: ' + err.message); }
+        } catch (err) { toastr.error('导入失败：' + readableErrorText(err, '文件格式或内容不受支持。', { context: '导入指令' })); }
     };
     input.click();
 }

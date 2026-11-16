@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { normalizeHistoryBackup } from '../history-backup.js';
 import { normalizeCollections, remapHistoryImport, newHistoryKey } from '../history-collections.js';
+import { readableErrorText } from '../error-text.js';
 
 const source = readFileSync(new URL('../theater-history.js', import.meta.url), 'utf8');
 const code = source.slice(source.indexOf('function importHistoryBackup()'), source.indexOf('// @theater-source-end importHistoryBackup'));
@@ -11,7 +12,7 @@ const file = (name, html, type = '') => ({ name, type, text: async () => html })
 async function importFiles(files, zipData) {
     const input = { click() {} }, writes = [], errors = [], notices = [];
     runInNewContext(`${code}\nimportHistoryBackup();`, {
-        document: { createElement: () => input }, normalizeHistoryBackup, normalizeCollections, remapHistoryImport, newHistoryKey,
+        document: { createElement: () => input }, normalizeHistoryBackup, normalizeCollections, remapHistoryImport, newHistoryKey, readableErrorText,
         readHistoryZip: async () => zipData,
         addHistoryItems: async (items, folders) => { writes.push({ items, folders }); return true; },
         toastr: { success: text => notices.push(text), warning: text => notices.push(text) },

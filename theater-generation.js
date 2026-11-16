@@ -26,6 +26,7 @@ import { markCompleted, markFirstToken } from './request-metrics.js';
 import { captureHistoryRoles, normalizeRoleSources } from './history-roles.js';
 import { continuationHistoryMetadata, newHistoryKey } from './history-collections.js';
 import { itemTags } from './tag-system.js';
+import { readableErrorText } from './error-text.js';
 
 export function createTheaterGeneration(runtime) {
 // @theater-source-begin htmlToPlainText
@@ -744,7 +745,7 @@ async function generateTheater() {
         await runGeneration(instruction, false, sourceTags);
     } catch (error) {
         console.error('[Theater] Generation preparation failed:', error);
-        toastr.error(error?.message || '生成资料读取失败，请稍后重试');
+        toastr.error(readableErrorText(error, '生成资料读取失败，请稍后重试', { context: '生成准备' }));
     }
 }
 // @theater-source-end generateTheater

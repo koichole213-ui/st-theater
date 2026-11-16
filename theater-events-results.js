@@ -5,6 +5,7 @@ import { isTextOutputMode, textThemeForOutputMode } from './plain-text-renderer.
 import { createHtmlTextEdit } from './result-text-edit.js';
 import { displayedContinuationVersion } from './continuation-session.js';
 import { SKIN_LABELS } from './theater-defaults.js';
+import { readableErrorText } from './error-text.js';
 
 // Event registration order and handler closures are preserved by the coordinator.
 export function bindResultEvents(runtime, $d) {
@@ -28,7 +29,7 @@ export function bindResultEvents(runtime, $d) {
         const html = runtime.lastGeneratedHtml || runtime.currentDisplayHtml;
         let htmlEdit = null;
         try { if (!isTextOutputMode(runtime.currentOutputMode)) htmlEdit = createHtmlTextEdit(html); }
-        catch (error) { toastr.warning(error.message); return; }
+        catch (error) { toastr.warning(readableErrorText(error, '编辑没有完成，请再试一次。', { context: '编辑生成页' })); return; }
         const text = htmlEdit?.text ?? runtime.htmlToPlainText(html);
         if (!text) { toastr.warning('没有可编辑的正文'); return; }
         runtime.resultEditSnapshot = {
@@ -57,7 +58,7 @@ export function bindResultEvents(runtime, $d) {
         const newMode = snapshot.mode;
         try {
             newHtml = snapshot.htmlEdit ? snapshot.htmlEdit.apply(text) : runtime.textFallbackHtml(text, textThemeForOutputMode(snapshot.mode));
-        } catch (error) { toastr.warning(error.message); return; }
+        } catch (error) { toastr.warning(readableErrorText(error, '编辑没有完成，请再试一次。', { context: '编辑生成页' })); return; }
         const version = displayedContinuationVersion(runtime.continuationSession, snapshot.html);
         const candidates = [runtime.currentGenerationResult, ...runtime.recentCache];
         const target = candidates.find(item => item?.html === snapshot.html && (!version?.resultId || item.resultId === version.resultId));

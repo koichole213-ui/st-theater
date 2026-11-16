@@ -9,6 +9,7 @@ import { syncPersonaToSettings } from './persona-follow.js';
 import { presetEntryStatesForPreset } from './preset-entry-states.js';
 import { normalizePromptRole, noToolsPostProcessingMode } from './request-layout.js';
 import { worldBookEntryStrategy, shouldReadWorldBookEntry, rememberWorldBookEntryStates, syncFollowedWorldBooks } from './world-book-policy.js';
+import { readableErrorText } from './error-text.js';
 
 export function createTheaterMaterials(runtime) {
 // @theater-source-begin knownInstructionTags
@@ -839,7 +840,7 @@ function reloadWorldBooks({ silent = false, force = false, requireFresh = false 
                         entries: fallbackEntries,
                         available: fallbackEntries.length > 0 || previousCacheBooks.has(name),
                     });
-                    if (!silent && requestId === runtime.wbReloadSequence) toastr.error(`世界书「${name}」读取失败: ` + error.message);
+                    if (!silent && requestId === runtime.wbReloadSequence) toastr.error(`世界书「${name}」读取失败：` + readableErrorText(error, '请稍后重试。', { context: '读取世界书' }));
                 }
             }
         } catch (error) {

@@ -1,6 +1,7 @@
 import { classifyRequestFailure, createDiagnosticError } from './request-diagnostics.js';
 import { theaterError } from './notify.js';
 import { escapeBackup } from './backup-ui.js';
+import { readableErrorText } from './error-text.js';
 
 const writeMessage = '浏览器已关闭本地存档，这次没有保存。请先下载抢救备份，再刷新页面。';
 const notice = '本地存档已被关闭，点此下载抢救备份';
@@ -15,7 +16,7 @@ export function archiveWriteFailureDetail(error) {
     if (error?.name === 'AbortError' || error?.name === 'InvalidStateError' || error?.message === 'IndexedDB transaction aborted') {
         return '本地存档操作中断，请先保留页面里的内容。';
     }
-    return error?.message || error;
+    return readableErrorText(error, '浏览器没有说明原因，请先导出备份，再刷新页面。', { context: '本地存档写入失败' });
 }
 
 export function createArchiveRescue(runtime, { toast = globalThis.toastr } = {}) {

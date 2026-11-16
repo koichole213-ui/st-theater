@@ -5,6 +5,7 @@ import { beginVertexRequest } from './vertex-credentials.js';
 import { normalizeMaxTokens, buildApiRequest } from './api-client.js';
 import { DEFAULT_LAYOUT_MAX_TOKENS, resolveLayoutApiRoute, captureLayoutApiSelection } from './layout-api.js';
 import { classifyRequestFailure } from './request-diagnostics.js';
+import { readableErrorText } from './error-text.js';
 
 export function bindLayoutApi($d, runtime) {
     $d.off('change.tlayoutenabled').on('change.tlayoutenabled', '#theater-layout-api-enabled', function () {
@@ -31,7 +32,7 @@ export function bindLayoutApi($d, runtime) {
         try {
             resolveLayoutApiRoute({ layoutSelection: captureLayoutApiSelection({ ...runtime.settings, layoutApiEnabled: true }) });
             toastr.success('排版 API 设置已保存');
-        } catch (error) { toastr.warning(error.message); }
+        } catch (error) { toastr.warning(readableErrorText(error, '排版 API 设置不完整，请检查后再试。', { context: '排版 API 设置' })); }
     });
     $d.off('click.tlayouttest').on('click.tlayouttest', '#theater-layout-api-test', async function () {
         const $button = $(this);
@@ -42,7 +43,7 @@ export function bindLayoutApi($d, runtime) {
                 ...runtime.settings, layoutApiEnabled: true,
                 layoutApiPresetId: String($('#theater-layout-api-preset').val() || ''),
             }) });
-        } catch (error) { toastr.warning(error.message); return; }
+        } catch (error) { toastr.warning(readableErrorText(error, '排版 API 设置不完整，请检查后再试。', { context: '排版 API 设置' })); return; }
         $button.prop('disabled', true).find('span').text('测试中…');
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 30000);

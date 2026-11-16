@@ -15,7 +15,7 @@
 | 请求线路 | `api-client`、`api-runtime-custom`（独立 API）、`api-runtime-main`（酒馆主 API）、`api-presets`、`reasoning-filter`、`request-metrics`、`runtime-log` |
 | 显示与排版规则 | `render-templates`、`safe-renderer`、`plain-text-renderer` |
 | 长梦 | `long-dream-model`、`long-dream-generation`、`long-dream-payload`、`long-dream-memory`、`long-dream-summary`、`long-dream-backup`、`long-dream-canon`、`long-dream-ui` |
-| 界面与弹窗 | `main-ui`、`popup-ui`、`popup-lifecycle` |
+| 界面与弹窗 | `main-ui`、`popup-ui`、`popup-lifecycle`、`error-text`（报错里给用户看的那句话） |
 | 版本与更新 | `release-version`（每次发版改这里的版本号）、`extension-update`、`version-check` |
 
 ## 新测试优先直接 `import`

@@ -10,6 +10,7 @@ import { createLongDreamWorldBookSnapshot, updateLongDreamChapter, LONG_DREAM_ST
 import { createLongDreamArchive, LONG_DREAM_ARCHIVE_MANIFEST, MAX_LONG_DREAM_ARCHIVE_BYTES, MAX_LONG_DREAM_ARCHIVE_FILES, parseLongDreamArchive } from './long-dream-archive.js';
 import { createLongDreamBackup, MAX_LONG_DREAM_BACKUP_BYTES, parseLongDreamBackup } from './long-dream-backup.js';
 import { isTextOutputMode } from './plain-text-renderer.js';
+import { readableErrorText } from './error-text.js';
 
 export function createLongDreamLibrary(runtime, ws) {
 // 其他部分的函数：调用时转给 ws（组装完成后才会被调用）。
@@ -640,7 +641,7 @@ async function saveLongDreamChapterEdits() {
         toastr.success(textChanged ? '章节正文与富 HTML 已更新，梦脉将从本章起重新织录' : '章节标题已保存，原始 HTML 保持不变');
         if (textChanged) runtime.queueLongDreamMemoryWeave(saved.id, { force: true });
     } catch (error) {
-        toastr.warning(error?.message || String(error));
+        toastr.warning(readableErrorText(error, '章节没有保存，请再试一次。', { context: '保存长梦章节编辑' }));
         $('#theater-dream-save-chapter').prop('disabled', false);
     }
 }

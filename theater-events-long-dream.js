@@ -3,6 +3,7 @@ import { importLongDreamSeries } from './long-dream-series.js';
 import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_WORLD_LINE_RELATION, LONG_DREAM_WORLD_BOOK_POLICY, createLongDreamRecord, LONG_DREAM_STATUS, LONG_DREAM_MEMORY_STATUS, prepareLongDreamMemoryRegeneration, updateLongDreamMemoryV2RecordItem, setLongDreamMemoryV2RecordItemHidden, rejectLongDreamMemoryV2RecordItem, resolveLongDreamMemoryV2RecordConflict, updateLongDreamMemoryCard, setLongDreamMemoryCardStatus, updateLongDreamDefinition } from './long-dream.js';
 import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, composeLongDreamCanon } from './long-dream-canon-suggestions.js';
 import { normalizeManualTarget } from './length-policy.js';
+import { readableErrorText } from './error-text.js';
 
 // Event registration order and handler closures are preserved by the coordinator.
 export function bindLongDreamEvents(runtime, $d) {
@@ -548,7 +549,7 @@ export function bindLongDreamEvents(runtime, $d) {
             };
             toastr.success(messages[action] || '梦脉已更新');
         } catch (error) {
-            toastr.warning(error?.message || String(error));
+            toastr.warning(readableErrorText(error, '梦脉没有更新，请再试一次。', { context: '梦脉操作' }));
         }
     });
     $d.off('click.tdsummary').on('click.tdsummary', '[data-dream-summary-refresh]', () => runtime.confirmLongDreamSummaryAction(runtime.activeLongDreamId));
@@ -574,7 +575,7 @@ export function bindLongDreamEvents(runtime, $d) {
                 if (!saved.memory.pendingConflicts.length && !saved.memory.pendingChapterNumbers.length) await runtime.refreshLongDreamSummaryNow(saved.id, { fillMissing: true });
             }
         } catch (error) {
-            toastr.warning(error?.message || String(error));
+            toastr.warning(readableErrorText(error, '梦脉没有更新，请再试一次。', { context: '梦脉操作' }));
         }
     });
     $d.off('click.tdmemoryaction').on('click.tdmemoryaction', '[data-dream-memory-action]', async function () {
@@ -598,7 +599,7 @@ export function bindLongDreamEvents(runtime, $d) {
             runtime.renderLongDreamPanel();
             toastr.success(action === 'save' ? '梦脉修改已保存' : (action === 'dismiss' ? '这条梦脉已废止，可随时恢复' : '这条梦脉已恢复有效'));
         } catch (error) {
-            toastr.warning(error?.message || String(error));
+            toastr.warning(readableErrorText(error, '梦脉没有更新，请再试一次。', { context: '梦脉操作' }));
         }
     });
     $d.off('click.tdreviewfullscreen').on('click.tdreviewfullscreen', '#theater-dream-review-fullscreen', function () {

@@ -1,6 +1,7 @@
 // theater-update: receives live state and cross-feature callbacks from index.js.
 import { fetchInstalledExtensionStatus, formatVersionCheckError, fetchLatestRemoteVersion, compareVersion } from './version-check.js';
 import { EXTENSION_FOLDER, extensionScopeAttempts, resolveExtensionScope } from './extension-location.js';
+import { readableErrorText } from './error-text.js';
 
 export function createTheaterUpdate(runtime) {
 // @theater-source-begin checkRemoteVersion
@@ -152,7 +153,7 @@ async function updateExtension() {
             : '如遇 Git 冲突或网络问题，可在【扩展管理】卸载后重新安装。';
         runtime.theaterError(`更新失败 (HTTP ${resp.status || 0})\n${detail}\n\n${tip}`, '更新失败');
     } catch (e) {
-        runtime.theaterError('更新失败: ' + e.message);
+        runtime.theaterError('更新失败：' + readableErrorText(e, '请稍后再试；仍不行可在【扩展管理】卸载后重新安装（设置不会丢）。', { context: '更新插件' }));
     } finally {
         btn.removeClass('disabled');
     }
