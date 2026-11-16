@@ -791,7 +791,8 @@ function importHistoryBackup() {
                     items.push(...imported.items.map(item => item.id != null ? { ...item, id: itemIds.get(String(item.id)) } : item));
                     folders.push(...imported.folders.map(folder => ({ ...folder, itemIds: folder.itemIds.map(id => itemIds.get(String(id))).filter(Boolean) })));
                 } catch (error) {
-                    throw new Error(`「${file.name}」：${error?.message || error}`);
+                    // 先换成中文说明（并记下原话），再带上文件名；直接包一层会丢掉错误类型，弹出英文。
+                    throw new Error(`「${file.name}」：${readableErrorText(error, '文件格式或内容不受支持。', { context: '导入历史备份', file: true })}`);
                 }
             }
             const added = await addHistoryItems(items, folders);

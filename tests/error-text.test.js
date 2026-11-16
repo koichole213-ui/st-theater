@@ -99,3 +99,19 @@ test('运行日志脱敏：JSON 里的 Authorization（含 Basic）、Cookie / S
     for (const secret of ['dXNlcjpwYXNz', 't-123', 'abc123', 'zzz']) assert.doesNotMatch(entry.message, new RegExp(secret));
     assert.match(entry.message, /更新插件/);
 });
+
+test('运行日志脱敏：带引号的 Cookie 值、Digest 的 response / nonce、按字段名的 Cookie / Authorization', async () => {
+    const { writeRuntimeLog } = await import('../runtime-log.js');
+    clearRuntimeLogs();
+    writeRuntimeLog('warn', '更新插件：酒馆返回的原话', { message: 'Cookie: sid="abc def"; theme=x\nAuthorization: Digest username="u", nonce="n123", response="6629fae4"' });
+    writeRuntimeLog('warn', '请求', { headers: { Cookie: 'sid=zz', Authorization: 'Basic qq' }, status: 503 });
+    const text = getRuntimeLogEntries().map(entry => entry.message).join('\n');
+    for (const secret of ['abc def', 'n123', '6629fae4', 'sid=zz', 'Basic qq']) assert.doesNotMatch(text, new RegExp(secret));
+    assert.match(text, /"status":503/);
+});
+
+test('备用的历史导入路径：坏 JSON 先换成中文说明再带上文件名，不再弹英文', () => {
+    const source = readFileSync(new URL('../theater-history.js', import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /throw new Error\(`「\$\{file\.name\}」：\$\{error\?\.message/);
+    assert.match(source, /throw new Error\(`「\$\{file\.name\}」：\$\{readableErrorText\(error/);
+});
