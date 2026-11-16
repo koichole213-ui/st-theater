@@ -2,6 +2,7 @@
 import { DEFAULT_RENDER_TEMPLATE_PC, DEFAULT_RENDER_TEMPLATE_TEXT, DEFAULT_RENDER_TEMPLATE } from './theater-defaults.js';
 import { isPlainTextSelection, PLAIN_TEXT_LIGHT_SELECTION, PLAIN_TEXT_DARK_SELECTION } from './plain-text-renderer.js';
 import { adaptiveRenderProfile, adaptiveRenderProfiles } from './adaptive-render.js';
+import { phoneRenderProfile, PHONE_RENDER_PROFILE } from './phone-render.js';
 
 export function createTheaterRenderSelection(runtime) {
 // @theater-source-begin isBuiltinRenderSelection
@@ -16,6 +17,8 @@ function renderTemplateContentForSelection(selection, customTemplates = []) {
     if (isPlainTextSelection(selection)) return DEFAULT_RENDER_TEMPLATE_TEXT;
     const adaptive = adaptiveRenderProfile(selection);
     if (adaptive) return adaptive.rules;
+    const phone = phoneRenderProfile(selection);
+    if (phone) return phone.rules;
     if (selection !== '__default__') {
         const custom = customTemplates[parseInt(selection)];
         if (custom) return custom.content;
@@ -38,6 +41,8 @@ function renderSelectionMeta(selection, customTemplates = []) {
     const value = normalizeRenderSelection(selection, customTemplates);
     const adaptive = adaptiveRenderProfile(value);
     if (adaptive) return { value, name: adaptive.name, shortName: adaptive.shortName, icon: adaptive.icon, adaptive: true };
+    const phone = phoneRenderProfile(value);
+    if (phone) return { value, name: phone.name, shortName: phone.shortName, icon: phone.icon, adaptive: false };
     if (value === '__default_pc__') return { value, name: '默认模板（PC端）', shortName: '默认 PC', icon: 'fa-desktop', adaptive: false };
     if (value === PLAIN_TEXT_LIGHT_SELECTION) return { value, name: '纯文字模板（亮色）', shortName: '纯文字·亮色', icon: 'fa-book-open', adaptive: false };
     if (value === PLAIN_TEXT_DARK_SELECTION) return { value, name: '纯文字模板（暗色夜读）', shortName: '纯文字·暗色', icon: 'fa-moon', adaptive: false };
@@ -62,6 +67,7 @@ function renderTemplateOptions(selected, customTemplates = []) {
     return [
         `<optgroup label="基础内置">${basic}</optgroup>`,
         `<optgroup label="剧情自适应">${adaptive}</optgroup>`,
+        `<optgroup label="特色">${option(PHONE_RENDER_PROFILE.id, PHONE_RENDER_PROFILE.name)}</optgroup>`,
         custom ? `<optgroup label="我的模板">${custom}</optgroup>` : '',
     ].join('');
 }
@@ -69,7 +75,7 @@ function renderTemplateOptions(selected, customTemplates = []) {
 
 // @theater-source-begin renderSelectionHint
 function renderSelectionHint(selection) {
-    const adaptive = adaptiveRenderProfile(selection);
+    const adaptive = adaptiveRenderProfile(selection) || phoneRenderProfile(selection);
     return adaptive
         ? adaptive.description
         : (isPlainTextSelection(selection)

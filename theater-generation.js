@@ -8,6 +8,7 @@ import { resolveLayoutApiRoute } from './layout-api.js';
 import { creativeEnhancementPrompt } from './creative-enhancement.js';
 // theater-generation: receives live state and cross-feature callbacks from index.js.
 import { adaptiveRenderProfile } from './adaptive-render.js';
+import { phoneRenderProfile } from './phone-render.js';
 import { isPlainTextSelection, plainTextThemeForSelection, textOutputModeForTheme } from './plain-text-renderer.js';
 import { DEFAULT_RENDER_TEMPLATE_TEXT, DEFAULT_RENDER_TEMPLATE, DEFAULT_RENDER_TEMPLATE_PC, DEFAULT_SYSTEM_PROMPT } from './theater-defaults.js';
 import { buildContinuationPayload, STORY_RELATION_CONTINUITY_RULE, buildGenerationPayload, hydrateFinalRenderHtml, buildFinalRenderPayload, buildContinuationInstruction, recentGenerationRoundsContext } from './generation-payload.js';
@@ -105,17 +106,19 @@ function generationPreparationKey(ctx = SillyTavern.getContext()) {
 function resolveRenderSelection(forcePlainText = false) {
     const selectedRender = runtime.normalizeRenderSelection(runtime.settings.selectedRenderIndex, runtime.settings.renderTemplates || []);
     const adaptiveProfile = adaptiveRenderProfile(selectedRender);
+    const phoneProfile = phoneRenderProfile(selectedRender);
     const isPlainTextRender = forcePlainText || isPlainTextSelection(selectedRender);
     const textTheme = plainTextThemeForSelection(selectedRender);
     const customRender = (runtime.settings.renderTemplates || [])[parseInt(selectedRender)];
     let rules = isPlainTextRender ? DEFAULT_RENDER_TEMPLATE_TEXT : DEFAULT_RENDER_TEMPLATE;
     if (!isPlainTextRender && selectedRender === '__default_pc__') rules = DEFAULT_RENDER_TEMPLATE_PC;
     else if (!isPlainTextRender && adaptiveProfile) rules = adaptiveProfile.rules;
+    else if (!isPlainTextRender && phoneProfile) rules = phoneProfile.rules;
     else if (!isPlainTextRender && selectedRender !== '__default__' && customRender) rules = customRender.content;
     if (!isPlainTextRender) rules += `\n\n${runtime.HTML_RENDER_FINAL_GUARDRAILS}`;
     const label = isPlainTextRender
         ? (textTheme === 'dark' ? '纯文字·暗色夜读' : '纯文字·亮色')
-        : (adaptiveProfile?.name || (selectedRender === '__default_pc__' ? '内置 PC' : (selectedRender === '__default__' ? '内置默认' : (customRender?.name || `自定义 ${selectedRender}`))));
+        : (adaptiveProfile?.name || phoneProfile?.name || (selectedRender === '__default_pc__' ? '内置 PC' : (selectedRender === '__default__' ? '内置默认' : (customRender?.name || `自定义 ${selectedRender}`))));
     return { selectedRender, isPlainTextRender, textTheme, rules, label, adaptiveProfile };
 }
 // @theater-source-end resolveRenderSelection

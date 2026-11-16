@@ -5,6 +5,7 @@ import { autoSourceLabel } from './auto-mode.js';
 import { REQUEST_DIAGNOSTIC_SIGNAL, diagnosticSignalCatalog, formatConnectionDiagnostics } from './request-diagnostics.js';
 import { isPlainTextSelection } from './plain-text-renderer.js';
 import { isAdaptiveRenderSelection } from './adaptive-render.js';
+import { phoneRenderProfile } from './phone-render.js';
 import { summarizeMetrics } from './request-metrics.js';
 import { readableCharCount } from './text-counter.js';
 import { resolveProtocol, normalizeMaxTokens } from './api-client.js';
@@ -78,6 +79,7 @@ function buildDiagnostics() {
         || selectedRender === '__default_pc__'
         || isPlainTextSelection(selectedRender)
         || isAdaptiveRenderSelection(selectedRender)
+        || !!phoneRenderProfile(selectedRender)
         || !!(runtime.settings.renderTemplates || [])[parseInt(selectedRender)];
     const timingDetail = runtime.requestMetricsLog.length
         ? runtime.requestMetricsLog.slice(0, 3).reverse().map((metrics, index, list) => `请求${runtime.requestMetricsLog.length - list.length + index + 1}：${summarizeMetrics(metrics)}`).join('；')

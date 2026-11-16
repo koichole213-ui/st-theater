@@ -5,6 +5,7 @@ import { readTheaterImplementation, runInNewContext } from './theater-source.js'
 import { estimateTokenCount } from '../token-estimator.js';
 import { buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml } from '../generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection } from '../adaptive-render.js';
+import { PHONE_RENDER_PROFILE, phoneRenderProfile } from '../phone-render.js';
 import { createGenerationJob } from '../generation-job.js';
 import { readableCharCount } from '../text-counter.js';
 import { classifyLengthTier, isLongFormTarget, isStagedRenderTarget, resolveTargetWordCount } from '../length-policy.js';
@@ -205,7 +206,7 @@ test('HTML 模板统一覆盖 Markdown 输出并检查配色，保留代码要�
     assert.match(guardrails, /各场景\/状态同步设置背景、正文、小字、边框、控件/);
     assert.match(guardrails, /浅底深字、深底浅字/);
     assert.match(guardrails, /禁止文字与背景明度相近/);
-    for (const profile of adaptiveRenderProfiles()) {
+    for (const profile of [...adaptiveRenderProfiles(), PHONE_RENDER_PROFILE]) {
         assert.ok(estimateTokenCount(`${profile.rules}\n\n${guardrails}`) <= 2425, `${profile.name} 含兜底规则后明显过长`);
         for (const interactiveMode of [false, true]) {
             const settings = {
@@ -213,7 +214,7 @@ test('HTML 模板统一覆盖 Markdown 输出并检查配色，保留代码要�
                 renderTemplates: [{ name: profile.name, content: profile.rules }],
             };
             const select = runInNewContext(resolve + '; resolveRenderSelection', {
-                settings, adaptiveRenderProfile, isPlainTextSelection, plainTextThemeForSelection,
+                settings, adaptiveRenderProfile, phoneRenderProfile, isPlainTextSelection, plainTextThemeForSelection,
                 normalizeRenderSelection: value => value,
                 DEFAULT_RENDER_TEMPLATE: '默认 HTML', DEFAULT_RENDER_TEMPLATE_PC: 'PC HTML',
                 DEFAULT_RENDER_TEMPLATE_TEXT: '仅正文',

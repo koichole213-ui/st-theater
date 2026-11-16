@@ -43,6 +43,7 @@ import { requestCustomApi, requestMainApi } from './api-runtime.js';
 import { recognizeInstructionTitle } from './instruction-title.js';
 import { STORY_RELATION_CONTINUITY_RULE, buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml, recentGenerationRoundsContext } from './generation-payload.js';
 import { ADAPTIVE_RENDER_SELECTIONS, adaptiveRenderProfile, adaptiveRenderProfiles, isAdaptiveRenderSelection } from './adaptive-render.js';
+import { PHONE_RENDER_SELECTION } from './phone-render.js';
 import { normalizeContinuationRounds, continuationRoundHistory, createContinuationSession, appendContinuationVersion, selectContinuationVersion, displayedContinuationVersion } from './continuation-session.js';
 import { createTokenBreakdownEstimator, debounce, estimateTokenBreakdown, estimateTokenCount, formatTokenCount } from './token-estimator.js';
 import { createRequestMetrics, markCompleted, markFailed, markFallback, markFirstToken, summarizeMetrics } from './request-metrics.js';
@@ -80,7 +81,7 @@ import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLi
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.4.8m';
+const VERSION = '4.4.8n';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
@@ -124,6 +125,7 @@ const BUILTIN_RENDER_SELECTIONS = new Set([
     PLAIN_TEXT_LIGHT_SELECTION,
     PLAIN_TEXT_DARK_SELECTION,
     ...Object.values(ADAPTIVE_RENDER_SELECTIONS),
+    PHONE_RENDER_SELECTION,
 ]);
 // @theater-source-group 3
 let settings = {};
