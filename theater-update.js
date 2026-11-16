@@ -2,6 +2,7 @@
 import { fetchInstalledExtensionStatus, formatVersionCheckError, fetchLatestRemoteVersion, compareVersion } from './version-check.js';
 import { EXTENSION_FOLDER, extensionScopeAttempts, resolveExtensionScope } from './extension-location.js';
 import { readableErrorText } from './error-text.js';
+import { writeRuntimeLog } from './runtime-log.js';
 
 export function createTheaterUpdate(runtime) {
 // @theater-source-begin checkRemoteVersion
@@ -151,7 +152,9 @@ async function updateExtension() {
         const tip = (resp.status === 409 || /already exists/i.test(detail))
             ? '插件目录被旧版残留卡住了。请在【扩展管理】卸载本插件，再用 Install from URL 输入 https://github.com/koichole213-ui/st-theater 重新安装（设置不会丢）。'
             : '如遇 Git 冲突或网络问题，可在【扩展管理】卸载后重新安装。';
-        runtime.theaterError(`更新失败 (HTTP ${resp.status || 0})\n${detail}\n\n${tip}`, '更新失败');
+        // 酒馆后台（git）返回的原话是英文，写进运行日志给维护者看；弹窗里说结果和怎么办。
+        if (detail) writeRuntimeLog('warn', '更新插件：酒馆返回的原话', { status: resp.status || 0, message: detail });
+        runtime.theaterError(`这次没有更新成功（HTTP ${resp.status || 0}）。${tip}${detail ? '\n酒馆返回的详细原因已写进诊断里的运行日志。' : ''}`, '更新失败');
     } catch (e) {
         runtime.theaterError('更新失败：' + readableErrorText(e, '请稍后再试；仍不行可在【扩展管理】卸载后重新安装（设置不会丢）。', { context: '更新插件' }));
     } finally {

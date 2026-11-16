@@ -72,3 +72,17 @@ test('世界书读取失败时能看到 404，而不是一句“请稍后重试�
     assert.match(source, /throw new Error\(`HTTP \$\{/);
     assert.match(source, /世界书「\$\{name\}」读取失败：` \+ readableErrorText\(error/);
 });
+
+test('浏览器的英文报错里夹着中文字段名，也换成中文说明并记日志', () => {
+    clearRuntimeLogs();
+    const error = new SyntaxError('Unexpected token \'o\', "{"标题":oops}" is not valid JSON');
+    assert.match(readableErrorText(error, '兜底', { file: true }), /请确认选对了文件/);
+    assert.equal(getRuntimeLogEntries().length, 1);
+    assert.equal(readableErrorText(new Error('世界书「旧梦」读取失败'), '兜底'), '世界书「旧梦」读取失败', '插件自己的中文提示不受影响');
+});
+
+test('插件更新失败：弹窗不直接贴酒馆后台的英文原话，原话写进运行日志', () => {
+    const source = readFileSync(new URL('../theater-update.js', import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /\$\{detail\}\\n/);
+    assert.match(source, /writeRuntimeLog\('warn', '更新插件：酒馆返回的原话'/);
+});

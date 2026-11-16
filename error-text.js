@@ -3,6 +3,9 @@
 import { writeRuntimeLog } from './runtime-log.js';
 
 const HAN = /[一-鿿]/;
+const BROWSER_ERROR_NAMES = new Set(['SyntaxError', 'TypeError', 'RangeError', 'ReferenceError', 'URIError', 'EvalError',
+    'QuotaExceededError', 'AbortError', 'TimeoutError', 'NetworkError', 'InvalidStateError', 'NotFoundError', 'DataError']);
+const BROWSER_ERROR_TEXT = /is not valid JSON|Unexpected token|Unexpected end of|Failed to fetch|Failed to execute/i;
 
 function httpStatusText(status) {
     if (status === 401 || status === 403) return `酒馆拒绝了这次请求，可能是登录过期了，请刷新页面后再试（HTTP ${status}）。`;
@@ -32,7 +35,9 @@ const KNOWN_ERRORS = [
 export function readableErrorText(error, fallback = '原因不明，请刷新页面后再试。', { context = '', file = false } = {}) {
     const name = String(error?.name || '');
     const text = String(error?.message ?? error ?? '').trim();
-    if (HAN.test(text)) return text;
+    // 插件自己抛的中文提示原样保留。浏览器自带的错误（例如 JSON 解析失败）可能引用了中文字段名，
+    // 但整句仍是英文，要换成中文说明。
+    if (HAN.test(text) && !BROWSER_ERROR_NAMES.has(name) && !BROWSER_ERROR_TEXT.test(text)) return text;
     const rule = KNOWN_ERRORS.find(([test]) => test(name, text));
     if (text || name) {
         writeRuntimeLog('warn', `${context || '报错'}：浏览器给出的原话`, { name: name || undefined, message: text.slice(0, 300) });
