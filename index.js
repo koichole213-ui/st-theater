@@ -81,7 +81,7 @@ import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecy
 import { createSettingsGuard, SETTINGS_STAMP_KEY } from './settings-guard.js';
 
 const MODULE_NAME = 'theater_generator';
-const VERSION = '4.4.8h';
+const VERSION = '4.4.8i';
 const LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET = 32000;
 let latestRemoteVersion = null;
 let installedBranchHasUpdate = false;
