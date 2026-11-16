@@ -619,3 +619,19 @@ test('长梦确认采用版后回续写，取消或保存失败保持原页且�
         }else{assert.equal(scope.longDreamWorkspaceSection,'works');assert.equal(queued,0);assert.equal(renders,0);}
     }
 });
+
+test('选择长梦来源：历史的纯文字用到时才转，转过就记住', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../long-dream-workspace-library.js', import.meta.url), 'utf8');
+    const helper = source.slice(source.indexOf('function withLazyText'), source.indexOf('// @theater-source-end withLazyText'));
+    const withLazyText = new Function(`${helper}; return withLazyText;`)();
+    let calls = 0;
+    const item = withLazyText({ key: 'history:1', html: '<p>甲</p>' }, () => { calls++; return '甲'; });
+    assert.equal(calls, 0, '建列表时不转');
+    assert.equal(item.text, '甲');
+    assert.equal(item.text, '甲');
+    assert.equal(calls, 1, '转过就记住');
+    assert.equal({ ...item }.text, '甲', '展开复制时带上文字');
+    const body = source.slice(source.indexOf('function longDreamSources'), source.indexOf('// @theater-source-end longDreamSources'));
+    assert.match(body, /source\.html\.trim\(\) \|\| source\.text\.trim\(\)/, '过滤时先看 HTML');
+});

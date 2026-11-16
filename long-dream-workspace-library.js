@@ -107,7 +107,7 @@ function longDreamSources() {
         });
     });
     runtime.historyCache.slice().reverse().forEach(item => {
-        sources.push({
+        sources.push(withLazyText({
             key: `history:${item.id}`,
             kind: 'history',
             refId: item.id,
@@ -116,14 +116,27 @@ function longDreamSources() {
             instruction: item.instruction || '',
             sourceConfig: item.sourceConfig || null,
             html: item.html || '',
-            text: runtime.htmlToPlainText(item.html || ''),
             mode: item.mode || 'html',
-        });
+        }, () => runtime.htmlToPlainText(item.html || '')));
     });
     sources.unshift(...longDreamFolderSources(runtime).reverse());
-    return sources.filter(source => source.text.trim() || source.html.trim());
+    // 先看 HTML：历史一般都有 HTML，不用为了过滤把每篇都转一遍纯文字。
+    return sources.filter(source => source.html.trim() || source.text.trim());
 }
 // @theater-source-end longDreamSources
+
+// @theater-source-begin withLazyText
+// 历史很多时，每次打开“选择作品”都把全部历史转成纯文字会卡；用到 text 时才转，转过就记住。
+function withLazyText(source, compute) {
+    let text;
+    return Object.defineProperty(source, 'text', {
+        enumerable: true,
+        configurable: true,
+        get() { return text ??= String(compute() ?? ''); },
+        set(value) { text = value; },
+    });
+}
+// @theater-source-end withLazyText
 
 // @theater-source-begin resolveLongDreamSource
 function resolveLongDreamSource(key) {
