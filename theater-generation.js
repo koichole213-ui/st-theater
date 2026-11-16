@@ -27,7 +27,7 @@ import { captureHistoryRoles, normalizeRoleSources } from './history-roles.js';
 import { continuationHistoryMetadata, newHistoryKey } from './history-collections.js';
 import { itemTags } from './tag-system.js';
 import { readableErrorText } from './error-text.js';
-import { plainTextFromParsedHtml, stripBreakMarks } from './html-plain-text.js';
+import { looksLikeEscapedHtml, plainTextFromParsedHtml, stripBreakMarks } from './html-plain-text.js';
 
 export function createTheaterGeneration(runtime) {
 // @theater-source-begin htmlToPlainText
@@ -48,8 +48,7 @@ function htmlToPlainText(html) {
         const text = plainTextFromParsedHtml(div);
         // 兜底：整篇 HTML 被转义过一次时，文字里会留下成对的段落标签。再当 HTML 解析一遍（只一层），
         // 这样段落还在、样式和脚本也会去掉。正文里本来就写着的 <b> 之类字样不动。
-        // 分两次查开始和结束标签（不用回溯引用，很长的正文里也不会慢）。
-        if (!nested && /<(?:p|div|section|article|body|html)\b[^>]*>/i.test(text) && /<\/(?:p|div|section|article|body|html)\s*>/i.test(text)) return convert(text, true);
+        if (!nested && looksLikeEscapedHtml(text)) return convert(text, true);
         return text;
     }
 }

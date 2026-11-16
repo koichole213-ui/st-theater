@@ -114,7 +114,7 @@ const hasRestore = page => page.active().some(item => item.message.includes('用
 
 test('版本号：比的是谁包含谁，不是保存了几次', () => {
     const a1 = nextStamp(null, 'A', 1, 1), a2 = nextStamp(a1, 'A', 2, 2);
-    assert.deepEqual(a2.chain, [{ by: 'A', from: 1, to: 2 }], '同一页面连续保存合成一段');
+    assert.deepEqual(a2.chain, [{ by: 'A', from: 1, to: 2, t: 2 }], '同一页面连续保存合成一段，记最后一次保存的时间');
     const b1 = nextStamp(a2, 'B', 1, 3), b2 = nextStamp(b1, 'B', 2, 4), b3 = nextStamp(b2, 'B', 3, 5);
     assert.ok(stampIncludes(b3, a2) && stampIncludes(b3, a1) && !stampIncludes(a2, b1));
     assert.ok(stampIncludes(null, null) && stampIncludes(a1, null) && !stampIncludes(null, a1));
@@ -133,17 +133,19 @@ test('版本号：比的是谁包含谁，不是保存了几次', () => {
     assert.ok(stampIncludes(superseding, c1) && stampIncludes(superseding, a2), '补回时把被取代的那份并进来历');
     assert.equal(normalizeStamp({ by: 'A', n: 0 }), null);
     assert.equal(normalizeStamp('坏数据'), null);
-    assert.deepEqual(normalizeStamp({ by: 'A', n: 3 }).chain, [{ by: 'A', from: 3, to: 3 }]);
+    assert.deepEqual(normalizeStamp({ by: 'A', n: 3, at: 9 }).chain, [{ by: 'A', from: 3, to: 3, t: 9 }]);
 });
 
-test('来历段数超过上限：标上 trimmed；找不到本页时只叫刷新，不给补回按钮', () => {
+test('来历段数超过上限：记下丢掉的段最晚到什么时候；比它还旧的找不到才只叫刷新', () => {
     let stamp = null;
-    for (let i = 0; i < 205; i++) stamp = nextStamp(stamp, `page-${i}`, 1, i);
-    assert.equal(stamp.trimmed, true);
+    for (let i = 0; i < 205; i++) stamp = nextStamp(stamp, `page-${i}`, 1, 1_000 + i);
     assert.equal(stamp.chain.length, 200);
-    const early = nextStamp(null, 'page-0', 1, 0);
+    assert.equal(stamp.trimmedUntil, 1_004, '丢掉了 page-0 到 page-4');
+    const early = nextStamp(null, 'page-0', 1, 1_000);
     assert.equal(compareSettingsStamps({ local: early, server: stamp, me: 'page-0', confirmed: true }), 'stale');
-    assert.equal(nextStamp(stamp, 'next', 1, 1).trimmed, true, '截断的标记往下传');
+    const recentSibling = nextStamp(nextStamp(null, 'page-150', 1, 1_150), 'side', 1, 2_000);
+    assert.equal(compareSettingsStamps({ local: recentSibling, server: stamp, me: 'side', confirmed: true }), 'diverged', '比丢掉的段新：仍是两边都改过');
+    assert.equal(nextStamp(stamp, 'next', 1, 3_000).trimmedUntil, 1_005, '往下传；再多一段就再丢最早的一段（page-5）');
 });
 
 for (const rtt of [20, 300]) {
@@ -267,7 +269,7 @@ test('补回：等酒馆真正存完才说成功；没存上就说没存上', as
     assert.equal(pc.toast.shown.some(item => item.level === 'success'), false, '还没存完不能说已补回');
     await world.advance(10_000);
     assert.equal(pc.toast.shown.some(item => item.level === 'success'), false);
-    assert.ok(pc.active().some(item => /补回没有存进酒馆/.test(item.message)));
+    assert.ok(pc.active().some(item => /补回还没存进酒馆.*下次保存时会一起补上/.test(item.message)));
     assert.deepEqual(names(world), ['旧指令']);
 });
 
@@ -351,14 +353,54 @@ test('同一浏览器两个标签页：旧标签页保存不会抹掉新标签�
 });
 
 test('新标签页加载的那几秒里，另一个标签页刚好存了一次：不误报，也不删记录', async () => {
+    for (const gap of [0, 100, 500]) {
+        const world = createWorld();
+        const tabA = await open(world);
+        tabA.addInstruction('A 新加'); // 打了版本号，酒馆 1 秒后才存
+        await world.advance(gap);
+        const tabC = openPage(world, { startedAt: world.now() }); // 读到的是还没存上的旧设置，插件初始化还没跑
+        await world.advance(3_000);
+        await tabC.start();
+        assert.equal(tabC.active().length, 0, `间隔 ${gap}ms`);
+        const tabD = await open(world);
+        assert.equal(tabD.active().length, 0, '记录还在，而且服务器上就是它');
+    }
+});
+
+test('启动时因为“内容一样”不提醒的，同时清掉旧记录，不会卡住造成以后误报或漏报', async () => {
+    // 情况甲：之后什么都没被盖，不该提醒
     const world = createWorld();
-    const tabA = await open(world);
-    const startedAt = world.now();
-    const tabC = openPage(world, { startedAt }); // 已经读到设置，插件初始化还没跑
-    tabA.addInstruction('A 新加');
-    await world.advance(3_000);
-    await tabC.start();
-    assert.equal(tabC.active().length, 0);
+    const phone = await open(world, { device: 'phone' }), pc = await open(world);
+    pc.switchTab(1); await world.advance(3_000);
+    phone.switchTab(2); await world.advance(3_000);
+    const pc2 = await open(world);
+    assert.equal(pc2.active().length, 0);
+    pc2.addInstruction('电脑新写'); await world.advance(3_000);
+    const pc3 = await open(world);
+    assert.equal(pc3.active().length, 0, '没有被盖，不误报');
+
+    // 情况乙：之后真的被旧页面盖掉了，要提醒
+    phone.switchCharacter(); await world.advance(3_000);
+    assert.deepEqual(names(world), ['旧指令']);
+    const pc4 = await open(world);
+    assert.equal(pc4.active().length, 1, '真被盖掉了，要提醒');
+});
+
+test('很多页面之后，两个页面各改各的：仍给“两边都改过”和补回按钮，电脑刷新后也提醒', async () => {
+    const world = createWorld();
+    for (let i = 0; i < 205; i++) {
+        const page = openPage(world);
+        await page.start();
+        page.switchTab(i);
+        await world.advance(1_500);
+    }
+    const pc = await open(world), phone = await open(world, { device: 'phone' });
+    pc.addInstruction('电脑新加'); await world.advance(3_000);
+    phone.addInstruction('手机新加'); await world.advance(3_000);
+    assert.equal(await pc.check('打开小剧场'), 'diverged');
+    assert.ok(hasRestore(pc));
+    const pcAgain = await open(world);
+    assert.equal(pcAgain.active().length, 1);
 });
 
 test('读不到酒馆设置时安静跳过，只记日志；频率有限制', async () => {

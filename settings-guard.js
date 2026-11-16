@@ -14,7 +14,8 @@ import { stableJson } from './backup-data.js';
 
 export const SETTINGS_STAMP_KEY = 'settingsStamp';
 const LOCAL_KEY_PREFIX = 'st-theater-settings-saved:';
-// 每个保存过设置的页面占一段（约 60 字节）。超过上限丢掉最早的段，并标上 trimmed。
+// 每个保存过设置的页面占一段（约 70 字节），段里记着这段最后一次保存的时间 t。
+// 超过上限丢掉最早的段，并记下丢掉的段里最晚的时间 trimmedUntil：比它还旧的版本找不到是正常的。
 const MAX_CHAIN_SEGMENTS = 200;
 const MIN_CHECK_GAP_MS = 20_000;
 // /api/settings/get 会连同全部预设一起返回，比较重：回到前台只在后台放了很久之后才查。
@@ -35,10 +36,11 @@ export function normalizeStamp(value) {
     if (!value || typeof value !== 'object' || !validId(value.by) || !validCount(value.n)) return null;
     const chain = (Array.isArray(value.chain) ? value.chain : [])
         .filter(seg => seg && validId(seg.by) && validCount(seg.from) && validCount(seg.to) && seg.from <= seg.to)
-        .map(seg => ({ by: seg.by, from: seg.from, to: seg.to }))
+        .map(seg => ({ by: seg.by, from: seg.from, to: seg.to, t: Number(seg.t) || 0 }))
         .slice(-MAX_CHAIN_SEGMENTS);
-    if (!stampIncludes({ chain }, value)) chain.push({ by: value.by, from: value.n, to: value.n });
-    return { by: value.by, n: value.n, at: Number(value.at) || 0, chain, ...(value.trimmed === true ? { trimmed: true } : {}) };
+    if (!stampIncludes({ chain }, value)) chain.push({ by: value.by, from: value.n, to: value.n, t: Number(value.at) || 0 });
+    const trimmedUntil = Number(value.trimmedUntil) || 0;
+    return { by: value.by, n: value.n, at: Number(value.at) || 0, chain, ...(trimmedUntil > 0 ? { trimmedUntil } : {}) };
 }
 
 // stamp 的来历里有没有 ref 这一版。没有版本号（null）算作一切的起点。
@@ -55,10 +57,11 @@ export function nextStamp(current, tabId, n, now = Date.now(), supersede = null)
     const extra = (normalizeStamp(supersede)?.chain || []).filter(seg => !own.some(o => o.by === seg.by && o.from <= seg.from && seg.to <= o.to));
     const chain = [...extra, ...own];
     const last = chain.at(-1);
-    if (last && last.by === tabId && last.to === n - 1) last.to = n;
-    else chain.push({ by: tabId, from: n, to: n });
-    const trimmed = chain.length > MAX_CHAIN_SEGMENTS || normalizeStamp(current)?.trimmed === true || normalizeStamp(supersede)?.trimmed === true;
-    return { by: tabId, n, at: now, chain: chain.slice(-MAX_CHAIN_SEGMENTS), ...(trimmed ? { trimmed: true } : {}) };
+    if (last && last.by === tabId && last.to === n - 1) { last.to = n; last.t = now; }
+    else chain.push({ by: tabId, from: n, to: n, t: now });
+    const dropped = chain.slice(0, Math.max(0, chain.length - MAX_CHAIN_SEGMENTS));
+    const trimmedUntil = Math.max(0, normalizeStamp(current)?.trimmedUntil || 0, normalizeStamp(supersede)?.trimmedUntil || 0, ...dropped.map(seg => seg.t || 0));
+    return { by: tabId, n, at: now, chain: chain.slice(-MAX_CHAIN_SEGMENTS), ...(trimmedUntil > 0 ? { trimmedUntil } : {}) };
 }
 
 // local：本页内存里的版本；server：服务器上现在的版本；me：本页编号；
@@ -71,8 +74,8 @@ export function compareSettingsStamps({ local, server, me, confirmed }) {
     if (l && s && l.by === s.by && l.n === s.n) return 'same';
     if (stampIncludes(s, l)) return 'stale';
     if (stampIncludes(l, s)) return confirmed ? 'overwritten' : 'unknown';
-    // 服务器那份的来历被截断过、找不到本页这份：多半是很早以前的版本。只提醒刷新，不给补回按钮。
-    if (s?.trimmed) return 'stale';
+    // 服务器那份的来历被截断过，而本页这份比被丢掉的段还旧：找不到是正常的，只提醒刷新，不给补回按钮。
+    if (s?.trimmedUntil && l && l.at <= s.trimmedUntil) return 'stale';
     return 'diverged';
 }
 
@@ -149,7 +152,8 @@ export function createSettingsGuard(runtime, {
             log('info', '本机记录是另一个标签页存的较新版本，保留它', { record: shortStamp(previous), page: shortStamp(stamp) });
             return;
         }
-        try { storage?.setItem(recordKey(), JSON.stringify({ ...stamp, ...details })); } catch { /* 读写不了 localStorage 时只少一层提醒 */ }
+        // savedAt：确认存上的时间（启动时用来判断记录是不是在本页开始加载之后才写的）。
+        try { storage?.setItem(recordKey(), JSON.stringify({ ...stamp, ...details, savedAt: now() })); } catch { /* 读写不了 localStorage 时只少一层提醒 */ }
     }
 
     // 插件每次保存设置前调用。
@@ -187,8 +191,16 @@ export function createSettingsGuard(runtime, {
         const missing = saved && !stampIncludes(server, saved);
         // 不提醒的情况：内容其实一样；服务器那份的来历被截断过（找不到不代表被盖掉）；
         // 记录是本页开始加载之后才写的（另一个标签页刚存，本页读到的是那之前的设置）。
-        const quiet = missing && (record.content === protectedContentHash(getSettings()) || server?.trimmed || (pageStartedAt && saved.at >= pageStartedAt));
-        if (missing && quiet) log('info', '这台浏览器上次保存的版本不在现在的设置里，但不需要提醒', { saved: shortStamp(saved), server: shortStamp(server) });
+        const savedAt = Number(record?.savedAt) || saved?.at || 0;
+        const writtenWhileLoading = missing && pageStartedAt && savedAt >= pageStartedAt;
+        const quiet = missing && (writtenWhileLoading || record.content === protectedContentHash(getSettings())
+            || (server?.trimmedUntil && saved.at <= server.trimmedUntil));
+        if (missing && quiet) {
+            log('info', '这台浏览器上次保存的版本不在现在的设置里，但不需要提醒', { saved: shortStamp(saved), server: shortStamp(server) });
+            // 内容一样或太旧找不到：这条记录已经没用了，清掉，否则它会卡住、以后再也更新不了。
+            // 加载那几秒另一个标签页刚写的记录要留着。
+            if (!writtenWhileLoading) { try { storage?.removeItem(recordKey()); } catch { /* 同上 */ } }
+        }
         if (missing && !quiet) {
             const counts = settingsCounts(getSettings());
             const detail = countsText({ instructions: Number(record.instructions) || 0, renderTemplates: Number(record.renderTemplates) || 0 }, counts);
@@ -254,7 +266,7 @@ export function createSettingsGuard(runtime, {
                 toast?.success?.('已用本页的设置补回；其他开着的页面请刷新一下。');
             } else {
                 log('warn', '补回后核对没有通过', { verdict: after.verdict });
-                toast?.warning?.('补回没有存进酒馆。请确认酒馆还连着（可以看看有没有“设置保存失败”的提示），再点一次。', '小剧场设置', PERSISTENT);
+                toast?.warning?.('补回还没存进酒馆。请确认酒馆还连着（可以看看有没有“设置保存失败”的提示）；连上后，本页下次保存时会一起补上。过一会儿重新打开小剧场确认一下。', '小剧场设置', PERSISTENT);
             }
         } else if (verdict === 'stale') {
             showStale(stampOf(serverSettings));

@@ -46,3 +46,15 @@ export function plainTextFromParsedHtml(root) {
     }
     return collapseBlockBreaks(root?.textContent || root?.innerText || '');
 }
+
+// 整篇 HTML 被转义过一次时，转出来的文字里会有成对的块标签字样（先 <p …> 后 </p>）。
+// 每种标签各查两次（先找开始，再在它后面找同名结束），不用回溯引用，很长的正文里也不会慢；
+// 正文里只是提到一两个标签字样的（不成对、或结束在前），不算。
+const ESCAPED_BLOCK_TAGS = ['p', 'div', 'section', 'article', 'body', 'html'];
+export function looksLikeEscapedHtml(text) {
+    const value = String(text ?? '');
+    return ESCAPED_BLOCK_TAGS.some(tag => {
+        const at = value.search(new RegExp(`<${tag}(?:[\\s/][^<>]*)?>`, 'i'));
+        return at >= 0 && new RegExp(`</${tag}\\s*>`, 'i').test(value.slice(at));
+    });
+}

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
-import { plainTextFromParsedHtml, stripBreakMarks, collapseBlockBreaks } from '../html-plain-text.js';
+import { plainTextFromParsedHtml, stripBreakMarks, collapseBlockBreaks, looksLikeEscapedHtml } from '../html-plain-text.js';
 
 // 作品 HTML 转纯文字时，必须在“空白文档”里解析：
 // 用酒馆页面自己的 document 解析，<img onerror/onload> 里的代码会在酒馆页面上运行（Chromium 已复现）。
@@ -12,7 +12,7 @@ function loadHtmlToPlainText(sandbox) {
     const start = source.indexOf(begin) + begin.length;
     const end = source.indexOf('// @theater-source-end htmlToPlainText', start);
     assert.ok(start > begin.length && end > start, '找不到 htmlToPlainText');
-    return runInContext(`${source.slice(start, end)}\nhtmlToPlainText;`, createContext({ plainTextFromParsedHtml, stripBreakMarks, ...sandbox }));
+    return runInContext(`${source.slice(start, end)}\nhtmlToPlainText;`, createContext({ plainTextFromParsedHtml, stripBreakMarks, looksLikeEscapedHtml, ...sandbox }));
 }
 
 function fakeDiv(log) {
@@ -115,4 +115,18 @@ test('转纯文字：正文里写着的尖括号字样不被当成标签删掉',
     assert.equal(htmlToPlainText('&lt;div&gt;&lt;p&gt;段一&lt;/p&gt;&lt;p&gt;段二&lt;/p&gt;&lt;style&gt;.a{color:red}&lt;/style&gt;&lt;/div&gt;'), '段一\n段二', '再解析一遍：分段保留，样式不当正文');
     assert.equal(parsed.length, 5, '每次最多多解析一层（1 + 2 + 2）');
     assert.equal(htmlToPlainText('<p>他写下 &lt;/p&gt; 这几个字，又写 1 &lt; 2 且 3 &gt; 2。</p>'), '他写下 </p> 这几个字，又写 1 < 2 且 3 > 2。', '单独一个结束标签字样不算被转义');
+});
+
+test('整篇被转义的判断：要先有开始标签、后有同名结束标签；正文里提到标签字样不算；很长也不慢', () => {
+    assert.equal(looksLikeEscapedHtml('<p>x</p>'), true);
+    assert.equal(looksLikeEscapedHtml('<div class="a"><p>段</p></div>'), true);
+    assert.equal(looksLikeEscapedHtml('<P >x</P>'), true);
+    assert.equal(looksLikeEscapedHtml('她在屏幕上敲下 </p> 然后又写了 <div class="box"> 表示盒子。'), false);
+    assert.equal(looksLikeEscapedHtml('先出现 </section> 后来 <p> 这样的字样'), false);
+    assert.equal(looksLikeEscapedHtml('<pre>x</pre>'), false);
+    assert.equal(looksLikeEscapedHtml('<paragraph>x</p>'), false);
+    const started = Date.now();
+    looksLikeEscapedHtml('<p '.repeat(80_000));
+    looksLikeEscapedHtml('<p>'.repeat(20_000) + '正文');
+    assert.ok(Date.now() - started < 500);
 });
