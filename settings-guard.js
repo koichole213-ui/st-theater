@@ -10,16 +10,23 @@
 // - 互不包含 → 两个页面各改各的 → 提醒两边都改过，给「用本页补回」并建议先导出。
 // 启动时：这台浏览器上次确认存上的那份，不在现在服务器那份的来历里 → 提醒一次，指向备份。
 import { newHistoryKey } from './history-collections.js';
+import { stableJson } from './backup-data.js';
 
 export const SETTINGS_STAMP_KEY = 'settingsStamp';
 const LOCAL_KEY_PREFIX = 'st-theater-settings-saved:';
-const MAX_CHAIN_SEGMENTS = 40;
+// 每个保存过设置的页面占一段（约 60 字节）。超过上限丢掉最早的段，并标上 trimmed。
+const MAX_CHAIN_SEGMENTS = 200;
 const MIN_CHECK_GAP_MS = 20_000;
 // /api/settings/get 会连同全部预设一起返回，比较重：回到前台只在后台放了很久之后才查。
 const HIDDEN_BEFORE_CHECK_MS = 5 * 60_000;
 const RECHECK_DELAY_MS = 3_000;
-// 酒馆的 saveSettingsDebounced 延迟 1 秒；比这更早收到的“保存成功”，存的不是本页最新的那一份。
-const SAVE_SETTLE_MS = 1_200;
+// 酒馆的 saveSettingsDebounced 延迟 1 秒，而且插件每保存一次都会重新计时：带着最新版本号的那次保存，
+// 最早也要在最后一次打版本号之后 1 秒才发出。比这更早收到的“保存成功”，存的是之前那一份。
+const SAVE_SETTLE_MS = 950;
+const RESTORE_CONFIRM_MS = 6_000;
+// 用户自己写的内容。这些都一样时，两边只差界面状态（例如上次停在哪个标签页），不提醒。
+const PROTECTED_KEYS = ['instructionTemplates', 'instructionTags', 'renderTemplates', 'contextExclusionRules', 'customCSS', 'customStyleAddon',
+    'customNsfwAddon', 'apiPresets', 'longDreamMemoryPresets', 'userPersona', 'manualWBEntries', 'history', 'longDreams'];
 
 const validId = value => typeof value === 'string' && value.length > 0 && value.length <= 80;
 const validCount = value => Number.isSafeInteger(value) && value >= 1;
@@ -31,7 +38,7 @@ export function normalizeStamp(value) {
         .map(seg => ({ by: seg.by, from: seg.from, to: seg.to }))
         .slice(-MAX_CHAIN_SEGMENTS);
     if (!stampIncludes({ chain }, value)) chain.push({ by: value.by, from: value.n, to: value.n });
-    return { by: value.by, n: value.n, at: Number(value.at) || 0, chain };
+    return { by: value.by, n: value.n, at: Number(value.at) || 0, chain, ...(value.trimmed === true ? { trimmed: true } : {}) };
 }
 
 // stamp 的来历里有没有 ref 这一版。没有版本号（null）算作一切的起点。
@@ -50,7 +57,8 @@ export function nextStamp(current, tabId, n, now = Date.now(), supersede = null)
     const last = chain.at(-1);
     if (last && last.by === tabId && last.to === n - 1) last.to = n;
     else chain.push({ by: tabId, from: n, to: n });
-    return { by: tabId, n, at: now, chain: chain.slice(-MAX_CHAIN_SEGMENTS) };
+    const trimmed = chain.length > MAX_CHAIN_SEGMENTS || normalizeStamp(current)?.trimmed === true || normalizeStamp(supersede)?.trimmed === true;
+    return { by: tabId, n, at: now, chain: chain.slice(-MAX_CHAIN_SEGMENTS), ...(trimmed ? { trimmed: true } : {}) };
 }
 
 // local：本页内存里的版本；server：服务器上现在的版本；me：本页编号；
@@ -62,8 +70,28 @@ export function compareSettingsStamps({ local, server, me, confirmed }) {
     if (!l && !s) return 'same';
     if (l && s && l.by === s.by && l.n === s.n) return 'same';
     if (stampIncludes(s, l)) return 'stale';
-    if (stampIncludes(l, s)) return !confirmed || s?.by === me ? 'unknown' : 'overwritten';
+    if (stampIncludes(l, s)) return confirmed ? 'overwritten' : 'unknown';
+    // 服务器那份的来历被截断过、找不到本页这份：多半是很早以前的版本。只提醒刷新，不给补回按钮。
+    if (s?.trimmed) return 'stale';
     return 'diverged';
+}
+
+function pickProtected(settings) {
+    const picked = {};
+    for (const key of PROTECTED_KEYS) if (settings?.[key] !== undefined) picked[key] = settings[key];
+    return picked;
+}
+
+export function sameProtectedContent(a, b) {
+    return stableJson(pickProtected(a)) === stableJson(pickProtected(b));
+}
+
+// 记在本机的只是“内容指纹”，不存内容本身。
+export function protectedContentHash(settings) {
+    const text = stableJson(pickProtected(settings));
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193) >>> 0;
+    return `${text.length.toString(36)}-${hash.toString(36)}`;
 }
 
 export function settingsCounts(settings) {
@@ -94,6 +122,7 @@ export function createSettingsGuard(runtime, {
     doc = globalThis.document,
     now = () => Date.now(),
     wait = ms => new Promise(resolve => setTimeout(resolve, ms)),
+    pageStartedAt = Number(globalThis.performance?.timeOrigin) || 0,
 } = {}) {
     const me = newHistoryKey();
     let counter = 0;
@@ -103,6 +132,7 @@ export function createSettingsGuard(runtime, {
     let lastCheckAt = -Infinity, hiddenAt = 0, checking = null;
     let staleToast = null, staleKey = '', restoreToast = null, restoreKind = '';
     let supersedeNext = null;
+    let confirmWaiters = [];
 
     const stampOf = settings => normalizeStamp(settings?.[SETTINGS_STAMP_KEY]);
     const recordKey = () => LOCAL_KEY_PREFIX + accountKey;
@@ -110,9 +140,16 @@ export function createSettingsGuard(runtime, {
     function readLocalRecord() {
         try { return JSON.parse(storage?.getItem(recordKey()) || 'null'); } catch { return null; }
     }
-    function writeLocalRecord(stamp, counts) {
+    function writeLocalRecord(stamp, details) {
         if (!stamp || stamp.by !== me || !accountKey) return;
-        try { storage?.setItem(recordKey(), JSON.stringify({ ...stamp, ...counts })); } catch { /* 读写不了 localStorage 时只少一层提醒 */ }
+        // 同一浏览器里另一个标签页存过、而本页这份不是在它的基础上改的（本页是旧标签页）：保留那条记录，
+        // 下次启动才能发现它被盖掉了。
+        const previous = normalizeStamp(readLocalRecord());
+        if (previous && !stampIncludes(stamp, previous)) {
+            log('info', '本机记录是另一个标签页存的较新版本，保留它', { record: shortStamp(previous), page: shortStamp(stamp) });
+            return;
+        }
+        try { storage?.setItem(recordKey(), JSON.stringify({ ...stamp, ...details })); } catch { /* 读写不了 localStorage 时只少一层提醒 */ }
     }
 
     // 插件每次保存设置前调用。
@@ -131,8 +168,12 @@ export function createSettingsGuard(runtime, {
         // 带着最新版本号的那次延迟保存完成时，还会再来一次。
         if (now() - lastNoteSaveAt < SAVE_SETTLE_MS) return;
         confirmed = true;
-        const stamp = stampOf(getSettings()), counts = settingsCounts(getSettings());
-        void accountReady?.then(() => writeLocalRecord(stamp, counts));
+        const settings = getSettings();
+        const stamp = stampOf(settings), details = { ...settingsCounts(settings), content: protectedContentHash(settings) };
+        void accountReady?.then(() => writeLocalRecord(stamp, details));
+        const waiters = confirmWaiters;
+        confirmWaiters = [];
+        waiters.forEach(resolve => resolve());
     }
 
     // loadedStamp：启动时从酒馆读到的版本号（在插件自己的升级迁移保存之前记下）。
@@ -143,7 +184,12 @@ export function createSettingsGuard(runtime, {
         const record = readLocalRecord();
         const saved = normalizeStamp(record);
         const server = normalizeStamp(loadedStamp);
-        if (saved && !stampIncludes(server, saved)) {
+        const missing = saved && !stampIncludes(server, saved);
+        // 不提醒的情况：内容其实一样；服务器那份的来历被截断过（找不到不代表被盖掉）；
+        // 记录是本页开始加载之后才写的（另一个标签页刚存，本页读到的是那之前的设置）。
+        const quiet = missing && (record.content === protectedContentHash(getSettings()) || server?.trimmed || (pageStartedAt && saved.at >= pageStartedAt));
+        if (missing && quiet) log('info', '这台浏览器上次保存的版本不在现在的设置里，但不需要提醒', { saved: shortStamp(saved), server: shortStamp(server) });
+        if (missing && !quiet) {
             const counts = settingsCounts(getSettings());
             const detail = countsText({ instructions: Number(record.instructions) || 0, renderTemplates: Number(record.renderTemplates) || 0 }, counts);
             log('warn', '这台浏览器上次保存的小剧场设置不在现在的酒馆设置里', { saved: shortStamp(saved), server: shortStamp(server), ...counts });
@@ -198,9 +244,18 @@ export function createSettingsGuard(runtime, {
         closeToast($toast);
         if (verdict === 'overwritten' || verdict === 'diverged') {
             supersedeNext = stampOf(serverSettings);
+            const saved = new Promise(resolve => confirmWaiters.push(resolve));
             runtime.save();
-            log('info', '已用本页的小剧场设置补回', { verdict });
-            toast?.success?.('已用本页的设置补回；其他开着的页面请刷新一下。');
+            // 等酒馆真正存完，再看一眼服务器，确认补上了才说成功。
+            await Promise.race([saved, wait(RESTORE_CONFIRM_MS)]);
+            const after = await readVerdict('补回后核对');
+            if (after.verdict === 'same' || after.verdict === 'same-content') {
+                log('info', '已用本页的小剧场设置补回', { verdict });
+                toast?.success?.('已用本页的设置补回；其他开着的页面请刷新一下。');
+            } else {
+                log('warn', '补回后核对没有通过', { verdict: after.verdict });
+                toast?.warning?.('补回没有存进酒馆。请确认酒馆还连着（可以看看有没有“设置保存失败”的提示），再点一次。', '小剧场设置', PERSISTENT);
+            }
         } else if (verdict === 'stale') {
             showStale(stampOf(serverSettings));
         } else if (verdict === 'error') {
@@ -219,7 +274,13 @@ export function createSettingsGuard(runtime, {
             return { verdict: 'error' };
         }
         if (serverSettings === undefined) return { verdict: 'error' };
-        return { serverSettings, verdict: compareSettingsStamps({ local: stampOf(getSettings()), server: stampOf(serverSettings), me, confirmed }) };
+        const verdict = compareSettingsStamps({ local: stampOf(getSettings()), server: stampOf(serverSettings), me, confirmed });
+        // 版本对不上、但用户写的内容两边一样（只差上次停在哪个标签页之类）：不打扰，只记一笔。
+        if ((verdict === 'stale' || verdict === 'overwritten' || verdict === 'diverged') && sameProtectedContent(getSettings(), serverSettings || {})) {
+            log('info', '小剧场设置的版本对不上，但内容一样，不提醒', { reason, verdict, local: shortStamp(stampOf(getSettings())), server: shortStamp(stampOf(serverSettings)) });
+            return { serverSettings, verdict: 'same-content' };
+        }
+        return { serverSettings, verdict };
     }
 
     async function runCheck(reason) {
@@ -230,8 +291,8 @@ export function createSettingsGuard(runtime, {
             ({ serverSettings, verdict } = await readVerdict(reason));
         }
         // 情况变了，就收掉和现在对不上的旧提醒，免得两条相反的提醒同时挂着。
-        if (verdict === 'same' || verdict === 'stale') closeToast(restoreToast);
-        if (verdict === 'same' || verdict === 'overwritten' || verdict === 'diverged') closeToast(staleToast);
+        if (verdict === 'same' || verdict === 'same-content' || verdict === 'stale') closeToast(restoreToast);
+        if (verdict === 'same' || verdict === 'same-content' || verdict === 'overwritten' || verdict === 'diverged') closeToast(staleToast);
         if (verdict === 'stale') showStale(stampOf(serverSettings));
         else if (verdict === 'overwritten' || verdict === 'diverged') showRestore(verdict, serverSettings || {});
         return verdict;
