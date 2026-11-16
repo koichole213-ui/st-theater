@@ -29,6 +29,8 @@ function activateTheaterTab(tabName, { persist = true, resetScroll = true } = {}
 
 // @theater-source-begin openTheaterPopup
 async function openTheaterPopup(initialTabOverride = '') {
+    // 和酒馆服务器上的小剧场设置比对一下：别的页面改过就提醒（不阻塞打开）。
+    void runtime.settingsGuard?.check('打开小剧场');
     runtime.restoreLongDreamNavigation();
     const initialTab = initialTabOverride === 'diagnostics' ? 'diagnostics' : runtime.longDreamGenerationController?.active || runtime.longDreamChapterEditController
         ? 'long-dream'

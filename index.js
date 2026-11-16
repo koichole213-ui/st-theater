@@ -78,6 +78,7 @@ import { createRequestTrace, formatRequestTrace, requestTraceCompatibilityLabel,
 import { migrateLegacyPresetEntryStates, presetEntryStatesForPreset } from './preset-entry-states.js';
 import { TAG_UNCATEGORIZED, cleanTagName, itemTags, matchesTagFilter, mergeTagLists, migrateLegacyTagSettings, normalizeTagFilter, normalizeTagList, removeTagFromList, renameTagInList } from './tag-system.js';
 import { waitForPopupElements, withPreservedPopupViewport } from './popup-lifecycle.js';
+import { createSettingsGuard, SETTINGS_STAMP_KEY } from './settings-guard.js';
 
 const MODULE_NAME = 'theater_generator';
 const VERSION = '4.4.8h';
@@ -268,6 +269,9 @@ async function init() {
         if (!hasOwn(extensionSettings[MODULE_NAME], k)) extensionSettings[MODULE_NAME][k] = defaultSettings[k];
     }
     settings = extensionSettings[MODULE_NAME];
+    // 启动时内存里的就是酒馆服务器上的设置；先记下它的版本号，后面的升级迁移会再保存一次。
+    void runtime.settingsGuard?.initialize({ loadedStamp: settings[SETTINGS_STAMP_KEY] });
+    if (event_types?.SETTINGS_UPDATED) eventSource.on(event_types.SETTINGS_UPDATED, () => runtime.settingsGuard?.noteSaved());
     const tagSettingsMigrated = migrateLegacyTagSettings(settings);
     settings.contextExclusionRules = normalizeContextExclusionRules(settings.contextExclusionRules);
     settings.historyTagFilter = normalizeTagFilter(settings.historyTagFilter, settings.instructionTags);
@@ -523,7 +527,7 @@ function esc(s) {
     if (s === null || s === undefined) return '';
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
-function save() { runtime.backup?.noteSettingsSave(); SillyTavern.getContext().saveSettingsDebounced(); }
+function save() { runtime.settingsGuard?.noteSave(); runtime.backup?.noteSettingsSave(); SillyTavern.getContext().saveSettingsDebounced(); }
 
 // Live bindings preserve the existing state ownership and asynchronous snapshots.
 // Factories register functions without reading these getters during construction.
@@ -1053,5 +1057,6 @@ const scheduleTokenEstimate = debounce(refreshTokenEstimate, 220);
 const scheduleLongDreamTokenEstimate = debounce(refreshLongDreamTokenEstimate, 220);
 
 runtime.backup = createTheaterBackup(runtime);
+runtime.settingsGuard = createSettingsGuard(runtime);
 
 jQuery(async () => { await init(); });

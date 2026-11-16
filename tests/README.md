@@ -9,6 +9,7 @@
 | 主题 | 文件 |
 |---|---|
 | 历史、文件夹、阅读页 | `history-save`、`history-collections`、`history-ui`、`history-backup`、`result-swipe` |
+| 设置被旧页面盖回的提醒 | `settings-guard` |
 | 指令、标签、模板 | `instruction-title`、`instruction-import`、`tag-system` |
 | 生成与补写 | `generation-rounds`、`length-policy`、`continuation-session`、`text-counter`、`final-render-payload` |
 | 提示词编排与资料 | `request-layout`、`context-policy`、`context-exclusions`、`token-estimator`、`world-book-policy`、`preset-worldbook-loading` |
