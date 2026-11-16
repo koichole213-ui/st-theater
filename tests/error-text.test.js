@@ -18,7 +18,7 @@ test('浏览器和网络的英文原话换成中文说明，原话写进运行�
     clearRuntimeLogs();
     assert.match(readableErrorText(domError('QuotaExceededError', 'The quota has been exceeded.'), '兜底'), /存储空间不足/);
     assert.match(readableErrorText(new TypeError('Failed to fetch'), '兜底'), /连不上酒馆服务器/);
-    assert.match(readableErrorText(new SyntaxError('Unexpected token < in JSON at position 0'), '兜底'), /不是插件能读的格式/);
+    assert.match(readableErrorText(new SyntaxError('Unexpected token < in JSON at position 0'), '兜底', { file: true }), /不是插件能读的格式，请确认选对了文件/);
     assert.match(readableErrorText(domError('TimeoutError', 'signal timed out'), '兜底'), /等了太久/);
     assert.match(readableErrorText(domError('AbortError', 'The operation was aborted.'), '兜底'), /中断/);
     const logs = getRuntimeLogEntries();
@@ -49,4 +49,26 @@ test('弹窗里不再直接拼接 error.message', () => {
         const leaks = source.split('\n').filter(line => /(toastr\.(error|warning)|theaterError)\(/.test(line) && /\b(e|err|error)\??\.message\b/.test(line));
         assert.deepEqual(leaks, [], file);
     }
+});
+
+test('JSON 读不懂：导入文件时说“选对文件”，其他地方说酒馆返回的内容读不懂', () => {
+    const error = new SyntaxError("Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON");
+    assert.match(readableErrorText(error, '兜底', { file: true }), /请确认选对了文件/);
+    const other = readableErrorText(error, '兜底');
+    assert.doesNotMatch(other, /文件/);
+    assert.match(other, /登录过期|刷新页面/);
+});
+
+test('HTTP 状态码保留下来，并配一句人话', () => {
+    assert.match(readableErrorText(new Error('HTTP 404'), '请稍后重试。'), /找不到.*改名或删除.*HTTP 404/);
+    assert.match(readableErrorText(new Error('HTTP 401'), '兜底'), /登录过期.*HTTP 401/);
+    assert.match(readableErrorText(new Error('HTTP 403'), '兜底'), /HTTP 403/);
+    assert.match(readableErrorText(new Error('HTTP 502 Bad Gateway'), '兜底'), /服务器出错.*HTTP 502/);
+    assert.match(readableErrorText(new Error('HTTP 418'), '兜底'), /HTTP 418/);
+});
+
+test('世界书读取失败时能看到 404，而不是一句“请稍后重试”', () => {
+    const source = readFileSync(new URL('../theater-materials.js', import.meta.url), 'utf8');
+    assert.match(source, /throw new Error\(`HTTP \$\{/);
+    assert.match(source, /世界书「\$\{name\}」读取失败：` \+ readableErrorText\(error/);
 });

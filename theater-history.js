@@ -798,7 +798,7 @@ function importHistoryBackup() {
             if (added) toastr.success(`已导入 ${items.length} 条历史、${folders.length} 个文件夹`);
             else toastr.warning('没有导入任何内容');
         } catch (err) {
-            runtime.theaterError('导入历史备份失败：' + readableErrorText(err, '文件格式或内容不受支持。', { context: '导入历史备份' }));
+            runtime.theaterError('导入历史备份失败：' + readableErrorText(err, '文件格式或内容不受支持。', { context: '导入历史备份', file: true }));
         }
     };
     input.click();

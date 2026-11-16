@@ -88,7 +88,7 @@ export function bindSettingsEvents(runtime, $d) {
                 runtime.save();
                 toastr.success(`已导入梦脉预设「${imported?.name || preset.name}」`);
             } catch (error) {
-                toastr.warning(readableErrorText(error, '操作没有完成，请确认文件后再试。', { context: '梦脉预设' }));
+                toastr.warning(readableErrorText(error, '梦脉预设没有导入，请确认文件后再试。', { context: '导入梦脉预设', file: true }));
             }
         };
         input.click();
@@ -101,7 +101,7 @@ export function bindSettingsEvents(runtime, $d) {
             runtime.downloadFile(filename, JSON.stringify(data, null, 2), 'application/json');
             toastr.success('梦脉预设已导出；文件不包含 API 或长梦内容');
         } catch (error) {
-            toastr.warning(readableErrorText(error, '操作没有完成，请确认文件后再试。', { context: '梦脉预设' }));
+            toastr.warning(readableErrorText(error, '梦脉预设没有导出，请再试一次。', { context: '导出梦脉预设' }));
         }
     });
     $d.off('click.tdmemorypresetdelete').on('click.tdmemorypresetdelete', '#theater-delete-dream-memory-preset', function () {
