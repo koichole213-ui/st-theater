@@ -226,6 +226,7 @@ test('HTML 模板统一覆盖 Markdown 输出并检查配色，保留代码要�
             assert.equal(builtin.rules, custom.rules);
             assert.equal(builtin.isPlainTextRender, false);
             assert.equal(builtin.rules, profile.rules + `\n\n${guardrails}`);
+            assert.equal(builtin.label, profile.name, '生成记录里显示的模板名');
             assert.deepEqual(buildGenerationPayload({ instruction: '写一段雨夜故事', rules: builtin.rules }),
                 buildGenerationPayload({ instruction: '写一段雨夜故事', rules: custom.rules }));
             settings.selectedRenderIndex = profile.id;

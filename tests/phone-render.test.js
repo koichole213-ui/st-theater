@@ -35,8 +35,11 @@ test('小手机是独立的内置选项：出现在「特色」分组，名字�
 test('小手机规则：机主在右、内容不删不改、待排版正文原样保留、沙盒限制、三种色调，长度和三档相当', () => {
     const rules = PHONE_RENDER_PROFILE.rules;
     assert.match(rules, /机主的消息在右，其他人在左/);
-    assert.match(rules, /每条消息、动态、评论都画出来，按原顺序，不删不并不缩写/);
-    assert.match(rules, /提供了待排版正文时：原文一字不改/);
+    assert.match(rules, /每条消息、动态、评论按原顺序画出，不删不并不缩写/);
+    assert.match(rules, /提供了待排版正文（段落编号）时：按编号顺序每段放进一个气泡、动态或"长消息"卡片，排成一条从上到下的时间线，不拆进切换页面；锁屏通知、标题栏不引用正文/,
+        '长篇排版时每个段落编号只出现一次、顺序不变');
+    assert.match(rules, /overflow:hidden;overflow:clip/, 'overflow:hidden 会让标题栏和底部切换栏贴不住');
+    assert.match(rules, /默认那块不加wait，它的按钮加class="on"/);
     assert.match(rules, /不另写消息、评论或彩蛋/);
     assert.match(rules, /localStorage\/sessionStorage\/cookie、alert\/confirm\/prompt、表单提交、全屏、新窗口都不能用/);
     assert.match(rules, /不做左右滑（会被外层当翻页）/);
@@ -125,6 +128,11 @@ test('小手机骨架：收款、点赞、开合、切换都在原地生效，�
     assert.deepEqual([r.hidden('chat'), r.hidden('feed'), r.has('tf', 'on'), r.has('tc', 'on')], [true, false, true, false], '切到动态');
     r = runSkeleton({ els: tabs, clicks: ['tf', 'tc'] });
     assert.deepEqual([r.hidden('chat'), r.hidden('feed'), r.has('tc', 'on'), r.has('tf', 'on')], [false, true, true, false], '切回消息');
+    const twoGroups = [...tabs, { id: 'follow', data: { pane: 'feedTabs' } }, { id: 'hot', wait: true, data: { pane: 'feedTabs' } },
+        { id: 'tfo', data: { tab: '#follow' } }, { id: 'th', data: { tab: '#hot' } }];
+    r = runSkeleton({ els: twoGroups, clicks: ['tf', 'th'] });
+    assert.deepEqual([r.has('tf', 'on'), r.has('th', 'on'), r.has('tc', 'on'), r.has('tfo', 'on')], [true, true, false, false], '两组切换的高亮互不清掉');
+    assert.deepEqual([r.hidden('feed'), r.hidden('chat'), r.hidden('hot'), r.hidden('follow')], [false, true, false, true]);
 
     assert.equal(runSkeleton({ els: [...pay, { id: 'orphan', wait: true }] }).ready, false, '有 wait 内容没按钮：一开始就不隐藏');
     assert.equal(runSkeleton({ els: [{ id: 'feed', wait: true, data: { pane: 'app' } }, { id: 'tf', data: { tab: '#feed' } }, { id: 'chat', data: { pane: 'app' } }] }).ready, false,

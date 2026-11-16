@@ -3,17 +3,17 @@
 export const PHONE_RENDER_SELECTION = '__phone__';
 
 const PHONE_RENDER_RULES = `小手机剧场渲染规范：
-把本次内容画成手机界面（聊天记录、社交动态等）。写什么按任务指令，这里只管呈现。
+把本次内容画成手机界面（聊天、动态等），写什么按任务指令。
 
-【成品】直接输出完整HTML：<!doctype html>→head内style→body→body末尾唯一的script，不用markdown代码块。禁止外部资源与网络请求；头像、图片、图标用CSS、emoji或内联SVG画。App名用「消息」「动态」「钱包」等通用词，不写真实App名、不画其标志。
+【成品】直接输出完整HTML：<!doctype html>→head内style→body→body末尾唯一的script，不用markdown代码块。禁止外部资源与网络请求；头像、图片、图标用CSS、emoji或内联SVG画。App名用「消息」「动态」等通用词，不用真实App名和标志。
 
 【内容】
 - 机主看指令，没说就是用户扮演的人（user）。机主的消息在右，其他人在左。
-- 每条消息、动态、评论都画出来，按原顺序，不删不并不缩写。
-- 提供了待排版正文时：原文一字不改放进对应气泡、动态或评论；不成聊天或动态的段落放进"长消息"或"备忘录"卡片原样保留；不另写消息、评论或彩蛋。没有时，时间、电量、"已读"、网友昵称等小细节可按剧情补全。
+- 每条消息、动态、评论按原顺序画出，不删不并不缩写。
+- 提供了待排版正文（段落编号）时：按编号顺序每段放进一个气泡、动态或"长消息"卡片，排成一条从上到下的时间线，不拆进切换页面；锁屏通知、标题栏不引用正文；不另写消息、评论或彩蛋。没有时，时间、电量、"已读"、网友昵称等小细节可按剧情补全。
 
 【外观】
-1. .phone{width:100%;max-width:400px;margin:0 auto;overflow:hidden}；@media(min-width:520px)时加约10px深色机身边框、圆角约40px；窄屏只留屏幕。高度随内容，不用100vh、固定高度或内部滚动框。
+1. .phone{width:100%;max-width:400px;margin:0 auto;overflow:hidden;overflow:clip}（clip让sticky生效）；@media(min-width:520px)时加约10px深色机身边框、圆角约40px；窄屏只留屏幕。高度随内容，不用100vh、固定高度或内部滚动框。
 2. 顶部：状态栏（剧情时间、信号、电量）+标题栏（聊天写对方名字，可带"对方正在输入…"）。标题栏可sticky;top:0，不用fixed。
 3. 色调按本篇情绪三选一，可微调，每种状态都浅底深字或深底浅字：
 - 奶油手账（甜、日常）：底#FAF3E6，字#4A3B2A，次要#7A5C40，机主气泡#F6D9C4字#5A2E14，对方气泡#FFFFFF加虚线边#E3CFA8，点缀#A8581F；圆角大，可加便签、贴纸。
@@ -31,23 +31,23 @@ const PHONE_RENDER_RULES = `小手机剧场渲染规范：
 
 【互动写法：出错也能读完】
 沙盒里localStorage/sessionStorage/cookie、alert/confirm/prompt、表单提交、全屏、新窗口都不能用，状态只存JS变量。
-1. 内容默认全部可见。点了才出现的加class="wait"和唯一id，隐藏只写在 .js .wait{display:none}，另加[hidden]{display:none!important}。四种button：data-open="#id"开合（图片描述、语音转写、其余评论）；data-tab="#id"切换（每块面板写id和相同data-pane，各有一个data-tab按钮，默认那块不加wait）；data-take="#id"收款（id是紧随的系统小字）；data-like=""点赞（数字写在按钮内<b>里，只用阿拉伯数字）。不要在html标签上预写js类。
+1. 内容默认全部可见。点了才出现的加class="wait"和唯一id，隐藏只写在 .js .wait{display:none}，另加[hidden]{display:none!important}。四种button：data-open="#id"开合（图片描述、语音转写、其余评论）；data-tab="#id"切换（每块面板写id和相同data-pane，各有一个data-tab按钮，默认那块不加wait，它的按钮加class="on"）；data-take="#id"收款（id是紧随的系统小字）；data-like=""点赞（数字写在按钮内<b>里，只用阿拉伯数字）。不要在html标签上预写js类。
 2. script照抄骨架，可加功能，不删检查：
 const root=document.documentElement,reveal=()=>root.classList.remove('js');
 addEventListener('error',reveal);addEventListener('unhandledrejection',reveal);
 const $=s=>document.querySelector(s),pick=s=>{const el=$(s);if(!el)throw s;return el};
 const on=(sel,fn)=>document.querySelectorAll(sel).forEach(el=>el.addEventListener('click',e=>{try{fn(el,e)}catch(_){reveal()}}));
 try{on('[data-open]',b=>b.setAttribute('aria-expanded',!pick(b.dataset.open).classList.toggle('wait')));
-on('[data-tab]',b=>{const el=pick(b.dataset.tab);document.querySelectorAll(':not(button)[data-pane="'+el.dataset.pane+'"]').forEach(p=>p.classList.add('wait'));el.classList.remove('wait');document.querySelectorAll('[data-tab]').forEach(t=>t.classList.toggle('on',t===b))});
+on('[data-tab]',b=>{const el=pick(b.dataset.tab),g=el.dataset.pane;document.querySelectorAll(':not(button)[data-pane="'+g+'"]').forEach(p=>p.classList.add('wait'));el.classList.remove('wait');document.querySelectorAll('[data-tab]').forEach(t=>{const p=$(t.dataset.tab);if(p&&p.dataset.pane===g)t.classList.toggle('on',t===b)})});
 on('[data-take]',b=>{b.classList.add('done');pick(b.dataset.take).classList.remove('wait')});
 on('[data-like]',b=>{const d=b.classList.toggle('done'),n=b.querySelector('b');if(n&&/^\\d+$/.test(n.textContent))n.textContent=+n.textContent+(d?1:-1)});
 const refs=[...document.querySelectorAll('button')].flatMap(b=>Object.values(b.dataset));
 for(const w of document.querySelectorAll('.wait,:not(button)[data-pane]'))if(!refs.includes('#'+w.id))throw w;
 root.classList.add('js')}catch(_){reveal()}
 任何出错都会去掉js，内容全部露出。
-3. button都写type="button"，不写内联onclick。收款前后两种文字都写在按钮里，用.done切换。装饰层pointer-events:none。不做全屏遮罩和弹窗。露出的内容紧跟被点的东西，不自动滚动。
+3. button都写type="button"，不写内联onclick。收款前后两种文字都写在按钮里，用.done切换。装饰层pointer-events:none。不做全屏遮罩和弹窗；露出的内容紧跟被点处，不自动滚动。
 
-【自检，不输出】消息、动态、评论齐全且顺序没变；每个按钮点一遍；script不运行也能从头读到尾；各色调文字都看得清。prefers-reduced-motion时减少动效。`;
+【自检，不输出】内容齐全、顺序不变；每个按钮点一遍；script不运行也能读完；文字都看得清。prefers-reduced-motion时减少动效。`;
 
 export const PHONE_RENDER_PROFILE = Object.freeze({
     id: PHONE_RENDER_SELECTION,
