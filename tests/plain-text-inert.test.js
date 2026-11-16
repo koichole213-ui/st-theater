@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
-import { plainTextFromParsedHtml, stripBreakMarks, collapseBlockBreaks, looksLikeEscapedHtml } from '../html-plain-text.js';
+import { plainTextFromParsedHtml, stripBreakMarks, collapseBlockBreaks, looksLikeEscapedHtml, keepTextAfterReparse, stripTagsKeepText } from '../html-plain-text.js';
 
 // 作品 HTML 转纯文字时，必须在“空白文档”里解析：
 // 用酒馆页面自己的 document 解析，<img onerror/onload> 里的代码会在酒馆页面上运行（Chromium 已复现）。
@@ -12,7 +12,7 @@ function loadHtmlToPlainText(sandbox) {
     const start = source.indexOf(begin) + begin.length;
     const end = source.indexOf('// @theater-source-end htmlToPlainText', start);
     assert.ok(start > begin.length && end > start, '找不到 htmlToPlainText');
-    return runInContext(`${source.slice(start, end)}\nhtmlToPlainText;`, createContext({ plainTextFromParsedHtml, stripBreakMarks, looksLikeEscapedHtml, ...sandbox }));
+    return runInContext(`${source.slice(start, end)}\nhtmlToPlainText;`, createContext({ plainTextFromParsedHtml, stripBreakMarks, looksLikeEscapedHtml, keepTextAfterReparse, stripTagsKeepText, ...sandbox }));
 }
 
 function fakeDiv(log) {
@@ -36,11 +36,12 @@ test('作品转纯文字时不在酒馆页面的 document 上解析', () => {
     assert.ok(parsed[0].includes('onerror'), '内容原样交给空白文档解析，文字结果不变');
 });
 
-test('没有空白文档能力的环境仍能退回原来的写法', () => {
+test('没有空白文档能力时不在酒馆页面上解析，只去掉标签字样、保留分段', () => {
     const parsed = [];
     const htmlToPlainText = loadHtmlToPlainText({ document: { createElement: () => fakeDiv(parsed) } });
-    assert.equal(htmlToPlainText('<p>第一段</p><p>第二段</p>'), '第一段第二段');
-    assert.equal(parsed.length, 1);
+    assert.equal(htmlToPlainText('<p>第一段</p><p>第二段<br>第三行</p><img src=x onerror="alert(1)">'), '第一段\n第二段\n第三行');
+    assert.equal(parsed.length, 0, '没有用酒馆页面的 document');
+    assert.equal(stripTagsKeepText('<div>甲</div><p class="a">乙</p>1 < 2 且 3 > 2 <!-- 注释 -->'), '甲\n乙\n1 < 2 且 3 > 2 <!-- 注释 -->');
 });
 
 // ---- 分段 ----
@@ -112,8 +113,9 @@ test('转纯文字：正文里写着的尖括号字样不被当成标签删掉',
     const htmlToPlainText = loadHtmlToPlainText({ document });
     assert.equal(htmlToPlainText('<p>他写下 &lt;b&gt;重点&lt;/b&gt; 这几个字。</p>'), '他写下 <b>重点</b> 这几个字。');
     assert.equal(htmlToPlainText('&lt;p&gt;整篇被转义过一次&lt;/p&gt;'), '整篇被转义过一次');
-    assert.equal(htmlToPlainText('&lt;div&gt;&lt;p&gt;段一&lt;/p&gt;&lt;p&gt;段二&lt;/p&gt;&lt;style&gt;.a{color:red}&lt;/style&gt;&lt;/div&gt;'), '段一\n段二', '再解析一遍：分段保留，样式不当正文');
-    assert.equal(parsed.length, 5, '每次最多多解析一层（1 + 2 + 2）');
+    assert.equal(htmlToPlainText('&lt;div&gt;&lt;p&gt;段一&lt;/p&gt;&lt;p&gt;段二&lt;/p&gt;&lt;style&gt;.a{color:red}&lt;/style&gt;&lt;/div&gt;'), '段一\n段二\n.a{color:red}', '再解析一遍：分段保留；写出来的样式字样宁可留着也不删字');
+    assert.equal(htmlToPlainText('<p>她写下 &lt;p&gt;站名&lt;/p&gt; 和 &lt;script&gt;约在东门见&lt;/script&gt;。</p>'), '她写下\n站名\n和 约在东门见。', '小砚的样例：<script> 字样里的话是正文，不能丢');
+    assert.equal(parsed.length, 7, '每次最多多解析一层（1 + 2 + 2 + 2）');
     assert.equal(htmlToPlainText('<p>他写下 &lt;/p&gt; 这几个字，又写 1 &lt; 2 且 3 &gt; 2。</p>'), '他写下 </p> 这几个字，又写 1 < 2 且 3 > 2。', '单独一个结束标签字样不算被转义');
 });
 

@@ -58,3 +58,22 @@ export function looksLikeEscapedHtml(text) {
         return at >= 0 && new RegExp(`</${tag}\\s*>`, 'i').test(value.slice(at));
     });
 }
+
+// 没有隔离的空白文档可用时的兜底：只去掉像标签的片段（< 后面紧跟字母），字一个不删；
+// 不在酒馆页面上解析（那样作品里 <img onerror> 的代码会在酒馆页面上运行）。
+const BLOCK_TAG_PATTERN = new RegExp(`<\\/?(?:${BLOCK_SELECTOR.split(',').join('|')})(?:[\\s/][^<>]*)?>`, 'gi');
+export function stripTagsKeepText(value) {
+    return collapseBlockBreaks(stripBreakMarks(value)
+        .replace(/<br\s*\/?>/gi, LINE_BREAK)
+        .replace(BLOCK_TAG_PATTERN, BREAK)
+        .replace(/<\/?[a-zA-Z][^<>]*>/g, ''));
+}
+
+const visibleCount = value => String(value ?? '').replace(/\s+/g, '').length;
+
+// 整篇被转义过一次时会再解析一层。再解析只为拆标签、分段落，不能丢正文：
+// 解析后的字比“只去掉标签字样”还少（例如正文里写着 <!-- … -->、没闭合的 <div），就不用解析的结果。
+export function keepTextAfterReparse(escapedText, reparsed) {
+    const stripped = stripTagsKeepText(escapedText);
+    return visibleCount(reparsed) >= visibleCount(stripped) ? reparsed : stripped;
+}

@@ -27,7 +27,7 @@ import { captureHistoryRoles, normalizeRoleSources } from './history-roles.js';
 import { continuationHistoryMetadata, newHistoryKey } from './history-collections.js';
 import { itemTags } from './tag-system.js';
 import { readableErrorText } from './error-text.js';
-import { looksLikeEscapedHtml, plainTextFromParsedHtml, stripBreakMarks } from './html-plain-text.js';
+import { keepTextAfterReparse, looksLikeEscapedHtml, plainTextFromParsedHtml, stripBreakMarks, stripTagsKeepText } from './html-plain-text.js';
 
 export function createTheaterGeneration(runtime) {
 // @theater-source-begin htmlToPlainText
@@ -36,19 +36,22 @@ function htmlToPlainText(html) {
     function convert(source, nested) {
         // 放进一个不显示、不加载图片、不运行事件代码的空白文档里解析。
         // 直接用酒馆页面的 document 解析时，作品里 <img onerror/onload> 的代码会在酒馆页面上运行。
-        const doc = document.implementation?.createHTMLDocument?.('') || document;
+        const doc = document.implementation?.createHTMLDocument?.('')
+            || (typeof DOMParser === 'function' ? new DOMParser().parseFromString('', 'text/html') : null);
+        if (!doc) return stripTagsKeepText(source);
         const div = doc.createElement('div');
         // 先用正则预清理完整 HTML 文档结构，避免某些浏览器 innerHTML 解析不彻底
         const cleaned = stripBreakMarks(source)
             .replace(/<!(DOCTYPE|doctype)[^>]*>/gi, '')
             .replace(/<\/?(html|head|body|meta|link)[^>]*>/gi, '');
         div.innerHTML = cleaned;
-        div.querySelectorAll('script, style, svg, noscript').forEach(el => el.remove());
+        // 第一层去掉作品的脚本和样式；再解析的那一层是正文里写出来的字，<script>…</script> 字样里的话也是正文，不删。
+        if (!nested) div.querySelectorAll('script, style, svg, noscript').forEach(el => el.remove());
         // 块级元素、<br> 处保留分段；只取 textContent 会把挤在一行的段落粘成一整段。
         const text = plainTextFromParsedHtml(div);
-        // 兜底：整篇 HTML 被转义过一次时，文字里会留下成对的段落标签。再当 HTML 解析一遍（只一层），
-        // 这样段落还在、样式和脚本也会去掉。正文里本来就写着的 <b> 之类字样不动。
-        if (!nested && looksLikeEscapedHtml(text)) return convert(text, true);
+        // 兜底：整篇 HTML 被转义过一次时，文字里会留下成对的段落标签。再当 HTML 解析一遍（只一层）拆掉标签、分好段；
+        // 解析后少了字就退回“只去掉标签字样”。正文里本来就写着的 <b> 之类字样不动。
+        if (!nested && looksLikeEscapedHtml(text)) return keepTextAfterReparse(text, convert(text, true));
         return text;
     }
 }
