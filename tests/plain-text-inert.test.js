@@ -168,6 +168,8 @@ test('脚本 / 样式块像不像代码', () => {
     assert.equal(looksLikeCode('script', ''), true);
     assert.equal(looksLikeCode('style', '.a{color:red}'), true);
     assert.equal(looksLikeCode('style', '一句话'), false);
+    assert.equal(looksLikeCode('script', 'Please return to the east gate.'), false, '小砚 4.4.8l 样例：正文里的英文单词不算代码');
+    assert.equal(looksLikeCode('style', '集合时间: 八点。'), false, '小砚 4.4.8l 样例：半角冒号不算样式');
 });
 
 test('长梦章节：旧记录里正文写出来的 <script>一句话</script> 字样不丢，真脚本照样清掉', async () => {
@@ -191,4 +193,5 @@ test('DOMParser 存在但抛错时，退回只去标签字样，不中断', () =
         DOMParser: class { parseFromString() { throw new Error('boom'); } },
     });
     assert.equal(htmlToPlainText('<p>甲</p><p>乙</p>'), '甲\n乙');
+    assert.equal(htmlToPlainText('<p>汤姆 &amp; 杰瑞 &ldquo;好&rdquo;</p>'), '汤姆 & 杰瑞 “好”', '没有隔离文档时也还原常见字符');
 });

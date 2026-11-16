@@ -41,7 +41,7 @@ function htmlToPlainText(html) {
             doc = document.implementation?.createHTMLDocument?.('')
                 || (typeof DOMParser === 'function' ? new DOMParser().parseFromString('', 'text/html') : null);
         } catch { doc = null; }
-        if (!doc) return stripTagsKeepText(source);
+        if (!doc) return stripTagsKeepText(source, { decode: true });
         const div = doc.createElement('div');
         // 先用正则预清理完整 HTML 文档结构，避免某些浏览器 innerHTML 解析不彻底
         const cleaned = stripBreakMarks(source)

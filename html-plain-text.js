@@ -62,11 +62,12 @@ export function looksLikeEscapedHtml(text) {
 // 没有隔离的空白文档可用时的兜底：只去掉像标签的片段（< 后面紧跟字母），字一个不删；
 // 不在酒馆页面上解析（那样作品里 <img onerror> 的代码会在酒馆页面上运行）。
 const BLOCK_TAG_PATTERN = new RegExp(`<\\/?(?:${BLOCK_SELECTOR.split(',').join('|')})(?:[\\s/][^<>]*)?>`, 'gi');
-export function stripTagsKeepText(value) {
-    return collapseBlockBreaks(stripBreakMarks(value)
+export function stripTagsKeepText(value, { decode = false } = {}) {
+    const text = collapseBlockBreaks(stripBreakMarks(value)
         .replace(/<br\s*\/?>/gi, LINE_BREAK)
         .replace(BLOCK_TAG_PATTERN, BREAK)
         .replace(/<\/?[a-zA-Z][^<>]*>/g, ''));
+    return decode ? decodeBasicEntities(text) : text;
 }
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0', ldquo: '\u201c', rdquo: '\u201d', lsquo: '\u2018',
@@ -98,6 +99,7 @@ export function keepTextAfterReparse(escapedText, reparsed, decode = decodeBasic
 export function looksLikeCode(tag, content) {
     const text = String(content ?? '');
     if (!text.trim()) return true;
-    if (String(tag).toLowerCase() === 'style') return /[{}:;]/.test(text);
-    return /[;{}()=<>[\]]|=>|\b(?:function|var|let|const|return|document|window|import|export)\b/.test(text);
+    // 只看代码离不开的符号，不看单词（正文里也会写 return、function 这样的英文）。
+    if (String(tag).toLowerCase() === 'style') return /[{}]/.test(text);
+    return /[;{}()=]/.test(text);
 }
