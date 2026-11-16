@@ -86,3 +86,16 @@ test('插件更新失败：弹窗不直接贴酒馆后台的英文原话，原�
     assert.doesNotMatch(source, /\$\{detail\}\\n/);
     assert.match(source, /writeRuntimeLog\('warn', '更新插件：酒馆返回的原话'/);
 });
+
+test('插件自己的中文提示里引用了“Failed to fetch”之类的名字，原样保留', () => {
+    assert.equal(readableErrorText(new Error('预设「Failed to fetch」不存在'), '兜底'), '预设「Failed to fetch」不存在');
+});
+
+test('运行日志脱敏：JSON 里的 Authorization（含 Basic）、Cookie / Set-Cookie、token 都抹掉', async () => {
+    const { writeRuntimeLog } = await import('../runtime-log.js');
+    clearRuntimeLogs();
+    writeRuntimeLog('warn', '更新插件：酒馆返回的原话', { message: '{"Authorization":"Basic dXNlcjpwYXNz","token":"t-123"}\nCookie: session=abc123; theme=dark\nSet-Cookie: sid=zzz; Path=/' });
+    const [entry] = getRuntimeLogEntries();
+    for (const secret of ['dXNlcjpwYXNz', 't-123', 'abc123', 'zzz']) assert.doesNotMatch(entry.message, new RegExp(secret));
+    assert.match(entry.message, /更新插件/);
+});

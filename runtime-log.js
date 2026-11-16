@@ -47,8 +47,10 @@ export function sanitizeLogText(value) {
     text = text.replace(/\b(?:https?|wss?):\/\/[^\s<>"'`]+/gi, rawUrl => {
         try { return new URL(rawUrl).origin; } catch { return '[URL]'; }
     });
-    text = text.replace(/((?:authorization)["']?\s*[:=]\s*["']?)(?:bearer\s+)?([^"',;\s}\\]+)/gi, '$1[REDACTED]');
-    text = text.replace(/((?:key|private[-_]?key|client[-_]?secret|x[-_]?api[-_]?key|api[-_]?key|apikey|secret|password|credential|access[-_]?token|refresh[-_]?token)["']?\s*[:=]\s*["']?)([^"',;\s}\\]+)/gi, '$1[REDACTED]');
+    // 原话被转成 JSON 字符串后，引号前会多出反斜杠（\"Authorization\":\"…\"），规则里都允许。
+    text = text.replace(/((?:proxy-)?authorization\\*["']?\s*[:=]\s*\\*["']?)(?:(?:bearer|basic|token|digest)\s+)?([^"',;\s}\\]+)/gi, '$1[REDACTED]');
+    text = text.replace(/((?:set-)?cookie\\*["']?\s*[:=]\s*\\*["']?)([^"\r\n\\]+)/gi, '$1[REDACTED]');
+    text = text.replace(/((?:key|private[-_]?key|client[-_]?secret|x[-_]?api[-_]?key|api[-_]?key|apikey|secret|password|credential|access[-_]?token|refresh[-_]?token|session[-_]?id|token)\\*["']?\s*[:=]\s*\\*["']?)([^"',;\s}\\]+)/gi, '$1[REDACTED]');
     text = text.replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]');
     return redactKnownSecrets(text);
 }
