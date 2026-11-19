@@ -49,8 +49,8 @@
 
 ### 维护小尾巴（低）
 
-- [ ] 旧的 `@theater-source` 切源码测试逐步改成直接 `import`（很脆，改名搬家要同步 `tests/production-source-map.json`）。
-- [ ] 清理旧的远端分支：`claude/*` 各功能分支、`claude/try-20261115`、`codex/long-dream-html-parity` 的内容都已进 4.4.9 或被取代（2026-11-19 核对）。删远端分支要禾禾同意。
+- [ ] 旧的 `@theater-source` 切源码测试逐步改成直接 `import`（很脆，改名搬家要同步 `tests/production-source-map.json`）。这些测试仍在检查真实代码，不能删，只是写法旧；禾禾 11-19 说不急。
+- [ ] 清理旧的远端分支（禾禾 2026-11-19 同意“不需要了就删”；小克的环境删远端分支被拒绝（HTTP 403），留给禾禾在 GitHub 网页上删，不删也不影响使用）：已逐个核对内容都在 4.4.9 里（直接包含或换写法并入）。可删的分支和提交号：`claude/adaptive-render-fun`(`c459dc8`) `claude/chapter-tools-hover`(`e3bdab3`) `claude/error-toast-close`(`1658dc2`) `claude/extension-scope`(`dd04d7f`) `claude/fingerprint-per-device`(`2f460b6`) `claude/foundation-1115`(`d9557e7`) `claude/more-fixes`(`572b9df`) `claude/output-tag-exclusion`(`d761593`) `claude/phone-render`(`7145824`) `claude/plain-text-inert`(`369620b`) `claude/release-4.4.9`(`79e395b`) `claude/server-backup-fixes`(`362a519`) `claude/slim-down`(`a464d5f`) `claude/split-core-tests`(`f572f4b`) `claude/try-20261115`(`5142310`) `codex/long-dream-html-parity`(`dcdb8e5`)。
 - [x] `htmlToPlainText` 直接测试：已有（`tests/plain-text-inert.test.js` 等）。
 - [x] 根基清单其余项：测试打底、瘦身、排版接上内容排除、空 `catch`（4.4.8h）；报错文案收尾（4.4.8i）；子路径部署已销项。
 
