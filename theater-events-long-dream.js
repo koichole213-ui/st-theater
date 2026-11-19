@@ -41,6 +41,10 @@ export function bindLongDreamEvents(runtime, $d) {
     $d.off('change.tdrecent').on('change.tdrecent', '#theater-dream-next-recent', () => {
         runtime.rememberLongDreamComposerDraft();
         runtime.renderLongDreamPanel();
+        // Re-rendering closes the options card; keep it open so the new context list is visible.
+        document.getElementById('theater-dream-continuation-options')?.classList.add('open');
+        $('[data-dream-options-toggle]').attr('aria-expanded', 'true').addClass('is-open');
+        $('#theater-dream-next-recent').trigger('focus');
         runtime.scheduleLongDreamTokenEstimate();
     });
     $d.off('click.tdsection').on('click.tdsection', '[data-dream-section]', function () {
