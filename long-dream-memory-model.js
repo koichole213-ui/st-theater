@@ -293,7 +293,7 @@ function normalizeDeletedItem(item) {
     const kind = ['state', 'transition', 'thread', 'deviation'].includes(item?.kind) ? item.kind : '';
     const id = cleanText(item?.id, 120);
     if (!kind || !id) return null;
-    return { kind, id, threadKey: cleanText(item.threadKey, 180), key: typeof item.key === 'string' ? item.key.slice(0, 600) : '', deletedAt: typeof item.deletedAt === 'string' ? item.deletedAt : '' };
+    return { kind, id, threadKey: cleanText(item.threadKey, 180), key: typeof item.key === 'string' ? item.key.slice(0, 4000) : '', deletedAt: typeof item.deletedAt === 'string' ? item.deletedAt : '' };
 }
 
 // What an item is about, independent of its id: thread name, state slot or deviation name.
@@ -489,17 +489,27 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
         const live = operation.targetId ? lists[kind].some(item => item.id === operation.targetId)
             : kind === 'thread' && operation.threadKey ? sameThread(operation.threadKey) >= 0 : true;
         let deleted = live ? null : deletedTarget(memory, kind, operation);
+        let renamed = false;
         if (deleted && operation.targetId) {
-            // An old id must agree with what its deleted item was about; if the operation describes
-            // something else, never guess — ask the user like any other missing target.
+            // An old id must agree with what its deleted item was about. If the operation describes
+            // something else, never apply it to the old item's successor. A conflict would make
+            // "keep mine" record a name-based rejection, so instead: skip it when the name belongs
+            // to another current item, and otherwise record it quietly as something new.
             const ownKey = memoryItemKey(kind, operation);
             const deletedKey = deleted.key || (kind === 'thread' ? canonicalText(deleted.threadKey) : '');
             if (ownKey && deletedKey && ownKey !== deletedKey) {
-                addConflict(operation, 'missing-target', operation.targetId, index);
-                continue;
+                const takenByOther = kind === 'thread' ? sameThread(operation.threadKey) >= 0
+                    : kind === 'state' ? states.some(item => stateSlotKey(item.subjects, item.attribute, item.topic) === ownKey)
+                    : kind === 'deviation' ? deviations.some(item => canonicalText(item.deviationKey) === ownKey) : false;
+                if (takenByOther) {
+                    skippedOperations.push({ index, reason: 'deleted-id-names-other-item', op: operation.op });
+                    continue;
+                }
+                renamed = true;
+                if (kind !== 'thread') { operation.targetId = ''; deleted = null; }
             }
         }
-        if (deleted && kind === 'thread') {
+        if (deleted && kind === 'thread' && !renamed) {
             const reopened = sameThread(deleted.threadKey);
             if (reopened >= 0) { operation.targetId = threads[reopened].id; deleted = null; } // already picked up again: update that one
         }
@@ -514,7 +524,7 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
                 ...operation,
                 id: generatedId('thread', operation, index),
                 targetId: '',
-                threadKey: deleted.threadKey || operation.threadKey,
+                threadKey: renamed ? operation.threadKey : (deleted.threadKey || operation.threadKey),
                 content: operation.progress,
                 status: 'progressed',
                 introducedAt: operation.chapterNumber,

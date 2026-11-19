@@ -184,25 +184,36 @@ test('小砚⑧：梦脉命中预览和实际发送按同一个“带入全文�
     }
 });
 
-test('小砚复审②：旧编号指向被删的 A、名字却写着 B 时，不改 B，交给用户确认', () => {
+test('小砚复审②：旧编号指向被删的 A、名字却写着 B 时，不改 B、不弹窗，跳过这一条', () => {
     let record = dream();
     record = normalizeLongDreamRecord({ ...record, memory: { ...record.memory, threads: [...record.memory.threads,
         { id: 'thread-b', threadKey: '旧信', kind: 'mystery', status: 'open', content: '旧信是谁写的', introducedAt: 1, lastTouchedAt: 1, subjects: ['林晚'], sourceChapterNumbers: [1] }] } });
     const deleted = deleteLongDreamMemoryV2RecordItem(record, 'thread', 'thread-key');
-    const run = (memory, ops) => applyLongDreamMemoryOperations(memory, ops, { worldLineRelation: 'canon' }).memory;
-    const mixed = run(deleted.memory, [{ op: 'resolve_thread', targetId: 'thread-key', threadKey: '旧信', resolution: '是母亲写的', chapterNumber: 3 }]);
+    const full = (memory, ops) => applyLongDreamMemoryOperations(memory, ops, { worldLineRelation: 'canon' });
+    const run = (memory, ops) => full(memory, ops).memory;
+    const mixedResult = full(deleted.memory, [{ op: 'resolve_thread', targetId: 'thread-key', threadKey: '旧信', resolution: '是母亲写的', chapterNumber: 3 }]);
+    const mixed = mixedResult.memory;
     assert.equal(mixed.threads.find(t => t.id === 'thread-b').status, 'open', 'B 不被悄悄结束');
-    assert.equal(mixed.pendingConflicts.length, 1);
+    assert.equal(mixed.pendingConflicts.length, 0, '不弹窗，免得“保留”时按名字记下拒绝');
+    assert.equal(mixedResult.skippedOperations.length, 1);
+    assert.equal(mixedResult.ignoredOperations.length, 0, '不让同批概要作废');
     const reopened = run(deleted.memory, [{ op: 'open_thread', threadKey: '银钥匙', kind: 'mystery', content: '银钥匙又出现了', chapterNumber: 3 }]);
     const again = run(reopened, [{ op: 'resolve_thread', targetId: 'thread-key', threadKey: '旧信', resolution: '是母亲写的', chapterNumber: 4 }]);
     assert.equal(again.threads.find(t => t.id === 'thread-b').status, 'open', 'A 重新开启后也不改 B');
-    assert.equal(again.pendingConflicts.length, 1);
+    assert.equal(again.threads.find(t => t.threadKey === '银钥匙').status, 'open', '也不改重新开启的 A');
+    assert.equal(again.pendingConflicts.length, 0);
+    const later = run(mixed, [{ op: 'advance_thread', targetId: 'thread-b', threadKey: '旧信', progress: '在抽屉里找到第二封', chapterNumber: 4 }]);
+    assert.equal(later.pendingConflicts.length, 0, 'B 自己以后的正常推进不受影响');
+    assert.equal(later.threads.find(t => t.id === 'thread-b').status, 'progressed');
+    const renamed = run(deleted.memory, [{ op: 'advance_thread', targetId: 'thread-key', threadKey: '银色钥匙', progress: '钥匙又出现了', chapterNumber: 3 }]);
+    assert.equal(renamed.pendingConflicts.length, 0, '名字稍有不同、没撞上现有条目：安静地新记一条');
+    assert.ok(renamed.threads.some(t => t.threadKey === '银色钥匙' && t.status === 'progressed'));
     const sameName = run(reopened, [{ op: 'resolve_thread', targetId: 'thread-key', threadKey: '银钥匙', resolution: '打开了后门', chapterNumber: 4 }]);
     assert.equal(sameName.threads.find(t => t.threadKey === '银钥匙').status, 'resolved', '名字对得上时结束的是重新开启的 A');
     assert.equal(sameName.threads.find(t => t.id === 'thread-b').status, 'open');
 });
 
-test('小砚复审②：状态也一样——旧编号描述的是另一条状态时交给用户确认', () => {
+test('小砚复审②：状态也一样——旧编号描述的是另一条现有状态时跳过，描述的是新内容时安静记下', () => {
     let record = dream();
     record = normalizeLongDreamRecord({ ...record, memory: { ...record.memory, states: [...record.memory.states,
         { id: 'state-b', subjects: ['沈砚'], attribute: 'location', topic: '住处', value: '城北', validFromChapter: 1, sourceChapterNumbers: [1] }] } });
@@ -211,7 +222,12 @@ test('小砚复审②：状态也一样——旧编号描述的是另一条状�
         { op: 'set_state', targetId: 'state-loc', subjects: ['沈砚'], attribute: 'location', topic: '住处', value: '搬去了城南', chapterNumber: 3 },
     ], { worldLineRelation: 'canon' }).memory;
     assert.equal(result.states.find(s => s.id === 'state-b').value, '城北');
-    assert.equal(result.pendingConflicts.length, 1);
+    assert.equal(result.pendingConflicts.length, 0);
+    const fresh = applyLongDreamMemoryOperations(deleted.memory, [
+        { op: 'set_state', targetId: 'state-loc', subjects: ['林晚'], attribute: 'location', topic: '住所', value: '城东', chapterNumber: 3 },
+    ], { worldLineRelation: 'canon' }).memory;
+    assert.equal(fresh.pendingConflicts.length, 0);
+    assert.ok(fresh.states.some(s => s.topic === '住所' && s.value === '城东'));
     const same = applyLongDreamMemoryOperations(deleted.memory, [
         { op: 'set_state', targetId: 'state-loc', subjects: ['林晚'], attribute: 'location', topic: '住处', value: '搬去了城南', chapterNumber: 3 },
     ], { worldLineRelation: 'canon' }).memory;
