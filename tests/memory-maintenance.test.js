@@ -87,3 +87,13 @@ test('织梦脉的已有梦脉：不超长时原样发送；超长时先省概�
     assert.match(text, /银钥匙/);
     assert.equal((text.match(/\[id=state-/g) || []).length, 150);
 });
+
+import { buildLongDreamMemoryPayload } from '../long-dream-memory.js';
+
+test('织梦脉规则：同一人物同一方面只留一条当前状态', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章。', html: '<p>1</p>' } });
+    record = appendLongDreamChapter(record, { text: '第二章。', html: '<p>2</p>' });
+    const { systemPrompt } = buildLongDreamMemoryPayload({ record });
+    assert.match(systemPrompt, /同一方面只保留一条当前状态/);
+    assert.match(systemPrompt, /必须带它的 targetId 更新/);
+});
