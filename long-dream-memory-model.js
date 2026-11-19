@@ -293,7 +293,15 @@ function normalizeDeletedItem(item) {
     const kind = ['state', 'transition', 'thread', 'deviation'].includes(item?.kind) ? item.kind : '';
     const id = cleanText(item?.id, 120);
     if (!kind || !id) return null;
-    return { kind, id, threadKey: cleanText(item.threadKey, 180), deletedAt: typeof item.deletedAt === 'string' ? item.deletedAt : '' };
+    return { kind, id, threadKey: cleanText(item.threadKey, 180), key: typeof item.key === 'string' ? item.key.slice(0, 600) : '', deletedAt: typeof item.deletedAt === 'string' ? item.deletedAt : '' };
+}
+
+// What an item is about, independent of its id: thread name, state slot or deviation name.
+function memoryItemKey(kind, item = {}) {
+    if (kind === 'thread') return canonicalText(item.threadKey);
+    if (kind === 'state') return item.subjects?.length || item.attribute || item.topic ? stateSlotKey(item.subjects, item.attribute, item.topic) : '';
+    if (kind === 'deviation') return canonicalText(item.deviationKey);
+    return '';
 }
 
 function deletedTarget(memory, kind, operation) {
@@ -481,8 +489,18 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
         const live = operation.targetId ? lists[kind].some(item => item.id === operation.targetId)
             : kind === 'thread' && operation.threadKey ? sameThread(operation.threadKey) >= 0 : true;
         let deleted = live ? null : deletedTarget(memory, kind, operation);
+        if (deleted && operation.targetId) {
+            // An old id must agree with what its deleted item was about; if the operation describes
+            // something else, never guess — ask the user like any other missing target.
+            const ownKey = memoryItemKey(kind, operation);
+            const deletedKey = deleted.key || (kind === 'thread' ? canonicalText(deleted.threadKey) : '');
+            if (ownKey && deletedKey && ownKey !== deletedKey) {
+                addConflict(operation, 'missing-target', operation.targetId, index);
+                continue;
+            }
+        }
         if (deleted && kind === 'thread') {
-            const reopened = sameThread(operation.threadKey || deleted.threadKey);
+            const reopened = sameThread(deleted.threadKey);
             if (reopened >= 0) { operation.targetId = threads[reopened].id; deleted = null; } // already picked up again: update that one
         }
         if (deleted && ['resolve_thread', 'abandon_thread'].includes(operation.op)) {
@@ -496,7 +514,7 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
                 ...operation,
                 id: generatedId('thread', operation, index),
                 targetId: '',
-                threadKey: operation.threadKey || deleted.threadKey,
+                threadKey: deleted.threadKey || operation.threadKey,
                 content: operation.progress,
                 status: 'progressed',
                 introducedAt: operation.chapterNumber,
@@ -811,7 +829,7 @@ export function deleteLongDreamMemoryV2Item(memoryInput, kind, itemIdValue, now 
     const item = memory[key].find(entry => String(entry.id) === String(itemIdValue));
     if (!item) throw new Error('没有找到要删除的梦脉');
     const deletedItems = [...memory.deletedItems.filter(entry => !(entry.kind === kind && entry.id === item.id)),
-        { kind, id: item.id, threadKey: kind === 'thread' ? item.threadKey : '', deletedAt: normalizedDate(now) }].slice(-200);
+        { kind, id: item.id, threadKey: kind === 'thread' ? item.threadKey : '', key: memoryItemKey(kind, item), deletedAt: normalizedDate(now) }].slice(-200);
     return { ...memory, [key]: memory[key].filter(entry => entry.id !== item.id), deletedItems };
 }
 
