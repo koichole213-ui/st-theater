@@ -64,7 +64,7 @@ function cleanDream(raw) {
     }
     if (Number.isSafeInteger(normalized.revision) && normalized.revision >= 0) result.revision = normalized.revision;
     if (origins(raw).length) result.backupOrigins = origins(raw);
-    if (raw.composerDraft && (String(raw.composerDraft.instruction || '').trim() || String(raw.composerDraft.title || '').trim() || Number.isFinite(Number(raw.composerDraft.targetChars)))) result.composerDraft = { instruction:String(raw.composerDraft.instruction || ''),title:String(raw.composerDraft.title || ''),targetChars:Number(raw.composerDraft.targetChars) || 3000 };
+    if (raw.composerDraft && (String(raw.composerDraft.instruction || '').trim() || String(raw.composerDraft.title || '').trim() || Number.isFinite(Number(raw.composerDraft.targetChars)) || Number(raw.composerDraft.recentChapters) === 1)) result.composerDraft = { instruction:String(raw.composerDraft.instruction || ''),title:String(raw.composerDraft.title || ''),targetChars:Number(raw.composerDraft.targetChars) || 3000,recentChapters:Number(raw.composerDraft.recentChapters) === 1 ? 1 : 2 };
     return result;
 }
 function cleanResult(value,seen=new WeakSet(),depth=0) {

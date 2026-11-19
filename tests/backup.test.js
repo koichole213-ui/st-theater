@@ -118,3 +118,9 @@ test('GitHub上传校验git blob标识，下载按不可变SHA并拒绝错误内
 test('GitHub失败或树截断不冒充空备份列表',async()=>{
  const client=createGithubBackupClient({repository:'user/backup',token:'test'}, {request:async url=>Response.json(url.includes('/git/trees/')?{truncated:true,tree:[]}:{private:true,default_branch:'main',size:10})});await assert.rejects(client.list(),/不完整/);
 });
+test('小砚④：长梦“带入全文：最近 1 章”经过完整备份往返后仍是 1 章',async()=>{
+ const only=dream();only.composerDraft={recentChapters:1};
+ const full=dream();full.id=dream().id+'-b';full.composerDraft={targetChars:9000,recentChapters:1};
+ const parsed=await parseCompleteBackup(await packet({dreams:[only]}));assert.equal(parsed.data.dreams[0].composerDraft.recentChapters,1);
+ const parsed2=await parseCompleteBackup(await packet({dreams:[full]}));assert.equal(parsed2.data.dreams[0].composerDraft.recentChapters,1);assert.equal(parsed2.data.dreams[0].composerDraft.targetChars,9000);
+});
