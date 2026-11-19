@@ -41,7 +41,9 @@ export function snapshotStorySummary(record, now = new Date()) {
     const memory = record.memory, sources = chapterSummarySources(record.chapters);
     const versions = normalizeStoryFields(memory, record.chapters.length).summaryVersions;
     const chapterNumber = Math.min(record.chapters.length, memory.summaryThroughChapter || memory.summaryHistory?.at(-1)?.chapterNumber || memory.processedThroughChapter || record.chapters.length);
-    if (memory.currentState?.trim() && chapterNumber > 0 && !versions.some(version => version.text === memory.currentState && version.chapterNumber === chapterNumber)) {
+    const existing = versions.findIndex(version => version.text === memory.currentState && version.chapterNumber === chapterNumber);
+    if (memory.currentState?.trim() && existing >= 0) versions.push(...versions.splice(existing, 1)); // keep the version being replaced among the newest
+    if (memory.currentState?.trim() && chapterNumber > 0 && existing < 0) {
         versions.push({ id: `legacy-${new Date(now).toISOString()}-${Math.random().toString(36).slice(2, 10)}`, text: memory.currentState, chapterNumber,
             createdAt: new Date(now).toISOString(), canRestore: !memory.summaryDecisionsChanged, sources: sources.slice(0, chapterNumber),
             storyEntries: validStoryEntries(record).filter(item => item.chapterNumber <= chapterNumber), manualFullSummary: manualFullSummary(record, true), summaryNeedsRefresh: memory.summaryNeedsRefresh === true });
@@ -162,8 +164,10 @@ export function condenseSummaryPlan(record) {
     const chapters = Array.isArray(record?.chapters) ? record.chapters : [];
     if (hasPendingManualSummary(record)) return { reason: '有手改概要等待核对，请先点“编辑概要”核对保存，再精简。' };
     const full = manualFullSummary(record);
-    const through = Math.min(chapters.length, Math.max(chapters.length - CONDENSE_KEEP_RECENT_CHAPTERS, full?.chapterNumber || 0));
+    const through = chapters.length - CONDENSE_KEEP_RECENT_CHAPTERS;
     if (through < 2) return { reason: `正文满 ${CONDENSE_KEEP_RECENT_CHAPTERS + 2} 章后才需要精简概要。` };
+    // A whole summary that already reaches into the latest chapters cannot be split back apart reliably.
+    if (full && full.chapterNumber > through) return { reason: `整篇概要已经写到第 ${full.chapterNumber} 章，包含了最近 ${CONDENSE_KEEP_RECENT_CHAPTERS} 章，没法再拆开精简。可以点“编辑概要”自己缩短，或点“更新概要”改回逐章版后再精简。` };
     const entries = validStoryEntries(record).filter(entry => entry.chapterNumber <= through && (!full || entry.chapterNumber > full.chapterNumber));
     const covered = new Set(entries.map(entry => entry.chapterNumber));
     if (full) for (let number = 1; number <= full.chapterNumber; number++) covered.add(number);

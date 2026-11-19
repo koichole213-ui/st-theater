@@ -46,7 +46,10 @@ export function saveManualStorySummary(record, entries, revision, now = new Date
     const available = [...validStoryEntries(record), ...pendingManualStoryEntries(record)].filter(entry => !full || entry.chapterNumber > full.chapterNumber);
     if (available.some(entry => !seen.has(entry.chapterNumber))) fail('COVERAGE', '已有分章概要缺失，原概要已保留，请重新打开编辑。');
     if (!edited.length && !full) fail('EMPTY_ENTRY', '尚无可保存的概要。');
-    return saveStorySummary(target, edited, now);
+    // Per-chapter entries hidden under the whole summary stay stored as a fallback
+    // (e.g. after condensing), so editing an early chapter later cannot leave no summary at all.
+    const hidden = full ? validStoryEntries(record).filter(entry => entry.chapterNumber <= full.chapterNumber && !seen.has(entry.chapterNumber)) : [];
+    return saveStorySummary(target, [...hidden, ...edited].sort((a, b) => a.chapterNumber - b.chapterNumber), now);
 }
 
 export function summaryEditorHTML(runtime, dream) {

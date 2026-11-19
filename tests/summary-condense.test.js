@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLongDreamRecord, appendLongDreamChapter, normalizeLongDreamRecord } from '../long-dream.js';
 import { chapterSummarySources, saveStorySummary, condenseSummaryPlan, saveCondensedSummary, restoreStorySummary, validateStorySources, invalidateStoryDecisions } from '../long-dream-story-summary.js';
-import { condenseLongDreamSummary, buildLongDreamCondensePayload } from '../long-dream-summary.js';
+import { condenseLongDreamSummary, buildLongDreamCondensePayload, summaryRevision } from '../long-dream-summary.js';
 import { buildLongDreamChapterPayload } from '../long-dream-payload.js';
 
 const entryText = n => `第${n}章概要：` + '她在码头撞见旧友交易，带走账本，两人关系裂开，银钥匙的伏笔留了下来。'.repeat(6);
@@ -92,4 +92,41 @@ test('精简失败时原概要原样保留：结果为空、没变短、太短�
     const changed = { ...record, canon: '设定改了' };
     assert.equal(await run('精简。'.repeat(80), { readLatest: async () => changed }), null);
     assert.equal(saves, 0);
+});
+
+import { saveManualStorySummary } from '../long-dream-summary-editor.js';
+
+test('小砚①：精简后在“编辑概要”原样保存，被盖住的逐章记录仍保留；之后改旧章正文也不会完全没有概要', () => {
+    const condensed = saveCondensedSummary(dreamWithSummaries(8), '精简后的前五章。'.repeat(20), 5);
+    const resaved = saveManualStorySummary(condensed, [6, 7, 8].map(n => ({ chapterNumber: n, text: entryText(n) })), summaryRevision(condensed), undefined,
+        { fullSummary: { text: condensed.memory.manualFullSummary.text, chapterNumber: 5 } });
+    assert.deepEqual(resaved.memory.storyEntries.map(e => e.chapterNumber), [1, 2, 3, 4, 5, 6, 7, 8]);
+    const chapters = resaved.chapters.map(c => c.number === 4 ? { ...c, text: '第4章被改过。' } : c);
+    const memory = validateStorySources(resaved.memory, chapters);
+    assert.match(memory.currentState, /第 1 章：第1章概要/);
+    assert.match(memory.currentState, /第 3 章：第3章概要/);
+});
+
+test('小砚⑤：整篇概要已经写进最近三章时不精简', () => {
+    const record = dreamWithSummaries(8);
+    const sources = chapterSummarySources(record.chapters);
+    const handFull = { ...record, memory: { ...record.memory, manualFullSummary: { text: '手写整篇。'.repeat(180), chapterNumber: 8, sources } } };
+    assert.match(condenseSummaryPlan(handFull).reason, /包含了最近 3 章/);
+    const four = dreamWithSummaries(4);
+    const handFour = { ...four, memory: { ...four.memory, manualFullSummary: { text: '手写整篇。'.repeat(180), chapterNumber: 4, sources: chapterSummarySources(four.chapters) } } };
+    assert.ok(condenseSummaryPlan(handFour).reason);
+});
+
+test('小砚⑥：“最近版本”满 5 版、恢复最老一版后再精简，刚才那版仍能找回', () => {
+    let record = dreamWithSummaries(8);
+    const sources = chapterSummarySources(record.chapters);
+    for (let round = 1; round <= 5; round++) {
+        record = saveStorySummary(record, record.chapters.map(c => ({ chapterNumber: c.number, text: `第${round}版：` + entryText(c.number), source: sources[c.number - 1] })));
+    }
+    assert.equal(record.memory.summaryVersions.length, 5);
+    const oldest = record.memory.summaryVersions[0];
+    record = restoreStorySummary(record, oldest.id);
+    const before = record.memory.currentState;
+    const condensed = saveCondensedSummary(record, '精简后的前五章。'.repeat(20), 5);
+    assert.ok(condensed.memory.summaryVersions.some(v => v.text === before), '精简前那一版还在最近版本里');
 });
