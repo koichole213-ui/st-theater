@@ -130,3 +130,20 @@ test('小砚⑥：“最近版本”满 5 版、恢复最老一版后再精简�
     const condensed = saveCondensedSummary(record, '精简后的前五章。'.repeat(20), 5);
     assert.ok(condensed.memory.summaryVersions.some(v => v.text === before), '精简前那一版还在最近版本里');
 });
+
+test('小砚复审⑥：文字相同、人工标记不同的两版不会被当成同一版', () => {
+    let record = dreamWithSummaries(8);
+    const autoText = record.memory.currentState;
+    record = saveManualStorySummary(record, record.chapters.map(c => ({ chapterNumber: c.number, text: entryText(c.number) })), summaryRevision(record));
+    assert.equal(record.memory.currentState, autoText, '手动原样保存，文字不变');
+    const sources = chapterSummarySources(record.chapters);
+    for (let round = 1; round <= 3; round++) {
+        record = saveStorySummary(record, record.chapters.map(c => ({ chapterNumber: c.number, text: `第${round}版：` + entryText(c.number), source: sources[c.number - 1] })));
+    }
+    const isAuto = v => v.text === autoText && v.storyEntries.every(e => !e.editedByUser);
+    const auto = record.memory.summaryVersions.find(isAuto);
+    assert.ok(auto, '自动版在最近版本里');
+    record = restoreStorySummary(record, auto.id);
+    const condensed = saveCondensedSummary(record, '精简后的前五章。'.repeat(20), 5);
+    assert.ok(condensed.memory.summaryVersions.some(isAuto), '精简前恢复的那一版（自动版）仍能找回');
+});

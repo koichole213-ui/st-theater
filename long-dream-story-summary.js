@@ -37,17 +37,27 @@ export function savedStoryText(record, entries) {
     return [full?.text || '', composeStorySummary(entries.filter(entry => !full || entry.chapterNumber > full.chapterNumber))].filter(Boolean).join('\n\n');
 }
 
+// Two versions are the same only if restoring either gives the same state, not just the same text.
+function snapshotSignature(version) {
+    const full = version.manualFullSummary;
+    return JSON.stringify([version.text, version.chapterNumber, version.canRestore !== false,
+        (version.storyEntries || []).filter(entry => entry.chapterNumber <= version.chapterNumber)
+            .map(entry => [entry.chapterNumber, entry.text, entry.source, entry.editedByUser === true, entry.needsReview === true]).sort((a, b) => a[0] - b[0]),
+        full ? [full.text, full.chapterNumber, full.sources, full.needsReview === true] : null]);
+}
+
 export function snapshotStorySummary(record, now = new Date()) {
     const memory = record.memory, sources = chapterSummarySources(record.chapters);
     const versions = normalizeStoryFields(memory, record.chapters.length).summaryVersions;
     const chapterNumber = Math.min(record.chapters.length, memory.summaryThroughChapter || memory.summaryHistory?.at(-1)?.chapterNumber || memory.processedThroughChapter || record.chapters.length);
-    const existing = versions.findIndex(version => version.text === memory.currentState && version.chapterNumber === chapterNumber);
-    if (memory.currentState?.trim() && existing >= 0) versions.push(...versions.splice(existing, 1)); // keep the version being replaced among the newest
-    if (memory.currentState?.trim() && chapterNumber > 0 && existing < 0) {
-        versions.push({ id: `legacy-${new Date(now).toISOString()}-${Math.random().toString(36).slice(2, 10)}`, text: memory.currentState, chapterNumber,
-            createdAt: new Date(now).toISOString(), canRestore: !memory.summaryDecisionsChanged, sources: sources.slice(0, chapterNumber),
-            storyEntries: validStoryEntries(record).filter(item => item.chapterNumber <= chapterNumber), manualFullSummary: manualFullSummary(record, true), summaryNeedsRefresh: memory.summaryNeedsRefresh === true });
-    }
+    if (!memory.currentState?.trim() || chapterNumber <= 0) return versions.slice(-5);
+    const current = { text: memory.currentState, chapterNumber, canRestore: !memory.summaryDecisionsChanged,
+        storyEntries: validStoryEntries(record).filter(item => item.chapterNumber <= chapterNumber), manualFullSummary: manualFullSummary(record, true) };
+    const signature = snapshotSignature(current);
+    const existing = versions.findIndex(version => snapshotSignature(version) === signature);
+    if (existing >= 0) versions.push(...versions.splice(existing, 1)); // the version being replaced stays among the newest
+    else versions.push({ id: `legacy-${new Date(now).toISOString()}-${Math.random().toString(36).slice(2, 10)}`, ...current,
+        createdAt: new Date(now).toISOString(), sources: sources.slice(0, chapterNumber), summaryNeedsRefresh: memory.summaryNeedsRefresh === true });
     return versions.slice(-5);
 }
 
