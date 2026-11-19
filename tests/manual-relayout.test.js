@@ -297,3 +297,24 @@ test('设置回退写入失败时，普通结果和长梦原版仍保留在内�
     assert.equal(runtime.settings.currentGenerationResult, item);
     assert.equal(item.html, original);
 });
+
+test('小砚复审⑨：只有正文的旧章（原排版缺失 / null / 空）都能重新排版并保存', async t => {
+    for (const html of [undefined, null, '']) {
+        const { runtime, dream } = dreamFixture(t, 'chapter');
+        const rawChapter = { ...dream.chapters[1], html };
+        if (html === undefined) delete rawChapter.html;
+        let stored = { ...dream, chapters: [dream.chapters[0], rawChapter] }; // 存档里是没规范化的旧记录
+        runtime.longDreamCache = [normalizeLongDreamRecord(stored)]; // 页面上显示的是规范化后的
+        runtime.idb = { transaction() {
+            const tx = { abort: () => setImmediate(() => tx.onabort?.()) };
+            tx.objectStore = () => ({
+                get() { const req = {}; queueMicrotask(() => { req.result = structuredClone(stored); req.onsuccess(); }); return req; },
+                put(record) { setImmediate(() => { stored = structuredClone(record); tx.oncomplete(); }); },
+            });
+            return tx;
+        } };
+        assert.equal(await runManualRelayout(runtime, 'chapter'), true, `原排版为 ${html} 时应保存`);
+        assert.equal(stored.chapters[1].html, formatted);
+        assert.equal(stored.chapters[1].text, dreamChapter.text, '正文不变');
+    }
+});

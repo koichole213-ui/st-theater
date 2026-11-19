@@ -191,11 +191,15 @@ function dreamJobTarget(runtime, scope) {
                 const chapterIndex = chapters.findIndex(entry => entry?.id === current.id);
                 const rawIndex = chapterIndex >= 0 ? chapterIndex : index;
                 const raw = chapters[rawIndex];
-                if (!raw || raw.html !== current.html || raw.text !== current.text) return null;
+                // Stored chapters may lack html or hold null; compare the way the record was read.
+                if (!raw || String(raw.html ?? '') !== String(current.html ?? '') || raw.text !== current.text) return null;
                 chapters[rawIndex] = { ...raw, html, mode };
                 return { ...dream, chapters };
             });
-            if (!saved) return false;
+            if (!saved) {
+                if (notAborted()) toastr.info('这一章刚刚有变动，这次排版结果没有保存，原版已保留。请重新打开后再试。');
+                return false;
+            }
             const displayed = dreamItem(runtime, scope);
             if (String(displayed.dream?.id) === key && displayed.index === original.index) {
                 if (scope === 'candidate') runtime.renderLongDreamPanel();
