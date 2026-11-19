@@ -58,7 +58,7 @@ test('长梦章节和候选只要存着正文就能重新排版，不看目标�
     assert.deepEqual(manualLayoutSource({ html: original, text: '正文', instruction: '写第二章' }, true), { sourceText: '正文', originalInstruction: '写第二章' });
     assert.deepEqual(manualLayoutSource({ html: original, text: '正文', targetChars: 3000 }, true), { sourceText: '正文', originalInstruction: '' });
     assert.equal(manualLayoutSource({ html: original, text: '  ', targetChars: 8000 }, true), null);
-    assert.equal(manualLayoutSource({ html: '', text: '正文', targetChars: 8000 }, true), null);
+    assert.equal(manualLayoutSource({ html: '', text: '正文', targetChars: 8000 }, true).sourceText, '正文', '只有正文、没有原排版的旧章节也能排');
     assert.equal(manualLayoutSource({ html: original, text: '正文', layoutSource: null }), null, '普通结果仍要有排版底稿');
     const opened = createLongDreamRecord({ source: { text: '从历史开卷的正文', html: original } });
     assert.equal(manualLayoutSource(opened.chapters[0], true).sourceText, '从历史开卷的正文');

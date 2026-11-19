@@ -14,13 +14,14 @@ export function cancelManualRelayout(runtime) {
 }
 
 export function manualLayoutSource(item, dream = false) {
-    if (!item?.html) return null;
     // Long dream chapters and candidates always keep the story text they were laid out from
     // (written first, or rebuilt from edited text), so every length can be laid out again.
     if (dream) {
+        if (!item) return null;
         if (typeof item.text !== 'string' || !item.text.trim()) return null;
         return { sourceText: item.text, originalInstruction: item.instruction || '' };
     }
+    if (!item?.html) return null;
     const source = item.layoutSource;
     if (!Number.isFinite(source?.targetChars) || !isStagedRenderTarget(source.targetChars)) return null;
     if (typeof source.text !== 'string' || !source.text.trim()) return null;
