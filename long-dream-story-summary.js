@@ -153,3 +153,43 @@ export function validateStorySources(memory, chapters) {
     return { ...memory, ...fields, manualFullSummary: full, storyEntries: entries, summaryVersions: versions,
         ...(changed ? { currentState: savedStoryText({ chapters, memory: { manualFullSummary: full } }, entries), summaryThroughChapter: Math.max(full && !full.needsReview ? full.chapterNumber : 0, entries.filter(entry => !entry.needsReview).at(-1)?.chapterNumber || 0), summaryNeedsRefresh: true } : {}) };
 }
+
+// Condensing: earlier chapters' summaries become one whole summary; the latest few stay per chapter.
+export const CONDENSE_KEEP_RECENT_CHAPTERS = 3;
+export const CONDENSE_MIN_SOURCE_CHARS = 800;
+
+export function condenseSummaryPlan(record) {
+    const chapters = Array.isArray(record?.chapters) ? record.chapters : [];
+    if (hasPendingManualSummary(record)) return { reason: '有手改概要等待核对，请先点“编辑概要”核对保存，再精简。' };
+    const full = manualFullSummary(record);
+    const through = Math.min(chapters.length, Math.max(chapters.length - CONDENSE_KEEP_RECENT_CHAPTERS, full?.chapterNumber || 0));
+    if (through < 2) return { reason: `正文满 ${CONDENSE_KEEP_RECENT_CHAPTERS + 2} 章后才需要精简概要。` };
+    const entries = validStoryEntries(record).filter(entry => entry.chapterNumber <= through && (!full || entry.chapterNumber > full.chapterNumber));
+    const covered = new Set(entries.map(entry => entry.chapterNumber));
+    if (full) for (let number = 1; number <= full.chapterNumber; number++) covered.add(number);
+    for (let number = 1; number <= through; number++) {
+        if (!covered.has(number)) return { reason: '还有较早章节缺少概要，请等概要补齐（或点“更新概要”）后再精简。' };
+    }
+    const source = [full?.text || '', composeStorySummary(entries)].filter(Boolean).join('\n\n');
+    if (source.length < CONDENSE_MIN_SOURCE_CHARS) return { reason: '较早章节的概要还不长，暂时不需要精简。' };
+    return { through, source, targetChars: Math.max(400, Math.round(source.length / 3)), maxChars: Math.floor(source.length * 0.7) };
+}
+
+export function saveCondensedSummary(record, text, through, now = new Date()) {
+    const createdAt = new Date(now).toISOString();
+    const sources = chapterSummarySources(record.chapters);
+    const full = { text: String(text).trim(), chapterNumber: through, sources: sources.slice(0, through) };
+    // Per-chapter entries stay stored: if an early chapter is edited later, they still cover the rest.
+    const entries = validStoryEntries(record);
+    const target = { ...record, memory: { ...record.memory, manualFullSummary: full } };
+    const currentState = savedStoryText(target, entries);
+    const covered = new Set(entries.map(entry => entry.chapterNumber));
+    for (let number = 1; number <= through; number++) covered.add(number);
+    let summaryThroughChapter = 0; while (covered.has(summaryThroughChapter + 1)) summaryThroughChapter++;
+    const incomplete = summaryThroughChapter < record.chapters.length;
+    const id = `${createdAt}-condensed-${Math.random().toString(36).slice(2, 10)}`;
+    const versions = [...snapshotStorySummary(record, now), { id, text: currentState, chapterNumber: record.chapters.length, createdAt, canRestore: true, sources,
+        storyEntries: entries, manualFullSummary: full, summaryNeedsRefresh: incomplete }].slice(-5);
+    return { ...record, updatedAt: createdAt, memory: { ...record.memory, storyEntries: entries, manualFullSummary: full, summaryVersions: versions,
+        summaryDecisionsChanged: false, currentState, summaryThroughChapter, summaryNeedsRefresh: incomplete, updatedAt: createdAt } };
+}

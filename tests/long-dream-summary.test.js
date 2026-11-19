@@ -1,3 +1,4 @@
+import { condenseSummaryPlan } from '../long-dream-story-summary.js';
 // 从 core.test.js 拆出：long-dream-summary
 import { summaryUnavailableReason } from '../long-dream-summary-ui.js';
 import test from 'node:test';
@@ -75,10 +76,11 @@ test('概要点击立即反馈、去重、超时解锁和配置异常提示', as
     let record = createLongDreamRecord({ source: { text: '合成正文', html: '<p>合成正文</p>' } });
     record = applyLongDreamMemoryPatch(record, { currentState: '原概要', operations: [] }, 1);
     const button = { each() { return this; }, prop(k,v) { this[k]=v; return this; }, attr(k,v) { this[k]=v; return this; }, text(v) { this.label=v; return this; } };
+    const condenseButton = { prop(k,v) { this[k]=v; return this; }, attr(k,v) { this[k]=v; return this; } };
     const notices = [];
     let handler, calls = 0, saves = 0;
     const scope = { settings: {}, activeLongDreamId: record.id, longDreamCache: [record], refreshingLongDreamSummaries: new Set(),
-        LONG_DREAM_MEMORY_STATUS, summaryUnavailableReason, $: () => button, normalizeMaxTokens: v => v, runtimeLog() {},
+        LONG_DREAM_MEMORY_STATUS, summaryUnavailableReason, condenseSummaryPlan, $: selector => selector === '[data-dream-summary-condense]' ? condenseButton : button, normalizeMaxTokens: v => v, runtimeLog() {},
         selectedLongDreamMemoryApiPreset: () => ({ maxOutputTokens: 4096 }),
         refreshLongDreamSummary: options => refreshLongDreamSummary({ ...options, timeoutMs: 10 }),
         requestCustomApi: ({ signal }) => { calls++; assert.equal(signal instanceof AbortSignal, true); return new Promise(() => {}); },
@@ -99,6 +101,8 @@ test('概要点击立即反馈、去重、超时解锁和配置异常提示', as
     await pending;
     assert.equal(button.label, '更新概要');
     assert.equal(button.disabled, false);
+    assert.equal(condenseButton.disabled, true, '只有 1 章时精简按钮保持灰色');
+    assert.match(condenseButton.title, /满 5 章/);
     assert.equal(scope.refreshingLongDreamSummaries.size, 0);
     assert.equal(saves, 0);
     assert.match(notices.at(-1)[1], /等待超过 3 分钟/);
@@ -430,7 +434,7 @@ test('概要刷新成功及失败均同步恢复按钮，保留失效正文和�
     ]};
     const buttons=['valid','invalid','changed'].map(id=>({disabled:true,getAttribute:()=>id}));
     const refresh={prop(){return this},attr(){return this},text(){return this},each(){return this}};
-    const scope={activeLongDreamId:dream.id,longDreamCache:[dream],refreshingLongDreamSummaries:new Set(),LONG_DREAM_MEMORY_STATUS,restoreStorySummary,summaryUnavailableReason,
+    const scope={activeLongDreamId:dream.id,longDreamCache:[dream],refreshingLongDreamSummaries:new Set(),LONG_DREAM_MEMORY_STATUS,restoreStorySummary,summaryUnavailableReason,condenseSummaryPlan,
         $:selector=>selector==='[data-dream-summary-restore]'?{each(fn){buttons.forEach(b=>fn.call(b));}}:refresh,
         selectedLongDreamMemoryApiPreset:()=>({}),refreshLongDreamSummary:async()=>dream,rememberLongDreamComposerDraft(){},
         renderLongDreamPanel(){buttons.forEach(b=>b.disabled=scope.refreshingLongDreamSummaries.has(String(dream.id)));},
@@ -462,7 +466,7 @@ test('手动概要确认取消不执行，确认后重新检查作品和版本�
         let prompts = 0, requests = 0, saves = 0, renders = 0, saved;
         const scope = { activeLongDreamId: dream.id, longDreamCache: [dream], settings: {},
             confirmingLongDreamSummaries: new Set(), refreshingLongDreamSummaries: new Set(),
-            summaryUnavailableReason, restoreStorySummary, esc: String,
+            summaryUnavailableReason, restoreStorySummary, condenseSummaryPlan, esc: String,
             refreshLongDreamSummaryNow: async () => { requests++; },
             longDreamPut: async value => { saves++; saved = value; return mode === 'failed-save' ? null : value; },
             rememberLongDreamComposerDraft() {}, renderLongDreamPanel() { renders++; },

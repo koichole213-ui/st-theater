@@ -16,8 +16,8 @@ import { buildLongDreamChapterPayload, buildLongDreamChapterMessages, selectRele
 import { applyPromptPostProcessing } from './request-layout.js';
 import { estimateTokenCount, formatTokenCount } from './token-estimator.js';
 import { summaryUnavailableReason } from './long-dream-summary-ui.js';
-import { restoreStorySummary, hasPendingManualSummary } from './long-dream-story-summary.js';
-import { refreshLongDreamSummary } from './long-dream-summary.js';
+import { restoreStorySummary, hasPendingManualSummary, condenseSummaryPlan } from './long-dream-story-summary.js';
+import { refreshLongDreamSummary, condenseLongDreamSummary } from './long-dream-summary.js';
 import { requestCustomApi } from './api-runtime.js';
 import { classifyRequestFailure, createDiagnosticError, diagnosticSignalInfo } from './request-diagnostics.js';
 import { finalStoryOutput, FORMAT_RECOVERY_NOTICE } from './story-output.js';
@@ -673,7 +673,7 @@ function queueLongDreamMemoryWeave(dreamId, { force = false, announce = false, r
 // @theater-source-end queueLongDreamMemoryWeave
 
 // @theater-source-begin confirmLongDreamSummaryAction
-async function confirmLongDreamSummaryAction(dreamId, versionId = null) {
+async function confirmLongDreamSummaryAction(dreamId, versionId = null, mode = 'refresh') {
     const key = String(dreamId);
     if (runtime.confirmingLongDreamSummaries.has(key)) return;
     const dream = runtime.longDreamCache.find(item => String(item.id) === key);
@@ -681,17 +681,24 @@ async function confirmLongDreamSummaryAction(dreamId, versionId = null) {
     if (reason) { toastr.info(reason); return; }
     const version = versionId === null ? null : dream.memory.summaryVersions.find(item => item.id === versionId);
     const restoring = versionId !== null;
-    const title = restoring ? '恢复到这版概要？' : '重新整理全篇概要？';
-    const paragraphs = restoring
+    const condensing = !restoring && mode === 'condense';
+    const plan = condensing ? condenseSummaryPlan(dream) : null;
+    if (plan?.reason) { toastr.info(plan.reason); return; }
+    const title = restoring ? '恢复到这版概要？' : condensing ? '精简全篇概要？' : '重新整理全篇概要？';
+    const paragraphs = condensing
+        ? [`将使用梦脉副 API，把第 1～${plan.through} 章的概要（约 ${plan.source.length} 字）压成一段整篇概要，目标约 ${plan.targetChars} 字；之后的章节仍保留逐章概要。会产生一次用量。`,
+            '精简前的版本会存进“最近版本”，可以一键恢复；结果为空或没有明显变短时不采用。正文和梦脉条目不变。',
+            '之后修改梦脉条目或定梦设定时，精简版会先标为“待核对”、暂不用于续写，点“编辑概要”看一眼保存即可；点“更新概要”会改回逐章版。']
+        : restoring
         ? [`将当前概要切换为这份截至第 ${version.chapterNumber} 章的版本，不调用 API。`,
             `正文和人物关系不回退。${version.chapterNumber < dream.chapters.length ? `第 ${version.chapterNumber + 1}～${dream.chapters.length} 章仍在，但不包含在这版概要里，会标记概要待更新。` : '这版概要已覆盖当前全部已保存章节。'}`]
         : ['将使用梦脉副 API，根据已保存章节和确认后的梦脉重新整理概要，会产生更新用量。',
-            '成功后将替换当前概要，包括手动修改的内容，并保留最近版本；失败时保留原概要。正文和梦脉条目不变。'];
+            '成功后将替换当前概要，包括手动修改的内容和精简过的概要（会改回逐章版），并保留最近版本；失败时保留原概要。正文和梦脉条目不变。'];
     runtime.confirmingLongDreamSummaries.add(key);
     try {
         const { Popup, POPUP_TYPE } = SillyTavern.getContext();
         const popup = new Popup(`<div class="theater-popup theater-compact-popup theater-dream-summary-confirmation" data-skin="${runtime.settings.skinMode || 'default'}"><h3>${title}</h3>${paragraphs.map(text => `<p>${runtime.esc(text)}</p>`).join('')}</div>`,
-            POPUP_TYPE.CONFIRM, '', { wide: false, okButton: restoring ? '确认恢复' : '确认更新', cancelButton: '取消', allowVerticalScrolling: true });
+            POPUP_TYPE.CONFIRM, '', { wide: false, okButton: restoring ? '确认恢复' : condensing ? '确认精简' : '确认更新', cancelButton: '取消', allowVerticalScrolling: true });
         if (!await popup.show()) return;
         const current = runtime.longDreamCache.find(item => String(item.id) === key);
         if (String(runtime.activeLongDreamId) !== key || current !== dream) {
@@ -699,6 +706,11 @@ async function confirmLongDreamSummaryAction(dreamId, versionId = null) {
         }
         const currentReason = summaryUnavailableReason(current, runtime.refreshingLongDreamSummaries.has(key), versionId);
         if (currentReason) { toastr.info(currentReason); return; }
+        if (condensing) {
+            const currentPlan = condenseSummaryPlan(current);
+            if (currentPlan.reason) { toastr.info(currentPlan.reason); return; }
+            await refreshLongDreamSummaryNow(key, { condense: true }); return;
+        }
         if (!restoring) { await refreshLongDreamSummaryNow(key); return; }
         const saved = await runtime.longDreamPut(restoreStorySummary(current, versionId));
         if (!saved) { toastr.warning('概要恢复未保存，请重试'); return; }
@@ -726,6 +738,9 @@ function syncLongDreamSummaryButton(key) {
     $('[data-dream-summary-refresh]')
         .prop('disabled', blocked)
         .attr('aria-busy', String(busy)).text(busy ? '正在更新…' : '更新概要');
+    const condenseReason = reason || (dream ? condenseSummaryPlan(dream).reason : '') || '';
+    $('[data-dream-summary-condense]').prop('disabled', !!condenseReason)
+        .attr('title', condenseReason || '把较早章节的概要压成一段，最近 3 章保留逐章；旧版可在“最近版本”恢复');
     $('[data-dream-summary-restore]').each(function () {
         this.disabled = !!summaryUnavailableReason(dream, busy, this.getAttribute('data-dream-summary-restore'));
     });
@@ -738,7 +753,7 @@ function syncLongDreamSummaryButton(key) {
 // @theater-source-end syncLongDreamSummaryButton
 
 // @theater-source-begin refreshLongDreamSummaryNow
-async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {}) {
+async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false, condense = false } = {}) {
     const errorIssueOwner = runtime.lastRequestIssue, errorMetricsOwner = runtime.lastRequestMetrics;
     const key = String(dreamId);
     if (runtime.refreshingLongDreamSummaries.has(key)) { toastr.info('概要正在更新，请稍候'); return; }
@@ -748,7 +763,7 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
         toastr.warning('请先完成梦脉织录和冲突确认，再更新概要'); return;
     }
     if (fillMissing && hasPendingManualSummary(dream)) return; // User corrections require review; never auto-replace the saved manual draft.
-    const series = dream.source?.kind === 'history-folder' && fillMissing;
+    const series = dream.source?.kind === 'history-folder' && fillMissing && !condense;
     const renderSeriesStatus = () => { if (series && String(runtime.activeLongDreamId) === key) { runtime.rememberLongDreamComposerDraft(); runtime.renderLongDreamPanel(); } };
     let stage = 'preset';
     try {
@@ -758,8 +773,8 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
         runtime.refreshingLongDreamSummaries.add(key);
         syncLongDreamSummaryButton(key);
         renderSeriesStatus();
-        toastr.info(series ? '正在分批补齐概要，每批最多等待 3 分钟' : '正在更新概要，最多等待 3 分钟');
-        const saved = await (series ? refreshSeriesStorySummary : refreshLongDreamSummary)({
+        toastr.info(condense ? '正在精简概要，最多等待 3 分钟' : series ? '正在分批补齐概要，每批最多等待 3 分钟' : '正在更新概要，最多等待 3 分钟');
+        const result = await (condense ? condenseLongDreamSummary : series ? refreshSeriesStorySummary : refreshLongDreamSummary)({
             ...(series ? { shouldStop: () => (runtime.settings.longDreamSeriesPausedIds || []).includes(key) } : {}),
             replace: !fillMissing,
             record: dream,
@@ -775,14 +790,15 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
                 });
             },
         });
+        const saved = condense ? result?.saved : result;
         if (saved) {
-            toastr.success('剧情概要已更新');
+            toastr.success(condense ? `概要已精简：第 1～${result.through} 章约 ${result.beforeChars} 字 → ${result.afterChars} 字，旧版在“最近版本”里` : '剧情概要已更新');
             if (String(runtime.activeLongDreamId) === key) {
                 runtime.rememberLongDreamComposerDraft();
                 runtime.renderLongDreamPanel();
             }
         }
-        else toastr.info(series && (runtime.settings.longDreamSeriesPausedIds || []).includes(key) ? '后续概要已停止，已完成批次保留' : '作品或梦脉刚刚发生变化，本次概要未覆盖，请重新更新');
+        else toastr.info(series && (runtime.settings.longDreamSeriesPausedIds || []).includes(key) ? '后续概要已停止，已完成批次保留' : condense ? '作品或梦脉刚刚发生变化，本次精简没有保存，原概要保留，请重新精简' : '作品或梦脉刚刚发生变化，本次概要未覆盖，请重新更新');
     } catch (error) {
         const summaryReasons = {
             LONG_DREAM_SUMMARY_PARSE_FAILED: '接口返回的概要格式无法解析',
@@ -790,15 +806,18 @@ async function refreshLongDreamSummaryNow(dreamId, { fillMissing = false } = {})
             LONG_DREAM_SUMMARY_COVERAGE: '接口返回的概要有漏章、章号不符或重复',
             LONG_DREAM_SUMMARY_EMPTY_ENTRY: '接口返回了空的分章概要',
             LONG_DREAM_SUMMARY_ENTRY_TOO_LONG: '接口返回的单章概要过长',
-            LONG_DREAM_SUMMARY_REQUEST_FAILED: '概要请求未完成',
+            LONG_DREAM_SUMMARY_REQUEST_FAILED: condense ? '精简请求未完成' : '概要请求未完成',
+            LONG_DREAM_CONDENSE_EMPTY: '接口返回的精简概要是空的',
+            LONG_DREAM_CONDENSE_NOT_SHORTER: '接口返回的精简概要没有明显变短',
+            LONG_DREAM_CONDENSE_TOO_SHORT: '接口返回的精简概要太短，可能漏了内容',
         };
         const reason = stage === 'preset' ? '副 API 配置读取失败'
             : error?.code === 'LONG_DREAM_SUMMARY_TIMEOUT' ? '等待超过 3 分钟'
             : error?.code === 'LONG_DREAM_SUMMARY_SAVE_FAILED' ? '概要保存失败'
             : error?.diagnosticSignal ? diagnosticSignalInfo(error.diagnosticSignal).title
             : summaryReasons[error?.code] || '接口未返回可用概要或保存失败';
-        if (error?.summaryDiagnostic) runtime.runtimeLog('warn', '概要更新失败', { code: error.code, ...error.summaryDiagnostic });
-        const issue = classifyRequestFailure(error, { stage: '概要更新' });
+        if (error?.summaryDiagnostic) runtime.runtimeLog('warn', condense ? '精简概要失败' : '概要更新失败', { code: error.code, ...error.summaryDiagnostic });
+        const issue = classifyRequestFailure(error, { stage: condense ? '精简概要' : '概要更新' });
         const override = stage === 'preset' ? 'T-API-CONFIG'
             : error?.code === 'LONG_DREAM_SUMMARY_TIMEOUT' ? 'T-NET-TIMEOUT'
             : error?.code === 'LONG_DREAM_SUMMARY_SAVE_FAILED' ? 'T-STORAGE-WRITE'

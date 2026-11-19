@@ -5,6 +5,7 @@ import { LONG_DREAM_MEMORY_STATUS, LONG_DREAM_MEMORY_TYPES, createLongDreamBranc
 import { normalizeApiPresetList } from './api-presets.js';
 import { normalizeLongDreamMemoryPresetList } from './long-dream-memory-presets.js';
 import { summaryUnavailableReason } from './long-dream-summary-ui.js';
+import { condenseSummaryPlan, CONDENSE_KEEP_RECENT_CHAPTERS } from './long-dream-story-summary.js';
 import { selectRelevantLongDreamMemoryItems, LONG_DREAM_RECENT_CHAPTER_COUNT, selectRelevantLongDreamMemoryCards } from './long-dream-payload.js';
 
 export function createLongDreamMemoryView(runtime, ws) {
@@ -287,7 +288,7 @@ function longDreamMemoryCardsHTML(dream) {
         <div class="theater-dream-memory-state-editor">
             <label><span>全篇概要</span><small>按章保留故事开端、发展与因果；关系现状在下方单独更新。${dream.memory?.summaryNeedsRefresh ? (conflicts.length || memory.pendingChapterNumbers?.length ? '请先完成补织和冲突确认，再更新概要。' : '概要待更新，可点击下方更新概要。') : '可单独重新整理，不改正文或梦脉条目。'}</small>${currentState ? '<button type="button" data-dream-memory-state-toggle aria-expanded="false">展开</button>' : ''}</label>
             <div class="theater-dream-memory-current-state-readonly ${currentState ? 'is-clamped' : ''}">${currentState ? runtime.esc(currentState) : '尚未形成全篇概要。'}</div>
-            <div class="theater-dream-summary-actions"><button type="button" data-dream-summary-edit ${summaryUnavailableReason(dream, runtime.refreshingLongDreamSummaries.has(String(dream.id))) ? 'disabled' : ''}>编辑概要</button><button type="button" data-dream-summary-refresh aria-busy="${runtime.refreshingLongDreamSummaries.has(String(dream.id))}" ${runtime.refreshingLongDreamSummaries.has(String(dream.id)) || memoryLocked || conflicts.length || memory.pendingChapterNumbers?.length ? 'disabled' : ''}>${runtime.refreshingLongDreamSummaries.has(String(dream.id)) ? '正在更新…' : '更新概要'}</button></div>
+            <div class="theater-dream-summary-actions"><button type="button" data-dream-summary-edit ${summaryUnavailableReason(dream, runtime.refreshingLongDreamSummaries.has(String(dream.id))) ? 'disabled' : ''}>编辑概要</button><button type="button" data-dream-summary-refresh aria-busy="${runtime.refreshingLongDreamSummaries.has(String(dream.id))}" ${runtime.refreshingLongDreamSummaries.has(String(dream.id)) || memoryLocked || conflicts.length || memory.pendingChapterNumbers?.length ? 'disabled' : ''}>${runtime.refreshingLongDreamSummaries.has(String(dream.id)) ? '正在更新…' : '更新概要'}</button>${condenseButtonHTML(runtime, dream)}</div>
             <div data-dream-summary-editor-mount>${summaryEditorHTML(runtime, dream)}</div>
             ${memory.summaryThroughChapter ? `<small class="theater-dream-summary-note">当前概要截至第 ${memory.summaryThroughChapter} 章 · 正文共 ${dream.chapters.length} 章</small>` : ''}
             <p class="theater-dream-summary-blocked-reason" data-dream-summary-blocked-reason ${summaryUnavailableReason(dream, runtime.refreshingLongDreamSummaries.has(String(dream.id))) ? '' : 'hidden'}>${runtime.esc(summaryUnavailableReason(dream, runtime.refreshingLongDreamSummaries.has(String(dream.id))))}</p>
@@ -503,4 +504,11 @@ async function handleLongDreamChapterAction(action, chapterId) {
 // @theater-source-end handleLongDreamChapterAction
 
 return { selectedLongDreamMemoryApiPreset, longDreamMemoryAnalysisPresets, selectedLongDreamMemoryAnalysisPreset, refreshLongDreamMemoryPresetControls, longDreamMemoryStatusText, longDreamActiveMemoryCount, longDreamSummaryHistoryHTML, toggleLongDreamSummaryPreview, longDreamMemoryConflictTarget, longDreamMemoryConflictSubjects, longDreamMemoryConflictItemText, longDreamMemoryConflictOperationText, longDreamMemoryConflictDetails, longDreamMemoryCardsHTML, longDreamMemorySelectionHTML, refreshLongDreamMemorySelection, longDreamMemoryTags, longDreamMemoryV2Fields, uniqueLongDreamBranchTitle, handleLongDreamChapterAction };
+}
+
+function condenseButtonHTML(runtime, dream) {
+    const busy = runtime.refreshingLongDreamSummaries.has(String(dream.id));
+    const reason = summaryUnavailableReason(dream, busy) || condenseSummaryPlan(dream).reason || '';
+    const hint = reason || `把较早章节的概要压成一段，最近 ${CONDENSE_KEEP_RECENT_CHAPTERS} 章保留逐章；旧版可在“最近版本”恢复`;
+    return `<button type="button" data-dream-summary-condense ${reason ? 'disabled' : ''} title="${runtime.esc(hint)}">精简概要</button>`;
 }

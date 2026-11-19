@@ -558,6 +558,7 @@ export function bindLongDreamEvents(runtime, $d) {
         }
     });
     $d.off('click.tdsummary').on('click.tdsummary', '[data-dream-summary-refresh]', () => runtime.confirmLongDreamSummaryAction(runtime.activeLongDreamId));
+    $d.off('click.tdsummarycondense').on('click.tdsummarycondense', '[data-dream-summary-condense]', () => runtime.confirmLongDreamSummaryAction(runtime.activeLongDreamId, null, 'condense'));
     $d.off('click.tdsummarypreview').on('click.tdsummarypreview', '[data-dream-summary-preview]', function () { runtime.toggleLongDreamSummaryPreview(this); });
     $d.off('click.tdsummaryrestore').on('click.tdsummaryrestore', '[data-dream-summary-restore]', function () {
         return runtime.confirmLongDreamSummaryAction(runtime.activeLongDreamId, String($(this).attr('data-dream-summary-restore')));
