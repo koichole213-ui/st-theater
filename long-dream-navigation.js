@@ -26,6 +26,8 @@ function getLongDreamComposerDraft(dreamId) {
         instruction: String(draft.instruction || ''),
         title: String(draft.title || ''),
         targetChars: normalizeManualTarget(draft.targetChars),
+        // How many latest chapters go in as full text: 2 (default) or 1, chosen per dream.
+        recentChapters: Number(draft.recentChapters) === 1 ? 1 : 2,
     };
 }
 // @theater-source-end getLongDreamComposerDraft
@@ -33,10 +35,12 @@ function getLongDreamComposerDraft(dreamId) {
 // @theater-source-begin rememberLongDreamComposerDraft
 function rememberLongDreamComposerDraft(dreamId = runtime.activeLongDreamId) {
     if (dreamId === null || dreamId === undefined || !$('#theater-dream-next-instruction').length) return;
+    const recent = $('#theater-dream-next-recent');
     longDreamComposerDrafts()[String(dreamId)] = {
         instruction: String($('#theater-dream-next-instruction').val() || ''),
         title: String($('#theater-dream-next-title').val() || ''),
         targetChars: normalizeManualTarget($('#theater-dream-next-target').val()),
+        recentChapters: Number(recent.length ? recent.val() : getLongDreamComposerDraft(dreamId).recentChapters) === 1 ? 1 : 2,
     };
     runtime.save();
 }
@@ -45,10 +49,12 @@ function rememberLongDreamComposerDraft(dreamId = runtime.activeLongDreamId) {
 // @theater-source-begin setLongDreamComposerDraft
 function setLongDreamComposerDraft(dreamId, draft = {}) {
     if (dreamId === null || dreamId === undefined) return;
+    const recentChapters = Number(draft.recentChapters ?? getLongDreamComposerDraft(dreamId).recentChapters) === 1 ? 1 : 2;
     longDreamComposerDrafts()[String(dreamId)] = {
         instruction: String(draft.instruction || ''),
         title: String(draft.title || ''),
         targetChars: normalizeManualTarget(draft.targetChars),
+        recentChapters,
     };
     runtime.save();
 }
@@ -57,9 +63,9 @@ function setLongDreamComposerDraft(dreamId, draft = {}) {
 // @theater-source-begin clearLongDreamComposerDraft
 function clearLongDreamComposerDraft(dreamId, { forgetTarget = false } = {}) {
     if (dreamId === null || dreamId === undefined) return;
-    const targetChars = getLongDreamComposerDraft(dreamId).targetChars;
+    const { targetChars, recentChapters } = getLongDreamComposerDraft(dreamId);
     if (forgetTarget) delete longDreamComposerDrafts()[String(dreamId)];
-    else longDreamComposerDrafts()[String(dreamId)] = { targetChars };
+    else longDreamComposerDrafts()[String(dreamId)] = { targetChars, recentChapters };
     runtime.save();
 }
 // @theater-source-end clearLongDreamComposerDraft

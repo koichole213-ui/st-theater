@@ -65,3 +65,19 @@ test('15000字多轮保留完整目标与7500首轮计划，最大轮数和排�
     assert.equal(calls,2);assert.equal(renders,1);assert.equal(result.record.draft.targetChars,15000);
     assert.equal(result.actualChars,15000);
 });
+test('“带入全文”每部长梦各记各的，默认 2 章，换指令和清空输入后仍保留', () => {
+    const runtime = { settings: {}, save() {} };
+    const nav = createLongDreamNavigation(runtime);
+    assert.equal(nav.getLongDreamComposerDraft(1).recentChapters, 2);
+    nav.setLongDreamComposerDraft(1, { targetChars: 9000, recentChapters: 1 });
+    nav.setLongDreamComposerDraft(2, { targetChars: 3000 });
+    nav.setLongDreamComposerDraft(1, { title: '新章', instruction: '新指令', targetChars: 9000 });
+    assert.equal(nav.getLongDreamComposerDraft(1).recentChapters, 1, '没传这一项时沿用原来的选择');
+    nav.clearLongDreamComposerDraft(1);
+    runtime.settings = JSON.parse(JSON.stringify(runtime.settings));
+    assert.equal(nav.getLongDreamComposerDraft(1).recentChapters, 1);
+    assert.equal(nav.getLongDreamComposerDraft(1).targetChars, 9000);
+    assert.equal(nav.getLongDreamComposerDraft(2).recentChapters, 2);
+    nav.setLongDreamComposerDraft(3, { recentChapters: 7 });
+    assert.equal(nav.getLongDreamComposerDraft(3).recentChapters, 2, '只认 1 和 2');
+});

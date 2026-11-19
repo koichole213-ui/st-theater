@@ -374,3 +374,45 @@ test('continuation payload retains two recent chapters, older index, memory, wor
     assert.equal(payload.context.recentChapterCount, 2);
     assert.equal(payload.context.olderChapterCount, 1);
 });
+
+function threeChapterDream() {
+    let record = createLongDreamRecord({ source: { text: '第一章原文：雨夜码头。', html: '<p>第一章</p>' } });
+    record = appendLongDreamChapter(record, { title: '旧信', text: '第二章原文：她在抽屉里找到那封旧信。', html: '<p>第二章</p>' });
+    return appendLongDreamChapter(record, { title: '对峙', text: '第三章原文：两人在仓库门口对峙。', html: '<p>第三章</p>' });
+}
+
+test('带入全文选“最近 1 章”时只带上一章全文，上上章进较早章节索引', () => {
+    const record = threeChapterDream();
+    const two = buildLongDreamChapterPayload({ record, instruction: '写第四章' });
+    assert.match(two.userPrompt, /最近 2 章全文/);
+    assert.match(two.userPrompt, /第二章原文：她在抽屉里找到那封旧信。/);
+    const one = buildLongDreamChapterPayload({ record, instruction: '写第四章', recentChapterCount: 1 });
+    assert.match(one.userPrompt, /最近 1 章全文/);
+    assert.match(one.userPrompt, /第三章原文：两人在仓库门口对峙。/);
+    assert.equal(one.context.recentChapterCount, 1);
+    assert.equal(one.context.olderChapterCount, 2);
+    assert.match(one.context.olderOutline, /第 2 章《旧信》/);
+    assert.doesNotMatch(one.context.chapters, /第二章原文/);
+});
+
+test('同一章自动补写的每一轮都沿用同一个“带入全文”设置', async () => {
+    const prompts = [];
+    const controller = createLongDreamGenerationController({
+        checkpointIntervalMs: 0,
+        requestChapter: async ({ userPrompt, round, onChunk }) => {
+            prompts.push(userPrompt);
+            const text = round === 1 ? '甲'.repeat(2500) : '乙'.repeat(2100);
+            onChunk(text);
+            return { text, stopReason: 'stop' };
+        },
+        renderChapter: async ({ text }) => `<main>${text}</main>`,
+    });
+    await controller.run({ record: threeChapterDream(), targetChars: 5000, autoContinue: true, maxRounds: 3, recentChapterCount: 1 });
+    assert.equal(prompts.length, 2);
+    for (const prompt of prompts) {
+        const recent = prompt.split('\n\n---\n\n').find(section => section.startsWith('【近期已保存章节'));
+        assert.match(recent, /最近 1 章全文/);
+        assert.match(recent, /第三章原文/);
+        assert.doesNotMatch(recent, /第二章原文/);
+    }
+});

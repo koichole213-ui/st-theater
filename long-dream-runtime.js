@@ -391,6 +391,7 @@ async function refreshLongDreamTokenEstimate() {
         const instruction = String($('#theater-dream-next-instruction').val() || '');
         const chapterTitle = String($('#theater-dream-next-title').val() || `第 ${dream.chapters.length + 1} 章`);
         const targetChars = normalizeManualTarget($('#theater-dream-next-target').val());
+        const recentChapterCount = runtime.getLongDreamComposerDraft?.(dream.id)?.recentChapters;
         const foundation = await resolveLongDreamRequestFoundation(dream);
         const currentDraft = dream.draft?.status === LONG_DREAM_DRAFT_STATUS.WRITING ? String(dream.draft.text || '') : '';
         const writingPlan = longDreamWritingPlan({ targetChars, autoContinue: runtime.settings.autoContinue !== false,
@@ -406,6 +407,7 @@ async function refreshLongDreamTokenEstimate() {
             finishThisRound: !writingPlan.stagedMultiRound,
             writingPlan: { round: 1, maxRounds: writingPlan.allowedRounds, splitFirstRound: writingPlan.stagedMultiRound },
             maxOptionalContextChars: runtime.LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET,
+            recentChapterCount,
             structuredPreset: true,
             continuationRound: !!currentDraft.trim(),
             hasIdentityContext: Object.values(foundation.identitySlots).some(value => String(value || '').trim()),
@@ -542,6 +544,7 @@ async function generateNextLongDreamChapter({ appendCandidate = false, candidate
             autoContinue: runtime.settings.autoContinue !== false,
             maxRounds: Math.min(10, Math.max(1, Number(runtime.settings.maxAutoRounds) || 3)),
             maxOptionalContextChars: runtime.LONG_DREAM_OPTIONAL_CONTEXT_CHAR_BUDGET,
+            recentChapterCount: runtime.getLongDreamComposerDraft?.(dream.id)?.recentChapters,
             appendCandidate,
             apiRoute,
         });

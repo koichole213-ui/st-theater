@@ -6,7 +6,6 @@ import { latestLongDreamChapter, LONG_DREAM_WORLD_LINE_RELATION, LONG_DREAM_MEMO
 import { isTextOutputMode } from './plain-text-renderer.js';
 import { LONG_DREAM_GENERATION_STAGE } from './long-dream-generation.js';
 import { readableCharCount } from './text-counter.js';
-import { LONG_DREAM_RECENT_CHAPTER_COUNT } from './long-dream-payload.js';
 import { mountStoryReading, storyReadingNoticeHTML } from './story-reading.js';
 import { createLongDreamLibrary } from './long-dream-workspace-library.js';
 import { createLongDreamCreatePage } from './long-dream-workspace-create.js';
@@ -73,6 +72,7 @@ function longDreamDetailState(dream) {
     const nextTitle = draft?.title || composerDraft.title || '';
     const nextInstruction = draft ? draft.instruction : composerDraft.instruction;
     const nextTarget = normalizeManualTarget(draft?.targetChars || composerDraft.targetChars);
+    const nextRecent = Number(composerDraft.recentChapters) === 1 ? 1 : 2;
     const generationHint = hasReviewDraft
         ? `当前有 ${draftCandidates.length} 版候选，可继续生成；未保留候选仅留最新三版，已保留版本不被替换。`
         : (hasWritingDraft
@@ -88,7 +88,7 @@ function longDreamDetailState(dream) {
         inheritanceSummary, draft, draftCandidates, selectedCandidateIndex,
         isGeneratingThisDream, activeProgress, activeStage, draftText, hasWritingDraft, hasReviewDraft,
         hasRenderPendingDraft, controlsDisabled, statusControlDisabled, nextTitle,
-        nextInstruction, nextTarget, generationHint,
+        nextInstruction, nextTarget, nextRecent, generationHint,
     };
 }
 // @theater-source-end longDreamDetailState
@@ -210,8 +210,9 @@ function longDreamDetailHTML(dream) {
             <div class="ia-grid-2 theater-dream-next-grid">
                 <label class="ia-field"><span>可选章名</span><input id="theater-dream-next-title" class="ui-input theater-input theater-default-name" maxlength="80" value="${runtime.esc(state.nextTitle)}" placeholder="第 ${state.nextNumber} 章" ${state.controlsDisabled ? 'disabled' : ''}></label>
                 <label class="ia-field"><span>目标字数</span><input id="theater-dream-next-target" class="ui-input theater-input" type="number" min="1" step="1" value="${state.nextTarget}" ${state.controlsDisabled ? 'disabled' : ''}></label>
+                <label class="ia-field"><span>带入全文</span><select id="theater-dream-next-recent" class="ui-select theater-select" data-select2-id="${runtime.theaterNativeSelectCompatId()}" ${state.controlsDisabled || state.hasWritingDraft ? 'disabled' : ''} title="${state.hasWritingDraft ? '本章草稿写完前保持不变，保证同一章前后用的前文一致' : '每章很长时可以只带最近 1 章，更早的章节靠概要和梦脉承接'}"><option value="2" ${state.nextRecent === 2 ? 'selected' : ''}>最近 2 章</option><option value="1" ${state.nextRecent === 1 ? 'selected' : ''}>最近 1 章</option></select></label>
             </div>
-            <div class="theater-dream-context-window">${dream.chapters.slice(-LONG_DREAM_RECENT_CHAPTER_COUNT).reverse().map(chapter => `<div class="ia-context-row"><div class="ia-context-copy"><div class="ia-line-title">第 ${chapter.number} 章 · ${runtime.esc(chapter.title)}</div><div class="ia-line-sub">最近完整章节 · ${readableCharCount(chapter.text || runtime.htmlToPlainText(chapter.html || ''))} 字 · 已注入全文</div></div><span class="memory-v2-tag">近期</span></div>`).join('')}${dream.chapters.length > LONG_DREAM_RECENT_CHAPTER_COUNT ? `<div class="ia-context-row"><div class="ia-context-copy"><div class="ia-line-title">更早章节索引</div><div class="ia-line-sub">第 1–${dream.chapters.length - LONG_DREAM_RECENT_CHAPTER_COUNT} 章旧章索引继续参与检索</div></div><span class="memory-v2-tag">索引</span></div>` : ''}</div>
+            <div class="theater-dream-context-window">${dream.chapters.slice(-state.nextRecent).reverse().map(chapter => `<div class="ia-context-row"><div class="ia-context-copy"><div class="ia-line-title">第 ${chapter.number} 章 · ${runtime.esc(chapter.title)}</div><div class="ia-line-sub">最近完整章节 · ${readableCharCount(chapter.text || runtime.htmlToPlainText(chapter.html || ''))} 字 · 已注入全文</div></div><span class="memory-v2-tag">近期</span></div>`).join('')}${dream.chapters.length > state.nextRecent ? `<div class="ia-context-row"><div class="ia-context-copy"><div class="ia-line-title">更早章节索引</div><div class="ia-line-sub">第 1–${dream.chapters.length - state.nextRecent} 章旧章索引继续参与检索</div></div><span class="memory-v2-tag">索引</span></div>` : ''}</div>
         </section>
         <section id="theater-dream-generation-status" class="ui-card ia-generation-status theater-dream-generation-status ${state.isGeneratingThisDream || state.hasWritingDraft ? 'open' : ''}" ${state.isGeneratingThisDream || state.hasWritingDraft ? '' : 'hidden'}>
             <header class="theater-dream-progress-head">

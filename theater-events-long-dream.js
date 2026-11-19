@@ -38,6 +38,11 @@ export function bindLongDreamEvents(runtime, $d) {
         }
         runtime.scheduleLongDreamTokenEstimate();
     });
+    $d.off('change.tdrecent').on('change.tdrecent', '#theater-dream-next-recent', () => {
+        runtime.rememberLongDreamComposerDraft();
+        runtime.renderLongDreamPanel();
+        runtime.scheduleLongDreamTokenEstimate();
+    });
     $d.off('click.tdsection').on('click.tdsection', '[data-dream-section]', function () {
         if (runtime.longDreamChapterEditController) { toastr.info('章节正在重新排版，请完成后再切换'); return; }
         const section = String($(this).attr('data-dream-section') || 'works');

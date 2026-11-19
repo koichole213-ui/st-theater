@@ -371,6 +371,7 @@ export function buildLongDreamChapterPayload({
     finishThisRound = true,
     writingPlan = null,
     maxOptionalContextChars = Infinity,
+    recentChapterCount = LONG_DREAM_RECENT_CHAPTER_COUNT,
     structuredPreset = false,
     continuationRound = false,
     hasIdentityContext = false,
@@ -378,7 +379,7 @@ export function buildLongDreamChapterPayload({
     creativeEnhancement = '',
 } = {}) {
     const direction = cleanText(instruction) || '自然承接上一章尚未解决的动作、情绪与伏笔。';
-    const context = longDreamChapterContext(record, { instruction: direction });
+    const context = longDreamChapterContext(record, { instruction: direction, recentChapterCount });
     if (!context.chapters) throw new Error('长梦缺少可续写的已保存章节');
     const target = normalizeManualTarget(targetChars);
     const draft = plainStoryText(currentDraft);
