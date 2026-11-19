@@ -169,6 +169,7 @@ function dreamJobTarget(runtime, scope) {
                 return false;
             }
             const key = String(original.dream.id);
+            let changedElsewhere = false; // only this case gets the notice; write failures report themselves
             const saved = await runtime.updateLongDreamLayout(original.dream.id, dream => {
                 if (!notAborted() || dreamMemoryBusy(runtime, key)) return null;
                 const { dream: displayedDream, index } = dreamItem(runtime, scope);
@@ -177,11 +178,11 @@ function dreamJobTarget(runtime, scope) {
                 const normalized = normalizeLongDreamRecord({ ...dream, createdAt: dream.createdAt || original.dream.createdAt });
                 const draft = normalized?.draft;
                 const entries = scope === 'candidate' ? draft?.candidates : normalized?.chapters;
-                if (scope === 'candidate' && (draft?.status !== 'review' || draft.selectedCandidateIndex !== index)) return null;
+                if (scope === 'candidate' && (draft?.status !== 'review' || draft.selectedCandidateIndex !== index)) { changedElsewhere = true; return null; }
                 const current = entries?.[index];
                 if (!current || current.id !== item.id || current.versionNumber !== item.versionNumber || current.createdAt !== item.createdAt
                     || current.text !== item.text || current.html !== item.html || current.instruction !== item.instruction
-                    || current.targetChars !== item.targetChars) return null;
+                    || current.targetChars !== item.targetChars) { changedElsewhere = true; return null; }
                 if (scope === 'candidate') {
                     const candidates = entries.slice();
                     candidates[index] = { ...dream.draft.candidates?.[index], ...current, html, mode };
@@ -192,12 +193,12 @@ function dreamJobTarget(runtime, scope) {
                 const rawIndex = chapterIndex >= 0 ? chapterIndex : index;
                 const raw = chapters[rawIndex];
                 // Stored chapters may lack html or hold null; compare the way the record was read.
-                if (!raw || String(raw.html ?? '') !== String(current.html ?? '') || raw.text !== current.text) return null;
+                if (!raw || String(raw.html ?? '') !== String(current.html ?? '') || raw.text !== current.text) { changedElsewhere = true; return null; }
                 chapters[rawIndex] = { ...raw, html, mode };
                 return { ...dream, chapters };
             });
             if (!saved) {
-                if (notAborted()) toastr.info('这一章刚刚有变动，这次排版结果没有保存，原版已保留。请重新打开后再试。');
+                if (changedElsewhere && notAborted()) toastr.info('这一章刚刚有变动，这次排版结果没有保存，原版已保留。请重新打开后再试。');
                 return false;
             }
             const displayed = dreamItem(runtime, scope);

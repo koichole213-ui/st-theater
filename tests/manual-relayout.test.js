@@ -318,3 +318,22 @@ test('小砚复审⑨：只有正文的旧章（原排版缺失 / null / 空）�
         assert.equal(stored.chapters[1].text, dreamChapter.text, '正文不变');
     }
 });
+
+test('子代理复审：本地写入失败时只报写入失败，不再叠加“这一章刚刚有变动”', async t => {
+    const { runtime, dream } = dreamFixture(t, 'chapter');
+    const notices = [];
+    for (const kind of ['info', 'success', 'error', 'warning']) globalThis.toastr[kind] = text => notices.push(text);
+    runtime.theaterError = text => notices.push(text);
+    runtime.longDreamCache = [normalizeLongDreamRecord(dream)];
+    runtime.idb = { transaction() {
+        const tx = { abort: () => setImmediate(() => tx.onabort?.()) };
+        tx.objectStore = () => ({
+            get() { const req = {}; queueMicrotask(() => { req.result = structuredClone(dream); req.onsuccess(); }); return req; },
+            put() { setImmediate(() => { tx.error = Object.assign(new Error('QuotaExceededError'), { name: 'QuotaExceededError' }); tx.onerror(); }); },
+        });
+        return tx;
+    } };
+    assert.equal(await runManualRelayout(runtime, 'chapter'), false);
+    assert.ok(notices.length > 0, '写入失败有提示');
+    assert.deepEqual(notices.filter(text => text.includes('刚刚有变动')), []);
+});
