@@ -147,3 +147,17 @@ test('小砚复审⑥：文字相同、人工标记不同的两版不会被当�
     const condensed = saveCondensedSummary(record, '精简后的前五章。'.repeat(20), 5);
     assert.ok(condensed.memory.summaryVersions.some(isAuto), '精简前恢复的那一版（自动版）仍能找回');
 });
+
+test('子代理复审：反复“改梦脉 → 更新概要”，最近版本不会塞满同文的仅供查看副本', () => {
+    let record = dreamWithSummaries(6);
+    const sources = chapterSummarySources(record.chapters);
+    const update = (r, tag) => normalizeLongDreamRecord(saveStorySummary(r, r.chapters.map(c => ({ chapterNumber: c.number, text: `${tag}：` + entryText(c.number), source: sources[c.number - 1] }))));
+    record = update(record, 'v1');
+    for (let i = 2; i <= 5; i++) {
+        record = normalizeLongDreamRecord({ ...record, memory: { ...record.memory, ...invalidateStoryDecisions(record.memory) } });
+        record = update(record, `v${i}`);
+    }
+    const texts = record.memory.summaryVersions.map(v => v.text);
+    assert.equal(new Set(texts).size, texts.length, '没有重复的版本');
+    assert.equal(texts.length, 5);
+});

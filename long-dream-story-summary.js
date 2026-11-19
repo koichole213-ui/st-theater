@@ -39,6 +39,8 @@ export function savedStoryText(record, entries) {
 
 // Two versions are the same only if restoring either gives the same state, not just the same text.
 function snapshotSignature(version) {
+    // View-only versions are never restored, so their text and range are all that tell them apart.
+    if (version.canRestore === false) return JSON.stringify([version.text, version.chapterNumber, false]);
     const full = version.manualFullSummary;
     return JSON.stringify([version.text, version.chapterNumber, version.canRestore !== false,
         (version.storyEntries || []).filter(entry => entry.chapterNumber <= version.chapterNumber)
