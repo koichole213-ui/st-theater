@@ -255,8 +255,9 @@ export function selectRelevantLongDreamMemoryItems(record = {}, {
     }
     for (const entry of scored.filter(candidate => candidate.kind === 'legacy')) {
         if (selectedIds.has(`legacy:${entry.item.id}`) || entry.score <= 5 || selected.length < target) continue;
-        const replaceIndex = selected.reduce((lowest, candidate, index) => candidate.score < selected[lowest].score ? index : lowest, 0);
-        if (entry.score <= selected[replaceIndex].score) continue;
+        const replaceIndex = selected.reduce((lowest, candidate, index) => anchors.has(candidate.item.id) && candidate.kind === 'state' ? lowest
+            : lowest < 0 || candidate.score < selected[lowest].score ? index : lowest, -1);
+        if (replaceIndex < 0 || entry.score <= selected[replaceIndex].score) continue;
         selectedIds.delete(`${selected[replaceIndex].kind}:${selected[replaceIndex].item.id}`);
         selected[replaceIndex] = entry;
         selectedIds.add(`legacy:${entry.item.id}`);

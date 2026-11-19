@@ -343,11 +343,13 @@ function longDreamMemoryCardsHTML(dream) {
 
 // @theater-source-begin longDreamMemorySelectionHTML
 function longDreamMemorySelectionHTML(dream, instruction = '') {
-    const selectedItems = selectRelevantLongDreamMemoryItems(dream, { instruction, maxItems: 30, recentChapterCount: LONG_DREAM_RECENT_CHAPTER_COUNT });
+    // Same window as the chapter request, so the preview matches what is sent.
+    const recentChapterCount = Number(runtime.getLongDreamComposerDraft?.(dream?.id)?.recentChapters) === 1 ? 1 : LONG_DREAM_RECENT_CHAPTER_COUNT;
+    const selectedItems = selectRelevantLongDreamMemoryItems(dream, { instruction, maxItems: 30, recentChapterCount });
     const activeCards = ['states', 'transitions', 'threads', 'deviations'].reduce((count, key) => count + (dream?.memory?.[key] || []).filter(item => !item.hiddenFromPrompt).length, 0)
         + [...(dream?.memory?.cards || []), ...(dream?.memory?.legacyCards || [])].filter(card => card?.status !== 'dismissed').length;
     if (!activeCards) return '<details id="theater-dream-memory-selection" class="theater-dream-memory-selection" hidden></details>';
-    const selected = selectedItems.length ? selectedItems : selectRelevantLongDreamMemoryCards(dream, { instruction, maxCards: 30, recentChapterCount: LONG_DREAM_RECENT_CHAPTER_COUNT }).map(item => ({ kind: 'legacy', item }));
+    const selected = selectedItems.length ? selectedItems : selectRelevantLongDreamMemoryCards(dream, { instruction, maxCards: 30, recentChapterCount }).map(item => ({ kind: 'legacy', item }));
     const visible = selected.slice(0, 8);
     return `<details id="theater-dream-memory-selection" class="memory-hit-box theater-dream-memory-selection" open>
         <summary class="memory-hit-header"><span><i class="fa-solid fa-filter"></i> 检索命中梦脉 (${selected.length}/${activeCards})</span><i class="fa-solid fa-chevron-down"></i></summary>

@@ -116,3 +116,70 @@ test('写正文挑梦脉：主角的身份、关系、知情状态固定带上�
     for (const id of ['main-id', 'main-rel', 'main-know']) assert.ok(picked.includes(id), id + ' 应该被带上');
     assert.ok(picked.filter(id => id.startsWith('crowd-')).length >= 4, '其余名额仍给相关的条目');
 });
+
+test('小砚②：删掉的事项在后文重新开启后，同一批按名字推进 / 结束都作用在新事项上', () => {
+    const memory = deleteLongDreamMemoryV2RecordItem(dream(), 'thread', 'thread-key').memory;
+    const { memory: advanced } = applyLongDreamMemoryOperations(memory, [
+        { op: 'open_thread', threadKey: '银钥匙', kind: 'mystery', content: '银钥匙又出现了', chapterNumber: 3 },
+        { op: 'advance_thread', threadKey: '银钥匙', progress: '试着开了仓库门', chapterNumber: 3 },
+    ], { worldLineRelation: 'canon' });
+    assert.equal(advanced.threads.length, 1, '不会多出一条');
+    assert.equal(advanced.threads[0].status, 'progressed');
+    const { memory: resolved } = applyLongDreamMemoryOperations(advanced, [
+        { op: 'resolve_thread', threadKey: '银钥匙', resolution: '打开了后门', chapterNumber: 4 },
+    ], { worldLineRelation: 'canon' });
+    assert.equal(resolved.threads.length, 1);
+    assert.equal(resolved.threads[0].status, 'resolved', '能正常结束');
+    const { memory: byOldId } = applyLongDreamMemoryOperations(advanced, [
+        { op: 'advance_thread', targetId: 'thread-key', progress: '用旧编号推进', chapterNumber: 4 },
+    ], { worldLineRelation: 'canon' });
+    assert.equal(byOldId.threads.length, 1, '用被删的旧编号推进时，落到重新开启的那条上');
+    assert.match(byOldId.threads[0].progress, /旧编号/);
+});
+
+import { applyLongDreamMemoryPatch } from '../long-dream.js';
+
+test('小砚③：跳过已删事项不会连带丢掉同批的概要', () => {
+    const base = deleteLongDreamMemoryV2RecordItem(dream(), 'thread', 'thread-key');
+    const record = normalizeLongDreamRecord({ ...base, memory: { ...base.memory, pendingChapterNumbers: [2], processedThroughChapter: 1, status: 'weaving' } });
+    const patch = { storyRequested: true, storyEntries: [{ chapterNumber: 1, text: '第一章概要：她拿到账本。' }, { chapterNumber: 2, text: '第二章概要：她决定去码头。' }],
+        operations: [{ op: 'resolve_thread', threadKey: '银钥匙', resolution: '打开了后门', chapterNumber: 2 }] };
+    const saved = applyLongDreamMemoryPatch(record, patch, 2);
+    assert.equal(saved.memory.storyEntries.length, 2, '概要照常收下');
+});
+
+test('小砚⑦：旧版梦脉替换时不会挤掉主角关键状态', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章。', html: '<p>1</p>' } });
+    for (let n = 2; n <= 10; n++) record = appendLongDreamChapter(record, { text: `第${n}章。`, html: '<p>x</p>' });
+    const main = [
+        { id: 'main-id', subjects: ['林晚'], attribute: 'identity', topic: '身份', value: '码头账房', validFromChapter: 1, sourceChapterNumbers: [1] },
+        { id: 'main-rel', subjects: ['林晚', '沈砚'], attribute: 'relationship', topic: '关系', value: '盟友', validFromChapter: 2, sourceChapterNumbers: [2] },
+    ];
+    const crowd = Array.from({ length: 40 }, (_, i) => ({ id: 'crowd-' + i, subjects: ['伙计' + i], attribute: 'other', topic: '茶楼', value: '在茶楼听戏', validFromChapter: 10, sourceChapterNumbers: [10] }));
+    const legacy = [{ id: 'legacy-1', type: 'event', content: '茶楼听戏喝茶谈论码头茶楼听戏', status: 'active', sourceChapterNumbers: [10] }];
+    record = normalizeLongDreamRecord({ ...record, memory: { ...record.memory, states: [...main, ...crowd], legacyCards: legacy } });
+    const picked = selectRelevantLongDreamMemoryItems(record, { instruction: '茶楼听戏喝茶谈论码头' });
+    const ids = picked.map(entry => entry.item.id);
+    assert.ok(ids.includes('main-id') && ids.includes('main-rel'), JSON.stringify(ids.slice(0, 5)));
+});
+
+import { createLongDreamMemoryView } from '../long-dream-workspace-memory.js';
+
+test('小砚⑧：梦脉命中预览和实际发送按同一个“带入全文”挑选', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章。', html: '<p>1</p>' } });
+    for (let n = 2; n <= 10; n++) record = appendLongDreamChapter(record, { text: `第${n}章。`, html: '<p>x</p>' });
+    const near = Array.from({ length: 8 }, (_, i) => ({ id: 'near-' + i, subjects: ['甲' + i], attribute: 'other', topic: '上一章' + i, value: '上一章发生的事' + i, validFromChapter: 9, sourceChapterNumbers: [9] }));
+    const far = Array.from({ length: 8 }, (_, i) => ({ id: 'far-' + i, subjects: ['乙' + i], attribute: 'other', topic: '旧事' + i, value: '银钥匙 仓库 后门 账本 旧事' + i, validFromChapter: 3, sourceChapterNumbers: [3] }));
+    record = normalizeLongDreamRecord({ ...record, id: 7, memory: { ...record.memory, states: [...near, ...far] } });
+    const instruction = '银钥匙 仓库 后门 账本';
+    const top = count => selectRelevantLongDreamMemoryItems(record, { instruction, recentChapterCount: count }).slice(0, 8).map(e => e.item.topic);
+    assert.notDeepEqual(top(1), top(2), '这组数据在 1 章 / 2 章下前 8 名不同');
+    const preview = count => {
+        const runtime = new Proxy({ settings: {}, esc: v => String(v ?? ''), getLongDreamComposerDraft: () => ({ recentChapters: count }) }, { get: (t, k) => k in t ? t[k] : () => '' });
+        return createLongDreamMemoryView(runtime, new Proxy({}, { get: () => () => '' })).longDreamMemorySelectionHTML(record, instruction);
+    };
+    for (const count of [1, 2]) {
+        const html = preview(count);
+        for (const topic of top(count)) assert.ok(html.includes(topic), `选 ${count} 章时预览里应有 ${topic}`);
+    }
+});

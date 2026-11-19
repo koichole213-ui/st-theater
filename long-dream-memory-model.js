@@ -442,6 +442,7 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
     const conflicts = memory.pendingConflicts.slice();
     const appliedChanges = [];
     const ignoredOperations = [];
+    const skippedOperations = []; // skipped on purpose; unlike ignoredOperations they do not void the batch
     const rawOperations = Array.isArray(operationsInput) ? operationsInput : [];
     const pendingChapterNumbers = rawOperations.map(operation => Math.floor(Number(operation?.chapterNumber))).filter(number => number >= 1);
     const operations = rawOperations
@@ -475,10 +476,18 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
         const kind = operation.op === 'set_state' ? 'state' : operation.op === 'append_transition' ? 'transition'
             : operation.op === 'upsert_deviation' ? 'deviation' : 'thread';
         const lists = { state: states, transition: transitions, thread: threads, deviation: deviations };
-        const deleted = !lists[kind].some(item => item.id === operation.targetId) ? deletedTarget(memory, kind, operation) : null;
+        const sameThread = key => threads.findIndex(item => canonicalText(item.threadKey) === canonicalText(key));
+        // Live items always win: only consult deletions when nothing current matches.
+        const live = operation.targetId ? lists[kind].some(item => item.id === operation.targetId)
+            : kind === 'thread' && operation.threadKey ? sameThread(operation.threadKey) >= 0 : true;
+        let deleted = live ? null : deletedTarget(memory, kind, operation);
+        if (deleted && kind === 'thread') {
+            const reopened = sameThread(operation.threadKey || deleted.threadKey);
+            if (reopened >= 0) { operation.targetId = threads[reopened].id; deleted = null; } // already picked up again: update that one
+        }
         if (deleted && ['resolve_thread', 'abandon_thread'].includes(operation.op)) {
             // The user deleted this thread; closing it again would only bring back a finished item.
-            ignoredOperations.push({ index, reason: 'deleted-by-user', op: operation.op });
+            skippedOperations.push({ index, reason: 'deleted-by-user', op: operation.op });
             continue;
         }
         if (deleted && operation.op === 'advance_thread') {
@@ -740,6 +749,7 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
         },
         conflicts: conflicts.slice(memory.pendingConflicts.length),
         ignoredOperations,
+        skippedOperations,
         appliedChanges,
     };
 }
