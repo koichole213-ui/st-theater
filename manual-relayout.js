@@ -14,10 +14,17 @@ export function cancelManualRelayout(runtime) {
 }
 
 export function manualLayoutSource(item, dream = false) {
-    const source = dream ? item : item?.layoutSource;
-    if (!item?.html || !Number.isFinite(source?.targetChars) || !isStagedRenderTarget(source.targetChars)) return null;
+    if (!item?.html) return null;
+    // Long dream chapters and candidates always keep the story text they were laid out from
+    // (written first, or rebuilt from edited text), so every length can be laid out again.
+    if (dream) {
+        if (typeof item.text !== 'string' || !item.text.trim()) return null;
+        return { sourceText: item.text, originalInstruction: item.instruction || '' };
+    }
+    const source = item.layoutSource;
+    if (!Number.isFinite(source?.targetChars) || !isStagedRenderTarget(source.targetChars)) return null;
     if (typeof source.text !== 'string' || !source.text.trim()) return null;
-    return { sourceText: source.text, originalInstruction: (dream ? source.instruction : source.originalInstruction) || '' };
+    return { sourceText: source.text, originalInstruction: source.originalInstruction || '' };
 }
 
 export function resultRelayoutTarget(runtime, scope) {

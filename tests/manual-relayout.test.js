@@ -47,12 +47,21 @@ function fixture(t, props = {}) {
     return { runtime, item, notices, requests };
 }
 
-test('手动排版按原始目标和独立正文判断，5000 含在内', () => {
+test('普通结果的手动排版按原始目标和独立正文判断，5000 含在内', () => {
     assert.equal(manualLayoutSource(entry('a', { ...layoutSource, targetChars: 4999 })), null);
     assert.equal(manualLayoutSource(entry('a', null)), null);
     assert.equal(manualLayoutSource(entry('a', { ...layoutSource, text: '  ' })), null);
     assert.deepEqual(manualLayoutSource(entry()), { sourceText: layoutSource.text, originalInstruction: '原任务' });
-    assert.equal(manualLayoutSource({ html: original, text: '正文' }, true), null);
+});
+
+test('长梦章节和候选只要存着正文就能重新排版，不看目标字数', () => {
+    assert.deepEqual(manualLayoutSource({ html: original, text: '正文', instruction: '写第二章' }, true), { sourceText: '正文', originalInstruction: '写第二章' });
+    assert.deepEqual(manualLayoutSource({ html: original, text: '正文', targetChars: 3000 }, true), { sourceText: '正文', originalInstruction: '' });
+    assert.equal(manualLayoutSource({ html: original, text: '  ', targetChars: 8000 }, true), null);
+    assert.equal(manualLayoutSource({ html: '', text: '正文', targetChars: 8000 }, true), null);
+    assert.equal(manualLayoutSource({ html: original, text: '正文', layoutSource: null }), null, '普通结果仍要有排版底稿');
+    const opened = createLongDreamRecord({ source: { text: '从历史开卷的正文', html: original } });
+    assert.equal(manualLayoutSource(opened.chapters[0], true).sourceText, '从历史开卷的正文');
 });
 
 test('生成结果独立排版只替换 HTML，沿用当前模板和原正文，保留续写记录和备份来源', async t => {
@@ -263,14 +272,14 @@ test('旧长梦缺少候选元数据但明确保存过目标时，仍可更新�
     assert.equal(written.draft.candidates[0].targetChars, 5000);
 });
 
-test('旧多候选的草稿目标不能替缺失的候选目标', () => {
+test('旧多候选里缺目标字数的候选也能按自己的正文重新排版', () => {
     const seed = createLongDreamRecord({ source: { text: '开篇', html: original } });
     const candidates = [
         { ...dreamChapter, targetChars: undefined, versionNumber: 1 },
         { ...dreamChapter, versionNumber: 2 },
     ];
     const normalized = normalizeLongDreamRecord({ ...seed, draft: { ...dreamChapter, status: 'review', candidates, selectedCandidateIndex: 1 } });
-    assert.equal(manualLayoutSource(normalized.draft.candidates[0], true), null);
+    assert.equal(manualLayoutSource(normalized.draft.candidates[0], true).sourceText, dreamChapter.text);
     assert.equal(manualLayoutSource(normalized.draft.candidates[1], true).sourceText, dreamChapter.text);
 });
 
