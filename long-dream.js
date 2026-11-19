@@ -5,6 +5,7 @@ import {
     applyLongDreamMemoryOperations,
     normalizeLongDreamMemoryV2,
     rejectLongDreamMemoryV2Item,
+    deleteLongDreamMemoryV2Item,
     resolveLongDreamMemoryConflict,
     setLongDreamMemoryV2ItemHidden,
     updateLongDreamMemoryV2Item,
@@ -171,6 +172,7 @@ function resetMemoryForChapters(chapters = []) {
         threads: [],
         deviations: [],
         rejections: [],
+        deletedItems: [],
         pendingConflicts: [],
         lastBatchChanges: [],
         currentState: '',
@@ -200,6 +202,7 @@ export function prepareLongDreamMemoryRegeneration(record, now = new Date()) {
         cards: preserveLegacy(normalized.memory.cards || []),
         legacyCards: preserveLegacy(normalized.memory.legacyCards || []),
         rejections: normalized.memory.rejections || [],
+        deletedItems: normalized.memory.deletedItems || [],
         processedThroughChapter: 0,
         pendingChapterNumbers: chapterNumbers,
         status: chapterNumbers.length ? LONG_DREAM_MEMORY_STATUS.PENDING : LONG_DREAM_MEMORY_STATUS.NOT_STARTED,
@@ -965,6 +968,19 @@ export function setLongDreamMemoryV2RecordItemHidden(record, kind, itemId, hidde
     return {
         ...normalized,
         memory: normalizeMemory({ ...normalized.memory, ...v2, ...invalidateStoryDecisions(normalized.memory), updatedAt }, normalized.chapters.length),
+        updatedAt,
+    };
+}
+
+// Plain delete: removes the item without marking the summary for review (no new fact is introduced).
+export function deleteLongDreamMemoryV2RecordItem(record, kind, itemId, now = new Date()) {
+    const normalized = normalizeLongDreamRecord(record);
+    if (!normalized) throw new Error('长梦记录无效');
+    const updatedAt = normalizeIsoDate(now, new Date().toISOString());
+    const v2 = deleteLongDreamMemoryV2Item(normalized.memory, kind, itemId, now);
+    return {
+        ...normalized,
+        memory: normalizeMemory({ ...normalized.memory, ...v2, updatedAt }, normalized.chapters.length),
         updatedAt,
     };
 }

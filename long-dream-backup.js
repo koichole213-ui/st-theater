@@ -172,6 +172,7 @@ function safeMemory(memory = {}, fallbackDate) {
         threads: v2.threads,
         deviations: v2.deviations,
         rejections: v2.rejections,
+        deletedItems: v2.deletedItems,
         pendingConflicts: v2.pendingConflicts,
         lastBatchChanges: v2.lastBatchChanges,
         ...normalizeStoryFields(memory),

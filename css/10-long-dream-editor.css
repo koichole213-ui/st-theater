@@ -219,6 +219,9 @@
 .theater-dream-memory-editor-record blockquote { margin:13px 0; padding-left:10px; color:var(--t-fg-mute); border-left:2px solid var(--t-line); font-size:10px; }
 .theater-dream-memory-editor-actions { position:sticky; bottom:0; display:flex; align-items:center; justify-content:space-between; gap:14px; margin-top:auto; padding:14px 0 calc(14px + env(safe-area-inset-bottom)); border-top:1px solid var(--t-line); background:color-mix(in srgb,var(--t-surface-1) 96%,transparent); backdrop-filter:blur(10px); }
 .theater-dream-memory-editor-save { display:flex; align-items:center; justify-content:center; gap:7px; min-height:40px; padding:0 18px; color:var(--t-on-accent); border:0; border-radius:999px; background:linear-gradient(135deg,var(--t-accent),var(--t-accent-deep)); box-shadow:0 8px 20px color-mix(in srgb,var(--t-accent) 24%,transparent); cursor:pointer; }
+.theater-dream-memory-editor-main-actions { display:flex; align-items:center; gap:8px; }
+.theater-dream-memory-editor-delete { display:flex; align-items:center; justify-content:center; gap:6px; min-height:40px; padding:0 14px; color:var(--t-danger); border:1px solid color-mix(in srgb,var(--t-danger) 45%,transparent); border-radius:999px; background:transparent; cursor:pointer; }
+.theater-dream-memory-editor-delete:disabled { opacity:.5; cursor:default; }
 .theater-dream-memory-editor-secondary,
 .theater-dream-memory-editor-more > summary { display:flex; align-items:center; min-height:36px; padding:0; color:var(--t-fg-mute); border:0; background:transparent; font-size:10px; cursor:pointer; list-style:none; }
 .theater-dream-memory-editor-secondary.is-danger { color:var(--t-danger); }

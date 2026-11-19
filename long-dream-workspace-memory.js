@@ -200,7 +200,7 @@ function longDreamMemoryConflictOperationText(operation = {}) {
 function longDreamMemoryConflictDetails(memory, conflict) {
     const target = longDreamMemoryConflictTarget(memory, conflict);
     let original = longDreamMemoryConflictItemText(target);
-    if (!original && conflict?.reason === 'rejected-by-user') original = '这条内容曾被你标记为错误。';
+    if (!original && conflict?.reason === 'rejected-by-user') original = '这条内容曾被你删除，并选了“以后别再记”。';
     if (!original && conflict?.reason === 'missing-target') original = '原记录已经不存在，需要从已保存正文补织。';
     if (!original) original = '没有找到对应的旧梦脉记录。';
     return {
@@ -229,7 +229,7 @@ function longDreamMemoryCardsHTML(dream) {
     const conflicts = Array.isArray(memory.pendingConflicts) ? memory.pendingConflicts : [];
     const conflictLabels = {
         'locked-by-user': '新章节与一条由你锁定的记忆不同',
-        'rejected-by-user': '新章节再次出现了你曾否定的记忆',
+        'rejected-by-user': '新章节又写到了你选过“以后别再记”的内容',
         'closed-thread': '已经结束的事项似乎再次被提起',
         'missing-target': '新变化引用的旧记忆已经不存在',
         'target-type-mismatch': '新变化引用了不匹配的记忆类型',
@@ -272,8 +272,8 @@ function longDreamMemoryCardsHTML(dream) {
                 ${field('tags', '检索标签', (item.tags || []).join('、'), { placeholder: '用顿号或逗号分隔' })}
                 ${item.quote ? `<blockquote>${runtime.esc(item.quote)}</blockquote>` : ''}
                 <div class="theater-dream-memory-editor-actions">
-                    <details class="theater-dream-memory-editor-more"><summary>更多操作</summary><div>${item.lockedByUser ? `<button type="button" data-dream-memory-v2-action="unlock" ${memoryLocked ? 'disabled' : ''}>交还自动更新</button>` : ''}<button type="button" data-dream-memory-v2-action="${item.hiddenFromPrompt ? 'show' : 'hide'}" ${memoryLocked ? 'disabled' : ''}>${item.hiddenFromPrompt ? '恢复参与续写' : '暂不参与续写'}</button><button type="button" class="is-danger" data-dream-memory-v2-action="reject" ${memoryLocked ? 'disabled' : ''}>标记为错误</button></div></details>
-                    <button type="button" class="theater-dream-memory-editor-save" data-dream-memory-v2-action="save" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid fa-check"></i><span>保存修改</span></button>
+                    <details class="theater-dream-memory-editor-more"><summary>更多操作</summary><div>${item.lockedByUser ? `<button type="button" data-dream-memory-v2-action="unlock" ${memoryLocked ? 'disabled' : ''}>交还自动更新</button>` : ''}<button type="button" data-dream-memory-v2-action="${item.hiddenFromPrompt ? 'show' : 'hide'}" ${memoryLocked ? 'disabled' : ''}>${item.hiddenFromPrompt ? '恢复参与续写' : '暂不参与续写'}</button><button type="button" class="is-danger" data-dream-memory-v2-action="reject" ${memoryLocked ? 'disabled' : ''}>删除，并且以后别再记</button></div></details>
+                    <div class="theater-dream-memory-editor-main-actions"><button type="button" class="theater-dream-memory-editor-delete" data-dream-memory-v2-action="delete" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid fa-trash-can"></i><span>删除</span></button><button type="button" class="theater-dream-memory-editor-save" data-dream-memory-v2-action="save" ${memoryLocked ? 'disabled' : ''}><i class="fa-solid fa-check"></i><span>保存修改</span></button></div>
                 </div>
             </div></template>
         </article>`;

@@ -1,6 +1,6 @@
 import { resetLongDreamSourcePicker, pickerSelectedSource } from './long-dream-source-picker.js';
 import { importLongDreamSeries } from './long-dream-series.js';
-import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_WORLD_LINE_RELATION, LONG_DREAM_WORLD_BOOK_POLICY, createLongDreamRecord, LONG_DREAM_STATUS, LONG_DREAM_MEMORY_STATUS, prepareLongDreamMemoryRegeneration, updateLongDreamMemoryV2RecordItem, setLongDreamMemoryV2RecordItemHidden, rejectLongDreamMemoryV2RecordItem, resolveLongDreamMemoryV2RecordConflict, updateLongDreamMemoryCard, setLongDreamMemoryCardStatus, updateLongDreamDefinition } from './long-dream.js';
+import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_WORLD_LINE_RELATION, LONG_DREAM_WORLD_BOOK_POLICY, createLongDreamRecord, LONG_DREAM_STATUS, LONG_DREAM_MEMORY_STATUS, prepareLongDreamMemoryRegeneration, updateLongDreamMemoryV2RecordItem, setLongDreamMemoryV2RecordItemHidden, rejectLongDreamMemoryV2RecordItem, deleteLongDreamMemoryV2RecordItem, resolveLongDreamMemoryV2RecordConflict, updateLongDreamMemoryCard, setLongDreamMemoryCardStatus, updateLongDreamDefinition } from './long-dream.js';
 import { LONG_DREAM_CANON_SUGGESTION_CATEGORIES, composeLongDreamCanon } from './long-dream-canon-suggestions.js';
 import { normalizeManualTarget } from './length-policy.js';
 import { readableErrorText } from './error-text.js';
@@ -540,15 +540,18 @@ export function bindLongDreamEvents(runtime, $d) {
                 updated = updateLongDreamMemoryV2RecordItem(dream, kind, itemId, { status: 'open', resolvedAt: null, resolution: '', abandonedReason: '' });
             } else if (action === 'hide' || action === 'show') {
                 updated = setLongDreamMemoryV2RecordItemHidden(dream, kind, itemId, action === 'hide');
+            } else if (action === 'delete') {
+                if (!confirm('删除这条梦脉吗？\n删除后不能撤销。后面的章节如果又写到它，会当作新内容重新记下。\n如果这条是写错的、以后也不想再记，请改用“更多操作”里的“删除，并且以后别再记”。')) return;
+                updated = deleteLongDreamMemoryV2RecordItem(dream, kind, itemId);
             } else if (action === 'reject') {
-                if (!confirm('确认这是一条错误记忆吗？它会从有效梦脉中移除，并阻止同一错误直接复活。')) return;
+                if (!confirm('删除这条梦脉，并且以后别再记吗？\n它会从梦脉中移除，后面的章节再写出同样的内容时会先问你。全篇概要会标为待核对。')) return;
                 updated = rejectLongDreamMemoryV2RecordItem(dream, kind, itemId, '用户在梦脉界面确认提取错误');
             } else return;
             const saved = await runtime.longDreamPut(updated);
             if (!saved) return;
             runtime.renderLongDreamPanel();
             const messages = {
-                save: '梦脉已保存', unlock: '这条梦脉已交还自动更新', reject: '错误梦脉已否定并建立抑制记录',
+                save: '梦脉已保存', unlock: '这条梦脉已交还自动更新', reject: '已删除，以后同样的内容不会直接记回来', delete: '这条梦脉已删除',
                 hide: '这条梦脉不会进入续章请求', show: '这条梦脉已恢复注入', resolve: '事项已标记为解决',
                 abandon: '事项已标记为放弃', reopen: '事项已重新开启',
             };

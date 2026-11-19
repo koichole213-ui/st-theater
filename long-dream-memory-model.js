@@ -287,6 +287,20 @@ function normalizeBatchChange(change, index = 0) {
     };
 }
 
+// Plain deletions (not "wrong, never again"): remembered only so later chapters
+// that touch the deleted item add it back quietly instead of asking the user.
+function normalizeDeletedItem(item) {
+    const kind = ['state', 'transition', 'thread', 'deviation'].includes(item?.kind) ? item.kind : '';
+    const id = cleanText(item?.id, 120);
+    if (!kind || !id) return null;
+    return { kind, id, threadKey: cleanText(item.threadKey, 180), deletedAt: typeof item.deletedAt === 'string' ? item.deletedAt : '' };
+}
+
+function deletedTarget(memory, kind, operation) {
+    return (memory.deletedItems || []).find(item => item.kind === kind && ((operation.targetId && item.id === operation.targetId)
+        || (kind === 'thread' && !operation.targetId && operation.threadKey && canonicalText(item.threadKey) === canonicalText(operation.threadKey))));
+}
+
 export function normalizeLongDreamMemoryV2(memory = {}, fallbackDate = '') {
     return {
         schemaVersion: LONG_DREAM_MEMORY_SCHEMA_VERSION,
@@ -295,6 +309,7 @@ export function normalizeLongDreamMemoryV2(memory = {}, fallbackDate = '') {
         threads: (Array.isArray(memory.threads) ? memory.threads : []).map((item, index) => normalizeLongDreamMemoryThread(item, index, fallbackDate)).filter(Boolean),
         deviations: (Array.isArray(memory.deviations) ? memory.deviations : []).map((item, index) => normalizeLongDreamMemoryDeviation(item, index, fallbackDate)).filter(Boolean),
         rejections: (Array.isArray(memory.rejections) ? memory.rejections : []).map((item, index) => normalizeRejection(item, index, fallbackDate)).filter(Boolean),
+        deletedItems: (Array.isArray(memory.deletedItems) ? memory.deletedItems : []).map(normalizeDeletedItem).filter(Boolean).slice(-200),
         pendingConflicts: (Array.isArray(memory.pendingConflicts) ? memory.pendingConflicts : []).map((item, index) => normalizeConflict(item, index, fallbackDate)).filter(Boolean),
         lastBatchChanges: (Array.isArray(memory.lastBatchChanges) ? memory.lastBatchChanges : []).map(normalizeBatchChange).filter(Boolean).slice(-100),
     };
@@ -457,6 +472,34 @@ export function applyLongDreamMemoryOperations(memoryInput = {}, operationsInput
             addConflict(operation, 'rejected-by-user', operation.targetId, index);
             continue;
         }
+        const kind = operation.op === 'set_state' ? 'state' : operation.op === 'append_transition' ? 'transition'
+            : operation.op === 'upsert_deviation' ? 'deviation' : 'thread';
+        const lists = { state: states, transition: transitions, thread: threads, deviation: deviations };
+        const deleted = !lists[kind].some(item => item.id === operation.targetId) ? deletedTarget(memory, kind, operation) : null;
+        if (deleted && ['resolve_thread', 'abandon_thread'].includes(operation.op)) {
+            // The user deleted this thread; closing it again would only bring back a finished item.
+            ignoredOperations.push({ index, reason: 'deleted-by-user', op: operation.op });
+            continue;
+        }
+        if (deleted && operation.op === 'advance_thread') {
+            // Picked up again in the story: record it as a new thread instead of asking.
+            const thread = normalizeLongDreamMemoryThread({
+                ...operation,
+                id: generatedId('thread', operation, index),
+                targetId: '',
+                threadKey: operation.threadKey || deleted.threadKey,
+                content: operation.progress,
+                status: 'progressed',
+                introducedAt: operation.chapterNumber,
+                lastTouchedAt: operation.chapterNumber,
+                progressHistory: [{ chapterNumber: operation.chapterNumber, content: operation.progress, quote: operation.quote }],
+                sourceChapterNumbers: [operation.chapterNumber],
+                updatedAt,
+            }, threads.length, updatedAt);
+            if (thread) { threads.push(thread); changed(operation, thread.id, index); }
+            continue;
+        }
+        if (deleted && operation.targetId) operation.targetId = '';
         if (operation.op === 'set_state') {
             const slot = stateSlotKey(operation.subjects, operation.attribute, operation.topic);
             const targetIndex = operation.targetId
@@ -748,6 +791,18 @@ export function setLongDreamMemoryV2ItemHidden(memoryInput, kind, itemIdValue, h
     if (index < 0) throw new Error('没有找到要处理的梦脉');
     list[index] = { ...list[index], hiddenFromPrompt: hidden === true, updatedAt: normalizedDate(now) };
     return { ...memory, [key]: list };
+}
+
+export function deleteLongDreamMemoryV2Item(memoryInput, kind, itemIdValue, now = new Date()) {
+    const memory = normalizeLongDreamMemoryV2(memoryInput);
+    const map = { state: 'states', transition: 'transitions', thread: 'threads', deviation: 'deviations' };
+    const key = map[kind];
+    if (!key) throw new Error('未知梦脉类型');
+    const item = memory[key].find(entry => String(entry.id) === String(itemIdValue));
+    if (!item) throw new Error('没有找到要删除的梦脉');
+    const deletedItems = [...memory.deletedItems.filter(entry => !(entry.kind === kind && entry.id === item.id)),
+        { kind, id: item.id, threadKey: kind === 'thread' ? item.threadKey : '', deletedAt: normalizedDate(now) }].slice(-200);
+    return { ...memory, [key]: memory[key].filter(entry => entry.id !== item.id), deletedItems };
 }
 
 export function rejectLongDreamMemoryV2Item(memoryInput, kind, itemIdValue, reason = '', now = new Date()) {
