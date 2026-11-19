@@ -181,6 +181,23 @@ function scoreV2Item(kind, item, query, terms, recentStart, chapterCount) {
         + closedPenalty;
 }
 
+const ANCHOR_STATE_ATTRIBUTES = new Set(['identity', 'relationship', 'knowledge']);
+
+// The people the memory talks about most (at most three, each in at least two items).
+function anchorStateIds(raw, stateQuota = 12) {
+    const counts = new Map();
+    for (const { kind, item } of raw) {
+        if (kind === 'legacy') continue;
+        for (const subject of new Set((item.subjects || []).map(cleanText).filter(Boolean))) counts.set(subject, (counts.get(subject) || 0) + 1);
+    }
+    const main = new Set([...counts].filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([subject]) => subject));
+    const limit = Math.min(8, Math.max(0, Math.floor(Number(stateQuota) || 0) - 4));
+    return new Set(raw.filter(({ kind, item }) => kind === 'state' && ANCHOR_STATE_ATTRIBUTES.has(item.attribute)
+        && (item.subjects || []).some(subject => main.has(cleanText(subject))))
+        .sort((a, b) => (b.item.lockedByUser ? 1 : 0) - (a.item.lockedByUser ? 1 : 0) || Math.max(0, ...(b.item.sourceChapterNumbers || [0])) - Math.max(0, ...(a.item.sourceChapterNumbers || [0])))
+        .slice(0, limit).map(({ item }) => item.id));
+}
+
 export function selectRelevantLongDreamMemoryItems(record = {}, {
     instruction = '',
     recentChapterCount = LONG_DREAM_RECENT_CHAPTER_COUNT,
@@ -217,9 +234,13 @@ export function selectRelevantLongDreamMemoryItems(record = {}, {
     })).sort((a, b) => b.score - a.score || a.index - b.index);
     const selected = [];
     const selectedIds = new Set();
+    const anchors = anchorStateIds(raw, quotas.state);
     for (const kind of ['state', 'thread', 'deviation', 'transition']) {
         const limit = Math.max(0, Math.floor(Number(quotas[kind]) || 0));
-        for (const entry of scored.filter(candidate => candidate.kind === kind).slice(0, limit)) {
+        const candidates = scored.filter(candidate => candidate.kind === kind);
+        // Main characters' identity, relationships and knowledge come first, whatever the instruction says.
+        const ordered = kind === 'state' ? [...candidates.filter(entry => anchors.has(entry.item.id)), ...candidates.filter(entry => !anchors.has(entry.item.id))] : candidates;
+        for (const entry of ordered.slice(0, limit)) {
             selected.push(entry);
             selectedIds.add(`${kind}:${entry.item.id}`);
         }

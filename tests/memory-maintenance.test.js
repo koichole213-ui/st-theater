@@ -97,3 +97,22 @@ test('织梦脉规则：同一人物同一方面只留一条当前状态', () =>
     assert.match(systemPrompt, /同一方面只保留一条当前状态/);
     assert.match(systemPrompt, /必须带它的 targetId 更新/);
 });
+
+import { selectRelevantLongDreamMemoryItems } from '../long-dream-payload.js';
+
+test('写正文挑梦脉：主角的身份、关系、知情状态固定带上，其余名额仍按相关度', () => {
+    let record = createLongDreamRecord({ source: { text: '第一章。', html: '<p>1</p>' } });
+    for (let n = 2; n <= 10; n++) record = appendLongDreamChapter(record, { text: `第${n}章。`, html: '<p>x</p>' });
+    const main = [
+        { id: 'main-id', subjects: ['林晚'], attribute: 'identity', topic: '身份', value: '码头账房，暗中替巡捕房做事', validFromChapter: 1, sourceChapterNumbers: [1] },
+        { id: 'main-rel', subjects: ['林晚', '沈砚'], attribute: 'relationship', topic: '关系', value: '彼此试探的盟友', validFromChapter: 2, sourceChapterNumbers: [2] },
+        { id: 'main-know', subjects: ['沈砚'], attribute: 'knowledge', topic: '账本', value: '不知道账本在林晚手里', validFromChapter: 3, sourceChapterNumbers: [3] },
+        { id: 'main-loc', subjects: ['林晚'], attribute: 'location', topic: '住处', value: '旧楼', validFromChapter: 1, sourceChapterNumbers: [1] },
+    ];
+    const crowd = Array.from({ length: 40 }, (_, i) => ({ id: 'crowd-' + i, subjects: ['茶楼伙计' + i], attribute: 'other', topic: '茶楼', value: '在茶楼里听戏、喝茶、谈论码头', validFromChapter: 10, sourceChapterNumbers: [10] }));
+    record = normalizeLongDreamRecord({ ...record, memory: { ...record.memory, states: [...main, ...crowd] } });
+    const picked = selectRelevantLongDreamMemoryItems(record, { instruction: '写茶楼里众人听戏、喝茶、谈论码头的一场戏' })
+        .filter(entry => entry.kind === 'state').map(entry => entry.item.id);
+    for (const id of ['main-id', 'main-rel', 'main-know']) assert.ok(picked.includes(id), id + ' 应该被带上');
+    assert.ok(picked.filter(id => id.startsWith('crowd-')).length >= 4, '其余名额仍给相关的条目');
+});
