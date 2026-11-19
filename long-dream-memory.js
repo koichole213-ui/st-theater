@@ -68,33 +68,49 @@ function memorySources(item = {}) {
 }
 
 function activeMemoryText(memory = {}) {
-    const sections = [];
+    return Object.values(activeMemorySections(memory)).filter(Boolean).join('\n\n');
+}
+
+// Weaving must see existing states to update them in place. When the memory is too long,
+// leave out the story summary and finished threads, and put states last so any cut falls on
+// older transitions and legacy cards first. Short memories are sent exactly as before.
+export function weaveMemoryText(memory = {}, limit = 16000) {
+    const full = activeMemoryText(memory);
+    if (!limit || full.length <= limit) return full;
+    const parts = activeMemorySections(memory, { openThreadsOnly: true });
+    const ordered = [parts.legacy, parts.transitions, parts.rejections, parts.threads, parts.deviations, parts.states].filter(Boolean).join('\n\n');
+    const note = '（梦脉较多：本次省略故事概要、已结束事项，必要时也省略较早的关键变化；没列出的旧条目仍然保留，不要重复新建。）';
+    return `${note}\n${boundedText(ordered, Math.max(0, limit - note.length - 1), true)}`;
+}
+
+function activeMemorySections(memory = {}, { openThreadsOnly = false } = {}) {
+    const sections = {};
     const state = memory.manualFullSummary?.needsReview || memory.storyEntries?.some(entry => entry.editedByUser && entry.needsReview) ? '' : cleanText(memory.currentState);
-    if (state) sections.push(`【故事概要｜过去经历不等于当前状态】\n${state}`);
+    if (state && !openThreadsOnly) sections.summary = `【故事概要｜过去经历不等于当前状态】\n${state}`;
 
     const states = (Array.isArray(memory.states) ? memory.states : [])
         .filter(item => !item.hiddenFromPrompt)
         .map(item => `- [id=${cleanText(item.id)}｜${(item.subjects || []).join('、')}｜${cleanText(item.attribute)}${item.topic ? `｜${cleanText(item.topic)}` : ''}｜从第 ${item.validFromChapter} 章起${item.lockedByUser ? '｜用户锁定' : ''}] ${cleanText(item.value)}`)
         .join('\n');
-    if (states) sections.push(`【已有当前状态】\n${states}`);
+    if (states) sections.states = `【已有当前状态】\n${states}`;
 
     const transitions = (Array.isArray(memory.transitions) ? memory.transitions : [])
         .filter(item => !item.hiddenFromPrompt)
         .map(item => `- [id=${cleanText(item.id)}｜${cleanText(item.domain)}｜来源第 ${memorySources(item)} 章${item.lockedByUser ? '｜用户锁定' : ''}] ${(item.subjects || []).join('、')}：${cleanText(item.from)} → ${cleanText(item.to)}；原因：${cleanText(item.cause)}${item.impact ? `；长期影响：${cleanText(item.impact)}` : ''}`)
         .join('\n');
-    if (transitions) sections.push(`【已有关键变化】\n${transitions}`);
+    if (transitions) sections.transitions = `【已有关键变化】\n${transitions}`;
 
     const threads = (Array.isArray(memory.threads) ? memory.threads : [])
-        .filter(item => !item.hiddenFromPrompt)
+        .filter(item => !item.hiddenFromPrompt && !(openThreadsOnly && ['resolved', 'abandoned'].includes(item.status)))
         .map(item => `- [id=${cleanText(item.id)}｜${cleanText(item.kind)}｜${cleanText(item.status)}｜初见第 ${item.introducedAt} 章｜最近第 ${item.lastTouchedAt} 章${item.lockedByUser ? '｜用户锁定' : ''}] ${cleanText(item.threadKey)}：${cleanText(item.content)}${item.progress ? `；当前进展：${cleanText(item.progress)}` : ''}${item.resolution ? `；解决：${cleanText(item.resolution)}` : ''}${item.abandonedReason ? `；放弃原因：${cleanText(item.abandonedReason)}` : ''}`)
         .join('\n');
-    if (threads) sections.push(`【已有未完事项及生命周期】\n${threads}`);
+    if (threads) sections.threads = `【已有未完事项及生命周期】\n${threads}`;
 
     const deviations = (Array.isArray(memory.deviations) ? memory.deviations : [])
         .filter(item => !item.hiddenFromPrompt)
         .map(item => `- [id=${cleanText(item.id)}｜${cleanText(item.deviationKey)}｜来源第 ${memorySources(item)} 章${item.lockedByUser ? '｜用户锁定' : ''}] 原线：${cleanText(item.originalCanon) || '未知'}；本梦：${cleanText(item.dreamChange)}；后果：${(item.directConsequences || []).join('；') || '暂无'}；失效默认：${(item.invalidatedAssumptions || []).join('；') || '暂无'}`)
         .join('\n');
-    if (deviations) sections.push(`【已有世界线偏离】\n${deviations}`);
+    if (deviations) sections.deviations = `【已有世界线偏离】\n${deviations}`;
 
     const legacyCards = [
         ...(Array.isArray(memory.legacyCards) ? memory.legacyCards : []),
@@ -112,13 +128,13 @@ function activeMemoryText(memory = {}) {
         .map(card => `- [${cleanText(card.type) || '旧版记忆'}${card.key ? `｜${cleanText(card.key)}` : ''}｜来源第 ${memorySources(card)} 章] ${cleanText(card.content)}`)
         .filter(Boolean)
         .join('\n');
-    if (legacy) sections.push(`【旧版兼容梦脉｜不得丢弃】\n${legacy}`);
+    if (legacy) sections.legacy = `【旧版兼容梦脉｜不得丢弃】\n${legacy}`;
 
     const rejections = (Array.isArray(memory.rejections) ? memory.rejections : [])
         .map(item => `- [${cleanText(item.kind)}] ${cleanText(item.signature)}${item.reason ? `；原因：${cleanText(item.reason)}` : ''}`)
         .join('\n');
-    if (rejections) sections.push(`【用户否定的错误记忆｜不得重新添加】\n${rejections}`);
-    return sections.join('\n\n');
+    if (rejections) sections.rejections = `【用户否定的错误记忆｜不得重新添加】\n${rejections}`;
+    return sections;
 }
 
 function sourceReferenceText(record = {}) {
@@ -173,7 +189,7 @@ export function buildLongDreamMemoryPayload({
     if (!pending.length) throw new Error('没有待织录的已确认章节');
     const relation = record?.inheritance?.worldLineRelation || LONG_DREAM_WORLD_LINE_RELATION.ISOLATED;
     const chapters = pending.map(chapter => `【第 ${chapter.number} 章 · ${cleanText(chapter.title) || `第 ${chapter.number} 章`}】\n${chapterText(chapter)}`).join('\n\n');
-    const existing = boundedText(activeMemoryText(record.memory), maxExistingMemoryChars, true);
+    const existing = weaveMemoryText(record.memory, maxExistingMemoryChars);
     const source = boundedText(sourceReferenceText(record), maxSourceReferenceChars);
     const allowedNumbers = pending.map(chapter => Number(chapter.number));
     const summarizedNumbers = coveredStoryChapters(record);

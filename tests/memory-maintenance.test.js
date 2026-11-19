@@ -64,3 +64,26 @@ test('删过的记录刷新页面和备份后还在', () => {
     assert.equal(normalizeLongDreamRecord(JSON.parse(JSON.stringify(deleted))).memory.deletedItems.length, 1);
     assert.equal(sanitizeLongDreamBackupRecord(deleted).memory.deletedItems.length, 1);
 });
+
+import { weaveMemoryText } from '../long-dream-memory.js';
+
+test('织梦脉的已有梦脉：不超长时原样发送；超长时先省概要和已结束事项，当前状态全部保留', () => {
+    const states = Array.from({ length: 150 }, (_, i) => ({ id: 'state-' + i, subjects: ['林晚'], attribute: 'relationship', topic: '主题' + i, value: '表面疏离，私下仍会替对方遮掩。'.repeat(3), validFromChapter: 1, sourceChapterNumbers: [1] }));
+    const transitions = Array.from({ length: 80 }, (_, i) => ({ id: 'tr-' + i, subjects: ['林晚'], domain: 'relationship', from: '提防', to: '同谋', cause: '码头那夜她替他挡下盘问。'.repeat(3), sourceChapterNumbers: [1] }));
+    const threads = [
+        { id: 'th-open', threadKey: '银钥匙', kind: 'mystery', status: 'open', content: '钥匙开哪扇门', introducedAt: 1, lastTouchedAt: 1, subjects: ['林晚'], sourceChapterNumbers: [1] },
+        { id: 'th-done', threadKey: '旧信', kind: 'mystery', status: 'resolved', content: '旧信是谁写的', resolution: '是母亲', introducedAt: 1, lastTouchedAt: 2, subjects: ['林晚'], sourceChapterNumbers: [1] },
+    ];
+    const small = { currentState: '第 1 章：她拿到账本。', states: states.slice(0, 3), threads };
+    assert.equal(weaveMemoryText(small, 16000).includes('【故事概要'), true);
+    assert.equal(weaveMemoryText(small, 16000).includes('旧信'), true);
+    assert.doesNotMatch(weaveMemoryText(small, 16000), /梦脉较多/);
+    const big = { currentState: '第 1 章：她拿到账本。'.repeat(200), states, transitions, threads };
+    const text = weaveMemoryText(big, 16000);
+    assert.ok(text.length <= 16000);
+    assert.match(text, /梦脉较多/);
+    assert.doesNotMatch(text, /【故事概要/);
+    assert.doesNotMatch(text, /旧信/);
+    assert.match(text, /银钥匙/);
+    assert.equal((text.match(/\[id=state-/g) || []).length, 150);
+});
