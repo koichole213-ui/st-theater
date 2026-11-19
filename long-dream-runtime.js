@@ -917,7 +917,7 @@ async function weaveLongDreamMemoryBatch(dreamId, { force = false, announce = fa
         runtime.runtimeLog('info', '梦脉织录完成', {
             dream_id: String(dream.id),
             through_chapter: payload.throughChapter,
-            operations_applied: Array.isArray(patch.operations) ? patch.operations.length : 0,
+            operations_returned: Array.isArray(patch.operations) ? patch.operations.length : 0, // returned by the side API, before conflicts or skips
             legacy_cards_added: Array.isArray(patch.cards) ? patch.cards.length : 0,
             invalid_operations: Number(patch.invalidOperationCount) || 0,
             corrected_chapter_numbers: Number(patch.correctedChapterCount) || 0,
