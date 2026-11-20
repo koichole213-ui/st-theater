@@ -86,6 +86,39 @@ test('新手引导：只给真正的新用户自动弹一次', () => {
     assert.equal(shouldAutoStartOnboarding({ ...fresh(), settings: { archiveFingerprints: { 'http://x#1': { history: 0, dreams: 0 } } } }), true);
 });
 
+test('新手引导（小砚审查）：有最近生成或当前结果、存档被关、数量异常时都不自动弹', () => {
+    const fresh = () => ({ settings: { onboardingDone: false, archiveFingerprints: {} }, historyCache: [], longDreamCache: [], storageReadErrors: {} });
+    assert.equal(shouldAutoStartOnboarding({ ...fresh(), recentCache: [{ html: '<p>最近一篇</p>' }] }), false);
+    assert.equal(shouldAutoStartOnboarding({ ...fresh(), currentGenerationResult: { html: '<p>当前结果</p>' } }), false);
+    // 存档被浏览器关掉：页面上有抢救横条，引导不能盖住它。
+    assert.equal(shouldAutoStartOnboarding({ ...fresh(), archiveClosed: true }), false);
+    assert.equal(shouldAutoStartOnboarding({ ...fresh(), settings: { archiveFingerprints: { 'http://x#1': { history: 0, dreams: 0, lossSuspected: { found: {} } } } } }), false);
+    assert.equal(shouldAutoStartOnboarding({ ...fresh(), recentCache: [] }), true);
+});
+
+test('关主弹窗时一并收起引导（Esc 关窗也不留下窗口尺寸监听）', () => {
+    const source = readTheaterImplementation();
+    const open = source.match(/async function openTheaterPopup\([\s\S]*?\n\}/)?.[0] || '';
+    assert.match(open, /const onPopupClosed = \(\) => \{[\s\S]*?runtime\.activeTheaterPopupSession = null;\n\s*runtime\.closeOnboarding\(\);/);
+});
+
+test('宽屏阅读书签只在右侧内容区里停靠，窄屏仍按整个弹窗', () => {
+    const source = readTheaterImplementation();
+    const extract = name => source.match(new RegExp(`function ${name}\\([^]*?^}`, 'm'))?.[0] || '';
+    const contentRect = { top: 120, right: 1240, bottom: 730, left: 330, width: 910, height: 610 };
+    const popupRect = { top: 30, right: 1270, bottom: 740, left: 95, width: 1175, height: 710 };
+    const run = headVisible => runInNewContext(`${extract('resultBookmarkRect')}\nresultBookmarkRect();`, {
+        window: { innerWidth: 1366, innerHeight: 768 },
+        document: {
+            querySelector: selector => selector.endsWith('.theater-page-head') ? { getClientRects: () => (headVisible ? [{}] : []) }
+                : selector.endsWith('.theater-panels-wrapper') ? { getBoundingClientRect: () => contentRect }
+                    : selector === '.theater-popup' ? { getBoundingClientRect: () => popupRect } : null,
+        },
+    });
+    assert.equal(run(true).left, 330);
+    assert.equal(run(false).left, 95);
+});
+
 test('新手引导：八步，每步指向存在的页面，最后一步按宽窄屏说清重看入口', () => {
     assert.equal(ONBOARDING_STEPS.length, 8);
     assert.deepEqual(ONBOARDING_STEPS[0].tabs, []);

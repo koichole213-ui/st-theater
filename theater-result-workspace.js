@@ -28,6 +28,10 @@ function closeResultActions() {
 
 // @theater-source-begin resultBookmarkRect
 function resultBookmarkRect() {
+    // 宽屏左栏导航时只在右侧内容区里停靠，不盖住导航；窄屏标题行隐藏，仍按整个弹窗。
+    const pageHead = document.querySelector('.theater-main-popup .theater-page-head');
+    const content = pageHead?.getClientRects?.().length ? document.querySelector('.theater-main-popup > .theater-panels-wrapper') : null;
+    if (content) return content.getBoundingClientRect();
     const popup = document.querySelector('.theater-popup');
     return popup?.getBoundingClientRect() || {
         top: 0,

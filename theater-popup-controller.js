@@ -49,6 +49,7 @@ async function openTheaterPopup(initialTabOverride = '') {
         closed = true;
         if (runtime.activeTheaterPopupSession !== session) return;
         runtime.activeTheaterPopupSession = null;
+        runtime.closeOnboarding();
         cancelManualRelayout(runtime);
         runtime.closeInstructionActionMenus();
         closeHistoryMenus();

@@ -95,7 +95,7 @@ test('长梦首帧使用当前页面，慢资料完成后不重建输入或抢�
         } });
     `, {
         settings: { lastTheaterTab: 'long-dream' }, $: () => ui, esc: value => value,
-        maybeStartOnboarding() {},
+        maybeStartOnboarding() {}, closeOnboarding() {},
         document: { getElementById: () => ({}) },
         SillyTavern: { getContext: () => ({ POPUP_TYPE: { TEXT: 1 }, Popup: class {
             constructor(html) { screen.html = html; screen.writes++; }

@@ -49,14 +49,17 @@ export const ONBOARDING_STEPS = [
     },
 ];
 
-// 只给真正的新用户自动弹：没走过引导、没有作品、存档读取正常、以前也没在任何浏览器存过作品。
+// 只给真正的新用户自动弹：没走过引导、没有作品（含最近生成和当前结果）、存档读取正常、
+// 存档没被浏览器关掉、以前也没在任何浏览器存过作品或被提醒过数量异常。
 export function shouldAutoStartOnboarding(runtime) {
     const settings = runtime.settings || {};
     if (settings.onboardingDone) return false;
     if ((runtime.historyCache?.length || 0) > 0 || (runtime.longDreamCache?.length || 0) > 0) return false;
+    if ((runtime.recentCache?.length || 0) > 0 || runtime.currentGenerationResult) return false;
+    if (runtime.archiveClosed) return false;
     if (Object.values(runtime.storageReadErrors || {}).some(Boolean)) return false;
     const prints = Object.values(settings.archiveFingerprints || {});
-    if (prints.some(print => (Number(print?.history) || 0) + (Number(print?.dreams) || 0) > 0)) return false;
+    if (prints.some(print => print?.lossSuspected || (Number(print?.history) || 0) + (Number(print?.dreams) || 0) > 0)) return false;
     return true;
 }
 
