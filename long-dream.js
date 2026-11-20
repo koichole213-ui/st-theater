@@ -498,6 +498,12 @@ export function createLongDreamRecord({
     };
 }
 
+// The id a stored chapter is read with; old chapters without one get their original position,
+// so callers can find the stored entry again even when empty chapters before it were dropped.
+export function longDreamChapterStoredId(chapter, index) {
+    return cleanText(chapter?.id, 80) || `chapter-${index + 1}`;
+}
+
 export function normalizeLongDreamRecord(record = {}) {
     const now = new Date().toISOString();
     const createdAt = normalizeIsoDate(record.createdAt, now);
@@ -507,7 +513,7 @@ export function normalizeLongDreamRecord(record = {}) {
             const html = String(chapter?.html || '');
             if (!text.trim() && !html.trim()) return null;
             return {
-                id: cleanText(chapter?.id, 80) || `chapter-${index + 1}`,
+                id: longDreamChapterStoredId(chapter, index),
                 number: index + 1,
                 title: cleanText(chapter?.title, 80) || `第 ${index + 1} 章`,
                 instruction: String(chapter?.instruction || ''),

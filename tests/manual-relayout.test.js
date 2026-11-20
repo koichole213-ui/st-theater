@@ -337,3 +337,25 @@ test('子代理复审：本地写入失败时只报写入失败，不再叠加�
     assert.ok(notices.length > 0, '写入失败有提示');
     assert.deepEqual(notices.filter(text => text.includes('刚刚有变动')), []);
 });
+
+test('小砚复审：前面有被过滤的空章、章节没有编号时，重新排版写回点的那一章', async t => {
+    const { runtime, dream } = dreamFixture(t, 'chapter');
+    const body = dream.chapters[1];
+    const strip = chapter => { const copy = { ...chapter }; delete copy.id; return copy; };
+    // 存档：空章、甲章、乙章；甲乙都没有编号，正文和排版完全相同
+    let stored = { ...dream, chapters: [{ text: '', html: '' }, strip(body), strip(body)] };
+    const normalized = normalizeLongDreamRecord(stored);
+    runtime.longDreamCache = [normalized];
+    runtime.activeLongDreamChapterId = normalized.chapters[1].id; // 点的是乙章
+    runtime.idb = { transaction() {
+        const tx = { abort: () => setImmediate(() => tx.onabort?.()) };
+        tx.objectStore = () => ({
+            get() { const req = {}; queueMicrotask(() => { req.result = structuredClone(stored); req.onsuccess(); }); return req; },
+            put(record) { setImmediate(() => { stored = structuredClone(record); tx.oncomplete(); }); },
+        });
+        return tx;
+    } };
+    assert.equal(await runManualRelayout(runtime, 'chapter'), true);
+    assert.equal(stored.chapters[2].html, formatted, '乙章被重新排版');
+    assert.equal(stored.chapters[1].html, body.html, '甲章不动');
+});

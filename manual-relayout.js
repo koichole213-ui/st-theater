@@ -1,6 +1,6 @@
 import { displayedContinuationVersion } from './continuation-session.js';
 import { isStagedRenderTarget } from './length-policy.js';
-import { normalizeLongDreamRecord } from './long-dream.js';
+import { normalizeLongDreamRecord, longDreamChapterStoredId } from './long-dream.js';
 
 const jobs = new WeakMap();
 
@@ -189,8 +189,8 @@ function dreamJobTarget(runtime, scope) {
                     return { ...dream, draft: { ...dream.draft, ...draft, html, mode, candidates } };
                 }
                 const chapters = dream.chapters.slice();
-                const chapterIndex = chapters.findIndex(entry => entry?.id === current.id);
-                const rawIndex = chapterIndex >= 0 ? chapterIndex : index;
+                // Match the stored entry the way it was read (ids of old chapters come from their stored position).
+                const rawIndex = chapters.findIndex((entry, position) => longDreamChapterStoredId(entry, position) === current.id);
                 const raw = chapters[rawIndex];
                 // Stored chapters may lack html or hold null; compare the way the record was read.
                 if (!raw || String(raw.html ?? '') !== String(current.html ?? '') || raw.text !== current.text) { changedElsewhere = true; return null; }
