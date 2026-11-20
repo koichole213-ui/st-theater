@@ -360,6 +360,12 @@ html[data-theater-tone="dark"] .theater-popup[data-skin="theater"] {
     padding: 18px 20px calc(22px + env(safe-area-inset-bottom, 0px));
     border-radius: 18px 18px 0 0;
 }
+.theater-onboarding-card.is-sheet.is-top {
+    top: 0 !important;
+    bottom: auto;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 20px 18px;
+    border-radius: 0 0 18px 18px;
+}
 .theater-onboarding-top,
 .theater-onboarding-foot {
     display: flex;

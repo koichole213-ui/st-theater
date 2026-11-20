@@ -75,29 +75,32 @@ function safeQuery(root, selector) {
     try { return root.querySelector(selector); } catch { return null; } // 老浏览器不认 :has() 时当作找不到
 }
 
-// 最近的可滚动祖先（到弹窗为止）。
-function scrollParent(el, stop) {
+// 目标外面所有能纵向滚动的祖先，从里到外，到酒馆弹窗（dialog）为止，不碰酒馆页面本身。
+function scrollParents(el, stop) {
+    const found = [];
     for (let node = el?.parentElement; node && node !== stop; node = node.parentElement) {
         const style = getComputedStyle(node);
-        if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1) return node;
+        if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1) found.push(node);
     }
-    return null;
+    return found;
 }
 
-// 让目标露出来：横向标签行居中；纵向滚动区里，看不全就把它的顶边挪到上方。
-function bringIntoView(el, stop, { sheet = false } = {}) {
+// 让目标露出来：横向标签行居中；纵向从里到外逐层滚，看不全就把顶边挪到上方。
+// limitBottom：手机底部卡片的上沿，目标要露在它上面。
+export function bringIntoView(el, stop, { limitBottom = Infinity } = {}) {
     const row = el.closest('.theater-tabs');
     if (row && row.scrollWidth > row.clientWidth + 1) {
         const box = row.getBoundingClientRect();
         const rect = el.getBoundingClientRect();
         if (rect.left < box.left || rect.right > box.right) row.scrollLeft += rect.left - box.left - (box.width - rect.width) / 2;
     }
-    const scroller = scrollParent(el, stop);
-    if (!scroller) return;
-    const box = scroller.getBoundingClientRect();
-    const rect = el.getBoundingClientRect();
-    const visibleBottom = sheet ? box.top + box.height * 0.5 : box.bottom;
-    if (rect.top < box.top || rect.bottom > visibleBottom) scroller.scrollTop += rect.top - box.top - 12;
+    for (const scroller of scrollParents(el, stop)) {
+        const box = scroller.getBoundingClientRect();
+        const rect = el.getBoundingClientRect();
+        const bandTop = box.top + 12;
+        const bandBottom = Math.min(box.bottom, limitBottom) - 12;
+        if (rect.top < bandTop || rect.bottom > bandBottom) scroller.scrollTop += rect.top - bandTop;
+    }
 }
 
 export function createTheaterOnboarding(runtime) {
@@ -147,6 +150,7 @@ export function createTheaterOnboarding(runtime) {
         const wide = isWide();
         const targets = targetsFor(step, popup);
         card.classList.toggle('is-sheet', !wide);
+        card.classList.remove('is-top');
         if (!targets.length) {
             overlay.classList.add('is-centered');
             spot.hidden = true;
@@ -157,7 +161,9 @@ export function createTheaterOnboarding(runtime) {
             return;
         }
         overlay.classList.remove('is-centered');
-        bringIntoView(targets[0], popup.parentElement, { sheet: !wide });
+        bringIntoView(targets[0], host, { limitBottom: wide ? Infinity : card.getBoundingClientRect().top });
+        // 手机：目标在内容最底下、滚不上来时，卡片改到顶上，别盖住它。
+        if (!wide && targets[0].getBoundingClientRect().top > card.getBoundingClientRect().top - 24) card.classList.add('is-top');
         const hostRect = host.getBoundingClientRect();
         const offsetX = hostRect.left + (host.clientLeft || 0);
         const offsetY = hostRect.top + (host.clientTop || 0);

@@ -14,11 +14,11 @@ export const PAGE_GUIDES = {
         { pick: ['#theater-result-actions-toggle', '#theater-output-section'], title: '结果操作', body: '点「保存」才会存进历史，不点只留最近 3 篇。这里还有全屏阅读、续写、编辑文字、重新排版、纯文字阅读。「操作」按钮可以拖到左右页边。' },
     ],
     'long-dream': [
-        { pick: ['.theater-dream-create', '.theater-dream-list'], title: '开卷', body: '长梦从一篇小剧场开始：正在看的、最近生成的、历史里存过的都可以；也可以选一个历史文件夹，按顺序整个导入成多章。' },
+        { pick: ['.theater-dream-create', '.theater-dream-empty [data-dream-new]', '#theater-dream-new', '.theater-dream-list'], title: '开卷', body: '长梦从一篇小剧场开始：正在看的、最近生成的、历史里存过的都可以；也可以选一个历史文件夹，按顺序整个导入成多章。' },
         { pick: ['#theater-dream-create-confirm', '.theater-dream-form-grid'], title: '定梦', body: '写长卷名字和必须遵守的硬设定，点「确认定梦并开卷」。这时的角色卡、人设、世界书会存一份快照，后面照着写。' },
         { pick: [], title: '梦脉副 API', body: '梦脉和概要要用副 API 来整理。先在 设置 → 正文生成线路 → 梦脉织录 里选一个 API 预设，用便宜快的模型就行。不绑副 API，梦脉和概要就没法整理。' },
         { pick: ['#theater-dream-next-instruction'], title: '续写下一章', body: '写这一章想看什么。「本章选项与上下文」里可以写章名、定目标字数；每章写得很长时，「带入全文」选最近 1 章，发给模型的内容会少很多。' },
-        { pick: ['.theater-dream-candidate-actions'], title: '待确认', body: '写好的章先放在待确认，满意再确认收进正文；不满意就重写，想留的版本点保留。' },
+        { pick: ['.theater-dream-review-choice', '.theater-dream-candidate-actions'], title: '待确认', body: '写好的章先放在待确认，满意再确认收进正文；不满意就重写，想留的版本点保留。' },
         { pick: ['.theater-dream-memory-flow', '.theater-dream-summary-history'], title: '梦脉与概要', body: '确认后，梦脉会记下人物状态、关系和没收的伏笔，默认每 3 章整理一次。记错的条目点开就能改或删除。章节多了，全篇概要可以「精简概要」压短。作品菜单里能导出备份。' },
     ],
     setting: [

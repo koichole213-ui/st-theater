@@ -95,3 +95,44 @@ test('新手引导和左栏：改成“保存了才在历史里”，最后一�
     assert.equal(THEATER_PAGES.history.hint, '存下的作品');
     assert.match(THEATER_PAGES.history.desc, /点过「保存」的作品/);
 });
+
+test('小砚审查：长梦空页点亮「创建第一部长梦」，待确认点亮保留和确认那一排', () => {
+    const [open, , , , review] = PAGE_GUIDES['long-dream'];
+    assert.ok(open.pick.includes('.theater-dream-empty [data-dream-new]'));
+    assert.equal(review.pick[0], '.theater-dream-review-choice');
+    const create = read('long-dream-workspace-create.js');
+    assert.match(create, /class="ui-card theater-dream-empty"[\s\S]*?data-dream-new[^>]*>创建第一部长梦/);
+    const workspace = read('long-dream-workspace.js');
+    assert.match(workspace, /<div class="theater-dream-review-choice">[\s\S]*?id="theater-dream-keep-candidate"/);
+});
+
+test('小砚审查：手机上目标要露在底部卡片上面——从里到外逐层滚，不碰酒馆页面', async () => {
+    const { bringIntoView } = await import('../theater-onboarding.js');
+    const dialog = { tag: 'dialog' };
+    const outer = { parentElement: dialog, scrollTop: 0, scrollHeight: 3000, clientHeight: 800, top: 0, height: 800 };
+    const inner = { parentElement: outer, scrollTop: 0, scrollHeight: 2000, clientHeight: 600, top: 100, height: 600 };
+    const rectOf = node => ({ top: node.top - outer.scrollTop, bottom: node.top - outer.scrollTop + node.height });
+    let targetTop = 1500;
+    const target = {
+        parentElement: inner,
+        closest: () => null,
+        getBoundingClientRect: () => { const top = targetTop - inner.scrollTop - outer.scrollTop; return { top, bottom: top + 40 }; },
+    };
+    inner.getBoundingClientRect = () => rectOf(inner);
+    outer.getBoundingClientRect = () => ({ top: 0, bottom: 800 });
+    globalThis.getComputedStyle = () => ({ overflowY: 'auto' });
+    try {
+        bringIntoView(target, dialog, { limitBottom: 520 });
+        const rect = target.getBoundingClientRect();
+        assert.ok(rect.top >= 0 && rect.bottom <= 520 - 12, JSON.stringify(rect));
+        // 已经露在卡片上面的不动。
+        const before = [inner.scrollTop, outer.scrollTop];
+        bringIntoView(target, dialog, { limitBottom: 520 });
+        assert.deepEqual([inner.scrollTop, outer.scrollTop], before);
+    } finally {
+        delete globalThis.getComputedStyle;
+    }
+    // 滚到底也露不出来时，卡片改到顶上。
+    assert.match(read('theater-onboarding.js'), /card\.classList\.add\('is-top'\)/);
+    assert.match(readStyles(), /\.theater-onboarding-card\.is-sheet\.is-top \{\s*top: 0 !important;/);
+});
