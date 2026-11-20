@@ -3,6 +3,7 @@
 // 换设备也不会再自动弹。电脑左栏底部、手机「设置 → 界面与快捷入口」可以再看。
 // 遮罩挂在酒馆弹窗（dialog）上，不改动任何页面内容；关弹窗时随弹窗一起消失。
 import { THEATER_WIDE_QUERY } from './theater-nav.js';
+import { PAGE_GUIDES } from './theater-page-guides.js';
 
 export const ONBOARDING_STEPS = [
     {
@@ -32,20 +33,20 @@ export const ONBOARDING_STEPS = [
     },
     {
         tabs: ['history'],
-        title: '写过的都在历史里',
-        body: '作品存在这个浏览器里。插件默认还会在酒馆服务器上备份一份（有变化才备份），在设置里也能再备份到 GitHub。',
+        title: '保存了才在历史里',
+        body: '生成的作品点「保存」才会存进历史，没保存的只留最近 3 篇。\n作品存在这个浏览器里，插件默认还会在酒馆服务器上备份一份（有变化才备份），在设置里也能再备份到 GitHub。',
     },
     {
         tabs: ['diagnostics'],
         title: '报错了怎么办',
-        body: '报错弹窗会写原因和处理办法。还是不行的话，去诊断导出排查文件，发给作者。',
+        body: '报错弹窗会写原因和处理办法。还是不行的话，去诊断点「导出排查 TXT」，把下载的文件发给作者；只发截图作者没法查。',
     },
     {
         tabs: ['config'],
         wideTarget: '#theater-onboarding-nav-btn',
         title: '就这些',
-        body: '想再看一遍：设置 → 界面与快捷入口 → 新手引导。',
-        wideBody: '想再看一遍，点左下角的新手引导。',
+        body: '每一页右上角的 ? 会细说这一页怎么用。\n想再看一遍这个引导：设置 → 界面与快捷入口 → 新手引导。',
+        wideBody: '每一页标题右边的「这页怎么用」会细说这一页。\n想再看一遍这个引导，点左下角的新手引导。',
     },
 ];
 
@@ -68,17 +69,35 @@ const COPIED_TOKENS = ['--t-fg', '--t-fg-soft', '--t-bg', '--t-surface-1', '--t-
     '--t-accent', '--t-accent-soft', '--t-accent-deep', '--t-on-accent', '--t-font-serif', '--t-font-sans',
     '--t-text-xs', '--t-text-sm', '--t-text-base', '--t-text-lg', '--t-dur-base'];
 
-// 让 el 在可滚动的 container 里露出来（横向标签行 / 纵向左栏）。
-function bringIntoView(container, el) {
-    if (!container || !el) return;
-    const box = container.getBoundingClientRect();
+const isVisible = el => Boolean(el?.isConnected && el.getClientRects().length && !el.closest('[hidden]'));
+
+function safeQuery(root, selector) {
+    try { return root.querySelector(selector); } catch { return null; } // 老浏览器不认 :has() 时当作找不到
+}
+
+// 最近的可滚动祖先（到弹窗为止）。
+function scrollParent(el, stop) {
+    for (let node = el?.parentElement; node && node !== stop; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1) return node;
+    }
+    return null;
+}
+
+// 让目标露出来：横向标签行居中；纵向滚动区里，看不全就把它的顶边挪到上方。
+function bringIntoView(el, stop, { sheet = false } = {}) {
+    const row = el.closest('.theater-tabs');
+    if (row && row.scrollWidth > row.clientWidth + 1) {
+        const box = row.getBoundingClientRect();
+        const rect = el.getBoundingClientRect();
+        if (rect.left < box.left || rect.right > box.right) row.scrollLeft += rect.left - box.left - (box.width - rect.width) / 2;
+    }
+    const scroller = scrollParent(el, stop);
+    if (!scroller) return;
+    const box = scroller.getBoundingClientRect();
     const rect = el.getBoundingClientRect();
-    if (container.scrollWidth > container.clientWidth + 1 && (rect.left < box.left || rect.right > box.right)) {
-        container.scrollLeft += rect.left - box.left - (box.width - rect.width) / 2;
-    }
-    if (container.scrollHeight > container.clientHeight + 1 && (rect.top < box.top || rect.bottom > box.bottom)) {
-        container.scrollTop += rect.top - box.top - (box.height - rect.height) / 2;
-    }
+    const visibleBottom = sheet ? box.top + box.height * 0.5 : box.bottom;
+    if (rect.top < box.top || rect.bottom > visibleBottom) scroller.scrollTop += rect.top - box.top - 12;
 }
 
 export function createTheaterOnboarding(runtime) {
@@ -93,29 +112,40 @@ export function createTheaterOnboarding(runtime) {
         active = null;
     }
 
-    function markDone() {
-        if (!runtime.settings.onboardingDone) {
-            runtime.settings.onboardingDone = true;
-            runtime.save();
-        }
-    }
-
+    // 新手引导：step.tabs 全部点亮（宽屏可换成 wideTarget）；页面引导：step.pick 取第一个看得见的。
     function targetsFor(step, popup) {
         const wide = isWide();
-        if (wide && step.wideTarget) return [popup.querySelector(step.wideTarget)].filter(Boolean);
-        return step.tabs.map(tab => popup.querySelector(`.theater-tab[data-tab="${tab}"]`)).filter(Boolean);
+        if (wide && step.wideTarget) return [safeQuery(popup, step.wideTarget)].filter(isVisible);
+        if (step.tabs) return step.tabs.map(tab => safeQuery(popup, `.theater-tab[data-tab="${tab}"]`)).filter(isVisible);
+        for (const selector of step.pick || []) {
+            const el = safeQuery(popup, selector);
+            if (isVisible(el)) return [el];
+        }
+        return [];
+    }
+
+    function placeCard(card, overlay, spot) {
+        const W = overlay.clientWidth, H = overlay.clientHeight, w = card.offsetWidth, h = card.offsetHeight, gap = 18, m = 12;
+        const clampTop = top => Math.min(Math.max(m, top), H - h - m);
+        const clampLeft = left => Math.min(Math.max(m, left), W - w - m);
+        const middleY = (spot.top + spot.bottom) / 2;
+        let left, top;
+        if (spot.right + gap + w <= W - m) { left = spot.right + gap; top = clampTop(middleY - h / 2); }
+        else if (spot.left - gap - w >= m) { left = spot.left - gap - w; top = clampTop(middleY - h / 2); }
+        else if (spot.bottom + gap + h <= H - m) { left = clampLeft(spot.left); top = spot.bottom + gap; }
+        else if (spot.top - gap - h >= m) { left = clampLeft(spot.left); top = spot.top - gap - h; }
+        else { left = W - w - m; top = H - h - m; }
+        card.style.left = `${Math.max(m, left)}px`;
+        card.style.top = `${Math.max(m, top)}px`;
     }
 
     function place() {
         if (!active) return;
-        const { overlay, host, popup, spot, card } = active;
+        const { overlay, host, popup, spot, card, steps } = active;
         if (!overlay.isConnected || !popup.isConnected) { closeOnboarding(); return; }
-        const step = ONBOARDING_STEPS[active.index];
+        const step = steps[active.index];
         const wide = isWide();
         const targets = targetsFor(step, popup);
-        const hostRect = host.getBoundingClientRect();
-        const offsetX = hostRect.left + (host.clientLeft || 0);
-        const offsetY = hostRect.top + (host.clientTop || 0);
         card.classList.toggle('is-sheet', !wide);
         if (!targets.length) {
             overlay.classList.add('is-centered');
@@ -127,64 +157,64 @@ export function createTheaterOnboarding(runtime) {
             return;
         }
         overlay.classList.remove('is-centered');
-        const scroller = targets[0].closest('.theater-tabs');
-        bringIntoView(scroller, targets[0]);
+        bringIntoView(targets[0], popup.parentElement, { sheet: !wide });
+        const hostRect = host.getBoundingClientRect();
+        const offsetX = hostRect.left + (host.clientLeft || 0);
+        const offsetY = hostRect.top + (host.clientTop || 0);
         const rects = targets.map(target => target.getBoundingClientRect());
-        const pad = 4;
-        const left = Math.min(...rects.map(r => r.left)) - offsetX - pad;
-        const top = Math.min(...rects.map(r => r.top)) - offsetY - pad;
-        const right = Math.max(...rects.map(r => r.right)) - offsetX + pad;
-        const bottom = Math.max(...rects.map(r => r.bottom)) - offsetY + pad;
+        const pad = 4, W = overlay.clientWidth, H = overlay.clientHeight;
+        const box = {
+            left: Math.max(4, Math.min(...rects.map(r => r.left)) - offsetX - pad),
+            top: Math.max(4, Math.min(...rects.map(r => r.top)) - offsetY - pad),
+            right: Math.min(W - 4, Math.max(...rects.map(r => r.right)) - offsetX + pad),
+            bottom: Math.min(H - 4, Math.max(...rects.map(r => r.bottom)) - offsetY + pad),
+        };
         spot.hidden = false;
-        Object.assign(spot.style, { left: `${left}px`, top: `${top}px`, width: `${right - left}px`, height: `${bottom - top}px` });
-        if (wide) {
-            const cardLeft = Math.min(right + 18, overlay.clientWidth - card.offsetWidth - 12);
-            const middle = (top + bottom) / 2;
-            const cardTop = Math.min(Math.max(12, middle - card.offsetHeight / 2), overlay.clientHeight - card.offsetHeight - 12);
-            card.style.left = `${Math.max(12, cardLeft)}px`;
-            card.style.top = `${Math.max(12, cardTop)}px`;
-        }
+        Object.assign(spot.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${Math.max(0, box.right - box.left)}px`, height: `${Math.max(0, box.bottom - box.top)}px` });
+        if (wide) placeCard(card, overlay, box);
     }
 
     function render() {
         if (!active) return;
-        const { card, index } = active;
-        const step = ONBOARDING_STEPS[index];
-        const last = index === ONBOARDING_STEPS.length - 1;
-        card.querySelector('.theater-onboarding-count').textContent = index === 0 ? '新手引导' : `${index} / ${ONBOARDING_STEPS.length - 1}`;
+        const { card, index, steps, label } = active;
+        const step = steps[index];
+        const last = index === steps.length - 1;
+        card.querySelector('.theater-onboarding-count').textContent = active.countText(index, steps.length);
         card.querySelector('.theater-onboarding-title').textContent = step.title;
         card.querySelector('.theater-onboarding-body').textContent = isWide() && step.wideBody ? step.wideBody : step.body;
-        card.querySelector('.theater-onboarding-skip').hidden = last;
+        card.querySelector('.theater-onboarding-skip').hidden = last && !active.alwaysClosable;
+        card.querySelector('.theater-onboarding-skip').textContent = active.skipLabel;
         card.querySelector('.theater-onboarding-prev').hidden = index === 0;
-        card.querySelector('.theater-onboarding-next').textContent = index === 0 ? '开始看看' : (last ? '完成' : '下一步');
+        card.querySelector('.theater-onboarding-next').textContent = active.nextLabel(index, last);
         card.querySelectorAll('.theater-onboarding-dots span').forEach((dot, i) => dot.classList.toggle('on', i === index));
+        active.overlay.setAttribute('aria-label', label);
         place();
         card.querySelector('.theater-onboarding-next').focus({ preventScroll: true });
     }
 
     function go(index) {
         if (!active) return;
-        active.index = Math.max(0, Math.min(ONBOARDING_STEPS.length - 1, index));
+        active.index = Math.max(0, Math.min(active.steps.length - 1, index));
         render();
     }
 
-    function startOnboarding() {
+    // 通用的分步引导：遮罩挂在酒馆弹窗（dialog）上，关弹窗时一起消失。
+    function startTour({ steps, label, countText, nextLabel, skipLabel = '跳过', alwaysClosable = false, onEnd = () => {} }) {
         const popup = document.querySelector('.theater-main-popup');
-        if (!popup) return false;
+        if (!popup || !steps?.length) return false;
         closeOnboarding();
         const host = popup.closest('dialog, .popup') || popup.parentElement;
         const overlay = document.createElement('div');
         overlay.className = 'theater-onboarding';
         overlay.setAttribute('role', 'dialog');
         overlay.setAttribute('aria-modal', 'true');
-        overlay.setAttribute('aria-label', '新手引导');
         overlay.innerHTML = `<div class="theater-onboarding-spot" hidden></div>
 <div class="theater-onboarding-card">
-    <div class="theater-onboarding-top"><span class="theater-onboarding-count"></span><button type="button" class="theater-onboarding-skip">跳过</button></div>
+    <div class="theater-onboarding-top"><span class="theater-onboarding-count"></span><button type="button" class="theater-onboarding-skip"></button></div>
     <h3 class="theater-onboarding-title"></h3>
     <p class="theater-onboarding-body"></p>
     <div class="theater-onboarding-foot">
-        <div class="theater-onboarding-dots" aria-hidden="true">${ONBOARDING_STEPS.map(() => '<span></span>').join('')}</div>
+        <div class="theater-onboarding-dots" aria-hidden="true">${steps.map(() => '<span></span>').join('')}</div>
         <div class="theater-onboarding-actions"><button type="button" class="theater-onboarding-prev">上一步</button><button type="button" class="theater-onboarding-next"></button></div>
     </div>
 </div>`;
@@ -195,17 +225,17 @@ export function createTheaterOnboarding(runtime) {
         });
         host.appendChild(overlay);
         const card = overlay.querySelector('.theater-onboarding-card');
-        active = { overlay, host, popup, card, spot: overlay.querySelector('.theater-onboarding-spot'), index: 0, onResize: () => place() };
+        active = { overlay, host, popup, card, spot: overlay.querySelector('.theater-onboarding-spot'), index: 0, steps, label, countText, nextLabel, skipLabel, alwaysClosable, onResize: () => place() };
         window.addEventListener('resize', active.onResize);
         // 引导期间点遮罩不穿透到下面的页面。
         overlay.addEventListener('click', event => {
             const button = event.target.closest('button');
             event.stopPropagation();
             if (!button || !active) return;
-            if (button.classList.contains('theater-onboarding-skip')) { markDone(); closeOnboarding(); return; }
+            if (button.classList.contains('theater-onboarding-skip')) { closeOnboarding(); onEnd('skip'); return; }
             if (button.classList.contains('theater-onboarding-prev')) { go(active.index - 1); return; }
             if (button.classList.contains('theater-onboarding-next')) {
-                if (active.index === ONBOARDING_STEPS.length - 1) { markDone(); closeOnboarding(); return; }
+                if (active.index === active.steps.length - 1) { closeOnboarding(); onEnd('finish'); return; }
                 go(active.index + 1);
             }
         });
@@ -213,10 +243,52 @@ export function createTheaterOnboarding(runtime) {
         return true;
     }
 
+    function markDone() {
+        if (!runtime.settings.onboardingDone) {
+            runtime.settings.onboardingDone = true;
+            runtime.save();
+        }
+    }
+
+    function startOnboarding() {
+        return startTour({
+            steps: ONBOARDING_STEPS,
+            label: '新手引导',
+            countText: (index, total) => index === 0 ? '新手引导' : `${index} / ${total - 1}`,
+            nextLabel: (index, last) => index === 0 ? '开始看看' : (last ? '完成' : '下一步'),
+            onEnd: markDone,
+        });
+    }
+
     function maybeStartOnboarding() {
         if (!shouldAutoStartOnboarding(runtime)) return false;
         return startOnboarding();
     }
 
-    return { startOnboarding, maybeStartOnboarding, closeOnboarding };
+    function currentTab() {
+        return document.querySelector('.theater-main-popup .theater-tab.active')?.getAttribute('data-tab') || runtime.settings.lastTheaterTab || 'generate';
+    }
+
+    // 「这页怎么用」：打开就算看过，小点熄灭。
+    function startPageGuide(tab = currentTab()) {
+        const steps = PAGE_GUIDES[tab];
+        const name = document.querySelector(`.theater-main-popup .theater-tab[data-tab="${tab}"]`)?.getAttribute('data-page-title') || '';
+        if (!steps) return false;
+        const seen = runtime.settings.pageGuidesSeen && typeof runtime.settings.pageGuidesSeen === 'object' ? runtime.settings.pageGuidesSeen : {};
+        if (!seen[tab]) {
+            runtime.settings.pageGuidesSeen = { ...seen, [tab]: true };
+            runtime.save();
+        }
+        document.querySelectorAll('.theater-main-popup .theater-page-guide-dot').forEach(dot => { dot.hidden = true; });
+        return startTour({
+            steps,
+            label: `${name}这页怎么用`,
+            countText: (index, total) => `${name} · ${index + 1} / ${total}`,
+            nextLabel: (index, last) => last ? '完成' : '下一步',
+            skipLabel: '关掉',
+            alwaysClosable: true,
+        });
+    }
+
+    return { startOnboarding, maybeStartOnboarding, closeOnboarding, startPageGuide };
 }

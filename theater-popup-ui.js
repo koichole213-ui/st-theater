@@ -16,7 +16,8 @@ import { chatContextSettingsHTML } from './baibai-memory-ui.js';
 import { DEFAULT_LONG_DREAM_MEMORY_PRESET } from './long-dream-memory.js';
 import { normalizeMaxTokens } from './api-client.js';
 import { TAG_UNCATEGORIZED } from './tag-system.js';
-import { theaterNavHTML, theaterPageHeadHTML, skinChoiceFromSettings } from './theater-nav.js';
+import { theaterNavHTML, theaterPageHeadHTML, theaterMobileGuideButtonHTML, skinChoiceFromSettings } from './theater-nav.js';
+import { pageGuideDotHTML } from './theater-page-guides.js';
 
 export function createTheaterPopupUi(runtime) {
 // @theater-source-begin theaterNativeSelectCompatId
@@ -60,9 +61,10 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
         <p class="theater-title">千夜浮梦</p>
         <p class="theater-function">小剧场生成插件</p>
         <p class="theater-subtitle">独立生成 · 不影响正文</p>
+        ${theaterMobileGuideButtonHTML({ guideDot: pageGuideDotHTML(runtime.settings, initialTab) })}
     </div>
     <div class="theater-tabs">${theaterNavHTML(initialTab, { version: runtime.VERSION, badges: { config: runtime.hasRemoteUpdate() ? runtime.updateBadgeHTML() : '' } })}</div>
-    ${theaterPageHeadHTML(initialTab)}
+    ${theaterPageHeadHTML(initialTab, { guideDot: pageGuideDotHTML(runtime.settings, initialTab) })}
     <div data-archive-rescue-slot></div>
     <div class="theater-panels-wrapper">
 

@@ -19,6 +19,9 @@ function activateTheaterTab(tabName, { persist = true, resetScroll = true } = {}
     const pageDesc = document.querySelector('.theater-main-popup .theater-page-desc');
     if (activeTabEl && pageTitle) pageTitle.textContent = activeTabEl.getAttribute('data-page-title') || '';
     if (activeTabEl && pageDesc) pageDesc.textContent = activeTabEl.getAttribute('data-page-desc') || '';
+    // 「这页怎么用」按钮上的小点：这一页没看过才亮。
+    const guidesSeen = runtime.settings.pageGuidesSeen || {};
+    (document.querySelectorAll?.('.theater-main-popup .theater-page-guide-dot') || []).forEach(dot => { dot.hidden = Boolean(guidesSeen[tab]); });
     if (tab === 'history' && document.getElementById('theater-history-list')?.hasAttribute('data-pending-list')) runtime.refreshHistList();
     if (persist) {
         runtime.settings.lastTheaterTab = tab;

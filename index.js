@@ -165,6 +165,7 @@ const defaultSettings = Object.freeze({
     skinMode: 'default',  // 'default' (内置粉彩) | 'theater' (跟随酒馆) | 'custom' (用户CSS接管)
     skinTone: '',  // 'dark'：美化里的「深色」= skinMode 'theater' + 固定黑白灰（theater-nav.js）
     onboardingDone: false,  // 新手引导走完或跳过后记 true，不再自动弹
+    pageGuidesSeen: {},  // 「这页怎么用」看过的页面 { generate: true, … }，没看过的按钮上亮小点
     uiFontSize: 13.5,
     apiMode: 'custom',  // 'custom' 独立 API | 'main' 酒馆主 API（实验）
     apiUrl: '', apiKey: '', apiModel: '', apiProtocol: 'auto', streamEnabled: true,
@@ -935,6 +936,7 @@ const runtime = {
     get runtimeLog() { return runtimeLog; },
     get maybeStartOnboarding() { return maybeStartOnboarding; },
     get startOnboarding() { return startOnboarding; },
+    get startPageGuide() { return startPageGuide; },
     get save() { return save; },
     get saveInstructionTpl() { return saveInstructionTpl; },
     get saveLongDreamChapterEdits() { return saveLongDreamChapterEdits; },
@@ -1031,7 +1033,7 @@ const { scopeSelector, scopeRules, scopeCSS, applyCustomCSS, normalizeUIFontSize
 
 const { theaterNativeSelectCompatId, guardTheaterNativeSelectEvent, buildPopupHTML, decorateConfigLayout } = createTheaterPopupUi(runtime);
 
-const { startOnboarding, maybeStartOnboarding, closeOnboarding } = createTheaterOnboarding(runtime);
+const { startOnboarding, maybeStartOnboarding, closeOnboarding, startPageGuide } = createTheaterOnboarding(runtime);
 const applySkinTone = () => applyTheaterSkinTone(settings);
 
 const { historyItemHTML, historyTagBadgesHTML, longDreamSources, resolveLongDreamSource, longDreamDate, longDreamExcerpt, longDreamSourceInstructionState, longDreamSourcePreviewHTML, resetLongDreamCanonSuggestions, activeLongDreamCanonSuggestions, longDreamCanonSuggestionCardsHTML, longDreamCanonSuggestionHTML, renderLongDreamCanonSuggestions, findLongDreamCanonSuggestion, captureCurrentLongDreamWorldBooks, longDreamSnapshotEntryCount, longDreamBackupFileName, exportLongDreamZip, chooseExportFormat, exportLongDreamBackup, requestLongDreamExport, readLongDreamZip, importedLongDreamTitle, importLongDreamBackup, readLongDreamChapter, longDreamChapterFileName, exportLongDreamChapter, saveLongDreamChapterEdits, setCurrentLongDreamStatus, longDreamListHTML, longDreamRelationLabel, longDreamRelationChoicesHTML, longDreamSourceWorldBooks, sameWorldBookSelection, longDreamCreateWorldBookStateHTML, refreshLongDreamCreateWorldBookState, longDreamCreateHTML, longDreamGenerationStageText, formatLongDreamElapsed, longDreamProgressStageText, longDreamProgressLabelText, longDreamProgressKickerText, longDreamProgressMetaHTML, selectedLongDreamMemoryApiPreset, longDreamMemoryAnalysisPresets, selectedLongDreamMemoryAnalysisPreset, refreshLongDreamMemoryPresetControls, longDreamMemoryStatusText, longDreamActiveMemoryCount, longDreamSummaryHistoryHTML, toggleLongDreamSummaryPreview, longDreamMemoryConflictTarget, longDreamMemoryConflictSubjects, longDreamMemoryConflictItemText, longDreamMemoryConflictOperationText, longDreamMemoryConflictDetails, longDreamMemoryCardsHTML, longDreamMemorySelectionHTML, refreshLongDreamMemorySelection, longDreamMemoryTags, longDreamMemoryV2Fields, uniqueLongDreamBranchTitle, handleLongDreamChapterAction, longDreamWorkspaceHTML, longDreamDetailState, longDreamDetailHeaderHTML, refreshLongDreamWorldBookSources, longDreamDefinitionHTML, longDreamDetailHTML, longDreamKeptVersionsHTML, longDreamChapterDirectoryHTML, longDreamWorkDetailHTML, longDreamChapterDetailHTML, longDreamUnavailableHTML, longDreamPanelHTML, syncLongDreamPanel, renderLongDreamPanel, renderLongDreamProgressCandidate, stopLongDreamProgressTicker, syncLongDreamProgressDisplay, renderLongDreamReviewDraft } = createLongDreamWorkspace(runtime);

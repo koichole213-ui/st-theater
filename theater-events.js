@@ -38,6 +38,9 @@ function bindEvents() {
     $d.off('click.tonboard').on('click.tonboard', '#theater-onboarding-nav-btn, #theater-onboarding-config-btn', function () {
         runtime.startOnboarding();
     });
+    $d.off('click.tpageguide').on('click.tpageguide', '#theater-page-guide-btn, #theater-page-guide-mobile-btn', function () {
+        runtime.startPageGuide();
+    });
     // ---- Generate ----
     $d.off('click.tg').on('click.tg', '#theater-generate-btn', runtime.generateTheater);
     $d.off('click.tstop').on('click.tstop', '#theater-stop-btn', runtime.stopGeneration);

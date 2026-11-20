@@ -17,7 +17,7 @@ export const THEATER_PAGES = {
     setting: { label: '设定', icon: 'fa-book-open', hint: '预设 · 世界书', desc: '生成预设、文风补充和世界书' },
     dialogue: { label: '对话', icon: 'fa-comments', hint: '人设 · 聊天前文', desc: 'User 人设，以及要带进去多少聊天前文' },
     rules: { label: '规则', icon: 'fa-list-check', hint: '指令与排版模板', desc: '常用指令模板，和把正文排成网页的排版规则' },
-    history: { label: '历史', icon: 'fa-clock-rotate-left', hint: '写过的作品', desc: '写过的作品都在这里，可以按文件夹、角色、标签找' },
+    history: { label: '历史', icon: 'fa-clock-rotate-left', hint: '存下的作品', desc: '点过「保存」的作品都在这里，可以按文件夹、角色、标签找' },
     theme: { label: '美化', icon: 'fa-palette', hint: '外观 · 字号', desc: '插件外观：风格、自定义 CSS、字号' },
     diagnostics: { label: '诊断', icon: 'fa-stethoscope', hint: '报错时来这里', desc: '运行日志、诊断报告、常见问题，报错时来这里' },
     config: { label: '设置', icon: 'fa-sliders', hint: '模型 · 备份', desc: '连接模型、生成控制、备份和扩展管理' },
@@ -38,10 +38,15 @@ export function theaterNavHTML(activeTab, { version = '', badges = {} } = {}) {
     return `<div class="theater-nav-brand"><b>千夜浮梦</b><small>小剧场生成插件</small></div>${groups}<div class="theater-nav-footer"><button type="button" class="theater-nav-guide-btn" id="theater-onboarding-nav-btn"><i class="fa-solid fa-circle-question" aria-hidden="true"></i><span>新手引导</span></button><span class="theater-nav-version">${version ? `v${escapeText(version)}` : ''}</span></div>`;
 }
 
-// 宽屏才显示的页面标题行（含关闭按钮：宽屏时隐藏酒馆底部的“关闭”按钮）。
-export function theaterPageHeadHTML(activeTab) {
+// 宽屏才显示的页面标题行（含「这页怎么用」和关闭按钮：宽屏时隐藏酒馆底部的“关闭”按钮）。
+export function theaterPageHeadHTML(activeTab, { guideDot = '' } = {}) {
     const page = THEATER_PAGES[activeTab] || THEATER_PAGES.generate;
-    return `<div class="theater-page-head"><div class="theater-page-head-text"><h2 class="theater-page-title">${page.label}</h2><p class="theater-page-desc">${page.desc}</p></div><button type="button" class="theater-page-close" aria-label="关闭"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></div>`;
+    return `<div class="theater-page-head"><div class="theater-page-head-text"><h2 class="theater-page-title">${page.label}</h2><p class="theater-page-desc">${page.desc}</p></div><button type="button" class="theater-page-guide-btn" id="theater-page-guide-btn"><i class="fa-solid fa-circle-question" aria-hidden="true"></i><span>这页怎么用</span>${guideDot}</button><button type="button" class="theater-page-close" aria-label="关闭"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></div>`;
+}
+
+// 手机和窄窗口：顶上标题右边的 ?（宽屏时整个标题区隐藏）。
+export function theaterMobileGuideButtonHTML({ guideDot = '' } = {}) {
+    return `<button type="button" class="theater-page-guide-mobile" id="theater-page-guide-mobile-btn" aria-label="这页怎么用"><i class="fa-solid fa-question" aria-hidden="true"></i>${guideDot}</button>`;
 }
 
 // 深色皮肤：skinMode 仍是 'theater'，另记 skinTone: 'dark'。标记挂在 <html> 上，

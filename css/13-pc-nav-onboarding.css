@@ -13,6 +13,38 @@
 .theater-tab-hint,
 .theater-page-head { display: none; }
 
+/* 「这页怎么用」：手机和窄窗口在顶上标题右边放一个 ?；没看过这一页时亮小点。 */
+.theater-main-header { position: relative; }
+.theater-page-guide-mobile {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid var(--t-border);
+    background: var(--t-surface-1);
+    color: var(--t-accent-deep);
+    font-size: 15px;
+    cursor: pointer;
+}
+.theater-page-guide-dot {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--t-accent);
+    border: 2px solid var(--t-bg);
+    pointer-events: none;
+}
+.theater-page-guide-dot[hidden] { display: none; }
+
 @media (min-width: 1001px) {
     /* ---- 酒馆弹窗外壳：放大，底部“关闭”换成标题行右上角的 × ---- */
     body dialog.popup.theater-main-dialog,
@@ -205,6 +237,24 @@
         color: var(--t-fg-soft);
         text-align: left;
     }
+    .theater-main-popup .theater-page-guide-btn {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex: 0 0 auto;
+        height: 36px;
+        padding: 0 14px;
+        border-radius: 10px;
+        border: 1px solid var(--t-border);
+        background: var(--t-surface-1);
+        color: var(--t-fg);
+        font: inherit;
+        font-size: var(--t-text-sm);
+        font-weight: 600;
+        cursor: pointer;
+    }
+    .theater-main-popup .theater-page-guide-btn:hover { background: var(--t-surface-2); }
     .theater-main-popup .theater-page-close {
         display: flex;
         align-items: center;
