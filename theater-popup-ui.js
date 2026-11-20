@@ -450,6 +450,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
     <!-- ===== 7. 设置 ===== -->
     <div class="theater-panel${activeTabClass('config')}" data-panel="config">
         <div class="theater-config-layout"><div class="theater-config-groups">
+        <div class="theater-config-col" data-config-col="main">
         ${configGroupStart('api', 'fa-server', '正文生成线路')}
         <div class="theater-section" data-config-section="api">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-plug"></i> 正文线路</label>
@@ -602,6 +603,8 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
 
         </div>
         ${configGroupEnd}
+        </div>
+        <div class="theater-config-col" data-config-col="side">
         ${configGroupStart('materials', 'fa-book-atlas', '素材与提示')}
         <div class="theater-section" data-config-section="worldbook">
             <label class="theater-label theater-config-section-label"><i class="fa-solid fa-book-atlas"></i> 世界书读取</label>
@@ -732,6 +735,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
             <p id="theater-update-ready-hint" class="theater-update-ready-hint" ${runtime.updateReadyToReload ? '' : 'hidden'}><i class="fa-solid fa-circle-check"></i><span>更新文件已下载；你可以稍后刷新，不会自动打断当前操作。</span></p>
         </div>
         ${configGroupEnd}
+        </div>
         <p class="theater-version" style="order:9">当前版本 v${runtime.VERSION}</p>
         </div></div>
     </div>

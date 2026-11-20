@@ -3,6 +3,9 @@
  * 手机和窄窗口（≤1000px，与酒馆自己的手机样式同一分界）保持原来的一行标签；
  * 下面这些宽屏才出现的元素默认隐藏。
  * ============================================================ */
+/* 设置页的两个列容器：窄屏时不占位，卡片照旧按 order 排在同一列（和改之前一样）。 */
+.theater-config-col { display: contents; }
+
 .theater-nav-brand,
 .theater-tab-group-label,
 .theater-nav-footer,
@@ -219,12 +222,20 @@
     }
     .theater-main-popup .theater-page-close:hover { color: var(--t-fg); background: var(--t-surface-2); }
 
-    /* 设置页：宽屏两列，少滚一半 */
+    /* 设置页：宽屏两列，左列放连接与生成（正文线路、排版 API、生成控制），右列放其余，
+       两列各自往下排，不再按行对齐留出大块空白；展开某张卡也不会让卡片换列。 */
     .theater-main-popup .theater-panel[data-panel="config"] .theater-config-layout { width: 100%; }
     .theater-main-popup .theater-panel[data-panel="config"] .theater-config-groups {
         grid-template-columns: repeat(2, minmax(0, 1fr));
         align-items: start;
     }
+    .theater-main-popup .theater-panel[data-panel="config"] .theater-config-col {
+        display: grid;
+        gap: 16px;
+        align-content: start;
+        min-width: 0;
+    }
+    .theater-main-popup .theater-panel[data-panel="config"] .theater-config-groups > .theater-version { grid-column: 1 / -1; }
 }
 
 /* ============================================================
