@@ -3,6 +3,7 @@
  *   "default" (or absent) — built-in pastel/serif look
  *   "theater"             — follow SillyTavern theme variables
  *   "custom"               — minimal scaffolding, fully overridable via custom CSS
+ * 「深色」= "theater" + <html data-theater-tone="dark">（css/13）。
  */
 /* 样式按区块拆在 css/ 下，按下面的顺序加载；顺序就是原来的层叠顺序，不要调换。 */
 @import url('css/01-base-skins-panels.css');
@@ -17,3 +18,4 @@
 @import url('css/10-long-dream-editor.css');
 @import url('css/11-review-history-series.css');
 @import url('css/12-settings-backup-later.css');
+@import url('css/13-pc-nav-onboarding.css');

@@ -13,6 +13,12 @@ function activateTheaterTab(tabName, { persist = true, resetScroll = true } = {}
     $(`.theater-tab[data-tab="${tab}"]`).addClass('active');
     $('.theater-panel').removeClass('active');
     $(`.theater-panel[data-panel="${tab}"]`).addClass('active');
+    // 宽屏时的页面标题行：文字取自标签上的 data-page-title / data-page-desc。
+    const activeTabEl = document.querySelector(`.theater-tab[data-tab="${tab}"]`);
+    const pageTitle = document.querySelector('.theater-main-popup .theater-page-title');
+    const pageDesc = document.querySelector('.theater-main-popup .theater-page-desc');
+    if (activeTabEl && pageTitle) pageTitle.textContent = activeTabEl.getAttribute('data-page-title') || '';
+    if (activeTabEl && pageDesc) pageDesc.textContent = activeTabEl.getAttribute('data-page-desc') || '';
     if (tab === 'history' && document.getElementById('theater-history-list')?.hasAttribute('data-pending-list')) runtime.refreshHistList();
     if (persist) {
         runtime.settings.lastTheaterTab = tab;
@@ -59,6 +65,9 @@ async function openTheaterPopup(initialTabOverride = '') {
         runtime.closeFullscreenReader();
     };
     const p = popup.show();
+    // 宽屏时这个类把弹窗放大、隐藏底部“关闭”，改用标题行右上角的 ×（theater-nav.js / css 13）。
+    popup.dlg?.classList?.add('theater-main-dialog');
+    popup.dlg?.querySelector?.('.theater-page-close')?.addEventListener('click', () => popup.okButton?.click());
     // 关窗立即清理交互，不等待仍在途的预设/世界书读取；旧窗也不能拆掉新窗的监听。
     Promise.resolve(p).then(onPopupClosed, onPopupClosed);
     const popupMounted = await waitForPopupElements(
@@ -90,6 +99,7 @@ async function openTheaterPopup(initialTabOverride = '') {
     runtime.renderRuntimeLog();
     runtime.syncLongDreamPanel();
     runtime.archiveRescue?.addNotice();
+    runtime.maybeStartOnboarding();
     void runtime.backup?.onOpen();
     const [worldBookListResult, presetListResult] = await Promise.allSettled([
         runtime.loadWorldBookList(),

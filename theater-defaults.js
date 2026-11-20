@@ -131,5 +131,5 @@ export const DEFAULT_RENDER_TEMPLATE_TEXT = `小剧场输出规范（纯文字�
 // @theater-source-end DEFAULT_RENDER_TEMPLATE_TEXT
 
 // @theater-source-begin SKIN_LABELS
-export const SKIN_LABELS = { default: '内置默认', theater: '跟随酒馆', custom: '自定义' };
+export const SKIN_LABELS = { default: '内置默认', theater: '跟随酒馆', dark: '深色', custom: '自定义' };
 // @theater-source-end SKIN_LABELS

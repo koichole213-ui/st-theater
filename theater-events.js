@@ -35,6 +35,9 @@ function bindEvents() {
     $d.off('click.tt').on('click.tt', '.theater-tab', function () {
         runtime.activateTheaterTab($(this).data('tab'));
     });
+    $d.off('click.tonboard').on('click.tonboard', '#theater-onboarding-nav-btn, #theater-onboarding-config-btn', function () {
+        runtime.startOnboarding();
+    });
     // ---- Generate ----
     $d.off('click.tg').on('click.tg', '#theater-generate-btn', runtime.generateTheater);
     $d.off('click.tstop').on('click.tstop', '#theater-stop-btn', runtime.stopGeneration);

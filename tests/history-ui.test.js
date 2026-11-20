@@ -77,7 +77,7 @@ test('延迟进入历史会加载一次，批量恢复与刷新不显示全部�
         updateHistBulkBar() {}, refreshTagControls() {}, historyRoleFilterHTML: () => '<option>全部</option>', save() {},
         document: {
             getElementById: id => id === 'theater-history-list' ? list : null,
-            querySelector: () => ({ classList: { add() {}, remove() {} }, querySelectorAll: () => [] }),
+            querySelector: () => ({ classList: { add() {}, remove() {} }, querySelectorAll: () => [], getAttribute: () => '' }),
         },
         $: selector => {
             const api = {

@@ -1,0 +1,377 @@
+/* ============================================================
+ * 4.4.9b 宽屏左侧分组导航 · 深色皮肤 · 新手引导
+ * 手机和窄窗口（≤1000px，与酒馆自己的手机样式同一分界）保持原来的一行标签；
+ * 下面这些宽屏才出现的元素默认隐藏。
+ * ============================================================ */
+.theater-nav-brand,
+.theater-tab-group-label,
+.theater-nav-footer,
+.theater-tab-icon,
+.theater-tab-hint,
+.theater-page-head { display: none; }
+
+@media (min-width: 1001px) {
+    /* ---- 酒馆弹窗外壳：放大，底部“关闭”换成标题行右上角的 × ---- */
+    body dialog.popup.theater-main-dialog,
+    body .popup.theater-main-dialog {
+        width: min(1180px, 94vw);
+        min-width: 0;
+        max-width: 94vw;
+        height: min(900px, 92dvh);
+        padding: 0;
+        border-radius: 18px;
+    }
+    .popup.theater-main-dialog .popup-body {
+        height: 100%;
+        max-height: none;
+        padding: 0;
+    }
+    .popup.theater-main-dialog .popup-content {
+        display: flex;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+    }
+    .popup.theater-main-dialog .popup-controls { display: none; }
+
+    /* ---- 主弹窗：左栏导航 + 右侧标题与内容 ---- */
+    .theater-main-dialog .theater-main-popup {
+        display: grid;
+        grid-template-columns: 212px minmax(0, 1fr);
+        grid-template-rows: auto auto minmax(0, 1fr);
+        flex: 1 1 auto;
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        padding: 0;
+        border-radius: 18px;
+        box-shadow: none;
+        text-align: left;
+    }
+    .theater-main-dialog .theater-main-popup > * { grid-column: 2; min-width: 0; }
+    .theater-main-dialog .theater-main-popup > .theater-main-header { display: none; }
+    .theater-main-dialog .theater-main-popup > .theater-page-head { grid-row: 1; }
+    .theater-main-dialog .theater-main-popup > [data-archive-rescue-slot] { grid-row: 2; }
+    .theater-main-dialog .theater-main-popup > .theater-panels-wrapper {
+        grid-row: 3;
+        height: auto;
+        min-height: 0;
+        max-height: none;
+        overflow-y: auto;
+        padding: var(--t-space-5) 28px 28px;
+    }
+
+    .theater-main-dialog .theater-main-popup > .theater-tabs {
+        grid-column: 1;
+        grid-row: 1 / -1;
+        display: flex;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+        gap: 2px;
+        padding: 18px 12px 10px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        background: color-mix(in srgb, var(--t-surface-2) 55%, transparent);
+        border-right: 1px solid var(--t-border);
+        border-radius: 18px 0 0 18px;
+    }
+    .theater-main-popup .theater-nav-brand {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        padding: 0 10px 6px;
+    }
+    .theater-main-popup .theater-nav-brand b {
+        font-family: var(--t-font-serif);
+        font-size: 21px;
+        font-weight: 700;
+        line-height: 1.15;
+        color: var(--t-fg);
+    }
+    .theater-main-popup .theater-nav-brand small,
+    .theater-main-popup .theater-tab-group-label,
+    .theater-main-popup .theater-nav-version {
+        font-size: var(--t-text-xs);
+        color: var(--t-fg-soft);
+        text-shadow: none;
+        text-align: left;
+    }
+    .theater-main-popup .theater-tab-group-label {
+        display: block;
+        padding: 8px 10px 2px;
+        letter-spacing: 1px;
+    }
+    .theater-main-popup .theater-tab {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        min-height: 42px;
+        box-sizing: border-box;
+        padding: 4px 10px;
+        flex-shrink: 0;
+        white-space: normal;
+        text-align: left;
+        font-size: var(--t-text-base);
+    }
+    .theater-main-popup .theater-tab:not(.active) {
+        color: var(--t-fg);
+        background: transparent;
+        border-color: transparent;
+    }
+    .theater-main-popup .theater-tab:not(.active):hover { background: var(--t-surface-2); }
+    .theater-main-popup .theater-tab:active { transform: none; }
+    .theater-main-popup .theater-tab-icon {
+        display: inline-block;
+        flex: 0 0 18px;
+        width: 18px;
+        text-align: center;
+        font-size: 15px;
+    }
+    .theater-main-popup .theater-tab-text {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+        line-height: 1.3;
+    }
+    .theater-main-popup .theater-tab-label { font-weight: 600; }
+    .theater-main-popup .theater-tab-hint {
+        display: block;
+        color: inherit;
+        text-shadow: none;
+        font-size: var(--t-text-xs);
+        font-weight: 400;
+        opacity: .82;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .theater-main-popup .theater-nav-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-top: auto;
+        padding: 10px 4px 0;
+        border-top: 1px solid var(--t-border);
+    }
+    .theater-main-popup .theater-nav-guide-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 32px;
+        padding: 0 8px;
+        border: 0;
+        border-radius: var(--t-radius-sm);
+        background: transparent;
+        color: var(--t-fg-soft);
+        font: inherit;
+        font-size: var(--t-text-sm);
+        cursor: pointer;
+    }
+    .theater-main-popup .theater-nav-guide-btn:hover { color: var(--t-fg); background: var(--t-surface-2); }
+
+    .theater-main-popup .theater-page-head {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 20px 28px 14px;
+        border-bottom: 1px solid var(--t-border);
+    }
+    .theater-main-popup .theater-page-head-text {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+    .theater-main-popup .theater-page-title {
+        margin: 0;
+        font-family: var(--t-font-serif);
+        font-size: var(--t-text-lg);
+        font-weight: 700;
+        line-height: 1.25;
+        color: var(--t-fg);
+        text-align: left;
+    }
+    .theater-main-popup .theater-page-desc {
+        margin: 0;
+        font-size: var(--t-text-sm);
+        color: var(--t-fg-soft);
+        text-align: left;
+    }
+    .theater-main-popup .theater-page-close {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 36px;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border-radius: 10px;
+        border: 1px solid var(--t-border);
+        background: var(--t-surface-1);
+        color: var(--t-fg-soft);
+        font-size: 16px;
+        cursor: pointer;
+    }
+    .theater-main-popup .theater-page-close:hover { color: var(--t-fg); background: var(--t-surface-2); }
+
+    /* 设置页：宽屏两列，少滚一半 */
+    .theater-main-popup .theater-panel[data-panel="config"] .theater-config-layout { width: 100%; }
+    .theater-main-popup .theater-panel[data-panel="config"] .theater-config-groups {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: start;
+    }
+}
+
+/* ============================================================
+ * 深色皮肤：就是「跟随酒馆」在酒馆深色主题下的样子，固定黑白灰，不跟酒馆变。
+ * 存法：skinMode 仍是 'theater'，另记 skinTone: 'dark'；
+ * 生效靠 <html data-theater-tone="dark">，所以主弹窗和各个小弹窗都会一起变。
+ * ============================================================ */
+html[data-theater-tone="dark"] .popup:has(.theater-popup[data-skin="theater"]),
+html[data-theater-tone="dark"] .theater-popup[data-skin="theater"] {
+    --SmartThemeBodyColor: rgb(220, 220, 210);
+    --SmartThemeEmColor: rgb(160, 160, 152);
+    --SmartThemeQuoteColor: rgb(220, 220, 210);
+    --SmartThemeBlurTintColor: rgb(36, 36, 39);
+    --SmartThemeBgColor: rgb(30, 30, 33);
+    --SmartThemeBorderColor: rgba(255, 255, 255, .12);
+    --SmartThemeShadowColor: rgba(0, 0, 0, .5);
+    color: rgb(220, 220, 210);
+}
+html[data-theater-tone="dark"] .popup:has(.theater-popup[data-skin="theater"]) {
+    background-color: rgb(36, 36, 39);
+    border-color: rgba(255, 255, 255, .12);
+}
+html[data-theater-tone="dark"] .theater-popup[data-skin="theater"] {
+    --t-accent: rgb(220, 220, 210);
+    --t-accent-deep: rgb(220, 220, 210);
+    --t-on-accent: rgb(30, 30, 33);
+    background-color: rgb(36, 36, 39);
+    color-scheme: dark;
+}
+
+/* ============================================================
+ * 新手引导：遮罩挂在酒馆弹窗（dialog）上，聚光框用大阴影压暗其余部分。
+ * 颜色变量由脚本从主弹窗复制过来，跟着皮肤走。
+ * ============================================================ */
+.theater-onboarding {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    overflow: hidden;
+    border-radius: inherit;
+    font-family: var(--t-font-sans, inherit);
+    color: var(--t-fg, inherit);
+    text-align: left;
+}
+.theater-onboarding.is-centered { background: rgba(20, 16, 12, .5); }
+.theater-onboarding-spot {
+    position: absolute;
+    border-radius: 12px;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent, #B07A4A) 65%, transparent), 0 0 0 9999px rgba(20, 16, 12, .5);
+    pointer-events: none;
+    transition: left var(--t-dur-base, 180ms) ease, top var(--t-dur-base, 180ms) ease, width var(--t-dur-base, 180ms) ease, height var(--t-dur-base, 180ms) ease;
+}
+.theater-onboarding-card {
+    position: absolute;
+    width: min(400px, calc(100% - 24px));
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 20px 22px 18px;
+    border-radius: 18px;
+    background: var(--t-surface-1, #fff);
+    border: 1px solid var(--t-border, rgba(0, 0, 0, .1));
+    box-shadow: 0 16px 48px rgba(0, 0, 0, .28);
+}
+.theater-onboarding-card.is-sheet {
+    left: 0 !important;
+    right: 0;
+    bottom: 0;
+    top: auto !important;
+    width: 100%;
+    padding: 18px 20px calc(22px + env(safe-area-inset-bottom, 0px));
+    border-radius: 18px 18px 0 0;
+}
+.theater-onboarding-top,
+.theater-onboarding-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+.theater-onboarding-count {
+    font-size: var(--t-text-xs, 11.5px);
+    color: var(--t-fg-soft, inherit);
+    letter-spacing: 1px;
+}
+.theater-onboarding-title {
+    margin: 0;
+    font-family: var(--t-font-serif, inherit);
+    font-size: var(--t-text-lg, 19px);
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--t-fg, inherit);
+    text-align: left;
+}
+.theater-onboarding-body {
+    margin: 0;
+    font-size: var(--t-text-base, 13.5px);
+    line-height: 1.75;
+    white-space: pre-line;
+    text-align: left;
+    color: var(--t-fg, inherit);
+}
+.theater-onboarding-dots { display: flex; gap: 5px; }
+.theater-onboarding-dots span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--t-border-strong, rgba(0, 0, 0, .2));
+}
+.theater-onboarding-dots span.on { background: var(--t-accent-deep, #6B4423); }
+.theater-onboarding-actions { display: flex; gap: 8px; }
+.theater-onboarding button {
+    min-height: 40px;
+    padding: 0 16px;
+    border-radius: 999px;
+    border: 1px solid var(--t-border-strong, rgba(0, 0, 0, .2));
+    background: var(--t-surface-1, #fff);
+    color: var(--t-fg, inherit);
+    font: inherit;
+    font-size: var(--t-text-base, 13.5px);
+    font-weight: 600;
+    cursor: pointer;
+}
+.theater-onboarding button.theater-onboarding-next {
+    border-color: transparent;
+    background: linear-gradient(135deg, var(--t-accent, #B07A4A) 0%, var(--t-accent-deep, #6B4423) 100%);
+    color: var(--t-on-accent, #fff);
+}
+.theater-onboarding button.theater-onboarding-skip {
+    min-height: 32px;
+    padding: 0 10px;
+    border: 0;
+    background: transparent;
+    color: var(--t-fg-soft, inherit);
+    font-weight: 400;
+    font-size: var(--t-text-sm, 12.5px);
+}
+.theater-onboarding button[hidden] { display: none; }
+@media (max-width: 1000px) {
+    .theater-onboarding button { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .theater-onboarding-spot { transition: none; }
+}
+.theater-onboarding button:focus { outline: none; }
+.theater-onboarding button:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--t-accent, #B07A4A) 65%, transparent);
+    outline-offset: 2px;
+}

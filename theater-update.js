@@ -87,7 +87,7 @@ function refreshUpdateBadges() {
     $('#theater-open-btn').append(updateBadgeHTML('theater-update-badge'));
     $('#theater-wand-btn').append(updateBadgeHTML('theater-update-badge'));
     $('#theater-floating-ball').append(updateBadgeHTML('theater-update-badge theater-update-badge-floating'));
-    $('.theater-tab[data-tab="config"]').append(updateBadgeHTML('theater-tab-new-badge'));
+    $('.theater-tab[data-tab="config"] .theater-tab-label').append(updateBadgeHTML('theater-tab-new-badge'));
 }
 // @theater-source-end refreshUpdateBadges
 

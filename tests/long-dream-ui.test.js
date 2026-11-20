@@ -4,6 +4,7 @@ import { retainLongDreamDraftCandidate, appendLongDreamDraftCandidate } from '..
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readTheaterImplementation, runInNewContext } from './theater-source.js';
+import { theaterNavHTML } from '../theater-nav.js';
 import { LONG_DREAM_DRAFT_STATUS, LONG_DREAM_WORLD_BOOK_POLICY, createLongDreamRecord, createLongDreamWorldBookSnapshot, promoteLongDreamDraft, saveLongDreamDraft, updateLongDreamDefinition } from '../long-dream.js';
 
 test('长梦输入清空保留每部目标字数，删除长梦才移除，重新读取设置仍有效', () => {
@@ -94,6 +95,7 @@ test('长梦首帧使用当前页面，慢资料完成后不重建输入或抢�
         } });
     `, {
         settings: { lastTheaterTab: 'long-dream' }, $: () => ui, esc: value => value,
+        maybeStartOnboarding() {},
         document: { getElementById: () => ({}) },
         SillyTavern: { getContext: () => ({ POPUP_TYPE: { TEXT: 1 }, Popup: class {
             constructor(html) { screen.html = html; screen.writes++; }
@@ -254,7 +256,8 @@ test('世界书更新期间同一长梦不能保存旧定梦或启动续写，�
 test('长梦拥有独立入口、独立面板和 IndexedDB 长卷仓库', () => {
     const source = readTheaterImplementation();
     const styles = readStyles();
-    assert.match(source, /data-tab="long-dream">长梦<\/div>/);
+    assert.match(source, /theaterNavHTML\(initialTab/);
+    assert.match(theaterNavHTML('generate'), /data-tab="long-dream"[^>]*>[\s\S]*?长梦/);
     assert.match(source, /data-panel="long-dream"/);
     assert.match(source, /indexedDB\.open\('st-theater', 2\)/);
     assert.match(source, /createObjectStore\('dreams', \{ keyPath: 'id', autoIncrement: true \}\)/);

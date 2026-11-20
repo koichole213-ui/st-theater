@@ -16,6 +16,7 @@ import { chatContextSettingsHTML } from './baibai-memory-ui.js';
 import { DEFAULT_LONG_DREAM_MEMORY_PRESET } from './long-dream-memory.js';
 import { normalizeMaxTokens } from './api-client.js';
 import { TAG_UNCATEGORIZED } from './tag-system.js';
+import { theaterNavHTML, theaterPageHeadHTML, skinChoiceFromSettings } from './theater-nav.js';
 
 export function createTheaterPopupUi(runtime) {
 // @theater-source-begin theaterNativeSelectCompatId
@@ -52,24 +53,16 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
     const activeMemoryPreset = memoryPresets.find(preset => preset.id === runtime.settings.longDreamMemoryPresetId) || memoryPresets[0];
 
     const skin = runtime.settings.skinMode || 'default';
+    const skinChoice = skinChoiceFromSettings(runtime.settings);
     return `
-<div class="theater-popup" data-skin="${skin}">
-    <div class="theater-popup-header">
+<div class="theater-popup theater-main-popup" data-skin="${skin}">
+    <div class="theater-popup-header theater-main-header">
         <p class="theater-title">千夜浮梦</p>
         <p class="theater-function">小剧场生成插件</p>
         <p class="theater-subtitle">独立生成 · 不影响正文</p>
     </div>
-    <div class="theater-tabs">
-        <div class="theater-tab${activeTabClass('generate')}" data-tab="generate">生成</div>
-        <div class="theater-tab${activeTabClass('long-dream')}" data-tab="long-dream">长梦</div>
-        <div class="theater-tab${activeTabClass('setting')}" data-tab="setting">设定</div>
-        <div class="theater-tab${activeTabClass('dialogue')}" data-tab="dialogue">对话</div>
-        <div class="theater-tab${activeTabClass('rules')}" data-tab="rules">规则</div>
-        <div class="theater-tab${activeTabClass('history')}" data-tab="history">历史</div>
-        <div class="theater-tab${activeTabClass('theme')}" data-tab="theme">美化</div>
-        <div class="theater-tab${activeTabClass('diagnostics')}" data-tab="diagnostics">诊断</div>
-        <div class="theater-tab${activeTabClass('config')}" data-tab="config">设置${runtime.hasRemoteUpdate() ? runtime.updateBadgeHTML() : ''}</div>
-    </div>
+    <div class="theater-tabs">${theaterNavHTML(initialTab, { version: runtime.VERSION, badges: { config: runtime.hasRemoteUpdate() ? runtime.updateBadgeHTML() : '' } })}</div>
+    ${theaterPageHeadHTML(initialTab)}
     <div data-archive-rescue-slot></div>
     <div class="theater-panels-wrapper">
 
@@ -363,7 +356,7 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
             <label class="theater-label"><i class="fa-solid fa-palette"></i> 风格</label>
             <div class="theater-drawer">
                 <div class="theater-drawer-toggle" id="theater-skin-toggle">
-                    <span><i class="fa-solid fa-swatchbook"></i> 当前 · <span id="theater-skin-current-label">${SKIN_LABELS[skin]}</span></span>
+                    <span><i class="fa-solid fa-swatchbook"></i> 当前 · <span id="theater-skin-current-label">${SKIN_LABELS[skinChoice]}</span></span>
                     <i class="fa-solid fa-chevron-down theater-drawer-arrow"></i>
                 </div>
                 <div class="theater-drawer-body" style="display:none;">
@@ -372,10 +365,15 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
                         <span class="theater-skin-row-name">内置默认</span>
                         <span class="theater-skin-row-desc">粉彩 · 衬线 · 大圆角</span>
                     </label>
-                    <label class="theater-skin-row${skin === 'theater' ? ' active' : ''}">
-                        <input type="radio" name="theater-skin" value="theater"${skin === 'theater' ? ' checked' : ''}>
+                    <label class="theater-skin-row${skinChoice === 'theater' ? ' active' : ''}">
+                        <input type="radio" name="theater-skin" value="theater"${skinChoice === 'theater' ? ' checked' : ''}>
                         <span class="theater-skin-row-name">跟随酒馆</span>
                         <span class="theater-skin-row-desc">用酒馆当前主题色</span>
+                    </label>
+                    <label class="theater-skin-row${skinChoice === 'dark' ? ' active' : ''}">
+                        <input type="radio" name="theater-skin" value="dark"${skinChoice === 'dark' ? ' checked' : ''}>
+                        <span class="theater-skin-row-name">深色</span>
+                        <span class="theater-skin-row-desc">黑白灰，不跟酒馆主题变</span>
                     </label>
                     <label class="theater-skin-row${skin === 'custom' ? ' active' : ''}">
                         <input type="radio" name="theater-skin" value="custom"${skin === 'custom' ? ' checked' : ''}>
@@ -707,6 +705,10 @@ function buildPopupHTML(initialTab = runtime.settings.lastTheaterTab) {
             <div class="theater-config-setting-row">
                 <span class="theater-config-setting-copy"><b>悬浮球贴边收纳</b><small>闲置时自动缩到屏幕边缘</small></span>
                 <label class="theater-config-switch" aria-label="悬浮球贴边收纳"><input type="checkbox" id="theater-floating-ball-tuck-toggle" ${runtime.settings.floatingBallTuck !== false ? 'checked' : ''}><span></span></label>
+            </div>
+            <div class="theater-config-setting-row">
+                <span class="theater-config-setting-copy"><b>新手引导</b><small>再看一遍各个入口在哪</small></span>
+                <button type="button" id="theater-onboarding-config-btn" class="theater-btn"><i class="fa-solid fa-circle-question"></i><span>打开</span></button>
             </div>
         </div>
         ${configGroupEnd}

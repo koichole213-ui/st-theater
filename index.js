@@ -18,6 +18,8 @@ import { createTheaterEvents } from './theater-events.js';
 import { createTheaterGeneration } from './theater-generation.js';
 import { createLongDreamRuntime } from './long-dream-runtime.js';
 import { createTheaterAutoMode } from './theater-auto-mode.js';
+import { createTheaterOnboarding } from './theater-onboarding.js';
+import { applyTheaterSkinTone } from './theater-nav.js';
 import { createTheaterApi } from './theater-api.js';
 import { createTheaterDiagnostics } from './theater-diagnostics.js';
 import { remapHistorySource, historyKey, historyOrder, orderedHistory, normalizeCollections, historyEntries, collectionPage, collectionChapters, moveCollectionItems, remapHistoryImport, continuationHistoryMetadata, planHistorySave, newHistoryKey } from './history-collections.js';
@@ -161,6 +163,8 @@ const defaultSettings = Object.freeze({
     longDreams: [],
     customCSS: '',
     skinMode: 'default',  // 'default' (内置粉彩) | 'theater' (跟随酒馆) | 'custom' (用户CSS接管)
+    skinTone: '',  // 'dark'：美化里的「深色」= skinMode 'theater' + 固定黑白灰（theater-nav.js）
+    onboardingDone: false,  // 新手引导走完或跳过后记 true，不再自动弹
     uiFontSize: 13.5,
     apiMode: 'custom',  // 'custom' 独立 API | 'main' 酒馆主 API（实验）
     apiUrl: '', apiKey: '', apiModel: '', apiProtocol: 'auto', streamEnabled: true,
@@ -420,6 +424,7 @@ async function init() {
     }
 
     applyCustomCSS();
+    applySkinTone();
     // 悬浮球延迟创建，避免干扰其他插件初始化
     setTimeout(() => { try { createFloatingBall(); } catch (e) { console.warn('[Theater] Floating ball error:', e); } }, 2000);
     // 初始化完成就后台检查；不 await，不让慢网络拖住酒馆。
@@ -567,6 +572,7 @@ const runtime = {
     get applyBulkTagOperation() { return applyBulkTagOperation; },
     get applyCharBoundBooks() { return applyCharBoundBooks; },
     get applyCustomCSS() { return applyCustomCSS; },
+    get applySkinTone() { return applySkinTone; },
     get applyHistorySelectionGestureAt() { return applyHistorySelectionGestureAt; },
     get applyResultToolboxMode() { return applyResultToolboxMode; },
     get applyUIFontSize() { return applyUIFontSize; },
@@ -611,6 +617,7 @@ const runtime = {
     get clearRequestIssue() { return clearRequestIssue; },
     get closeFullscreenReader() { return closeFullscreenReader; },
     get closeInstructionActionMenus() { return closeInstructionActionMenus; },
+    get closeOnboarding() { return closeOnboarding; },
     get closeResultActions() { return closeResultActions; },
     get confirmLongDreamChapter() { return confirmLongDreamChapter; },
     get confirmLongDreamSummaryAction() { return confirmLongDreamSummaryAction; },
@@ -926,6 +933,8 @@ const runtime = {
     get runDiagnostics() { return runDiagnostics; },
     get runGeneration() { return runGeneration; },
     get runtimeLog() { return runtimeLog; },
+    get maybeStartOnboarding() { return maybeStartOnboarding; },
+    get startOnboarding() { return startOnboarding; },
     get save() { return save; },
     get saveInstructionTpl() { return saveInstructionTpl; },
     get saveLongDreamChapterEdits() { return saveLongDreamChapterEdits; },
@@ -1021,6 +1030,9 @@ const { checkRemoteVersion, hasRemoteUpdate, remoteUpdateLabel, updateBadgeHTML,
 const { scopeSelector, scopeRules, scopeCSS, applyCustomCSS, normalizeUIFontSize, fontSizeVars, applyUIFontSize, getSoundPreset, playNotificationSound, runtimeLog, theaterError, renderRuntimeLog, openTheaterPopupFromFloatingBall, createFloatingBall } = createTheaterAppearance(runtime);
 
 const { theaterNativeSelectCompatId, guardTheaterNativeSelectEvent, buildPopupHTML, decorateConfigLayout } = createTheaterPopupUi(runtime);
+
+const { startOnboarding, maybeStartOnboarding, closeOnboarding } = createTheaterOnboarding(runtime);
+const applySkinTone = () => applyTheaterSkinTone(settings);
 
 const { historyItemHTML, historyTagBadgesHTML, longDreamSources, resolveLongDreamSource, longDreamDate, longDreamExcerpt, longDreamSourceInstructionState, longDreamSourcePreviewHTML, resetLongDreamCanonSuggestions, activeLongDreamCanonSuggestions, longDreamCanonSuggestionCardsHTML, longDreamCanonSuggestionHTML, renderLongDreamCanonSuggestions, findLongDreamCanonSuggestion, captureCurrentLongDreamWorldBooks, longDreamSnapshotEntryCount, longDreamBackupFileName, exportLongDreamZip, chooseExportFormat, exportLongDreamBackup, requestLongDreamExport, readLongDreamZip, importedLongDreamTitle, importLongDreamBackup, readLongDreamChapter, longDreamChapterFileName, exportLongDreamChapter, saveLongDreamChapterEdits, setCurrentLongDreamStatus, longDreamListHTML, longDreamRelationLabel, longDreamRelationChoicesHTML, longDreamSourceWorldBooks, sameWorldBookSelection, longDreamCreateWorldBookStateHTML, refreshLongDreamCreateWorldBookState, longDreamCreateHTML, longDreamGenerationStageText, formatLongDreamElapsed, longDreamProgressStageText, longDreamProgressLabelText, longDreamProgressKickerText, longDreamProgressMetaHTML, selectedLongDreamMemoryApiPreset, longDreamMemoryAnalysisPresets, selectedLongDreamMemoryAnalysisPreset, refreshLongDreamMemoryPresetControls, longDreamMemoryStatusText, longDreamActiveMemoryCount, longDreamSummaryHistoryHTML, toggleLongDreamSummaryPreview, longDreamMemoryConflictTarget, longDreamMemoryConflictSubjects, longDreamMemoryConflictItemText, longDreamMemoryConflictOperationText, longDreamMemoryConflictDetails, longDreamMemoryCardsHTML, longDreamMemorySelectionHTML, refreshLongDreamMemorySelection, longDreamMemoryTags, longDreamMemoryV2Fields, uniqueLongDreamBranchTitle, handleLongDreamChapterAction, longDreamWorkspaceHTML, longDreamDetailState, longDreamDetailHeaderHTML, refreshLongDreamWorldBookSources, longDreamDefinitionHTML, longDreamDetailHTML, longDreamKeptVersionsHTML, longDreamChapterDirectoryHTML, longDreamWorkDetailHTML, longDreamChapterDetailHTML, longDreamUnavailableHTML, longDreamPanelHTML, syncLongDreamPanel, renderLongDreamPanel, renderLongDreamProgressCandidate, stopLongDreamProgressTicker, syncLongDreamProgressDisplay, renderLongDreamReviewDraft } = createLongDreamWorkspace(runtime);
 

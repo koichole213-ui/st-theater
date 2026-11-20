@@ -5,6 +5,7 @@ import { isTextOutputMode, textThemeForOutputMode } from './plain-text-renderer.
 import { createHtmlTextEdit } from './result-text-edit.js';
 import { displayedContinuationVersion } from './continuation-session.js';
 import { SKIN_LABELS } from './theater-defaults.js';
+import { skinSettingsForChoice } from './theater-nav.js';
 import { readableErrorText } from './error-text.js';
 
 // Event registration order and handler closures are preserved by the coordinator.
@@ -367,9 +368,12 @@ export function bindResultEvents(runtime, $d) {
     });
     $d.off('change.tskin').on('change.tskin', 'input[name="theater-skin"]', function () {
         const v = $(this).val();
-        runtime.settings.skinMode = v;
+        const next = skinSettingsForChoice(v);
+        runtime.settings.skinMode = next.skinMode;
+        runtime.settings.skinTone = next.skinTone;
         runtime.save();
-        $('.theater-popup').attr('data-skin', v);
+        runtime.applySkinTone();
+        $('.theater-popup').attr('data-skin', next.skinMode);
         $('.theater-skin-row').removeClass('active');
         $(this).closest('.theater-skin-row').addClass('active');
         $('#theater-skin-current-label').text(SKIN_LABELS[v] || v);
