@@ -15,22 +15,34 @@
 
 /* 「这页怎么用」：手机和窄窗口在顶上标题右边放一个 ?；没看过这一页时亮小点。 */
 .theater-main-header { position: relative; }
+/* 看得见的圆 28px（禾禾 11-21：原来 44px 太大）；用 ::before 把能点的范围撑回 44px，手指好点。 */
 .theater-page-guide-mobile {
     position: absolute;
-    top: 8px;
-    right: 8px;
+    top: 14px;
+    right: 14px;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 44px;
-    height: 44px;
+    width: 28px;
+    height: 28px;
     padding: 0;
     border-radius: 50%;
     border: 1px solid var(--t-border);
     background: var(--t-surface-1);
     color: var(--t-accent-deep);
-    font-size: 15px;
+    font-size: 12px;
     cursor: pointer;
+}
+.theater-page-guide-mobile::before {
+    content: '';
+    position: absolute;
+    inset: -8px;
+}
+.theater-page-guide-mobile .theater-page-guide-dot {
+    top: -3px;
+    right: -3px;
+    width: 8px;
+    height: 8px;
 }
 .theater-page-guide-dot {
     position: absolute;
