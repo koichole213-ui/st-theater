@@ -143,3 +143,10 @@ test('新增写法仍然保守：句子、要求、空正文、一边装饰都�
         '普通开场\n**中间的加粗**\n正文',
     ]) assert.deepEqual(recognizeInstructionTitle(input), { name: '', content: input.trim(), recognized: false }, input);
 });
+
+test('## / ### 标题，带不带空格都认', () => {
+    for (const input of ['## 雨夜来信\n完整内容', '### 雨夜来信\n完整内容', '##雨夜来信\n完整内容', '###雨夜来信\n完整内容', '## 雨夜来信 ##\n完整内容'])
+        assert.deepEqual(recognizeInstructionTitle(input), { name: '雨夜来信', content: '完整内容', recognized: true }, input);
+    for (const input of ['####### 七个井号\n正文', '###\n正文', '##请严格遵守人设\n正文', '#{{char}}\n正文'])
+        assert.equal(recognizeInstructionTitle(input).recognized, false, input);
+});

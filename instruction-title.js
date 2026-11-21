@@ -35,7 +35,8 @@ export function recognizeInstructionTitle(value) {
     // Setext 标题：第一行是标题，第二行全是 === 或 ---。
     const setext = body.match(/^(?:={3,}|-{3,})[ \t]*(?:\r?\n|$)/);
     if (setext && !/^[=\-\s]+$/.test(first)) return result(first, body.slice(setext[0].length), { loose: true });
-    const strict = first.match(/^#{1,6}\s+(.+?)(?:\s+#+)?$/u)
+    // Markdown 标题：# 到 ######，后面不加空格（###雨夜来信）也认。
+    const strict = first.match(/^#{1,6}\s*([^#\s].*?)(?:\s+#+)?$/u)
         || first.match(new RegExp(`^(?:${NAME_KEYS})\\s*[:：]\\s*(.+)$`, 'iu'))
         || first.match(/^<(?:标题|名称|title|name)>\s*([^<>]+?)\s*<\/(?:标题|名称|title|name)>$/iu)
         || first.match(/^【([^【】]+)】$/u)
