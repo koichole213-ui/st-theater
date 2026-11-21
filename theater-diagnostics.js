@@ -114,7 +114,7 @@ function buildDiagnostics() {
         diagnosticLine(runtime.lastRequestIssue ? runtime.lastRequestIssue.status : (runtime.bgError ? 'bad' : 'ok'), '最近错误信号', runtime.lastRequestIssue
             ? `${runtime.lastRequestIssue.signal}${runtime.lastRequestIssue.httpStatus ? ` · HTTP ${runtime.lastRequestIssue.httpStatus}` : ''} · ${runtime.lastRequestIssue.title}${runtime.lastRequestIssue.rawStopReason ? `（上游结束原因：${runtime.lastRequestIssue.rawStopReason}）` : ''}${providerNote}`
             : (runtime.bgError ? `${REQUEST_DIAGNOSTIC_SIGNAL.UNKNOWN} · 请打开“常见问题汇总”查询` : '无')),
-        ...(runtime.lastRequestIssue ? [diagnosticLine('warn', '错误处理建议', `${runtime.lastRequestIssue.signal}：${runtime.lastRequestIssue.action}`)] : []),
+        ...(runtime.lastRequestIssue ? [diagnosticLine('warn', '错误处理建议', `${runtime.lastRequestIssue.signal}：${runtime.lastRequestIssue.action}${runtime.lastRequestIssue.hint ? ` ${runtime.lastRequestIssue.hint}` : ''}`)] : []),
         diagnosticLine(runtime.lastRequestContext ? 'ok' : 'warn', '最近请求摘要', runtime.formatRequestContextSummary(runtime.lastRequestContext)),
         diagnosticLine(runtime.lastRequestTrace ? 'ok' : 'warn', '创作请求结构', runtime.lastRequestTrace
             ? `${runtime.lastRequestTrace.route}/${runtime.lastRequestTrace.transport} · ${runtime.lastRequestTrace.messages.length} 条消息 · ${runtime.lastRequestTrace.route === 'custom' ? '预设采样参数未继承' : '预设采样参数由酒馆主 API 决定'} · 消息兼容：${requestTraceCompatibilityLabel(runtime.lastRequestTrace)} · 工具已强制禁用`

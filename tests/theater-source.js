@@ -1,3 +1,4 @@
+import { requestRouteHints, withRequestRouteHints } from '../request-diagnostics.js';
 import { streamEndNotice } from '../generation-job.js';
 import { assertHtmlIntegrity, recoverHtmlText } from '../html-integrity.js';
 import { errorHelpHTML, errorCatalogHTML, bindErrorLibrary } from '../error-help-ui.js';
@@ -67,7 +68,7 @@ export function readTheaterImplementation() {
 // A factory receives live bindings to the same sandbox state used by the older
 // fixtures. This preserves their assertions about writes, identity and failures.
 export function runInNewContext(code, sandbox = {}, options) {
-    Object.assign(sandbox, { streamEndNotice, finalStoryOutput, FORMAT_RECOVERY_NOTICE, stripExcludedOutputTags, readableErrorText, looksLikeEscapedHtml, plainTextFromParsedHtml, stripBreakMarks, keepTextAfterReparse, stripTagsKeepText, looksLikeCode });
+    Object.assign(sandbox, { streamEndNotice, requestRouteHints, withRequestRouteHints, finalStoryOutput, FORMAT_RECOVERY_NOTICE, stripExcludedOutputTags, readableErrorText, looksLikeEscapedHtml, plainTextFromParsedHtml, stripBreakMarks, keepTextAfterReparse, stripTagsKeepText, looksLikeCode });
     sandbox.lastRequestIssue ??= null; sandbox.lastRequestMetrics ??= null; sandbox.isGenerating ??= false;
     Object.assign(sandbox, { errorHelpHTML, errorCatalogHTML, bindErrorLibrary, statusError, assertHtmlIntegrity, recoverHtmlText });
     // Real imported helpers used by relocated production bodies. Fixtures remain synthetic.

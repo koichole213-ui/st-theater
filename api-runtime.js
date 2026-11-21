@@ -21,7 +21,7 @@ import {
     resolveMainApiModel,
     retryAfterMilliseconds,
 } from './api-client.js';
-import { REQUEST_DIAGNOSTIC_SIGNAL, createDiagnosticError } from './request-diagnostics.js';
+import { REQUEST_DIAGNOSTIC_SIGNAL, createDiagnosticError, requestRouteHints, withRequestRouteHints } from './request-diagnostics.js';
 import { filterTaggedReasoning } from './reasoning-filter.js';
 import { applyPromptPostProcessing } from './request-layout.js';
 
@@ -556,6 +556,7 @@ export async function requestCustomApi({
     let connection = null;
     let connectionStartedAt = 0;
     let connectionAttempt = 0;
+    let routeHints = null;
     const publishConnection = (changes, announce = true) => {
         if (!connection) return;
         connection = { ...connection, ...changes, elapsedMs: Math.max(0, Date.now() - connectionStartedAt) };
@@ -585,6 +586,7 @@ export async function requestCustomApi({
             systemPrompt, userPrompt, messages, postProcessing, maxTokens, stream: shouldStream,
         }, { getHeaders });
         const request = preparedRequest?.then ? await preparedRequest : preparedRequest;
+        routeHints = requestRouteHints(config, request);
         if (request.protocol === API_PROTOCOLS.ANTHROPIC && !config.apiKey) {
             throw createDiagnosticError(REQUEST_DIAGNOSTIC_SIGNAL.CONFIG, {
                 code: 'THEATER_CONFIG', phase: 'body', transport: request.protocol,
@@ -736,6 +738,7 @@ export async function requestCustomApi({
         publishConnection({ state: aborted ? 'aborted' : 'failed', failedAt: connection?.state || null,
             failureSignal: aborted ? null : (knownSignal ? error.diagnosticSignal : REQUEST_DIAGNOSTIC_SIGNAL.UNKNOWN) });
         if (error instanceof Error && Object.isExtensible(error) && connection) error.apiConnectionSummary = { ...connection };
+        if (!aborted) withRequestRouteHints(error, routeHints);
         throw error;
     } finally { releaseVertex(); }
 }

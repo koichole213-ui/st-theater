@@ -13,7 +13,7 @@ import { createRequestTrace } from './request-trace.js';
 import { resolveMainApiModel, DEFAULT_MAX_OUTPUT_TOKENS, API_PROTOCOLS, normalizeMaxTokens, resolveProtocol, buildApiEndpoint, buildApiRequest } from './api-client.js';
 import { createRequestMetrics, markFallback, markCompleted, markFailed } from './request-metrics.js';
 import { requestMainApi, requestCustomApi } from './api-runtime.js';
-import { classifyRequestFailure } from './request-diagnostics.js';
+import { classifyRequestFailure, requestRouteHints, withRequestRouteHints } from './request-diagnostics.js';
 import { beginRequestDiagnostics } from './request-ownership.js';
 
 export function createTheaterApi(runtime, { presentModelPicker = showModelPicker } = {}) {
@@ -193,6 +193,7 @@ async function fetchModelList() {
     $btn.find('span').text('获取中…');
     const diagnostics = beginRequestDiagnostics(runtime, { auxiliary: true,
         context: { kind: '模型列表' }, metrics: createRequestMetrics('support:models') });
+    let routeHints = null;
 
     try {
         const protocol = resolveProtocol(config.apiProtocol, url);
@@ -202,6 +203,7 @@ async function fetchModelList() {
         const headers = protocol === API_PROTOCOLS.ANTHROPIC
             ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
             : (key ? { 'Authorization': `Bearer ${key}` } : {});
+        routeHints = requestRouteHints(config, { endpoint: modelsEndpoint, protocol });
         const res = await fetch(modelsEndpoint, { method: 'GET', headers });
         if (!res.ok) {
             throw statusError(res.status, await res.text().catch(() => ''), { transport: 'non_stream', secrets: [config.apiKey] });
@@ -241,7 +243,7 @@ async function fetchModelList() {
 
         toastr.success(`找到 ${models.length} 个模型`);
     } catch (e) {
-        const issue = classifyRequestFailure(e, { stage: '模型列表' });
+        const issue = classifyRequestFailure(withRequestRouteHints(e, routeHints), { stage: '模型列表' });
         markFailed(diagnostics.metrics, issue.signal);
         diagnostics.publish({ lastRequestIssue: issue });
         console.error('[Theater] 获取模型列表失败:', issue.signal);
@@ -272,6 +274,7 @@ async function testAPIConnection() {
     $btn.find('span').text('测试中…');
     const diagnostics = beginRequestDiagnostics(runtime, { auxiliary: true,
         context: { kind: '连接测试' }, metrics: createRequestMetrics('support:connection-test') });
+    let routeHints = null;
 
     try {
         if (apiChannel(config) === 'vertex') releaseVertex = beginVertexRequest();
@@ -280,6 +283,7 @@ async function testAPIConnection() {
             maxTokens: apiChannel(config) === 'custom' ? 16 : 256, stream: false,
         });
         const request = preparedRequest?.then ? await preparedRequest : preparedRequest;
+        routeHints = requestRouteHints(config, request);
         if (apiChannel(config) === 'vertex') await checkVertexCredential(config);
         if (request.protocol === API_PROTOCOLS.ANTHROPIC && !key) { toastr.warning('Anthropic 接口需要 API Key'); return; }
         runtime.runtimeLog('info', '连接测试请求发出', {
@@ -297,13 +301,13 @@ async function testAPIConnection() {
             if (formRequest.current()) toastr.success('接口已响应；实际写作与长文本输出仍需体验');
         }
         else {
-            const issue = classifyRequestFailure(statusError(res.status, await res.text().catch(() => ''), { transport: 'non_stream', secrets: [key] }), { stage: '连接测试' });
+            const issue = classifyRequestFailure(withRequestRouteHints(statusError(res.status, await res.text().catch(() => ''), { transport: 'non_stream', secrets: [key] }), routeHints), { stage: '连接测试' });
             markFailed(diagnostics.metrics, issue.signal);
             diagnostics.publish({ lastRequestIssue: issue });
             if (formRequest.current()) runtime.theaterError(runtime.requestFailureMessage('连接失败', issue), '', { requestIssue: issue, retained: false });
         }
     } catch (e) {
-        const issue = classifyRequestFailure(e, { stage: '连接测试' });
+        const issue = classifyRequestFailure(withRequestRouteHints(e, routeHints), { stage: '连接测试' });
         markFailed(diagnostics.metrics, issue.signal);
         diagnostics.publish({ lastRequestIssue: issue });
         if (formRequest.current()) runtime.theaterError(runtime.requestFailureMessage('连接失败', issue), '', { requestIssue: issue, retained: false });

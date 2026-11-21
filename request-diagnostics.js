@@ -24,6 +24,34 @@ export const REQUEST_DIAGNOSTIC_SIGNAL = Object.freeze({
     UNKNOWN: 'T-UNKNOWN',
 });
 
+// 连不上时的补充说明（4.4.9d）：只在确实对得上的情况下出现，不改请求本身。
+export const REQUEST_ROUTE_HINTS = Object.freeze({
+    crossOrigin: '如果这个 API 在别的插件或软件里能用，多半是这个中转站不允许网页直接访问。可以在酒馆的「API 连接」里连上同一个 API，再把插件的正文线路切到「酒馆主 API」。',
+    autoAnthropic: '「请求格式」是自动判断，这次按 Anthropic 格式发送（地址里有 claude 或 anthropic 字样）。如果这是 OpenAI 兼容的中转，把「请求格式」改成「OpenAI Chat Completions 兼容格式」再试。',
+});
+
+// 这次请求是不是从网页直接连到别的网站（跨域）、格式是不是“自动判断”成了 Anthropic。
+export function requestRouteHints(config = {}, request = {}, { origin = globalThis.location?.origin } = {}) {
+    let crossOrigin = false;
+    try {
+        const endpoint = String(request?.endpoint || '');
+        crossOrigin = origin ? new URL(endpoint, origin).origin !== new URL(origin).origin : /^https?:\/\//i.test(endpoint);
+    } catch { crossOrigin = false; }
+    const autoAnthropic = request?.protocol === 'anthropic' && !['openai', 'anthropic'].includes(config?.apiProtocol);
+    return { crossOrigin, autoAnthropic };
+}
+
+export function withRequestRouteHints(error, hints) {
+    if (hints && error && typeof error === 'object' && Object.isExtensible(error) && !error.requestRouteHints) error.requestRouteHints = hints;
+    return error;
+}
+
+function requestRouteHint(signal, hints = {}) {
+    if (hints?.crossOrigin && [REQUEST_DIAGNOSTIC_SIGNAL.NETWORK, REQUEST_DIAGNOSTIC_SIGNAL.NO_RESPONSE].includes(signal)) return REQUEST_ROUTE_HINTS.crossOrigin;
+    if (hints?.autoAnthropic && signal === 'T-HTTP-401') return REQUEST_ROUTE_HINTS.autoAnthropic;
+    return '';
+}
+
 export function safeDiagnosticReason(value) {
     const text = String(value || '').trim().toLowerCase();
     if (!text || text.length > 80) return null;
@@ -128,12 +156,14 @@ export function classifyRequestFailure(error, { stage = '正文生成' } = {}) {
     }
 
     const info = diagnosticSignalInfo(signal);
+    const hint = requestRouteHint(signal, error?.requestRouteHints);
     return {
         signal,
         status: info.status,
         title: info.title,
         detail: info.detail,
         action: info.action,
+        ...(hint ? { hint } : {}),
         stage: String(stage || '正文生成'),
         rawStopReason: safeDiagnosticReason(failure.rawStopReason || error?.rawStopReason),
         httpStatus,
