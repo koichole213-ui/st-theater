@@ -23,6 +23,7 @@ export function createGenerationJob({
         requireTargetCompletion: !!requireTargetCompletion,
         stopReason: null,
         rawStopReason: null,
+        streamEnd: null,
         aborted: false,
         finishAuthorized: false,
         completedBelowTarget: false,
@@ -30,11 +31,23 @@ export function createGenerationJob({
     };
 }
 
-export function addGenerationSegment(job, text, stopReason = 'unknown', rawStopReason = null) {
+export function addGenerationSegment(job, text, stopReason = 'unknown', rawStopReason = null, streamEnd = null) {
     job.segments.push(String(text || '').trim());
     job.stopReason = stopReason;
     job.rawStopReason = rawStopReason;
+    job.streamEnd = streamEnd || null;
     return job;
+}
+
+// 断流提醒（4.4.9d）：只看最后一轮怎么结束。只提醒，不改正文、轮数和提示词。
+// 'eof'：连接关了，但服务既没发结束信号也没给结束原因；'provider-error'：写了一部分后服务商报错。
+export const STREAM_END_NOTICES = Object.freeze({
+    eof: '连接结束了，但服务没有确认写完，结尾可能断在半截。',
+    'provider-error': '服务商在写的过程中报了错，结尾可能不完整。',
+});
+
+export function streamEndNotice(streamEnd) {
+    return Object.hasOwn(STREAM_END_NOTICES, streamEnd) ? STREAM_END_NOTICES[streamEnd] : '';
 }
 
 export function generationTextWithLiveSegment(job, liveSegment = '') {

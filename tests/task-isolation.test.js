@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { createGenerationJob, abortGenerationJob, generationTextWithLiveSegment, addGenerationSegment } from '../generation-job.js';
+import { createGenerationJob, abortGenerationJob, generationTextWithLiveSegment, addGenerationSegment, streamEndNotice } from '../generation-job.js';
 import { filterStoryOutput, finalStoryOutput, FORMAT_RECOVERY_NOTICE } from '../story-output.js';
 import { readableCharCount } from '../text-counter.js';
 import { requestMainApi, requestCustomApi, MAIN_FIRST_TOKEN_TIMEOUT_MS, MAIN_RESPONSE_TIMEOUT_MS, MAIN_STREAM_IDLE_TIMEOUT_MS } from '../api-runtime.js';
@@ -16,7 +16,7 @@ function deferred() { let resolve, reject; const promise = new Promise((a, b) =>
 const source = readFileSync(new URL('../theater-generation.js', import.meta.url), 'utf8');
 function productionFunction(name) { const start = source.indexOf(`${name === 'runGeneration' ? 'async ' : ''}function ${name}(`); return source.slice(start, source.indexOf(`// @theater-source-end ${name}`, start)); }
 function generationHarness({ honorAbort = true, htmlMode = false } = {}) {
-    const save = deferred(), requests = [], saved = [], updates = [], resets = [];
+    const save = deferred(), requests = [], saved = [], updates = [], resets = [], toasts = [];
     const ui = new Proxy(() => {}, { get: (_target, key) => key === 'length' ? 0 : () => ui });
     const runtime = { settings: { maxAutoRounds: 1, autoContinue: false, selectedWorldBooks: [] },
         extractHtml: text => text, knownInstructionTags: () => [], captureGenerationApiRoute: () => ({}), clearRequestIssue() {}, runtimeLog() {}, setActiveInstructionTags() {}, playNotificationSound() {},
@@ -28,16 +28,16 @@ function generationHarness({ honorAbort = true, htmlMode = false } = {}) {
         async storeCurrentResult(item) { saved.push(item); await save.promise; return true; },
         textFallbackHtml: text => `<p>${text}</p>`, captureRequestIssue: error => ({ signal: error.name }), requestFailureMessage: () => '', theaterError() {}, showInIframe() {},
     };
-    const sandbox = { runtime, $: () => ui, AbortController, DOMException, console: { error() {} }, toastr: { info() {}, warning() {}, success() {} },
+    const sandbox = { runtime, $: () => ui, AbortController, DOMException, console: { error() {} }, toastr: Object.fromEntries(['info', 'warning', 'success'].map(type => [type, (message, title) => toasts.push({ type, message, title })])),
         normalizeRoleSources: () => [], captureHistoryRoles: () => [], SillyTavern: { getContext: () => ({}) },
         resolveTargetWordCount: () => htmlMode ? 0 : 6000, isStagedRenderTarget: () => !htmlMode, resolveRenderSelection: () => ({ label: 'synthetic', rules: 'VIRTUAL_INTERACTIVE_RULE', isPlainTextRender: false }), updateContinueHint() {}, updateLengthHint() {},
         assembleGenerationPayload: async () => ({ ctx: {}, targetWordCount: htmlMode ? 0 : 6000, isPlainTextRender: !htmlMode }), textOutputModeForTheme: () => 'text', normalizeContextRange: value => value,
         itemTags: () => [], classifyLengthTier: () => 'long', createGenerationJob, abortGenerationJob, generationTextWithLiveSegment, filterStoryOutput, readableCharCount,
-        assertHtmlIntegrity, recoverHtmlText, finalStoryOutput, stripExcludedOutputTags, FORMAT_RECOVERY_NOTICE, addGenerationSegment, shouldContinueJob: () => false, markCompleted() {},
+        assertHtmlIntegrity, recoverHtmlText, finalStoryOutput, stripExcludedOutputTags, FORMAT_RECOVERY_NOTICE, addGenerationSegment, streamEndNotice, shouldContinueJob: () => false, markCompleted() {},
         htmlToPlainText: htmlMode ? recoverHtmlText : text => text, continuationRoundHistory: () => [], prepareContinuationContext: text => text, newHistoryKey: () => 'synthetic-id', markFirstToken() {},
     };
     const api = runInNewContext(productionFunction('runGeneration') + '\n' + productionFunction('stopGeneration') + '\n({run:runGeneration,stop:stopGeneration})', sandbox);
-    return { ...api, runtime, save, requests, saved, updates, resets };
+    return { ...api, runtime, save, requests, saved, updates, resets, toasts };
 }
 
 test('最终普通正文被附加标签包裹时，进入可重排的保留结果', async () => {
@@ -255,4 +255,35 @@ test('complete single HTML is saved successfully without a recovery task', async
     h.save.resolve(); await task;
     assert.equal(h.saved.length,1);assert.equal(h.requests.length,1);
     assert.equal(h.runtime.currentGenerationJob,null);
+});
+
+
+// 断流提醒（4.4.9d）：最后一轮没有结束信号或中途报错时只提醒，正文、保存和请求次数照旧。
+for (const [streamEnd, pattern] of [['eof', /服务没有确认写完/], ['provider-error', /服务商在写的过程中报了错/]]) {
+    test(`single HTML ending with ${streamEnd} is kept as-is and warns that the ending may be cut off`, async () => {
+        const h = generationHarness({ htmlMode: true });
+        const task = h.run('virtual cut HTML', false); while (!h.requests.length) await tick();
+        const html = '<html><body><p>她推开门，看见</p></body></html>';
+        h.requests[0].resolve({ text: html, stopReason: 'unknown', streamEnd });
+        while (!h.saved.length) await tick();
+        h.save.resolve(); await task;
+        assert.equal(h.saved.length, 1); assert.equal(h.requests.length, 1);
+        assert.equal(h.saved[0].html, html); assert.equal(h.saved[0].mode, 'html');
+        const warnings = h.toasts.filter(t => t.type === 'warning');
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0].message, pattern);
+        assert.match(warnings[0].message, /续写/);
+        assert.equal(h.toasts.some(t => t.type === 'success'), false);
+    });
+}
+
+test('single HTML with a confirmed ending keeps the ordinary success notice', async () => {
+    for (const streamEnd of ['done', 'stop-reason', undefined]) {
+        const h = generationHarness({ htmlMode: true });
+        const task = h.run('virtual complete HTML', false); while (!h.requests.length) await tick();
+        h.requests[0].resolve({ text: '<html><body><p>完整正文。</p></body></html>', stopReason: 'stop', streamEnd });
+        while (!h.saved.length) await tick();
+        h.save.resolve(); await task;
+        assert.deepEqual(h.toasts.map(t => t.type), ['success'], String(streamEnd));
+    }
 });

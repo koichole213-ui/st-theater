@@ -20,7 +20,7 @@ import { stripTargetWordCountRequirement, resolveTargetWordCount, isStagedRender
 import { scanWithCurrentSillyTavern } from './world-book-runtime.js';
 import { buildProtagonistAnchor } from './protagonist-anchor.js';
 import { formatTokenCount } from './token-estimator.js';
-import { targetCompletionChars, abortGenerationJob, createGenerationJob, addGenerationSegment, shouldContinueJob, shouldAuthorizeFinishRound, authorizeFinish, generationTextWithLiveSegment } from './generation-job.js';
+import { targetCompletionChars, abortGenerationJob, createGenerationJob, addGenerationSegment, shouldContinueJob, shouldAuthorizeFinishRound, authorizeFinish, generationTextWithLiveSegment, streamEndNotice } from './generation-job.js';
 import { readableCharCount } from './text-counter.js';
 import { displayedContinuationVersion, selectContinuationVersion, normalizeContinuationRounds, createContinuationSession, continuationRoundHistory, appendContinuationVersion } from './continuation-session.js';
 import { markCompleted, markFirstToken } from './request-metrics.js';
@@ -987,13 +987,14 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             }
             if (!segmentText) throw new Error('生成完成但没有可显示内容');
             const resolvedStopReason = result?.stopReason && result.stopReason !== 'unknown' ? result.stopReason : 'stop';
-            addGenerationSegment(runtime.currentGenerationJob, segmentText, resolvedStopReason, result?.rawStopReason || null);
+            addGenerationSegment(runtime.currentGenerationJob, segmentText, resolvedStopReason, result?.rawStopReason || null, result?.streamEnd || null);
             currentRoundStreamText = '';
             runtime.runtimeLog(resolvedStopReason === 'length' ? 'warn' : 'info', '请求结束', {
                 round,
                 stop_reason: resolvedStopReason,
                 raw_stop_reason: result?.rawStopReason || null,
                 inferred: !result?.stopReason || result.stopReason === 'unknown',
+                stream_end: result?.streamEnd || null,
                 segment_chars: readableCharCount(segmentText),
             });
 
@@ -1147,10 +1148,15 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             reached_target: reached,
         });
         const stopText = runtime.currentGenerationJob.stopReason === 'length' ? '（达到输出 Token 上限）' : '';
+        // 断流提醒：最后一轮没有正常收尾时，提醒看一眼结尾；正文、轮数都不变。
+        const cutNotice = streamEndNotice(runtime.currentGenerationJob.streamEnd);
+        if (cutNotice) runtime.runtimeLog('warn', '正文结尾可能不完整', { stream_end: runtime.currentGenerationJob.streamEnd });
         const summary = targetWordCount
             ? `目标约 ${targetWordCount} 字 · 实际约 ${runtime.currentGenerationJob.actualChars} 字 · 共 ${runtime.currentGenerationJob.round} 轮${stopText}`
             : `生成完成 · 共 ${runtime.currentGenerationJob.round} 轮${stopText}`;
-        if (runtime.currentGenerationJob.completedBelowTarget) {
+        if (cutNotice) {
+            toastr.warning(`${cutNotice}已保留收到的正文，要接着写可以点「续写」。`, summary, { timeOut: 15000, extendedTimeOut: 5000 });
+        } else if (runtime.currentGenerationJob.completedBelowTarget) {
             toastr.warning(`已完成，约 ${runtime.currentGenerationJob.actualChars} 字，低于目标 ${targetWordCount} 字`, '', { timeOut: 9000 });
         } else if (reached) {
             toastr.success(summary, '', { timeOut: 7000 });

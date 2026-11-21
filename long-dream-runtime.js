@@ -5,6 +5,7 @@ import { runSeriesMemoryBatches, applySeriesStoryBatch, refreshSeriesStorySummar
 // long-dream-runtime: receives live state and cross-feature callbacks from index.js.
 import { markFirstToken, markCompleted, createRequestMetrics } from './request-metrics.js';
 import { readableCharCount } from './text-counter.js';
+import { streamEndNotice } from './generation-job.js';
 import { buildLongDreamCanonSuggestionPayload, parseLongDreamCanonSuggestions } from './long-dream-canon-suggestions.js';
 import { resolveProtocol, normalizeMaxTokens } from './api-client.js';
 import { textOutputModeForTheme } from './plain-text-renderer.js';
@@ -79,6 +80,7 @@ async function requestLongDreamChapter({
         runtime.recordRequestMetrics(runtime.lastRequestMetrics);
         runtime.runtimeLog('info', '长梦正文生成完成', {
             stop_reason: result?.stopReason || 'unknown',
+            stream_end: result?.streamEnd || null,
             chars: readableCharCount(text),
         });
         return { ...(typeof result === 'string' ? {} : result), ...output, text };
@@ -556,11 +558,18 @@ async function generateNextLongDreamChapter({ appendCandidate = false, candidate
             candidate_count: result.record.draft?.candidates?.length || 1,
             rounds: result.rounds,
             completed_below_target: result.completedBelowTarget,
+            stream_end: result.streamEnd || null,
         });
         const candidateCount = result.record.draft?.candidates?.length || 1;
-        toastr.success(candidateCount > 1
+        const written = candidateCount > 1
             ? `新版本已经写好，当前保留 ${candidateCount} 版，可切换比较后确认保存`
-            : '新章节已经写好，请检查排版后确认保存', '', { timeOut: 7000 });
+            : '新章节已经写好，请检查排版后确认保存';
+        // 断流提醒：最后一轮没有正常收尾时提醒看结尾；章节照常进入待确认。
+        const cutNotice = streamEndNotice(result.streamEnd);
+        if (cutNotice) {
+            runtime.runtimeLog('warn', '长梦正文结尾可能不完整', { dream_id: String(dream.id), stream_end: result.streamEnd });
+            toastr.warning(`${cutNotice}确认保存前请看一眼这一章的结尾。`, written, { timeOut: 15000, extendedTimeOut: 5000 });
+        } else toastr.success(written, '', { timeOut: 7000 });
         runtime.playNotificationSound();
     } catch (error) {
         const unsaved = error?.unsavedLongDreamDraft;

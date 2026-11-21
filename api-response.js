@@ -307,6 +307,9 @@ export async function readSSEStream(
     let receivedChunks = 0, receivedBytes = 0;
     let readComplete = false;
     let plainTextPreamble = false;
+    // A protocol end event (Anthropic message_stop, Responses response.completed) or a whole
+    // non-SSE body also means the provider finished, even without a literal [DONE].
+    let endEventSeen = false, wholeBody = false, framedEvents = 0, bareEvents = 0;
 
     // Only shape/counters are diagnosed; never retain payloads in summaries.
     const isApiObject = json => {
@@ -343,6 +346,12 @@ export async function readSSEStream(
             .some(key => Object.hasOwn(json, key) && (json[key] == null
                 || typeof json[key] === 'string' || typeof json[key] === 'object'));
     };
+    // How the stream ended, for the "may be cut off" notice. Only 'eof' (the connection closed
+    // with no end signal at all) and 'provider-error' (an error event after some text) are suspicious.
+    const streamEnd = () => (providerError && full ? 'provider-error'
+        : meta.rawStopReason ? 'stop-reason'
+        : streamFinished || endEventSeen || wholeBody || (!framedEvents && bareEvents === 1) ? 'done'
+        : readComplete ? 'eof' : 'unknown');
     const summary = () => {
         const bodySeen = !!String(filterTaggedReasoning(full).content || '').trim();
         const unknownReason = parseFailures ? 'parse_failed'
@@ -352,7 +361,7 @@ export async function readSSEStream(
         return {
             ...createResponseSummary({ response, transport: 'stream', protocol, events: eventCount,
                 json: lastJson, meta, hasText: bodySeen, hasReasoning: hadReasoning }),
-            receivedChunks, receivedBytes, heartbeats, protocolDetected, doneSeen: streamFinished,
+            receivedChunks, receivedBytes, heartbeats, protocolDetected, doneSeen: streamFinished, streamEnd: streamEnd(),
             parseFailures, unsupportedEvents, readComplete,
             contentSeen: bodySeen ? true : unknownReason ? 'unknown' : false,
             contentObservationReason: bodySeen ? 'body_seen' : unknownReason || 'recognized_empty',
@@ -373,7 +382,9 @@ export async function readSSEStream(
             return;
         }
         eventCount += 1;
+        if (framed) framedEvents += 1; else bareEvents += 1;
         if (!namedHeartbeat && (json?.type === 'ping' || json?.type === 'heartbeat')) heartbeats += 1;
+        if (json?.type === 'message_stop' || json?.type === 'response.completed') endEventSeen = true;
         lastJson = json;
         const recognized = isApiObject(json);
         protocolDetected ||= framed || recognized;
@@ -457,6 +468,7 @@ export async function readSSEStream(
                     hadReasoning ||= hasReasoningContent(json);
                     meta = extractResponseMeta(json, protocol);
                     full = extractStreamText(json, protocol);
+                    wholeBody = true;
                     if (full) onChunk(full);
                 } catch (error) {
                     if (!(error instanceof SyntaxError)) throw error;
@@ -470,6 +482,7 @@ export async function readSSEStream(
             }
             if (!full && !protocolDetected && !unsupportedEvents && !parseFailures) {
                 full = raw;
+                wholeBody = true;
                 onChunk(full);
             }
         }
@@ -486,7 +499,7 @@ export async function readSSEStream(
             throw noTextResponseError(meta, { phase: 'body', transport: 'stream' });
         }
         if (!full) throw streamEmptyError();
-        return { text: full, ...meta, responseSummary };
+        return { text: full, ...meta, streamEnd: streamEnd(), responseSummary };
     } catch (error) {
         throw attachResponseSummary(error, summary());
     }

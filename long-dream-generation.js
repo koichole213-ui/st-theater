@@ -333,7 +333,7 @@ export function createLongDreamGenerationController({
                     }
                     const addedText = accumulatedText.startsWith(roundBaseText)
                         ? accumulatedText.slice(roundBaseText.length).trim() : streamedText;
-                    addGenerationSegment(job, addedText, requestResult?.stopReason || 'stop', requestResult?.rawStopReason || null);
+                    addGenerationSegment(job, addedText, requestResult?.stopReason || 'stop', requestResult?.rawStopReason || null, requestResult?.streamEnd || null);
                     if (active) {
                         if (!active.firstChunkAt) active.firstChunkAt = Number(clock());
                         active.currentChars = readableCharCount(accumulatedText);
@@ -405,6 +405,7 @@ export function createLongDreamGenerationController({
                 actualChars: readableCharCount(finalText),
                 targetCompletionChars: completionChars,
                 completedBelowTarget: readableCharCount(finalText) < completionChars,
+                streamEnd: job.streamEnd,
                 stage: LONG_DREAM_GENERATION_STAGE.REVIEW,
             };
         } catch (error) {
