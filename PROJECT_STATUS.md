@@ -22,9 +22,14 @@
 
 - [x] 断流提醒（只提醒，不改提示词、轮数、正文、保存）：`readSSEStream` 记下流怎么结束（`streamEnd`：`done` / `stop-reason` / `eof` / `provider-error`；Anthropic `message_stop`、Responses `response.completed`、一次给完的 JSON 也算正常结束）。最后一轮是 `eof`（连接关了，没有 `[DONE]` 也没有结束原因）或 `provider-error`（写了一部分后流里报错）时：普通生成 / 手动续写弹黄色提醒“……结尾可能断在半截。已保留收到的正文，要接着写可以点「续写」”；长梦照常进待确认，提醒“确认保存前请看一眼这一章的结尾”；运行日志各记一条。只对独立 API 流式生效（主 API 拿不到结束信号，不提醒）。
 - [x] 连不上时说清楚：独立 API 从网页直连别的网站失败（`T-NET-FAILED` / `T-NET-NO-RESPONSE`）时，报错多一段“如果这个 API 在别的插件或软件里能用，多半是中转站不允许网页直接访问……切到「酒馆主 API」”；「请求格式」自动判断成 Anthropic 又被 401 时，提示改成 OpenAI 兼容格式。连接测试、获取模型、正文生成都覆盖；诊断报告的“错误处理建议”也带上。不改请求本身。
-- 验证：全量 933/933（新增 `tests/stream-end-notice.test.js` 6 条、`tests/request-route-hints.test.js` 6 条、`task-isolation` 3 条；在旧代码上失败）；无头 Chrome 用真实 `fetch` 打假中转：不许跨域 → `T-NET-NO-RESPONSE` + 补充说明；安静断流 → `eof`；正文后报错 → `provider-error`；正常结束 → `stop-reason`。
+- 验证：全量 935/935（新增 `tests/stream-end-notice.test.js` 6 条、`tests/request-route-hints.test.js` 8 条、`task-isolation` 3 条；在旧代码上失败）；无头 Chrome 用真实 `fetch` 打假中转：不许跨域 → `T-NET-NO-RESPONSE` + 补充说明；安静断流 → `eof`；正文后报错 → `provider-error`；正常结束 → `stop-reason`。
 - 已知 / 推测：从不发 `[DONE]` 也不给结束原因的中转，每次都会提醒（误报，只多一条提示）；`stop` + `[DONE]` 齐全但断在半句的情况仍发现不了（要结束标记，禾禾定以后再说）；多轮补写时只看最后一轮。
-- [ ] 小砚交叉审查（`badab3e..claude/stream-end-notice`）。
+- [x] 小砚交叉审查（11-21，`badab3e..82a7e1d`，主审 / 独审各 933/933，专项 123/123；A–E 60 组 + 补充对照共 78 组，隔离 Edge 测跨域 / 预检 401 / 换请求格式 / 同源子路径 / 模拟 Vertex）：没有丢正文、写错数据、漏密钥。断流提醒通过：A、E 出黄字、正文保留、长梦进待确认；B、C、D 与基线一致，正文、保存内容、请求轮数不变；前一轮异常、最后一轮正常不提醒（按设计）。
+  - [x] 红色报错框看不到新加的说明（只在诊断报告里）：带错误码的报错框按错误码的固定说明重画，没用到 `issue.hint`。**本版新引入、还没发布、等于这项没做到**，小克顺手修了（禾禾没另外表态）：`errorHelpHTML` 把补充说明放在“现在可以”第一条，`errorCopyText` 多一行“补充说明”。
+  - [x] 宿主把页面来源报成 `"null"` 时漏掉跨域说明（小砚推测）→ 来源是 `null` 时按“完整的 http(s) 地址算跨域”。同上，小克顺手修。
+  - 两条修复的新测试（`request-route-hints` 第 7、8 条）在 `82a7e1d` 上失败；按收尾规则不另开审查。
+  - [-] 记下不修（都保留正文）：只有一条裸 JSON 增量、尾部损坏时漏提醒；Responses 的嵌套失败事件会提醒，但文案说的是“服务没有确认写完”而不是“报了错”。
+  - 待真机：TT、真实酒馆的 Gemini / Vertex 流。
 - [ ] 禾禾同意后升 4.4.9d、写更新日志、推预览。
 - [ ] 真实体验：用会断流的线路写一篇，看提醒出没出、正文是否照旧；把独立 API 填成不许网页访问的地址，看报错说明。
 - [-] 以后再说（禾禾 11-21）：结束标记（自动抗截断，默认关）；「经酒馆转发」开关（要先堵住“Key 注入失败会改用酒馆存的 Custom Key”、日志、取消等，见小砚报告第四节 b）。

@@ -35,7 +35,9 @@ export function requestRouteHints(config = {}, request = {}, { origin = globalTh
     let crossOrigin = false;
     try {
         const endpoint = String(request?.endpoint || '');
-        crossOrigin = origin ? new URL(endpoint, origin).origin !== new URL(origin).origin : /^https?:\/\//i.test(endpoint);
+        // 有的宿主把页面来源报成 "null"：这时只要地址是完整的 http(s) 网址就算跨域。
+        const pageOrigin = origin && origin !== 'null' ? new URL(origin).origin : '';
+        crossOrigin = pageOrigin ? new URL(endpoint, pageOrigin).origin !== pageOrigin : /^https?:\/\//i.test(endpoint);
     } catch { crossOrigin = false; }
     const autoAnthropic = request?.protocol === 'anthropic' && !['openai', 'anthropic'].includes(config?.apiProtocol);
     return { crossOrigin, autoAnthropic };

@@ -65,7 +65,7 @@ export function errorHelpHTML(issue, { retained = false, actions = false, versio
         <p>${esc(info.what)}</p>
         ${provider?.zh ? `<section class="teh-provider"><small>服务商 / 中转返回的说明</small>
             <p>${esc(provider.zh)}</p>${showEnglishHint ? '<small>英文原文见“技术信息”</small>' : ''}</section>` : ''}
-        <div class="teh-steps"><b>现在可以</b>${stepsHTML(info.steps)}</div>
+        <div class="teh-steps"><b>现在可以</b>${stepsHTML(issue.hint ? [issue.hint, ...info.steps] : info.steps)}</div>
         ${technical ? `<details><summary>技术信息（给维护者看）</summary>${technical}</details>` : ''}
         ${actions ? `<div class="teh-actions"><button type="button" data-error-copy>复制问题信息</button>
             <button type="button" data-error-diagnostics>打开诊断</button></div><p data-error-status role="status"></p>` : ''}
@@ -86,6 +86,7 @@ export function errorCopyText(issue, { version, time = new Date() } = {}) {
         issue.httpStatus && `HTTP 状态：${issue.httpStatus}`,
         route && `线路：${route}`,
         duration && `用时：${duration}`,
+        issue.hint && `补充说明：${issue.hint}`,
         provider?.zh && `服务商说明：${provider.zh}`,
         provider?.original && `${isProviderMessageChinese(provider.original) ? '服务商原文' : '英文原文'}：${provider.original}`,
         version && `插件版本：${version}`,

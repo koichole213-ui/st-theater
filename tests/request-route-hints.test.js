@@ -72,3 +72,21 @@ test('independent API: 401 after auto-detecting Anthropic suggests the OpenAI fo
     assert.equal(chosen.signal, 'T-HTTP-401');
     assert.equal(chosen.hint, undefined);
 });
+
+test('error popup shows the hint as the first suggestion, and the copy text carries it', async () => {
+    const { errorHelpHTML, errorCopyText } = await import('../error-help-ui.js');
+    const issue = classifyRequestFailure(withRequestRouteHints(new TypeError('Failed to fetch'), { crossOrigin: true }), { stage: '连接测试' });
+    const html = errorHelpHTML(issue, { actions: true });
+    const steps = html.slice(html.indexOf('teh-steps'));
+    assert.ok(steps.indexOf('不允许网页直接访问') > 0, 'hint is inside the steps');
+    assert.ok(steps.indexOf('不允许网页直接访问') < steps.indexOf('检查网络后再试'), 'hint comes first');
+    assert.match(errorCopyText(issue), /补充说明：.*不允许网页直接访问/);
+    const plain = classifyRequestFailure(new TypeError('Failed to fetch'));
+    assert.doesNotMatch(errorHelpHTML(plain), /不允许网页直接访问/);
+    assert.doesNotMatch(errorCopyText(plain), /补充说明/);
+});
+
+test('route hints: a page reporting origin "null" still recognises a full http(s) address as cross-origin', () => {
+    assert.equal(requestRouteHints({}, { endpoint: 'https://relay.example.com/v1/chat/completions' }, { origin: 'null' }).crossOrigin, true);
+    assert.equal(requestRouteHints({}, { endpoint: '/api/backends/chat-completions/generate' }, { origin: 'null' }).crossOrigin, false);
+});
