@@ -231,7 +231,7 @@ test('独立 API 按明确输出边界调整，重试保留完整输入与设置
         ['max_tokens must be between 1 and 32768', 32768],
         ['max_tokens exceeds maximum allowed output tokens of 32768', 32768],
         ['This model supports at most 32768 completion tokens, max_tokens was 64000', 32768],
-        ['max_tokens exceeds the allowed limit', 16384],
+        ['max_tokens exceeds the allowed limit', 32768],
     ]) {
         const bodies = [];
         const config = { apiUrl: 'https://example.invalid/v1', apiProtocol: API_PROTOCOLS.OPENAI,

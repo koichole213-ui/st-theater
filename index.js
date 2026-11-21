@@ -40,7 +40,7 @@ import { bindPersonaFollowRefresh, syncPersonaToSettings, readPromptPlacement } 
 import { compareVersion, fetchInstalledExtensionStatus, fetchLatestRemoteVersion, formatVersionCheckError } from './version-check.js';
 import { EXTENSION_TEMPLATE_PATH } from './extension-location.js';
 import { installSafeResizeListener, renderSafeIframe } from './safe-renderer.js';
-import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, buildApiEndpoint, buildApiRequest, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
+import { API_PROTOCOLS, DEFAULT_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS_SCHEMA, buildApiEndpoint, buildApiRequest, normalizeMaxTokens, resolveMainApiModel, resolveProtocol } from './api-client.js';
 import { requestCustomApi, requestMainApi } from './api-runtime.js';
 import { recognizeInstructionTitle } from './instruction-title.js';
 import { STORY_RELATION_CONTINUITY_RULE, buildContinuationInstruction, buildContinuationPayload, buildFinalRenderPayload, buildGenerationPayload, hydrateFinalRenderHtml, recentGenerationRoundsContext } from './generation-payload.js';
@@ -55,7 +55,7 @@ import { abortGenerationJob, addGenerationSegment, authorizeFinish, createGenera
 import { readableCharCount } from './text-counter.js';
 import { classifyLengthTier, continuationFirstRoundGuidance, firstRoundGuidance, isStagedRenderTarget, longFormFirstRoundGuidance, normalizeManualTarget, resolveTargetWordCount, stripTargetWordCountRequirement } from './length-policy.js';
 import { MAX_RUNTIME_LOGS, clearRuntimeLogs, formatRuntimeLogs, getRuntimeLogEntries, sanitizeLogText, setRuntimeLogSecretProvider, writeRuntimeLog } from './runtime-log.js';
-import { MAX_API_PRESETS, apiPresetSecretValues, createApiPresetFromConfig, normalizeApiPresetList } from './api-presets.js';
+import { MAX_API_PRESETS, apiPresetSecretValues, createApiPresetFromConfig, migrateMaxOutputDefault, normalizeApiPresetList } from './api-presets.js';
 import { splitInstructionTextFile } from './instruction-import.js';
 import { AUTO_CONTINUE_SCHEMA, migrateAutoContinueDefault } from './settings-migration.js';
 import { createInstructionBackup, parseInstructionBackup } from './instruction-backup.js';
@@ -174,7 +174,7 @@ const defaultSettings = Object.freeze({
     layoutApiEnabled: false, layoutApiPresetId: '', layoutMaxOutputTokens: 131072,
     releaseNotesReadVersion: '',
     maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
-    maxOutputTokensSchema: 2,
+    maxOutputTokensSchema: MAX_OUTPUT_TOKENS_SCHEMA,
     creativeEnhancementEnabled: false,
     autoContinue: true,
     autoContinueSchema: AUTO_CONTINUE_SCHEMA,
@@ -265,7 +265,8 @@ async function init() {
 
     const existingSettings = extensionSettings[MODULE_NAME];
     const upgradeNeedsProtocolCompatibility = !!existingSettings && !hasOwn(existingSettings, 'apiProtocol');
-    const upgradeNeedsMaxOutputDefault = !!existingSettings && !hasOwn(existingSettings, 'maxOutputTokensSchema');
+    // 旧设置里的 schema 要在和默认值合并之前取（合并后缺的会被补成最新的 3）。
+    const maxOutputSchemaBefore = existingSettings ? Number(existingSettings.maxOutputTokensSchema || 0) : MAX_OUTPUT_TOKENS_SCHEMA;
     const upgradeNeedsFollowedWorldBookTracking = !!existingSettings && !hasOwn(existingSettings, 'followedWorldBooks');
     const upgradeNeedsMemoryPresetLibrary = !!existingSettings && !hasOwn(existingSettings, 'longDreamMemoryPresets');
     const upgradeNeedsQuickRenderPair = !!existingSettings && !hasOwn(existingSettings, 'quickRenderA');
@@ -303,12 +304,10 @@ async function init() {
     const activeMemoryPromptPreset = settings.longDreamMemoryPresets.find(preset => preset.id === settings.longDreamMemoryPresetId);
     settings.longDreamMemoryPrompt = activeMemoryPromptPreset?.focusPrompt || DEFAULT_LONG_DREAM_MEMORY_PRESET;
     if (!settings.apiPresets.some(preset => preset.id === settings.selectedApiPresetId)) settings.selectedApiPresetId = '';
-    if (upgradeNeedsMaxOutputDefault) {
-        if (Number(settings.maxOutputTokens) === 8192) {
-            settings.maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS;
-            runtimeLog('info', '单轮输出上限默认值升级', { from: 8192, to: DEFAULT_MAX_OUTPUT_TOKENS });
-        }
-        settings.maxOutputTokensSchema = 2;
+    if (maxOutputSchemaBefore < MAX_OUTPUT_TOKENS_SCHEMA) {
+        settings.maxOutputTokensSchema = maxOutputSchemaBefore;
+        const migrated = migrateMaxOutputDefault(settings);
+        if (migrated?.settings || migrated?.presets) runtimeLog('info', '单轮输出上限默认值升级', { from: migrated.settings, to: DEFAULT_MAX_OUTPUT_TOKENS, presets: migrated.presets });
         save();
     }
     if (autoContinueDefaultMigrated) {

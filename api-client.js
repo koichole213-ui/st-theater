@@ -1,5 +1,10 @@
 export const API_PROTOCOLS = Object.freeze({ AUTO: 'auto', OPENAI: 'openai', ANTHROPIC: 'anthropic' });
-export const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
+// 独立 API 的单轮输出上限（max_tokens）。为什么不取消、每次都要带（禾禾问过好几次，记在这里）：
+// 1. Anthropic 格式规定必须带；2. OpenAI 兼容不带时由中转决定，有的中转默认很小，反而更容易断在半截；
+// 3. 思考模型的思考也算在这个数里，太小会把正文挤短。代价：有的中转按这个数预扣额度；模型上限更小时
+// 会先被拒一次、自动调低重试（不记住，每次都会这样）。2026-11-21 默认从 16384 调到 32768（禾禾同意）。
+export const DEFAULT_MAX_OUTPUT_TOKENS = 32768;
+export const MAX_OUTPUT_TOKENS_SCHEMA = 3;
 
 import { applyPromptPostProcessing } from './request-layout.js';
 
@@ -93,7 +98,7 @@ export function buildApiRequest({
 
 export function maxTokenFallbackSequence(value) {
     const requested = normalizeMaxTokens(value);
-    const standardLimits = [16384, 8192, 4096, 2048, 1024, 512, 256];
+    const standardLimits = [32768, 16384, 8192, 4096, 2048, 1024, 512, 256];
     return [requested, ...standardLimits.filter(limit => limit < requested)]
         .filter((limit, index, all) => all.indexOf(limit) === index);
 }

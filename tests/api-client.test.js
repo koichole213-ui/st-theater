@@ -126,9 +126,11 @@ test('OpenAI 请求使用 chat completions 与 Bearer', () => {
     assert.equal('tool_choice' in req.body, false);
 });
 
-test('单轮输出默认 16384，低上限模型按标准档位回落', () => {
-    assert.equal(DEFAULT_MAX_OUTPUT_TOKENS, 16384);
-    assert.equal(normalizeMaxTokens(undefined), 16384);
+test('单轮输出默认 32768，低上限模型按标准档位回落', () => {
+    assert.equal(DEFAULT_MAX_OUTPUT_TOKENS, 32768);
+    assert.equal(normalizeMaxTokens(undefined), 32768);
+    assert.deepEqual(maxTokenFallbackSequence(32768), [32768, 16384, 8192, 4096, 2048, 1024, 512, 256]);
+    assert.deepEqual(maxTokenFallbackSequence(65536), [65536, 32768, 16384, 8192, 4096, 2048, 1024, 512, 256]);
     assert.deepEqual(maxTokenFallbackSequence(16384), [16384, 8192, 4096, 2048, 1024, 512, 256]);
     assert.equal(isMaxTokenLimitError(400, 'max_tokens must be less than or equal to 8192'), true);
     assert.equal(isMaxTokenLimitError(400, 'status_code=400,上下文窗口已满。减少对话历史记录、系统提示或工具'), false);

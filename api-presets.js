@@ -1,5 +1,5 @@
 import { channelFields, apiChannel } from './api-channels.js';
-import { DEFAULT_MAX_OUTPUT_TOKENS, normalizeMaxTokens } from './api-client.js';
+import { DEFAULT_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS_SCHEMA, normalizeMaxTokens } from './api-client.js';
 
 export const MAX_API_PRESETS = 30;
 const VALID_PROTOCOLS = new Set(['auto', 'openai', 'anthropic']);
@@ -25,6 +25,29 @@ export function normalizeApiPreset(raw = {}) {
         maxOutputTokens: normalizeMaxTokens(raw.maxOutputTokens, DEFAULT_MAX_OUTPUT_TOKENS),
         ...channelFields(raw),
     };
+}
+
+// 单轮输出上限默认值升级：还停在旧默认值（8192 → 16384 → 32768）的一起调上去，自己改过的不动。
+// API 预设里存着 16384 的也调（套用预设会把它写回设置）。返回改了哪些，没改返回 null。
+export function migrateMaxOutputDefault(settings) {
+    if (!settings || Number(settings.maxOutputTokensSchema || 0) >= MAX_OUTPUT_TOKENS_SCHEMA) return null;
+    const oldDefaults = Number(settings.maxOutputTokensSchema || 0) < 2 ? [8192, 16384] : [16384];
+    const from = Number(settings.maxOutputTokens);
+    const changed = { settings: null, presets: 0 };
+    if (oldDefaults.includes(from)) {
+        settings.maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS;
+        changed.settings = from;
+    }
+    if (Array.isArray(settings.apiPresets)) {
+        for (const preset of settings.apiPresets) {
+            if (preset && typeof preset === 'object' && Number(preset.maxOutputTokens) === 16384) {
+                preset.maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS;
+                changed.presets += 1;
+            }
+        }
+    }
+    settings.maxOutputTokensSchema = MAX_OUTPUT_TOKENS_SCHEMA;
+    return changed;
 }
 
 export function normalizeApiPresetList(raw) {
