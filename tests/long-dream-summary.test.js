@@ -506,3 +506,24 @@ test('概要禁用说明与原恢复保护一致，不把正文生成本身当�
     assert.match(summaryUnavailableReason(dream, false, 'missing'), /不能恢复/);
     assert.match(summaryUnavailableReason({ ...dream, memory: { ...dream.memory, summaryVersions: [{ id: 'old', canRestore: false }] } }, false, 'old'), /仅供查看/);
 });
+
+test('最近版本标清楚：哪版正在使用、逐章还是前几章合成一段；确认框不再说“一键恢复”', () => {
+    const source = readTheaterImplementation();
+    const render = source.match(/function longDreamSummaryHistoryHTML\([^]*?(?=\nfunction (?:runtime\.)?toggleLongDreamSummaryPreview)/)[0];
+    const date = source.match(/function longDreamDate\([^]*?(?=\nfunction longDreamExcerpt)/)[0];
+    const scope = { esc: value => String(value) };
+    runInNewContext(date + '\n' + render, scope);
+    const memory = { currentState: '逐章八章', summaryVersions: [
+        { id: 'a', text: '逐章八章', chapterNumber: 8, createdAt: '2026-11-21T10:00:00Z' },
+        { id: 'b', text: '精简后', chapterNumber: 8, createdAt: '2026-11-21T11:00:00Z', manualFullSummary: { text: '精简后', chapterNumber: 5 } },
+        { id: 'c', text: '精简后加第九章', chapterNumber: 9, createdAt: '2026-11-22T10:00:00Z', manualFullSummary: { text: '精简后', chapterNumber: 5 } },
+    ] };
+    const html = scope.longDreamSummaryHistoryHTML(memory);
+    const titles = [...html.matchAll(/theater-dream-summary-version-title">([^]*?)<\/span>/g)].map(match => match[1]);
+    assert.deepEqual(titles, ['前 5 章合成一段', '前 5 章合成一段', '逐章概要<small class="theater-dream-summary-version-tag">正在使用</small>']);
+    assert.doesNotMatch(html, /最新保存|上一版|较早 \d 版/);
+    // 当前概要不在列表里时，不标“正在使用”
+    assert.doesNotMatch(scope.longDreamSummaryHistoryHTML({ ...memory, currentState: '别的' }), /正在使用/);
+    assert.match(source, /精简前的版本会存进“最近版本”，最近几章内可以恢复/);
+    assert.doesNotMatch(source, /可以一键恢复/);
+});

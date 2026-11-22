@@ -82,6 +82,12 @@ function longDreamActiveMemoryCount(dream) {
 function longDreamSummaryHistoryHTML(memory, blocked = false, dream = null) {
     const versions = (memory.summaryVersions || []).slice().reverse();
     if (!versions.length) return '';
+    // 标出“正在使用”的那一版（最新的一条和当前概要相同的），以及每版是逐章的还是前几章合成了一段（精简或手改整篇）。
+    const currentIndex = memory.currentState ? versions.findIndex(version => version.text === memory.currentState) : -1;
+    const kindLabel = version => {
+        const through = Number(version.manualFullSummary?.chapterNumber) || 0;
+        return through > 0 ? `前 ${through} 章合成一段` : '逐章概要';
+    };
     return `<details class="theater-dream-summary-history">
         <summary><span>最近版本</span><small>${versions.length} / 5</small><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></summary>
         <p class="theater-dream-summary-note">可查看并恢复旧版，仅切换概要，不回退正文或人物关系。</p>
@@ -91,7 +97,7 @@ function longDreamSummaryHistoryHTML(memory, blocked = false, dream = null) {
                 : version.canRestore === false ? '用户决定已改变，这版仅供查看。' : blocked ? '请先完成概要更新、织录和冲突确认。' : '';
             return `<article class="theater-dream-summary-version">
                 <button type="button" class="theater-dream-summary-version-row" data-dream-summary-preview aria-expanded="false">
-                    <span class="theater-dream-summary-version-info"><span class="theater-dream-summary-version-title">${i === 0 ? '最新保存' : i === 1 ? '上一版' : `较早 ${i} 版`}${i === 0 ? '<small class="theater-dream-summary-version-tag">最新</small>' : ''}</span><small class="theater-dream-summary-version-meta">截至第 ${version.chapterNumber} 章${date ? ` · ${runtime.esc(date)}` : ''}</small></span>
+                    <span class="theater-dream-summary-version-info"><span class="theater-dream-summary-version-title">${kindLabel(version)}${i === currentIndex ? '<small class="theater-dream-summary-version-tag">正在使用</small>' : ''}</span><small class="theater-dream-summary-version-meta">截至第 ${version.chapterNumber} 章${date ? ` · ${runtime.esc(date)}` : ''}</small></span>
                     <span class="theater-dream-summary-version-toggle">查看</span>
                 </button>
                 <div class="theater-dream-summary-version-preview" hidden>

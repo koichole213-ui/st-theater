@@ -696,7 +696,7 @@ async function confirmLongDreamSummaryAction(dreamId, versionId = null, mode = '
     const title = restoring ? '恢复到这版概要？' : condensing ? '精简全篇概要？' : '重新整理全篇概要？';
     const paragraphs = condensing
         ? [`将使用梦脉副 API，把第 1～${plan.through} 章的概要（约 ${plan.source.length} 字）压成一段整篇概要，目标约 ${plan.targetChars} 字；之后的章节仍保留逐章概要。会产生一次用量。`,
-            '精简前的版本会存进“最近版本”，可以一键恢复；结果为空或没有明显变短时不采用。正文和梦脉条目不变。',
+            '精简前的版本会存进“最近版本”，最近几章内可以恢复；结果为空或没有明显变短时不采用。正文和梦脉条目不变。',
             '之后修改梦脉条目或定梦设定时，精简版会先标为“待核对”、暂不用于续写，点“编辑概要”看一眼保存即可；点“更新概要”会改回逐章版。']
         : restoring
         ? [`将当前概要切换为这份截至第 ${version.chapterNumber} 章的版本，不调用 API。`,
