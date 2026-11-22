@@ -141,3 +141,9 @@ test('去重：同一段提示里“不要报告字数”只说一次；多轮�
     assert.match(STORY_OUTPUT_RULE_PLAIN, /旧篇幅范围不得覆盖本次目标/);
     assert.match(STORY_OUTPUT_RULE_PLAIN, /不得混入content正文/);
 });
+
+test('纯文字规范第 4 条：先写完人物反应和这一幕的落点，再收在动作、画面或对话上', async () => {
+    const { DEFAULT_RENDER_TEMPLATE_TEXT } = await import('../theater-defaults.js');
+    assert.doesNotMatch(DEFAULT_RENDER_TEMPLATE_TEXT, /结尾停在一个动作/);
+    assert.match(DEFAULT_RENDER_TEMPLATE_TEXT, /结尾写完人物的反应和这一幕的落点后，可以收在一个动作、画面或对话上；不要另写总结或解释。/);
+});
