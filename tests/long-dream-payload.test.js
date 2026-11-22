@@ -416,3 +416,17 @@ test('同一章自动补写的每一轮都沿用同一个“带入全文”设�
         assert.doesNotMatch(recent, /第二章原文/);
     }
 });
+
+test('长梦同章收尾轮剩的字数太少时，请模型写完整章末，不再说“仍需新增约 0 字”', () => {
+    const record = createLongDreamRecord({ source: { text: '第一章正文。', html: '<main>第一章正文。</main>' } });
+    const draft = '草稿'.repeat(4900);
+    const near = buildLongDreamChapterPayload({ record, targetChars: 10000, currentDraft: draft, continuationRound: true, finishThisRound: true, writingPlan: { round: 2, maxRounds: 2, splitFirstRound: true } });
+    assert.doesNotMatch(near.userPrompt, /仍需新增约 \d+ 字|约 \d+ 字，可随情节自然浮动/);
+    assert.match(near.userPrompt, /本轮不再追字数，请用约 1500 字把本章剩下的情节和章末写完整/);
+    // 不是收尾轮、或者剩得够多：照旧
+    const mid = buildLongDreamChapterPayload({ record, targetChars: 10000, currentDraft: draft, continuationRound: true, finishThisRound: false, writingPlan: { round: 2, maxRounds: 3, splitFirstRound: true } });
+    assert.match(mid.userPrompt, /仍需新增约 200 字/);
+    const room = buildLongDreamChapterPayload({ record, targetChars: 10000, currentDraft: '草稿'.repeat(2500), continuationRound: true, finishThisRound: true, writingPlan: { round: 2, maxRounds: 2, splitFirstRound: true } });
+    assert.match(room.userPrompt, /仍需新增约 5000 字/);
+    assert.doesNotMatch(room.userPrompt, /本轮不再追字数/);
+});

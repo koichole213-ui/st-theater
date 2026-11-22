@@ -1,5 +1,5 @@
 import { resolveTheaterPreset } from './preset-compat.js';
-import { longFormFirstRoundTarget, singleRoundCompletionGuidance, normalizeManualTarget } from './length-policy.js';
+import { longFormFirstRoundTarget, singleRoundCompletionGuidance, normalizeManualTarget, finishRoundFloorChars, FINISH_ROUND_NEAR_TARGET } from './length-policy.js';
 import { hasPendingManualSummary } from './long-dream-story-summary.js';
 import { LONG_DREAM_WORLD_BOOK_POLICY, LONG_DREAM_WORLD_LINE_RELATION } from './long-dream.js';
 import { composePresetMessages } from './request-layout.js';
@@ -449,15 +449,21 @@ export function buildLongDreamChapterPayload({
         style ? `【写作风格｜只控制表达，不得改写事实】\n${style}` : '',
     ].filter(Boolean).join('\n\n');
     const plannedRound = Math.max(1, Number(writingPlan?.round) || 1);
+    // 同章收尾轮剩的字数比下限还少（前面写多了）：请模型把本章结尾写完整，不再说“仍需新增约 0 字”。
+    const finishFloor = finishThisRound && draft ? finishRoundFloorChars(target) : 0;
+    const nearTarget = finishFloor > 0 && remainingChars < finishFloor;
+    const nearTargetAsk = FINISH_ROUND_NEAR_TARGET.replace('{chars}', finishFloor).replace('剩下的情节和结尾', '本章剩下的情节和章末');
     const plannedRounds = Math.max(1, Number(writingPlan?.maxRounds) || 1);
     const roundGuidance = writingPlan
         ? (writingPlan.splitFirstRound && plannedRound === 1 && !draft
             ? `本章总目标约 ${target} 字，将由同章多轮正文共同完成。本轮只写本章前半部分，目标约 ${longFormFirstRoundTarget(target)} 字；自然承接上一章，不重写已保存章节，不要把前半章压缩成独立成品，不要提前总结或形成章末。`
-            : `本章正文总目标约 ${target} 字，当前第 ${plannedRound}/${plannedRounds} 轮，本章已有约 ${draftChars} 字，仍需新增约 ${remainingChars} 字。${plannedRounds === 1 ? '本次只生成这一轮，请充分展开剩余正文后自然停笔，不把篇幅留给假定的下一轮。' : '轮数是上限；收尾许可不等于字数达标，不得复述凑字或为了继续补写撤销已经发生的剧情。'}`)
+            : `本章正文总目标约 ${target} 字，当前第 ${plannedRound}/${plannedRounds} 轮，本章已有约 ${draftChars} 字，${nearTarget ? `${draftChars >= target ? '已达到目标' : '已接近目标'}。${nearTargetAsk}。` : `仍需新增约 ${remainingChars} 字。`}${plannedRounds === 1 ? '本次只生成这一轮，请充分展开剩余正文后自然停笔，不把篇幅留给假定的下一轮。' : '轮数是上限；收尾许可不等于字数达标，不得复述凑字或为了继续补写撤销已经发生的剧情。'}`)
         : '';
     const sections = [
         `【本章方向｜用户本次明确要求】\n章名：${title}\n创作方向：${direction}\n${draft
-            ? `目标是本章完整正文约 ${target} 字；本章已有约 ${draftChars} 字，本轮只补写为接近总目标仍需新增的内容（约 ${remainingChars} 字，可随情节自然浮动），不要报告或标注字数。`
+            ? (nearTarget
+                ? `目标是本章完整正文约 ${target} 字；本章已有约 ${draftChars} 字，${draftChars >= target ? '已达到目标' : '已接近目标'}。${nearTargetAsk}，不要报告或标注字数。`
+                : `目标是本章完整正文约 ${target} 字；本章已有约 ${draftChars} 字，本轮只补写为接近总目标仍需新增的内容（约 ${remainingChars} 字，可随情节自然浮动），不要报告或标注字数。`)
             : `目标正文约 ${target} 字；不需要自行统计、报告或标注字数。`}`,
         context.canon ? `【此梦设定｜用户已确认的持续硬事实】\n${context.canon}` : '【此梦设定】\n暂无额外设定；以已保存章节中已经成立的事实为准。',
         chapters

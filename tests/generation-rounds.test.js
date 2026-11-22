@@ -646,3 +646,24 @@ test('短稿只写一轮，5000起不再按8000阈值降低用户轮数上限', 
         assert.equal(shouldContinueJob(job, readableCharCount), false);
     }
 });
+
+test('收尾轮剩的字数太少时不再说“新增约 0 字”，改为留出写完结尾的篇幅；其他轮原样', async () => {
+    const { finishRoundFloorChars } = await import('../length-policy.js');
+    assert.equal(finishRoundFloorChars(6000), 900);
+    assert.equal(finishRoundFloorChars(3000), 800);
+    assert.equal(finishRoundFloorChars(10000), 1500);
+    assert.equal(finishRoundFloorChars(20000), 2000);
+    assert.equal(finishRoundFloorChars(0), 0);
+    const base = { round: 2, finishThisRound: true, targetChars: 6000, roundsRemaining: 1, manuscriptMode: true, draft: '……' };
+    for (const currentChars of [5600, 6300]) {
+        const text = buildContinuationInstruction({ ...base, currentChars });
+        assert.doesNotMatch(text, /新增约 0 字|新增约 500 字|仍差约/);
+        assert.match(text, /本轮不再追字数，请用约 900 字把剩下的情节和结尾写完整，不要为了控制篇幅压缩结尾/);
+        assert.match(text, currentChars >= 6000 ? /已达到目标/ : /已接近目标/);
+    }
+    const cont = buildContinuationInstruction({ ...base, manuscriptMode: false, continuationTask: true, currentChars: 5800 });
+    assert.match(cont, /【本次续写篇幅】.*已接近目标.*旧正文、聊天前文和参考资料均不计入目标.*请用约 900 字/);
+    // 剩得够多的收尾轮、非收尾轮：一字不变
+    assert.match(buildContinuationInstruction({ ...base, currentChars: 3000 }), /仍差约 3000 字。本轮请新增约 3600 字的有效正文/);
+    assert.match(buildContinuationInstruction({ ...base, finishThisRound: false, roundsRemaining: 2, currentChars: 5600 }), /仍差约 400 字。本轮请新增约 300 字的有效正文/);
+});

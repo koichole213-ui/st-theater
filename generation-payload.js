@@ -1,3 +1,5 @@
+import { FINISH_ROUND_NEAR_TARGET, finishRoundFloorChars } from './length-policy.js';
+
 export const STORY_RELATION_CONTINUITY_RULE = '【本篇关系承接】后续写作须承接本篇正文已经建立的身份、相识经过、人物关系和称呼；角色卡、世界书、预设及聊天记录中与本篇冲突的旧关系不得覆盖本篇事实，不得补入与本篇冲突或本篇明确不继承的原世界共同经历及熟人关系。符合本篇指令与既有世界线继承规则、且不冲突的人物关系、共同经历、性格、说话方式及背景仍可沿用，不因本篇尚未重述就一律清空。除非用户明确要求改变相应设定，或本篇情节已经交代关系变化，否则不得突然切换关系；允许有情节依据的自然发展，不得仅凭原世界资料虚构本篇已经发生过的关系变化。';
 
 export function buildGenerationPayload(parts = {}) {
@@ -148,7 +150,15 @@ export function buildContinuationInstruction({
     const suggestedChars = remaining
         ? Math.ceil((remaining / availableRounds) * 1.2 / 100) * 100
         : 0;
-    const lengthPlan = target
+    // 收尾轮剩的字数比下限还少（前面写多了）：不再说“新增约 0 字”，改为请模型把结尾写完整。
+    const finishFloor = finishThisRound ? finishRoundFloorChars(target) : 0;
+    const nearTarget = finishFloor > 0 && remaining < finishFloor;
+    const nearTargetAsk = FINISH_ROUND_NEAR_TARGET.replace('{chars}', finishFloor);
+    const lengthPlan = target && nearTarget
+        ? (continuationTask
+            ? `【本次续写篇幅】本次续写新增正文的合计目标约 ${target} 字；程序已统计本次各轮新增约 ${current} 字，${current >= target ? '已达到目标' : '已接近目标'}。开始本次续写之前的旧正文、聊天前文和参考资料均不计入目标。${nearTargetAsk}；不需要自行计算、报告或标注字数。`
+            : `【本轮篇幅】程序已统计当前可读正文约 ${current} 字，目标约 ${target} 字，${current >= target ? '已达到目标' : '已接近目标'}。${nearTargetAsk}；不需要自行计算、报告或标注字数。`)
+        : target
         ? (continuationTask
             ? `【本次续写篇幅】本次续写新增正文的合计目标约 ${target} 字；程序已统计本次各轮新增约 ${current} 字，仍需新增约 ${remaining} 字。开始本次续写之前的旧正文、聊天前文和参考资料均不计入目标；下方引用的前情可能包含旧正文，不要依据引用长度判断本次已经写够。本轮请新增约 ${suggestedChars} 字的有效正文，充分展开后再停笔；不需要自行计算、报告或标注字数。`
             : `【本轮篇幅】程序已统计当前可读正文约 ${current} 字，目标约 ${target} 字，仍差约 ${remaining} 字。本轮请新增约 ${suggestedChars} 字的有效正文；不需要自行计算、报告或标注字数。`)

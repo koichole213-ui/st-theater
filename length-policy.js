@@ -127,6 +127,16 @@ export function continuationFirstRoundGuidance(targetChars, { maxRounds = 1 } = 
     return `${scope}${plan}${continuity}${rounds === 1 ? ENDING_ROOM_GUIDANCE + singleRoundCompletionGuidance() : ''}`;
 }
 
+// 收尾轮至少留给结尾的字数（禾禾 2026-11-21）：目标的 15%，夹在 800～2000 字之间。
+// 前面几轮写多了时，收尾轮原来只剩几百字、甚至“新增约 0 字”，却还要写完剩下的情节和结局。
+export function finishRoundFloorChars(targetChars) {
+    const target = Math.max(0, Math.round(Number(targetChars) || 0));
+    if (!target) return 0;
+    return Math.min(2000, Math.max(800, Math.round((target * 0.15) / 100) * 100));
+}
+
+export const FINISH_ROUND_NEAR_TARGET = '本轮不再追字数，请用约 {chars} 字把剩下的情节和结尾写完整，不要为了控制篇幅压缩结尾';
+
 export function isLongFormTarget(targetChars) {
     const target = Math.round(Number(targetChars));
     return Number.isFinite(target) && target >= LONG_FORM_SPLIT_THRESHOLD;
