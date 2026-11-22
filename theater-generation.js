@@ -964,6 +964,7 @@ async function runGeneration(instruction, isAuto, sourceTags = []) {
             const excluded = stripExcludedOutputTags(typeof result === 'string' ? result : result?.text, runtime.settings?.contextExclusionRules);
             const output = finalStoryOutput(excluded.text, {
                 plainText: round !== 1 || isPlainTextRender, formatRecovered: result?.formatRecovered,
+                onKeptTrailing: chars => runtime.runtimeLog('warn', '正文有一段写在 </content> 后面，已接在正文末尾保留', { round, chars }),
             });
             const responseText = output.text;
             if (output.formatRecovered) formatRecovered = output.formatRecovered;

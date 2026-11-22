@@ -81,3 +81,40 @@ test('长梦第二轮的异常回复连同第一轮保存为可重排草稿，�
     assert.equal(requests, 2);
     assert.equal(layouts, 1);
 });
+
+test('</content> 提前关上、后面接着写的正文：像正文的一大段接上保留，附加部件照旧去掉', () => {
+    const head = '<content>她推开门，屋里还亮着那盏旧台灯。\n\n他抬起头，没有说话。</content>';
+    const ending = '\n\n「你回来了。」他终于开口，声音比她记得的要轻。\n\n她把伞靠在门边，雨水顺着伞尖在地板上洇开一小片。她想说的话很多，最后只是点了点头，走过去坐在他对面。\n\n台灯的光落在两个人中间，窗外的雨还在下。她伸手把他面前那杯早就凉了的茶推开，替他倒了一杯热的。';
+    const kept = [];
+    const out = story.finalStoryOutput(head + ending, { plainText: true, onKeptTrailing: chars => kept.push(chars) });
+    assert.equal(out.formatRecovered, undefined);
+    // 每一段都在、顺序不变
+    const paragraphs = [...(head.replace(/<\/?content>/g, '') + ending).split(/\n\n+/)].map(p => p.trim()).filter(Boolean);
+    let at = -1;
+    for (const paragraph of paragraphs) { const i = out.text.indexOf(paragraph); assert.ok(i > at, paragraph); at = i; }
+    assert.equal(kept.length, 1);
+    assert.ok(kept[0] >= 100);
+
+    const drops = {
+        短尾巴: '（完）',
+        状态栏标题: '\n【状态栏】' + '时间：深夜。地点：旧公寓。她的心情很复杂，他也一样。'.repeat(4),
+        一行行键值: '\n时间：深夜十一点\n地点：旧公寓客厅\n心情：复杂，想说又没说\n好感度：上升了一点点\n下一步：明天早上一起去买早餐。' + '附注。'.repeat(20),
+        创作说明: '\n创作说明：本篇围绕重逢展开，重点写两个人之间没说出口的话。结尾停在倒茶的动作上，留出余韵。'.repeat(2),
+        思考: '\n思考：这一章要让人物关系往前走一步，所以安排了倒茶这个细节。再检查一遍有没有写错称呼。'.repeat(2),
+        带标签: '\n<StatusBlock>' + '她的心情很复杂。'.repeat(20) + '</StatusBlock>',
+    };
+    for (const [name, tail] of Object.entries(drops)) {
+        const calls = [];
+        const result = story.filterStoryOutput(head + tail, { plainText: true, onKeptTrailing: c => calls.push(c) });
+        assert.equal(result, '她推开门，屋里还亮着那盏旧台灯。\n\n他抬起头，没有说话。', name);
+        assert.equal(calls.length, 0, name);
+    }
+    // 对白里带冒号的正文不当成状态栏
+    const dialogue = '\n\n她说：「明天还下雨吗？」\n\n他说：「不知道。」\n\n她又问：「那你还走吗？」\n\n他想了很久，最后说：「不走了。」窗外的雨声慢慢小了下去，她靠在沙发上，听着他在厨房里洗杯子的声音，觉得这个夜晚终于有了一点暖意。她想，等雨停了，就把阳台上那几盆快枯掉的花搬进来，再问问他明天早上想吃什么。';
+    assert.match(story.filterStoryOutput(head + dialogue, { plainText: true }), /不走了。」窗外的雨声/);
+    // 流式过程中：附加标签和思考不会漏出来
+    const raw = head + ending + '<finish>字数 6000</finish>';
+    for (let i = 0; i <= raw.length; i += 3) assert.doesNotMatch(story.filterStoryOutput(raw.slice(0, i), { plainText: true }), /<finish|字数 6000|<\/?content/);
+    // 非纯文字模式不受影响
+    assert.equal(story.filterStoryOutput(head + ending), head + ending);
+});

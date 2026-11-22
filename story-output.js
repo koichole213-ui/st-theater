@@ -32,7 +32,21 @@ function startsWithWrappedBody(text) {
     return depth > 0 && readable(text.slice(cursor));
 }
 
-export function filterStoryOutput(value, { plainText = false } = {}) {
+// 模型提前写了 </content>、后面接着写正文时，后面那段原来会被当成附加部件整段去掉（4.4.9g 起小心地留下）。
+// 只留“像正文”的：不带任何标签、至少 100 字、有句子标点、不是【标题】或“备注：”开头、不是一行行“键：值”的状态栏。
+// 拿不准就照旧去掉（宁可多一段附加内容进不来，也不把状态栏当正文）。
+const TRAILING_META_START = /^(?:[【\[〔][^】\]〕\n]{0,15}[】\]〕]|(?:注|备注|说明|创作说明|作者的话|作者|后记|字数|字数统计|状态|状态栏|选项|总结|小结|思考|分析|自检|检查|ECoT|PS|P\.S\.)\s*[：:])/i;
+function looksLikeTrailingStory(value) {
+    const text = String(value || '').trim();
+    if (!text || /<\s*\/?\s*[A-Za-z!]/.test(text)) return false;
+    if (readableCharCount(text) < 100 || TRAILING_META_START.test(text)) return false;
+    if ((text.match(/[。！？…」』]/g) || []).length < 2) return false;
+    const lines = text.split(/\n+/).map(line => line.trim()).filter(Boolean);
+    const keyValue = lines.filter(line => /^[^。！？「」『』\n]{1,10}[：:]\s*\S/.test(line) && !/[「『]/.test(line)).length;
+    return !(keyValue >= 3 && keyValue * 2 >= lines.length);
+}
+
+export function filterStoryOutput(value, { plainText = false, onKeptTrailing } = {}) {
     const text = filterTaggedReasoning(value).content;
     let result = '', cursor = 0, depth = 0;
     EXTRA_PATTERN.lastIndex = 0;
@@ -53,7 +67,14 @@ export function filterStoryOutput(value, { plainText = false } = {}) {
     if (plainText) {
         // Only an explicit leading story envelope defines a body boundary. Never guess from prose headings.
         if (/^\s*<content\b[^>]*>/i.test(result)) {
-            const bodies = [...result.matchAll(/<content\b[^>]*>([\s\S]*?)(?:<\/content\s*>|$)/gi)].map(match => match[1]);
+            const blocks = [...result.matchAll(/<content\b[^>]*>([\s\S]*?)(?:<\/content\s*>|$)/gi)];
+            const bodies = blocks.map(match => match[1]);
+            const last = blocks[blocks.length - 1];
+            const trailing = last ? result.slice(last.index + last[0].length) : '';
+            if (looksLikeTrailingStory(trailing)) {
+                bodies.push(trailing.trim());
+                onKeptTrailing?.(readableCharCount(trailing));
+            }
             return bodies.join('\n\n');
         }
         if (/^\s*<[^>]*$/.test(result) && '<content>'.startsWith(result.trim().toLowerCase())) return '';
@@ -61,9 +82,9 @@ export function filterStoryOutput(value, { plainText = false } = {}) {
     return result;
 }
 
-export function finalStoryOutput(value, { plainText = false, formatRecovered, normalText } = {}) {
+export function finalStoryOutput(value, { plainText = false, formatRecovered, normalText, onKeptTrailing } = {}) {
     const raw = String(value || '');
-    const filtered = filterStoryOutput(raw, { plainText });
+    const filtered = filterStoryOutput(raw, { plainText, onKeptTrailing });
     if (formatRecovered === 'unclosed-reasoning') {
         return { text: raw.replace(FINISH_REPORT, '').replace(EXTRA_WRAPPERS, ''), formatRecovered };
     }
