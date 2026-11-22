@@ -103,3 +103,25 @@ test('旧用户升级时默认开启目标字数自动补写，迁移只执行�
     assert.equal(migrateAutoContinueDefault(settings), false);
     assert.equal(settings.autoContinue, false);
 });
+
+test('结尾留白：普通小剧场和单轮续写提醒给结尾留篇幅，长篇前半轮、多轮续写和长梦章节不加', async () => {
+    const { ENDING_ROOM_GUIDANCE, singleRoundCompletionGuidance } = await import('../length-policy.js');
+    assert.match(ENDING_ROOM_GUIDANCE, /给结尾留出余量/);
+    assert.match(ENDING_ROOM_GUIDANCE, /戛然而止/);
+    for (const target of [null, 1500, 3000, 6000]) {
+        const text = firstRoundGuidance(target);
+        assert.ok(text.includes(ENDING_ROOM_GUIDANCE), `首轮 ${target}`);
+        // 留白提醒在“单轮停笔要求”之前，只出现一次
+        assert.ok(text.indexOf(ENDING_ROOM_GUIDANCE) < text.indexOf('【单轮停笔要求】'));
+        assert.equal(text.split(ENDING_ROOM_GUIDANCE).length, 2);
+    }
+    assert.ok(continuationFirstRoundGuidance(3000).includes(ENDING_ROOM_GUIDANCE));
+    assert.ok(continuationFirstRoundGuidance(null).includes(ENDING_ROOM_GUIDANCE));
+    assert.ok(!continuationFirstRoundGuidance(6000, { maxRounds: 3 }).includes(ENDING_ROOM_GUIDANCE));
+    assert.ok(!continuationFirstRoundGuidance(null, { maxRounds: 3 }).includes(ENDING_ROOM_GUIDANCE));
+    assert.ok(!longFormFirstRoundGuidance(8000).includes(ENDING_ROOM_GUIDANCE));
+    assert.ok(!singleRoundCompletionGuidance({ chapter: true }).includes(ENDING_ROOM_GUIDANCE));
+    // 目标字数和“接近目标前不要过早收束”照旧
+    assert.match(firstRoundGuidance(3000), /目标约为 3000 字/);
+    assert.match(firstRoundGuidance(3000), /在接近目标前不要过早收束/);
+});
