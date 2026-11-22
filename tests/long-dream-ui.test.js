@@ -638,3 +638,35 @@ test('选择长梦来源：历史的纯文字用到时才转，转过就记住',
     const body = source.slice(source.indexOf('function longDreamSources'), source.indexOf('// @theater-source-end longDreamSources'));
     assert.match(body, /source\.html\.trim\(\) \|\| source\.text\.trim\(\)/, '过滤时先看 HTML');
 });
+
+test('API 预设改名用插件自己的小弹窗：带上原名、按钮写“改名”，不再弹酒馆自带的输入框', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source=readTheaterImplementation();
+    const code=source.match(/async function askNewItemName\([^]*?^}/m)[0];
+    let html='', options=null;
+    const scope={settings:{skinMode:'theater'},esc:s=>String(s).replace(/"/g,'&quot;'),
+        SillyTavern:{getContext:()=>({POPUP_TYPE:{CONFIRM:1},Popup:class {constructor(markup,type,title,opts){html=markup;options=opts;this.dlg={};} async show(){return true;}}})},
+        $:()=>({find:()=>({val:()=>'新名字'})})};
+    const result=await runInNewContext(code+'\naskNewItemName("重命名 API 预设","旧名\\"字",40,{compact:true,value:"旧名\\"字",hint:"只改预设的名字，连接设置不变。",okButton:"改名"})',scope);
+    assert.equal(result,'新名字');
+    assert.match(html,/theater-compact-popup theater-api-name-popup" data-skin="theater"/);
+    assert.match(html,/value="旧名&quot;字"/);
+    assert.match(html,/只改预设的名字，连接设置不变。/);
+    assert.equal(options.okButton,'改名');
+    const events=readFileSync(new URL('../theater-events-settings.js', import.meta.url),'utf8');
+    const rename=events.slice(events.indexOf("'click.tapreset-rename'"), events.indexOf("'click.tapreset-delete'"));
+    assert.match(rename,/runtime\.askNewItemName\('重命名 API 预设', current\.name, 40, \{ compact: true, value: current\.name/);
+    assert.doesNotMatch(rename,/Popup\.show\.input/);
+    // 保存新预设的说法不变
+    assert.match(events,/askNewItemName\('保存 API 预设', runtime\.apiPresetDefaultName\(config\), 40, \{ compact: true \}\)/);
+});
+
+test('概要的三个确认框按文字高度来，不再在手机上空出一大块', async () => {
+    const { readStyles } = await import('./styles.js');
+    const css=readStyles();
+    const sel='body :is(.popup,dialog.popup):has(.theater-popup.theater-compact-popup.theater-dream-summary-confirmation[data-skin])';
+    const esc=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    assert.match(css,new RegExp(esc(sel)+' \\{[^}]*height:fit-content !important'));
+    assert.match(css,new RegExp(esc(sel)+' \\.popup-body \\{[^}]*height:auto !important;[^}]*flex:0 1 auto !important'));
+    assert.match(css,new RegExp(esc(sel)+' \\.popup-content \\{[^}]*overflow-y:auto !important; height:auto !important; flex:0 1 auto !important'));
+});

@@ -101,7 +101,8 @@ test('概要点击立即反馈、去重、超时解锁和配置异常提示', as
     await pending;
     assert.equal(button.label, '更新概要');
     assert.equal(button.disabled, false);
-    assert.equal(condenseButton.disabled, true, '只有 1 章时精简按钮保持灰色');
+    assert.equal(condenseButton['aria-disabled'], 'true', '只有 1 章时精简按钮保持灰色');
+    assert.equal(condenseButton.disabled, false, '灰色的精简按钮仍能点，点了弹出原因（手机上看不到悬停提示）');
     assert.match(condenseButton.title, /满 5 章/);
     assert.equal(scope.refreshingLongDreamSummaries.size, 0);
     assert.equal(saves, 0);

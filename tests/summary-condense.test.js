@@ -161,3 +161,30 @@ test('子代理复审：反复“改梦脉 → 更新概要”，最近版本不
     assert.equal(new Set(texts).size, texts.length, '没有重复的版本');
     assert.equal(texts.length, 5);
 });
+
+test('精简刚做过时按钮变灰的原因写清楚：现在多少字、满多少字、大约再写几章', () => {
+    let record = dreamWithSummaries(8);
+    const plan = condenseSummaryPlan(record);
+    record = saveCondensedSummary(record, '精'.repeat(plan.targetChars), plan.through);
+    record = appendLongDreamChapter(record, { text: '第9章正文。', html: '<p>9</p>' });
+    const sources = chapterSummarySources(record.chapters);
+    record = saveStorySummary(record, [...record.memory.storyEntries, { chapterNumber: 9, text: '第9章概要：雨停了。', source: sources[8] }]);
+    record = normalizeLongDreamRecord({ ...record, memory: { ...record.memory, status: 'ready', pendingChapterNumbers: [], processedThroughChapter: 9 } });
+    const reason = condenseSummaryPlan(record).reason;
+    assert.match(reason, /还不长（约 \d+ 字），满 800 字才需要精简；刚精简过的，一般再写两三章就可以再精简。/);
+    // 从没精简过：不提“刚精简过”
+    assert.doesNotMatch(condenseSummaryPlan({ ...dreamWithSummaries(5), memory: { ...dreamWithSummaries(5).memory, storyEntries: dreamWithSummaries(5).memory.storyEntries.map(entry => ({ ...entry, text: '短' })) } }).reason || '', /刚精简过/);
+});
+
+test('精简按钮暂时不能用时只显示成灰色、仍可点击（点了会说原因），不用 disabled', async () => {
+    const { readFileSync } = await import('node:fs');
+    const markup = readFileSync(new URL('../long-dream-workspace-memory.js', import.meta.url), 'utf8');
+    assert.match(markup, /data-dream-summary-condense aria-disabled="\$\{reason \? 'true' : 'false'\}"/);
+    assert.doesNotMatch(markup, /data-dream-summary-condense \$\{reason \? 'disabled'/);
+    const runtimeSource = readFileSync(new URL('../long-dream-runtime.js', import.meta.url), 'utf8');
+    assert.match(runtimeSource, /\$\('\[data-dream-summary-condense\]'\)\.prop\('disabled', false\)\.attr\('aria-disabled'/);
+    // 点灰色按钮时：原因用 toast 说出来，不发请求
+    assert.match(runtimeSource, /const plan = condensing \? condenseSummaryPlan\(dream\) : null;\n    if \(plan\?\.reason\) \{ toastr\.info\(plan\.reason\); return; \}/);
+    const { readStyles } = await import('./styles.js');
+    assert.match(readStyles(), /\.theater-dream-summary-actions > button\[aria-disabled="true"\] \{ opacity:\.5; cursor:default; \}/);
+});

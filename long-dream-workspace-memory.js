@@ -512,5 +512,6 @@ function condenseButtonHTML(runtime, dream) {
     const busy = runtime.refreshingLongDreamSummaries.has(String(dream.id));
     const reason = summaryUnavailableReason(dream, busy) || condenseSummaryPlan(dream).reason || '';
     const hint = reason || `把较早章节的概要压成一段，最近 ${CONDENSE_KEEP_RECENT_CHAPTERS} 章保留逐章；旧版可在“最近版本”恢复`;
-    return `<button type="button" data-dream-summary-condense ${reason ? 'disabled' : ''} title="${runtime.esc(hint)}">精简概要</button>`;
+    // 暂时不能精简时只“看起来是灰的”（aria-disabled），手机上点一下会弹出原因；用 disabled 的话点了没反应，原因只在鼠标悬停时看得到。
+    return `<button type="button" data-dream-summary-condense aria-disabled="${reason ? 'true' : 'false'}" title="${runtime.esc(hint)}">精简概要</button>`;
 }

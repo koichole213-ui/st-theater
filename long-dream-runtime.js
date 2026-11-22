@@ -748,7 +748,7 @@ function syncLongDreamSummaryButton(key) {
         .prop('disabled', blocked)
         .attr('aria-busy', String(busy)).text(busy ? '正在更新…' : '更新概要');
     const condenseReason = reason || (dream ? condenseSummaryPlan(dream).reason : '') || '';
-    $('[data-dream-summary-condense]').prop('disabled', !!condenseReason)
+    $('[data-dream-summary-condense]').prop('disabled', false).attr('aria-disabled', condenseReason ? 'true' : 'false')
         .attr('title', condenseReason || '把较早章节的概要压成一段，最近 3 章保留逐章；旧版可在“最近版本”恢复');
     $('[data-dream-summary-restore]').each(function () {
         this.disabled = !!summaryUnavailableReason(dream, busy, this.getAttribute('data-dream-summary-restore'));

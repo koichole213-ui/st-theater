@@ -187,7 +187,7 @@ export function condenseSummaryPlan(record) {
         if (!covered.has(number)) return { reason: '还有较早章节缺少概要，请等概要补齐（或点“更新概要”）后再精简。' };
     }
     const source = [full?.text || '', composeStorySummary(entries)].filter(Boolean).join('\n\n');
-    if (source.length < CONDENSE_MIN_SOURCE_CHARS) return { reason: '较早章节的概要还不长，暂时不需要精简。' };
+    if (source.length < CONDENSE_MIN_SOURCE_CHARS) return { reason: `较早章节的概要还不长（约 ${source.length} 字），满 ${CONDENSE_MIN_SOURCE_CHARS} 字才需要精简${full ? '；刚精简过的，一般再写两三章就可以再精简' : ''}。` };
     return { through, source, targetChars: Math.max(400, Math.round(source.length / 3)), maxChars: Math.floor(source.length * 0.7) };
 }
 
