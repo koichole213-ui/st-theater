@@ -100,7 +100,7 @@ export function classifyLengthTier(targetChars) {
 }
 
 // 结尾留白（禾禾 2026-11-21）：只轻轻提醒“给结尾留篇幅”，不改目标字数、不催着收尾。
-// 只放进普通小剧场和单轮续写；长梦章节、长篇前半轮、多轮补写的收尾轮各有自己的说法，不加。
+// 只放进普通小剧场和单轮续写；长梦章节、5000 字起开着自动补写时的前半轮、多轮补写的收尾轮各有自己的说法，不加。
 export const ENDING_ROOM_GUIDANCE = '规划篇幅时给结尾留出余量：主要情节写完后，再用一两段写人物的反应和这一幕的落点，让结尾完整从容，不要在高潮处戛然而止或一句带过。';
 
 export function singleRoundCompletionGuidance({ chapter = false } = {}) {
