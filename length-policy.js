@@ -111,13 +111,14 @@ export function singleRoundCompletionGuidance({ chapter = false } = {}) {
 export function firstRoundGuidance(targetChars) {
     const target = Math.round(Number(targetChars));
     if (!Number.isFinite(target) || target <= 0) return `充分展开剧情，不急于收尾。${ENDING_ROOM_GUIDANCE}${singleRoundCompletionGuidance()}`;
-    return `本篇小剧场的可读中文正文目标约为 ${target} 字（不含 HTML、CSS、JavaScript 和排版代码）。请从开篇开始按照这一完整篇幅规划剧情，在接近目标前不要过早收束；用有效情节、动作、对白和心理变化充分展开，不要复述、注水，也不要在正文中报告或标注字数。${ENDING_ROOM_GUIDANCE}${singleRoundCompletionGuidance()}`;
+    return `本篇小剧场的可读中文正文目标约为 ${target} 字（不含 HTML、CSS、JavaScript 和排版代码）。请从开篇开始按照这一完整篇幅规划剧情，在接近目标前不要过早收束；用有效情节、动作、对白和心理变化充分展开，不要复述、注水。${ENDING_ROOM_GUIDANCE}${singleRoundCompletionGuidance()}`;
 }
 
 export function continuationFirstRoundGuidance(targetChars, { maxRounds = 1 } = {}) {
     const target = Math.round(Number(targetChars));
     const rounds = Math.max(1, Math.floor(Number(maxRounds) || 1));
-    const continuity = '从提供的前情最后位置继续，围绕用户本段续写方向充分展开新的动作、对白、心理变化和有效情节；不重写开头，不复述旧正文，不用总结、空话或重复情节凑字，也不要在正文中报告或标注字数。';
+    // 单轮时后面跟着「单轮停笔要求」（已含“不输出字数报告”），不再重复。
+    const continuity = `从提供的前情最后位置继续，围绕用户本段续写方向充分展开新的动作、对白、心理变化和有效情节；不重写开头，不复述旧正文，不用总结、空话或重复情节凑字${rounds === 1 ? '' : '，也不要在正文中报告或标注字数'}。`;
     if (!Number.isFinite(target) || target <= 0) return `本次任务是继续创作充分展开的新正文，不是概括前情或只补一句结尾。${continuity}${rounds === 1 ? ENDING_ROOM_GUIDANCE + singleRoundCompletionGuidance() : ''}`;
     const scope = `本次续写新增的可读中文正文目标约为 ${target} 字（不含 HTML、CSS、JavaScript 和排版代码）。目标只计算本次续写新生成的正文；提供的旧正文、聊天前文和其他参考资料均不计入，不是把旧正文与新增内容合计凑到 ${target} 字。`;
     const plan = rounds === 1

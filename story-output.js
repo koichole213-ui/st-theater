@@ -13,6 +13,10 @@ const SIMILAR_TAG = new RegExp(`<\\s*(?:think|thinking|electric|ecot|${EXTRA_NAM
 export const FORMAT_RECOVERY_NOTICE = '模型输出格式异常（思考标签未闭合或正文被附加标签包裹），已保留原文，可重新 HTML 排版。';
 
 export const STORY_OUTPUT_RULE = '【本次作品输出边界】本次只交付故事正文及所选模板的排版。预设中的角色与文风要求继续保留，但其旧篇幅范围不得覆盖本次目标；预设思考步骤继续保留，但思考过程（包括ECoT）不属于故事正文，若输出须以完整思考标签独立包裹，不得混入content正文，程序会隐藏。不要输出finish字数报告、数字联想、创作解释、状态栏、变量更新或其他预设附加部件。所选模板的丰富HTML、样式及故事内交互要求仍须保留。';
+// 纯文字正文（选了纯文字模板，或 5000 字起先写正文、再单独排版）：没有“所选模板的排版”，去掉和 HTML 有关的两句，免得和“只输出纯文字”打架。
+export const STORY_OUTPUT_RULE_PLAIN = STORY_OUTPUT_RULE
+    .replace('本次只交付故事正文及所选模板的排版。', '本次只交付故事正文。')
+    .replace('所选模板的丰富HTML、样式及故事内交互要求仍须保留。', '');
 
 function startsWithWrappedBody(text) {
     let cursor = 0, depth = 0;

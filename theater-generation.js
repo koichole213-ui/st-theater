@@ -2,7 +2,7 @@ import { activeRelayout, resultRelayoutTarget, syncResultRelayout } from './manu
 import { assertHtmlIntegrity, recoverHtmlText } from './html-integrity.js';
 import { estimateTavernTexts } from './tavern-token-counter.js';
 import { resolveTheaterPreset } from './preset-compat.js';
-import { filterStoryOutput, finalStoryOutput, FORMAT_RECOVERY_NOTICE, STORY_OUTPUT_RULE } from './story-output.js';
+import { filterStoryOutput, finalStoryOutput, FORMAT_RECOVERY_NOTICE, STORY_OUTPUT_RULE, STORY_OUTPUT_RULE_PLAIN } from './story-output.js';
 import { stripExcludedOutputTags } from './context-exclusions.js';
 import { resolveLayoutApiRoute } from './layout-api.js';
 import { creativeEnhancementPrompt } from './creative-enhancement.js';
@@ -337,8 +337,9 @@ async function assembleGenerationPayload(instruction, { continuationText = null,
         : '请根据以上所有信息生成小剧场，严格遵守渲染规则。';
     fixed += `\n${protagonistAnchor}`;
     fixed += `\n【创作节奏】${lengthGuidance}`;
-    fixed += `\n${STORY_OUTPUT_RULE}`;
-    if (isPlainTextRender) fixed += '\n本轮故事正文请只用一对<content>...</content>包裹；若有ECoT思考须在content之外完整闭合，此外不附加其他部件。程序会隐藏思考并移除正文包装标签，再计字与排版。';
+    fixed += `\n${isPlainTextRender ? STORY_OUTPUT_RULE_PLAIN : STORY_OUTPUT_RULE}`;
+    // 思考要放在 content 外面，上一句「本次作品输出边界」已经说过，这里不重复。
+    if (isPlainTextRender) fixed += '\n本轮故事正文请只用一对<content>...</content>包裹，此外不附加其他部件。程序会隐藏思考并移除正文包装标签，再计字与排版。';
     const payload = buildGenerationPayload({
         preset, role, persona, worldBook, context, memory: memory.content, continuation, rules, addons, creativeEnhancement,
         fixed,

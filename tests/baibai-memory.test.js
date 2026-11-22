@@ -155,3 +155,12 @@ test('实际主API与独立API发送适配后保留记忆，查看器可检索�
         assert.match(JSON.stringify(store.list().at(-1).sent),/ABSOLUTE-OLD-MEMORY/);
     }
 });
+
+test('纯文字正文的最后要求：不再要求“保留丰富 HTML”，思考标签的说法只出现一次', async t => {
+    const { payload } = await assembled(t);
+    const text = payload.messages.map(m => m.content).join('\n');
+    assert.match(text, /本次只交付故事正文。/);
+    assert.doesNotMatch(text, /所选模板的丰富HTML/);
+    assert.match(text, /只用一对<content>\.\.\.<\/content>包裹，此外不附加其他部件/);
+    assert.equal(text.split('ECoT').length, 2);
+});

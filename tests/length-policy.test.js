@@ -30,7 +30,8 @@ test('四档分诊边界保留，首轮明确告诉模型目标正文字数', ()
     assert.match(firstRoundGuidance(2000), /目标约为 2000 字/);
     assert.match(firstRoundGuidance(8000), /目标约为 8000 字/);
     assert.match(firstRoundGuidance(8000), /不含 HTML、CSS、JavaScript 和排版代码/);
-    assert.match(firstRoundGuidance(8000), /不要在正文中报告或标注字数/);
+    // “不要报告字数”只说一次：由后面的「单轮停笔要求」说
+    assert.match(firstRoundGuidance(8000), /字数报告/);
     assert.doesNotMatch(firstRoundGuidance(8000), /写满|统计注释/);
 });
 
@@ -124,4 +125,19 @@ test('结尾留白：普通小剧场和单轮续写提醒给结尾留篇幅，�
     // 目标字数和“接近目标前不要过早收束”照旧
     assert.match(firstRoundGuidance(3000), /目标约为 3000 字/);
     assert.match(firstRoundGuidance(3000), /在接近目标前不要过早收束/);
+});
+
+test('去重：同一段提示里“不要报告字数”只说一次；多轮续写没有停笔要求时仍保留', async () => {
+    const { STORY_OUTPUT_RULE, STORY_OUTPUT_RULE_PLAIN } = await import('../story-output.js');
+    const count = (text, pattern) => (text.match(pattern) || []).length;
+    for (const text of [firstRoundGuidance(6000), firstRoundGuidance(null), continuationFirstRoundGuidance(3000), continuationFirstRoundGuidance(null)]) {
+        assert.equal(count(text, /字数报告|报告或标注字数/g), 1, text);
+    }
+    assert.match(continuationFirstRoundGuidance(6000, { maxRounds: 3 }), /不要在正文中报告或标注字数/);
+    assert.match(longFormFirstRoundGuidance(8000), /不要在正文中报告或标注字数/);
+    // 纯文字正文不再被要求“保留丰富 HTML”，其余边界说法不变
+    assert.doesNotMatch(STORY_OUTPUT_RULE_PLAIN, /HTML|所选模板/);
+    assert.equal(STORY_OUTPUT_RULE_PLAIN, STORY_OUTPUT_RULE.replace('本次只交付故事正文及所选模板的排版。', '本次只交付故事正文。').replace('所选模板的丰富HTML、样式及故事内交互要求仍须保留。', ''));
+    assert.match(STORY_OUTPUT_RULE_PLAIN, /旧篇幅范围不得覆盖本次目标/);
+    assert.match(STORY_OUTPUT_RULE_PLAIN, /不得混入content正文/);
 });
