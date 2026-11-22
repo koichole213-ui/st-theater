@@ -258,8 +258,7 @@ export function bindSettingsEvents(runtime, $d) {
     $d.off('click.tapreset-rename').on('click.tapreset-rename', '#theater-rename-api-preset-btn', async function () {
         const current = runtime.findApiPreset();
         if (!current) { toastr.warning('请先选择一个 API 预设'); return; }
-        const { Popup } = SillyTavern.getContext();
-        const input = await Popup.show.input('重命名 API 预设', `把「${current.name}」改成：`, current.name);
+        const input = await runtime.askNewItemName('重命名 API 预设', current.name, 40, { compact: true, value: current.name, hint: '只改预设的名字，连接设置不变。', okButton: '改名' });
         const name = String(input || '').trim().slice(0, 40);
         if (!name || name === current.name) return;
         const duplicate = normalizeApiPresetList(runtime.settings.apiPresets).some(preset => preset.id !== current.id && preset.name.toLocaleLowerCase() === name.toLocaleLowerCase());
